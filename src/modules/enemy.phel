@@ -17,24 +17,44 @@
   [x y]
   {:x x :y y :alive true})
 
+(defn- try-step
+  "Attempt to step `dist` units from (ex, ey) along `angle`. Returns
+   [nx ny] if the destination cell is open, nil otherwise."
+  [grid ex ey dist angle]
+  (let [nx (php/+ ex (php/* dist (php/cos angle)))
+        ny (php/+ ey (php/* dist (php/sin angle)))]
+    (if (wall? grid (php/intval nx) (php/intval ny))
+      nil
+      [nx ny])))
+
 (defn- step-toward
-  "Move enemy one frame of chase-speed * dt toward (target-x, target-y),
-   skipping any axis whose new cell would collide with a wall. Returns
-   an updated enemy map."
+  "Walk one frame of chase-speed * dt toward (target-x, target-y). The
+   enemy first tries the straight line; if blocked, it tries angles
+   offset by ±45°, ±90°, ±135° (in that order) so it slides around
+   corners and walks around obstacles instead of bumping forever."
   [enemy grid target-x target-y dt]
   (let [ex (:x enemy)
         ey (:y enemy)]
-    (let [dx (php/- target-x ex)
-          dy (php/- target-y ey)]
-      (let [dist (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
-        (if (php/<= dist stop-dist)
-          enemy
-          (let [step (php/* chase-speed dt)]
-            (let [nx (php/+ ex (php/* step (php// dx dist)))
-                  ny (php/+ ey (php/* step (php// dy dist)))]
-              (let [nx' (if (wall? grid (php/intval nx) (php/intval ey)) ex nx)
-                    ny' (if (wall? grid (php/intval ex) (php/intval ny)) ey ny)]
-                (assoc enemy :x nx' :y ny')))))))))
+    (let [dx   (php/- target-x ex)
+          dy   (php/- target-y ey)
+          dist (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
+      (if (php/<= dist stop-dist)
+        enemy
+        (let [step    (php/* chase-speed dt)
+              desired (php/atan2 dy dx)
+              q       (php/* 0.25 php/M_PI)
+              h       (php/* 0.5 php/M_PI)
+              t       (php/* 0.75 php/M_PI)]
+          (let [hit (or (try-step grid ex ey step desired)
+                        (try-step grid ex ey step (php/+ desired q))
+                        (try-step grid ex ey step (php/- desired q))
+                        (try-step grid ex ey step (php/+ desired h))
+                        (try-step grid ex ey step (php/- desired h))
+                        (try-step grid ex ey step (php/+ desired t))
+                        (try-step grid ex ey step (php/- desired t)))]
+            (if hit
+              (assoc enemy :x (first hit) :y (second hit))
+              enemy)))))))
 
 (defn shoot
   "Fire a hitscan from the player along their facing. Returns

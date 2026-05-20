@@ -552,13 +552,31 @@
   []
   (print "\e[2J\e[H"))
 
+(defn- white-flash-frame
+  "Full-screen white wash, one frame. Painted on impact so the player
+   sees a brief jolt before the red i-frame palette swap kicks in."
+  [cols rows]
+  (let [parts (php/array)
+        line  (str "\e[107m" (php/str_repeat " " cols))]
+    (php/array_push parts "\e[H")
+    (loop [r 1]
+      (when (php/<= r rows)
+        (php/array_push parts (str "\e[" r ";1H" line))
+        (recur (php/+ r 1))))
+    (php/array_push parts "\e[0m")
+    (php/implode "" parts)))
+
 (defn render!
   "Move cursor home and overwrite the previous frame in place. Avoids
-   the full-screen clear that would otherwise flicker each frame."
+   the full-screen clear that would otherwise flicker each frame.
+   While :flash-secs > 0 the whole viewport flashes white — a 1-frame
+   impact jolt that lands before the red i-frame wash."
   {:export true}
   [world stats cols rows]
   (print "\e[H")
-  (print (frame->string world stats cols rows))
+  (if (php/> (or (get stats :flash-secs) 0.0) 0.0)
+    (print (white-flash-frame cols rows))
+    (print (frame->string world stats cols rows)))
   (php/flush))
 
 ;; ---------------------------------------------------------------------

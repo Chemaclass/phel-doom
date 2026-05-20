@@ -75,11 +75,13 @@
 (defn- decay-timers [world ^float dt]
   (let [iframes    (php/max 0.0 (php/- (:iframes world) dt))
         fire-anim  (php/max 0.0 (php/- (or (:fire-anim world) 0.0) dt))
-        intro-secs (php/max 0.0 (php/- (or (:intro-secs world) 0.0) dt))]
+        intro-secs (php/max 0.0 (php/- (or (:intro-secs world) 0.0) dt))
+        flash-secs (php/max 0.0 (php/- (or (:flash-secs world) 0.0) dt))]
     (assoc world
            :iframes    iframes
            :fire-anim  fire-anim
            :intro-secs intro-secs
+           :flash-secs flash-secs
            :fx         (decay-fx (:fx world) dt))))
 
 (defn- vulnerable? [world]
@@ -88,10 +90,17 @@
                           (:x (:player world))
                           (:y (:player world)))))
 
+(def flash-seconds
+  "How long the all-white impact flash holds before the red i-frame
+   wash takes over. About one frame at 60fps — long enough that the
+   eye reads it as a jolt, short enough not to mask the next frame."
+  0.05)
+
 (defn- take-damage [world]
   (when (:sound-on world) (play-sfx! :hit))
   (assoc (update world :lives (fn [l] (php/max 0 (php/- l 1))))
-         :iframes iframe-seconds))
+         :iframes    iframe-seconds
+         :flash-secs flash-seconds))
 
 (defn damage-step
   "Per-frame: decay every timer, then apply a touch hit if i-frames

@@ -16,6 +16,10 @@
 (def blood-bright "\e[48;5;160m ")
 (def blood-mid    "\e[48;5;88m ")
 (def blood-dim    "\e[48;5;52m ")
+(def heart-shade
+  "Bright pink-red painted into the per-cell overlay so a heart
+   pickup pops out against the grey walls + red enemies."
+  "\e[48;5;205m ")
 (def char-aspect 2.0)
 (def hud-rows 1)
 
@@ -332,6 +336,31 @@
                            (loop [r r-top]
                              (when (php/< r r-bot)
                                (php/aset blood-paint (php/+ (php/* r vw) c) bsh)
+                               (recur (php/+ r 1)))))
+                         (recur (php/+ c 1))))))))))
+    ;; Heart pickups: paint a compact bright-pink sprite at the upper
+    ;; mid of the projected column so they float visibly above the
+    ;; floor without obscuring the wall behind them entirely.
+    (doseq [heart (or (:hearts world) [])]
+           (let [proj (project-enemy heart (:player world) vw)]
+             (when proj
+               (let [col (:col proj)
+                     hw  (php/max 1 (php/intdiv (:half-width proj) 2))
+                     d   (:dist proj)]
+                 (let [c-from (php/max 0 (php/- col hw))
+                       c-to   (php/min (php/- vw 1) (php/+ col hw))
+                       h      (php/min vh (php/intval (php// proj-dist
+                                                             (php/* (php/max 0.5 d) char-aspect))))]
+                   (let [r-top (let [mid (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 2))]
+                                 (php/max 0 (php/- mid (php/intdiv h 6))))
+                         r-bot (let [mid (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 2))]
+                                 (php/min vh (php/+ mid (php/intdiv h 6) 1)))]
+                     (loop [c c-from]
+                       (when (php/<= c c-to)
+                         (when (php/< d (php/aget dists c))
+                           (loop [r r-top]
+                             (when (php/< r r-bot)
+                               (php/aset blood-paint (php/+ (php/* r vw) c) heart-shade)
                                (recur (php/+ r 1)))))
                          (recur (php/+ c 1))))))))))
     (let [parts (php/array)]

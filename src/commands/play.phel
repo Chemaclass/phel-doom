@@ -189,6 +189,41 @@
              :turn-left    (php/max 0 (php/- (:turn-left m) 1))
              :turn-right   (php/max 0 (php/- (:turn-right m) 1))})))
 
+(defn- handle-toggles
+  "Apply edge-triggered toggles (pause, minimap visibility) for one frame."
+  [world edges]
+  (let [w (if (:toggle-pause edges) (toggle-pause world) world)]
+    (if (:toggle-map edges) (toggle-map w) w)))
+
+(defn- tick-enemies
+  "Walk every alive enemy one dt-scaled step toward the player."
+  [world dt]
+  (let [p (:player world)]
+    (update world :enemies advance (:grid world) (:x p) (:y p) dt)))
+
+(defn- tick-shooting
+  "If the trigger was pulled this frame, resolve the hitscan; otherwise
+   bypass."
+  [world fire?]
+  (if fire? (fire-shot world) world))
+
+(defn tick-world
+  "Pure one-frame state transition. Decoupled from IO so it can be
+   unit-tested directly: build a world, hand it inputs, assert what
+   comes back. `keys` is the drained input string, `dt` is seconds
+   since the previous tick, `edges` is a map of rising-edge events
+   {:fire :toggle-map :toggle-pause}."
+  {:export true}
+  [world keys dt edges]
+  (let [w0 (handle-toggles world edges)]
+    (if (:paused w0)
+      w0
+      (let [w1 (refresh-from-keys w0 keys)]
+        (let [w2 (apply-physics w1 dt)]
+          (let [w3 (tick-enemies w2 dt)]
+            (let [w4 (tick-shooting w3 (:fire edges))]
+              (damage-step w4 dt))))))))
+
 (defn- game-loop [world0]
   (loop [world    world0
          t-last   (php/microtime true)
@@ -218,22 +253,10 @@
             now    (php/microtime true)
             ms     (php/intval (php/* (php/- now t-last) 1000))
             f      (if (php/> ms 0) (php/intval (php// 1000.0 ms)) 0)
-            world' (let [w0 (if (and p-now (not p-prev)) (toggle-pause world) world)]
-                     (if (:paused w0)
-                       w0
-                       (let [dt (php// ms 1000.0)]
-                         (let [stepped (apply-physics
-                                        (refresh-from-keys
-                                         (if (and m-now (not m-prev)) (toggle-map w0) w0)
-                                         keys)
-                                        dt)]
-                           (let [fired (let [moved (update stepped :enemies advance
-                                                           (:grid stepped)
-                                                           (:x (:player stepped))
-                                                           (:y (:player stepped))
-                                                           dt)]
-                                         (if (and sp-now (not sp-prev)) (fire-shot moved) moved))]
-                             (damage-step fired dt))))))]
+            world' (tick-world world keys (php// ms 1000.0)
+                               {:fire         (and sp-now (not sp-prev))
+                                :toggle-map   (and m-now (not m-prev))
+                                :toggle-pause (and p-now (not p-prev))})]
         (cond
           (str/contains? keys "q")   :quit
           (php/<= (:lives world') 0) {:game-over true :kills (:kills world')}

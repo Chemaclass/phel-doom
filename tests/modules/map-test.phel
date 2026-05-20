@@ -1,6 +1,6 @@
 (ns phel-doom-tests.modules.map-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.modules.map :refer [default-grid wall?]))
+  (:require phel-doom.modules.map :refer [default-grid wall? random-grid random-spawn]))
 
 (deftest test-walls-on-perimeter
   (is (wall? default-grid 0 0))
@@ -15,3 +15,35 @@
 (deftest test-out-of-bounds-is-wall
   (is (wall? default-grid -1 0))
   (is (wall? default-grid 100 100)))
+
+(deftest test-random-grid-dimensions-and-border
+  (let [g (random-grid 20 12 4)]
+    (is (= 12 (count g)))
+    (is (= 20 (count (first g))))
+    ;; Border = solid wall, top row and bottom row.
+    (is (every? (fn [v] (= 1 v)) (first g)))
+    (is (every? (fn [v] (= 1 v)) (get g 11)))
+    ;; First/last column of every row is a wall.
+    (is (every? (fn [row] (and (= 1 (first row)) (= 1 (last row)))) g))))
+
+(deftest test-random-grid-respects-block-count
+  ;; A grid with zero placed blocks should still have just the border.
+  (let [g (random-grid 10 10 0)]
+    (is (= 10 (count g)))
+    ;; Sum of all interior cells = 0 (no walls placed inside).
+    (let [interior-sum (apply + (apply concat
+                                       (map (fn [row]
+                                              (apply vector
+                                                     (php/array_slice
+                                                      (to-php-array row) 1 8)))
+                                            (php/array_slice (to-php-array g) 1 8))))]
+      (is (= 0 interior-sum)))))
+
+(deftest test-random-spawn-lands-on-floor
+  (let [g     [[1 1 1 1 1]
+               [1 0 0 0 1]
+               [1 0 0 0 1]
+               [1 0 0 0 1]
+               [1 1 1 1 1]]
+        [x y] (random-spawn g)]
+    (is (= false (wall? g (php/intval x) (php/intval y))))))

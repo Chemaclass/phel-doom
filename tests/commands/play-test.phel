@@ -1,0 +1,61 @@
+(ns phel-doom-tests.commands.play-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.modules.state  :refer [new-player new-world with-enemies])
+  (:require phel-doom.modules.enemy  :refer [new-enemy])
+  (:require phel-doom.commands.play  :refer [tick-world]))
+
+(def open-grid
+  (apply vector
+         (concat
+          [[1 1 1 1 1 1 1 1 1 1]]
+          (apply vector
+                 (map (fn [_] [1 0 0 0 0 0 0 0 0 1]) (range 0 8)))
+          [[1 1 1 1 1 1 1 1 1 1]])))
+
+(def no-edges
+  {:fire false :toggle-map false :toggle-pause false})
+
+(deftest test-tick-world-pause-edge-toggles-paused
+  (let [w' (tick-world (new-world open-grid (new-player 5.0 5.0 0.0))
+                       "" 0.016
+                       (assoc no-edges :toggle-pause true))]
+    (is (= true (:paused w')))))
+
+(deftest test-tick-world-when-paused-skips-physics
+  ;; A paused world keeps enemies in place regardless of dt.
+  (let [e (first (:enemies
+                  (tick-world
+                   (with-enemies
+                    (assoc (new-world open-grid (new-player 5.0 5.0 0.0))
+                           :paused true)
+                    [(new-enemy 2.0 5.0)])
+                   "" 1.0 no-edges)))]
+    (is (= 2.0 (:x e)))
+    (is (= 5.0 (:y e)))))
+
+(deftest test-tick-world-enemy-chases-toward-player
+  (let [e (first (:enemies
+                  (tick-world
+                   (with-enemies (new-world open-grid (new-player 5.0 5.0 0.0))
+                                 [(new-enemy 2.0 5.0)])
+                   "" 0.5 no-edges)))]
+    (is (> (:x e) 2.0))))
+
+(deftest test-tick-world-fire-edge-kills-enemy-and-bumps-kills
+  ;; Player at (2,5) facing east, enemy at (5,5) in front, open grid:
+  ;; one trigger pull lands.
+  (let [w' (tick-world
+            (with-enemies (new-world open-grid (new-player 2.0 5.0 0.0))
+                          [(new-enemy 5.0 5.0)])
+            "" 0.016 (assoc no-edges :fire true))]
+    (is (= 1 (:kills w')))
+    ;; Slot was respawned (no leftover :alive false), live count stays.
+    (is (= 1 (count (:enemies w'))))
+    (is (= true (:alive (first (:enemies w')))))
+    ;; Blood fx was pushed.
+    (is (>= (count (:fx w')) 1))))
+
+(deftest test-tick-world-toggle-map-edge-flips-show-map
+  (let [w' (tick-world (new-world open-grid (new-player 5.0 5.0 0.0))
+                       "" 0.016 (assoc no-edges :toggle-map true))]
+    (is (= false (:show-map w')))))

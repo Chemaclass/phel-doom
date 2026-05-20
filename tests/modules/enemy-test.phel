@@ -1,0 +1,91 @@
+(ns phel-doom-tests.modules.enemy-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.modules.enemy :refer [new-enemy spawn-enemies shoot advance]))
+
+(def open-grid
+  "Bordered 10x10 open arena, no interior walls."
+  (apply vector
+         (concat
+          [[1 1 1 1 1 1 1 1 1 1]]
+          (apply vector
+                 (map (fn [_] [1 0 0 0 0 0 0 0 0 1]) (range 0 8)))
+          [[1 1 1 1 1 1 1 1 1 1]])))
+
+(def wall-between-grid
+  "5x5 arena with a wall column at x=2 separating player (1,2) and a
+   would-be enemy on the other side at (4,2)."
+  [[1 1 1 1 1]
+   [1 0 1 0 1]
+   [1 0 1 0 1]
+   [1 0 1 0 1]
+   [1 1 1 1 1]])
+
+(deftest test-new-enemy-alive-with-position
+  (let [e (new-enemy 5.0 6.0)]
+    (is (= 5.0 (:x e)))
+    (is (= 6.0 (:y e)))
+    (is (= true (:alive e)))))
+
+(deftest test-spawn-enemies-count-and-min-dist
+  (let [es (spawn-enemies open-grid 5 2.0 5.0 5.0)]
+    (is (= 5 (count es)))
+    ;; Every spawn is on a floor cell, not on the player, and at least
+    ;; min-dist-from away.
+    (is (every? (fn [e]
+                  (and (:alive e)
+                       (let [dx (- (:x e) 5.0)
+                             dy (- (:y e) 5.0)]
+                         (>= (+ (* dx dx) (* dy dy)) (* 2.0 2.0)))))
+                es))))
+
+(deftest test-shoot-hits-enemy-in-front
+  ;; Player at (1.5, 1.5) facing +x (east); enemy 2 units east; wall far
+  ;; behind. Shot should land.
+  (let [[es' hit? hit-pos idx]
+        (shoot [(new-enemy 3.5 1.5)] 1.5 1.5 0.0 10.0 0.5 12.0)]
+    (is (= true hit?))
+    (is (= false (:alive (first es'))))
+    (is (= 3.5 (:x hit-pos)))
+    (is (= 0 idx))))
+
+(deftest test-shoot-misses-when-wall-closer
+  ;; Wall at 1.0 unit, enemy at 3.0 units behind it. Wall occludes.
+  (let [[_ hit?] (shoot [(new-enemy 4.0 1.5)] 1.5 1.5 0.0 1.0 0.5 12.0)]
+    (is (= false hit?))))
+
+(deftest test-shoot-misses-when-enemy-off-axis
+  ;; Enemy directly north of player; player facing east; off the cone.
+  (let [[_ hit?] (shoot [(new-enemy 1.5 4.0)] 1.5 1.5 0.0 10.0 0.5 12.0)]
+    (is (= false hit?))))
+
+(deftest test-shoot-empty-list-returns-miss
+  (let [[es' hit? hit-pos idx] (shoot [] 1.5 1.5 0.0 10.0 0.5 12.0)]
+    (is (= false hit?))
+    (is (= nil hit-pos))
+    (is (= -1 idx))))
+
+(deftest test-advance-moves-enemy-toward-player
+  ;; Enemy at (5,5), player at (8,5), open grid -> enemy x increases.
+  (let [es' (advance [(new-enemy 5.0 5.0)] open-grid 8.0 5.0 0.5)]
+    (is (> (:x (first es')) 5.0))
+    (is (< (:x (first es')) 8.0))
+    (is (= 5.0 (:y (first es'))))))
+
+(deftest test-advance-respects-stop-dist
+  ;; Already on top of player, must not pile in further.
+  (let [es' (advance [(new-enemy 5.1 5.0)] open-grid 5.0 5.0 0.5)]
+    (is (= 5.1 (:x (first es'))))
+    (is (= 5.0 (:y (first es'))))))
+
+(deftest test-advance-walks-around-wall-instead-of-stalling
+  ;; Player at (3.5, 2.5), enemy at (1.5, 2.5). Direct east step hits the
+  ;; x=2 wall; the chase should pivot and at least slide on the y axis
+  ;; instead of staying put.
+  (let [e (first (advance [(new-enemy 1.5 2.5)] wall-between-grid 3.5 2.5 0.5))]
+    (is (or (not (= 1.5 (:x e)))
+            (not (= 2.5 (:y e)))))))
+
+(deftest test-advance-leaves-dead-enemies-untouched
+  (let [es' (advance [{:x 5.0 :y 5.0 :alive false}] open-grid 8.0 5.0 0.5)]
+    (is (= 5.0 (:x (first es'))))
+    (is (= 5.0 (:y (first es'))))))

@@ -14,17 +14,69 @@
         c (+ 232 (php/intval (* t 23)))]
     (shade-c c)))
 
+(defn- direction-char [angle]
+  (let [two-pi (* 2.0 php/M_PI)
+        a      (php/fmod (+ angle two-pi two-pi) two-pi)
+        q      (php/mod (php/intval (+ (/ a (/ php/M_PI 2.0)) 0.5)) 4)]
+    (cond
+      (= q 0) ">"
+      (= q 1) "v"
+      (= q 2) "<"
+      :else   "^")))
+
+(defn- minimap-rows
+  "Render the world's grid into a vector of ANSI-coded strings, one per
+   grid row. Player cell shows a directional marker derived from angle."
+  [world]
+  (let [grid                (:grid world)
+        {:keys [x y angle]} (:player world)
+        pcol                (php/intval x)
+        prow                (php/intval y)
+        marker              (direction-char angle)
+        gw                  (count (first grid))]
+    (apply vector
+           (map (fn [row]
+                  (let [grow (get grid row)]
+                    (apply str
+                           (map (fn [col]
+                                  (cond
+                                    (and (= row prow) (= col pcol))
+                                    (str "\e[93;1m" marker "\e[0m")
+                                    (= 1 (get grow col))
+                                    "\e[37;1m#\e[0m"
+                                    :else                           "\e[90m·\e[0m"))
+                                (range 0 gw)))))
+                (range 0 (count grid))))))
+
+(defn- hud-line [world stats]
+  (let [{:keys [x y angle]} (:player world)
+        two-pi              (* 2.0 php/M_PI)
+        a-norm              (php/fmod (+ angle two-pi two-pi) two-pi)
+        a-deg               (php/intval (* a-norm (/ 180.0 php/M_PI)))
+        fps                 (or (get stats :fps) 0)
+        ms                  (or (get stats :frame-ms) 0)]
+    (str "\e[1mpos\e[0m ("
+         (php/number_format x 1) ", " (php/number_format y 1) ")"
+         "  \e[1mangle\e[0m " a-deg "°"
+         "  \e[1mfps\e[0m " fps
+         "  \e[1mframe\e[0m " ms "ms"
+         "  \e[2m[wasd move, q quit]\e[0m")))
+
 (defn frame->string
   "Render the world to one ANSI-coded multi-line frame string. Per-column
    metadata is unrolled into three PHP-native arrays (tops, bottoms, shades)
    so the inner cell loop is just integer compares + aget. Equal adjacent
-   cells are run-length encoded as one escape + N spaces."
+   cells are run-length encoded as one escape + N spaces. Each viewport
+   row is suffixed with the matching minimap row, and a HUD line is
+   appended below the viewport."
   {:export true}
-  [world]
+  [world stats]
   (let [columns (cast-frame world width)
         tops    (php/array)
         bots    (php/array)
-        shades  (php/array)]
+        shades  (php/array)
+        mrows   (minimap-rows world)
+        mh      (count mrows)]
     (loop [col 0 cs columns]
       (when (< col width)
         (let [dist   (:dist (first cs))
@@ -34,25 +86,29 @@
           (aset bots col (+ top wall-h))
           (aset shades col (shade dist))
           (recur (+ col 1) (next cs)))))
-    (loop [row 0 acc ""]
-      (if (>= row height)
-        acc
-        (recur
-         (+ row 1)
-         (str acc
-              (loop [col 0 prev nil run 0 line ""]
-                (if (>= col width)
-                  (if (zero? run) line (str line prev (php/str_repeat " " (- run 1))))
-                  (let [c (cond
-                            (< row (aget tops col))  sky
-                            (>= row (aget bots col)) floor
-                            :else                    (aget shades col))]
-                    (cond
-                      (zero? run) (recur (+ col 1) c 1 line)
-                      (= c prev)  (recur (+ col 1) prev (+ run 1) line)
-                      :else       (recur (+ col 1) c 1
-                                         (str line prev (php/str_repeat " " (- run 1))))))))
-              "\e[0m\n"))))))
+    (str
+     (loop [row 0 acc ""]
+       (if (>= row height)
+         acc
+         (recur
+          (+ row 1)
+          (str acc
+               (loop [col 0 prev nil run 0 line ""]
+                 (if (>= col width)
+                   (if (zero? run) line (str line prev (php/str_repeat " " (- run 1))))
+                   (let [c (cond
+                             (< row (aget tops col))  sky
+                             (>= row (aget bots col)) floor
+                             :else                    (aget shades col))]
+                     (cond
+                       (zero? run) (recur (+ col 1) c 1 line)
+                       (= c prev)  (recur (+ col 1) prev (+ run 1) line)
+                       :else       (recur (+ col 1) c 1
+                                          (str line prev (php/str_repeat " " (- run 1))))))))
+               "\e[0m  "
+               (if (< row mh) (get mrows row) "")
+               "\n"))))
+     (hud-line world stats) "\n")))
 
 (defn clear-screen
   "ANSI clear + cursor home."
@@ -64,7 +120,7 @@
   "Move cursor home and overwrite the previous frame in place. Avoids
    the full-screen clear that would otherwise flicker each frame."
   {:export true}
-  [world]
+  [world stats]
   (print "\e[H")
-  (print (frame->string world))
+  (print (frame->string world stats))
   (php/flush))

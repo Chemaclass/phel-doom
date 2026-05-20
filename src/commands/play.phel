@@ -5,6 +5,7 @@
   (:require phel-doom.modules.map    :refer [random-grid random-spawn wall? cell seed-doors])
   (:require phel-doom.modules.engine :refer [cast-ray])
   (:require phel-doom.modules.enemy  :refer [spawn-enemies advance shoot])
+  (:require phel-doom.modules.sound  :refer [play-beep!])
   (:require phel-doom.modules.render :refer [render! clear-screen])
   (:require phel-doom.modules.input  :refer [init-input! restore! drain-keys]))
 
@@ -142,8 +143,10 @@
                  (update :fx decay-fx dt))
           p  (:player world)]
       (if (and (php/<= i 0.0) (touching? (:enemies w') (:x p) (:y p)))
-        (-> w' (update :lives (fn [l] (php/max 0 (php/- l 1))))
-            (assoc :iframes iframe-seconds))
+        (do
+          (play-beep!)
+          (-> w' (update :lives (fn [l] (php/max 0 (php/- l 1))))
+              (assoc :iframes iframe-seconds)))
         w'))))
 
 (defn- fire-shot
@@ -156,17 +159,19 @@
     (let [wall-d (cast-ray (:pgrid world) (:x p) (:y p) (:angle p))]
       (let [[es hit? hit-pos idx] (shoot (:enemies world) (:x p) (:y p) (:angle p)
                                          wall-d shot-hit-radius shot-max-range)]
-        (if hit?
-          (let [respawn (first (spawn-enemies (:grid world) 1
-                                              enemy-min-spawn-dist (:x p) (:y p)))]
-            (-> world
-                (assoc :enemies (if respawn (assoc es idx respawn) es))
-                (update :kills (fn [k] (php/+ k 1)))
-                (assoc :fire-anim fire-anim-seconds)
-                (update :fx (fn [fx]
-                              (conj (or fx [])
-                                    {:x (:x hit-pos) :y (:y hit-pos) :ttl fx-ttl-seconds})))))
-          (assoc world :fire-anim fire-anim-seconds))))))
+        (do
+          (play-beep!)
+          (if hit?
+            (let [respawn (first (spawn-enemies (:grid world) 1
+                                                enemy-min-spawn-dist (:x p) (:y p)))]
+              (-> world
+                  (assoc :enemies (if respawn (assoc es idx respawn) es))
+                  (update :kills (fn [k] (php/+ k 1)))
+                  (assoc :fire-anim fire-anim-seconds)
+                  (update :fx (fn [fx]
+                                (conj (or fx [])
+                                      {:x (:x hit-pos) :y (:y hit-pos) :ttl fx-ttl-seconds})))))
+            (assoc world :fire-anim fire-anim-seconds)))))))
 
 (defn- apply-physics
   "Per-frame physics step. Active direction counters contribute dt-scaled
@@ -201,7 +206,7 @@
   "Walk forward from the player a short distance; if the first solid
    cell encountered is a closed door, rewrite both the persistent grid
    (for collision / minimap) and the PHP-native pgrid (for the
-   raycaster) so the cell becomes open floor."
+   raycaster) so the cell becomes open floor. Beeps on success."
   [world]
   (let [p (:player world)]
     (let [px (:x p)
@@ -213,9 +218,11 @@
           (let [cx (php/intval (php/+ px (php/* s (php/cos a))))
                 cy (php/intval (php/+ py (php/* s (php/sin a))))]
             (if (= 2 (cell (:grid world) cx cy))
-              (-> world
-                  (update :grid (fn [g] (assoc-in g [cy cx] 0)))
-                  (update :pgrid (fn [pg] (aset pg cy cx 0) pg)))
+              (do
+                (play-beep!)
+                (-> world
+                    (update :grid (fn [g] (assoc-in g [cy cx] 0)))
+                    (update :pgrid (fn [pg] (aset pg cy cx 0) pg))))
               (recur (php/+ s 0.3)))))))))
 
 (defn- handle-toggles

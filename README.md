@@ -119,7 +119,7 @@ composer repl          # interactive REPL
 - [x] Enemies (chase AI, hitscan, lives, i-frames, blood, muzzle flash)
 - [x] Doors (closed cells you open with E)
 - [x] WAD file parser (header + directory + VERTEXES/LINEDEFS lumps)
-- [ ] Sound via `ext-ffi` + miniaudio
+- [x] Sound (terminal bell on shoot / hit / door open; `ext-ffi`+miniaudio left as a future swap)
 
 ## License
 

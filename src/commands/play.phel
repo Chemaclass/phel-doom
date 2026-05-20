@@ -1,12 +1,23 @@
 (ns phel-doom.commands.play
   (:require phel.cli :as cli)
+  (:require phel.string :as str)
   (:require phel-doom.modules.state  :refer [new-player new-world move-player turn-player toggle-map])
   (:require phel-doom.modules.map    :refer [random-grid random-spawn wall?])
   (:require phel-doom.modules.render :refer [render! clear-screen])
   (:require phel-doom.modules.input  :refer [init-input! restore! drain-keys]))
 
-(def move-speed 0.35)
-(def turn-speed 0.15)
+(def move-speed
+  "World units per second when the player holds forward or back."
+  10.0)
+(def turn-speed
+  "Radians per second when the player holds left or right."
+  4.0)
+(def hold-frames
+  "Frames a direction stays active after each input byte for that
+   direction. Decoupling movement from key bytes lets opposite/diagonal
+   keys overlap smoothly even though terminal repeat only sends one
+   stream of bytes at a time."
+  4)
 (def frame-us 1000)
 (def map-w 32)
 (def map-h 22)
@@ -17,11 +28,11 @@
   []
   (let [out (php/array)]
     (php/exec "stty size 2>/dev/null" out)
-    (let [line (aget out 0)]
+    (let [line (php/aget out 0)]
       (if (or (nil? line) (= line ""))
         [24 80]
         (let [parts (php/explode " " line)]
-          [(php/intval (aget parts 0)) (php/intval (aget parts 1))])))))
+          [(php/intval (php/aget parts 0)) (php/intval (php/aget parts 1))])))))
 
 (defn- try-move [world dx dy]
   (let [{:keys [grid player]} world
@@ -31,26 +42,49 @@
       world
       (move-player world dx dy))))
 
-(defn- step-movement [world key]
-  (let [a (:angle (:player world))]
-    (cond
-      (= key "w") (try-move world (* move-speed (php/cos a)) (* move-speed (php/sin a)))
-      (= key "s") (try-move world (* (- 0 move-speed) (php/cos a)) (* (- 0 move-speed) (php/sin a)))
-      (= key "a") (turn-player world (- 0 turn-speed))
-      (= key "d") (turn-player world turn-speed)
-      :else       world)))
+(defn- refresh-move [world k]
+  (cond
+    (= k "w") (assoc-in world [:moves :fwd]   hold-frames)
+    (= k "s") (assoc-in world [:moves :back]  hold-frames)
+    (= k "a") (assoc-in world [:moves :left]  hold-frames)
+    (= k "d") (assoc-in world [:moves :right] hold-frames)
+    :else     world))
 
-(defn- apply-movement
-  "Fold every byte in the drained input through step-movement. `m` is
-   handled at the edge-detect layer above, so skip it here to avoid
-   toggling once per byte of a held key."
+(defn- refresh-from-keys
+  "Walk the drained input string, resetting the matching direction
+   counter for every w/a/s/d byte. Held keys (terminal repeat) keep
+   refreshing; opposite-direction keys layer onto the same world."
   [world keys]
   (let [n (php/strlen keys)]
     (loop [i 0 w world]
-      (if (>= i n)
+      (if (php/>= i n)
         w
-        (let [k (php/substr keys i 1)]
-          (recur (+ i 1) (if (= k "m") w (step-movement w k))))))))
+        (recur (php/+ i 1) (refresh-move w (php/substr keys i 1)))))))
+
+(defn- apply-physics
+  "Per-frame physics step. Each active direction counter contributes
+   one fraction-of-a-second worth of movement / turning (so motion is
+   smooth regardless of fps), then every counter is decremented. When
+   a counter reaches zero, that direction stops on its own — which is
+   why hold-frames needs to be at least one terminal-repeat interval."
+  [world dt]
+  (let [m (:moves world)]
+    (assoc
+     (let [turn-by (php/- (if (php/> (:right m) 0) (php/* turn-speed dt) 0.0)
+                          (if (php/> (:left m) 0)  (php/* turn-speed dt) 0.0))]
+       (let [turned (if (php/=== turn-by 0.0) world (turn-player world turn-by))]
+         (let [a          (:angle (:player turned))
+               forward-by (php/- (if (php/> (:fwd m) 0)  (php/* move-speed dt) 0.0)
+                                 (if (php/> (:back m) 0) (php/* move-speed dt) 0.0))]
+           (if (php/=== forward-by 0.0)
+             turned
+             (try-move turned
+                       (php/* forward-by (php/cos a))
+                       (php/* forward-by (php/sin a)))))))
+     :moves {:fwd   (php/max 0 (php/- (:fwd m) 1))
+             :back  (php/max 0 (php/- (:back m) 1))
+             :left  (php/max 0 (php/- (:left m) 1))
+             :right (php/max 0 (php/- (:right m) 1))})))
 
 (defn- game-loop [world0]
   (loop [world    world0
@@ -64,20 +98,24 @@
       (render! world {:fps fps :frame-ms frame-ms} cols rows)
       (php/usleep frame-us)
       (let [keys   (drain-keys)
-            m-now  (str-contains? keys "m")
-            world' (if (and m-now (not m-prev)) (toggle-map world) world)
+            m-now  (str/contains? keys "m")
             now    (php/microtime true)
-            ms     (php/intval (* (- now t-last) 1000))
-            f      (if (> ms 0) (php/intval (/ 1000.0 ms)) 0)]
-        (if (str-contains? keys "q")
+            ms     (php/intval (php/* (php/- now t-last) 1000))
+            f      (if (php/> ms 0) (php/intval (php// 1000.0 ms)) 0)
+            world' (apply-physics
+                    (refresh-from-keys
+                     (if (and m-now (not m-prev)) (toggle-map world) world)
+                     keys)
+                    (php// ms 1000.0))]
+        (if (str/contains? keys "q")
           :quit
-          (recur (apply-movement world' keys) now ms f m-now [rows cols]))))))
+          (recur world' now ms f m-now [rows cols]))))))
 
 (defn- run-play [ctx]
   (init-input!)
   (let [grid    (random-grid map-w map-h)
         [px py] (random-spawn grid)
-        angle   (* (rand-int 360) (/ php/M_PI 180.0))]
+        angle   (php/* (rand-int 360) (php// php/M_PI 180.0))]
     (game-loop (new-world grid (new-player px py angle))))
   (restore!)
   (clear-screen)
@@ -86,5 +124,5 @@
 
 (def play-command
   {:name "play"
-   :doc  "Start the DOOM showcase. Controls: WASD to move/turn, M to toggle the big map, Q to quit."
+   :doc  "Start the DOOM showcase. Controls: WASD to move/turn, M to toggle the minimap, Q to quit."
    :run  run-play})

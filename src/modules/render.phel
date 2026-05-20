@@ -8,6 +8,9 @@
 (def enemy-head "\e[48;5;196m ")
 (def enemy-body "\e[48;5;52m ")
 (def enemy-marker "\e[91;1mE\e[0m")
+(def blood-bright "\e[48;5;160m ")
+(def blood-mid    "\e[48;5;88m ")
+(def blood-dim    "\e[48;5;52m ")
 (def char-aspect 2.0)
 (def hud-rows 1)
 
@@ -119,7 +122,7 @@
          "  \e[1mkills\e[0m " (or (get stats :kills) 0)
          "  \e[1mfps\e[0m " (or (get stats :fps) 0)
          "  \e[1mframe\e[0m " (or (get stats :frame-ms) 0) "ms"
-         "  \e[2m[wasd / ↑↓←→ move+turn  ,. strafe  space fire  m map  q quit]\e[0m")))
+         "  \e[2m[w/↑ s/↓ move  ←→ turn  ad strafe  space fire  m map  q quit]\e[0m")))
 
 (defn- project-enemy
   "Project one enemy into screen space relative to the player. Returns
@@ -185,6 +188,7 @@
         shades                          (php/array)
         mids                            (php/array)
         emask                           (php/array)
+        blood-paint                     (php/array)
         mrows                           (if (:show-map world) (minimap-rows world) (php/array))
         visible-mh                      (php/min (php/count mrows) vh)]
     (loop [col 0]
@@ -216,6 +220,30 @@
                          (php/aset mids c e-mid)
                          (php/aset emask c true))
                        (recur (php/+ c 1)))))))))
+    (doseq [fx (or (get stats :fx) [])]
+           (let [proj (project-enemy fx (:player world) vw)]
+             (when proj
+               (let [col (:col proj)
+                     hw  (:half-width proj)
+                     d   (:dist proj)
+                     bsh (let [ttl (or (:ttl fx) 0.0)]
+                           (cond (php/> ttl 0.3)  blood-bright
+                                 (php/> ttl 0.15) blood-mid
+                                 :else            blood-dim))]
+                 (let [c-from (php/max 0 (php/- col hw))
+                       c-to   (php/min (php/- vw 1) (php/+ col hw))
+                       h      (php/min vh (php/intval (php// proj-dist
+                                                             (php/* (php/max 0.5 d) char-aspect))))]
+                   (let [r-top (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv (php/* h 2) 3))
+                         r-bot (php/min vh (php/+ (php/intdiv (php/- vh h) 2) h))]
+                     (loop [c c-from]
+                       (when (php/<= c c-to)
+                         (when (php/< d (php/aget dists c))
+                           (loop [r r-top]
+                             (when (php/< r r-bot)
+                               (php/aset blood-paint (php/+ (php/* r vw) c) bsh)
+                               (recur (php/+ r 1)))))
+                         (recur (php/+ c 1))))))))))
     (let [parts (php/array)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]
@@ -223,13 +251,14 @@
                    (when (php/> run 0)
                      (php/array_push parts prev)
                      (php/array_push parts (php/str_repeat " " (php/- run 1))))
-                   (let [c (cond
-                             (php/< row (php/aget tops col))  sky'
-                             (php/>= row (php/aget bots col)) floor'
-                             (php/aget emask col)             (if (php/< row (php/aget mids col))
-                                                                enemy-head
-                                                                enemy-body)
-                             :else                            (php/aget shades col))]
+                   (let [c (or (php/aget blood-paint (php/+ (php/* row vw) col))
+                               (cond
+                                 (php/< row (php/aget tops col))  sky'
+                                 (php/>= row (php/aget bots col)) floor'
+                                 (php/aget emask col)             (if (php/< row (php/aget mids col))
+                                                                    enemy-head
+                                                                    enemy-body)
+                                 :else                            (php/aget shades col)))]
                      (cond
                        (php/=== run 0)  (recur (php/+ col 1) c 1)
                        (php/=== c prev) (recur (php/+ col 1) prev (php/+ run 1))

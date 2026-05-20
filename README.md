@@ -102,20 +102,19 @@ zooming the walls.
 
 ## Controls
 
-Classic DOOM layout — no mouse needed. WASD mirrors the arrow keys.
+Modern DOOM-style — no mouse needed.
 
-| Key                    | Action              |
-|------------------------|---------------------|
-| `↑` / `w`              | Move forward        |
-| `↓` / `s`              | Move back           |
-| `←` / `a`              | Turn left           |
-| `→` / `d`              | Turn right          |
-| `,` / `.`              | Strafe left / right |
-| `space`                | Fire                |
-| `m`                    | Toggle minimap      |
-| `q`                    | Quit                |
+| Key       | Action              |
+|-----------|---------------------|
+| `↑` / `w` | Move forward        |
+| `↓` / `s` | Move back           |
+| `a` / `d` | Strafe left / right |
+| `←` / `→` | Turn left / right   |
+| `space`   | Fire                |
+| `m`       | Toggle minimap      |
+| `q`       | Quit                |
 
-Movement, turning, and strafing compose freely: holding `w` + `,` + `d`
+Movement, turning, and strafing compose freely: holding `w` + `a` + `→`
 walks forward, strafes left, and pans the view right all at once.
 
 ## Development

@@ -40,6 +40,9 @@
 (def fire-anim-seconds
   "How long the muzzle flash / tracer stays visible after each shot."
   0.09)
+(def fx-ttl-seconds
+  "Initial life of a blood splatter effect — visually fades down to 0."
+  0.45)
 
 (defn- term-size
   "Query the terminal for [rows cols] via stty. Falls back to a
@@ -65,10 +68,10 @@
   (cond
     (or (= k "^") (= k "w")) (assoc-in world [:moves :fwd]          hold-frames)
     (or (= k "_") (= k "s")) (assoc-in world [:moves :back]         hold-frames)
-    (or (= k "<") (= k "a")) (assoc-in world [:moves :turn-left]    hold-frames)
-    (or (= k ">") (= k "d")) (assoc-in world [:moves :turn-right]   hold-frames)
-    (= k ",")                (assoc-in world [:moves :strafe-left]  hold-frames)
-    (= k ".")                (assoc-in world [:moves :strafe-right] hold-frames)
+    (= k "<")                (assoc-in world [:moves :turn-left]    hold-frames)
+    (= k ">")                (assoc-in world [:moves :turn-right]   hold-frames)
+    (= k "a")                (assoc-in world [:moves :strafe-left]  hold-frames)
+    (= k "d")                (assoc-in world [:moves :strafe-right] hold-frames)
     :else                    world))
 
 (defn- refresh-from-keys
@@ -102,14 +105,23 @@
                            true
                            (recur (next es)))))))
 
+(defn- decay-fx [fx dt]
+  (apply vector
+         (filter (fn [e] (php/> (:ttl e) 0.0))
+                 (map (fn [e] (assoc e :ttl (php/- (:ttl e) dt)))
+                      (or fx [])))))
+
 (defn- damage-step
-  "Tick the i-frame and fire-anim timers down by dt; if no i-frames are
-   left and an enemy is touching the player, subtract a life and start
-   a fresh i-frame window."
+  "Tick the i-frame, fire-anim, and fx timers down by dt; if no
+   i-frames are left and an enemy is touching the player, subtract a
+   life and start a fresh i-frame window."
   [world dt]
   (let [i  (php/max 0.0 (php/- (:iframes world) dt))
         fa (php/max 0.0 (php/- (or (:fire-anim world) 0.0) dt))]
-    (let [w' (-> world (assoc :iframes i) (assoc :fire-anim fa))
+    (let [w' (-> world
+                 (assoc :iframes i)
+                 (assoc :fire-anim fa)
+                 (update :fx decay-fx dt))
           p  (:player world)]
       (if (and (php/<= i 0.0) (touching? (:enemies w') (:x p) (:y p)))
         (-> w' (update :lives (fn [l] (php/max 0 (php/- l 1))))
@@ -118,17 +130,25 @@
 
 (defn- fire-shot
   "Resolve one trigger pull: hitscan along the player's facing, taking
-   wall occlusion and a small off-axis tolerance into account, and
-   bump :kills when an enemy goes down."
+   wall occlusion and a small off-axis tolerance into account. On hit:
+   bump :kills, push a blood splatter at the kill site, and respawn a
+   fresh enemy in the slot so the arena stays populated."
   [world]
   (let [p (:player world)]
     (let [wall-d (cast-ray (:pgrid world) (:x p) (:y p) (:angle p))]
-      (let [[es hit?] (shoot (:enemies world) (:x p) (:y p) (:angle p)
-                             wall-d shot-hit-radius shot-max-range)]
-        (-> world
-            (assoc :enemies es)
-            (update :kills (fn [k] (if hit? (php/+ k 1) k)))
-            (assoc :fire-anim fire-anim-seconds))))))
+      (let [[es hit? hit-pos idx] (shoot (:enemies world) (:x p) (:y p) (:angle p)
+                                         wall-d shot-hit-radius shot-max-range)]
+        (if hit?
+          (let [respawn (first (spawn-enemies (:grid world) 1
+                                              enemy-min-spawn-dist (:x p) (:y p)))]
+            (-> world
+                (assoc :enemies (if respawn (assoc es idx respawn) es))
+                (update :kills (fn [k] (php/+ k 1)))
+                (assoc :fire-anim fire-anim-seconds)
+                (update :fx (fn [fx]
+                              (conj (or fx [])
+                                    {:x (:x hit-pos) :y (:y hit-pos) :ttl fx-ttl-seconds})))))
+          (assoc world :fire-anim fire-anim-seconds))))))
 
 (defn- apply-physics
   "Per-frame physics step. Active direction counters contribute dt-scaled
@@ -175,7 +195,8 @@
                 :kills     (:kills world)
                 :lives     (:lives world)
                 :iframes   (:iframes world)
-                :fire-anim (:fire-anim world)}
+                :fire-anim (:fire-anim world)
+                :fx        (:fx world)}
                cols rows)
       (php/usleep frame-us)
       (let [keys   (drain-keys)

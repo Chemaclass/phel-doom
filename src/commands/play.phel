@@ -7,11 +7,11 @@
   (:require phel-doom.modules.input  :refer [init-input! restore! drain-keys]))
 
 (def move-speed
-  "World units per second when the player holds forward or back."
-  10.0)
+  "World units per second when the player holds forward, back, or strafe."
+  4.5)
 (def turn-speed
-  "Radians per second when the player holds left or right."
-  4.0)
+  "Radians per second when the player holds a turn arrow."
+  3.0)
 (def hold-frames
   "Frames a direction stays active after each input byte for that
    direction. Decoupling movement from key bytes lets opposite/diagonal
@@ -44,47 +44,58 @@
 
 (defn- refresh-move [world k]
   (cond
-    (= k "w") (assoc-in world [:moves :fwd]   hold-frames)
-    (= k "s") (assoc-in world [:moves :back]  hold-frames)
-    (= k "a") (assoc-in world [:moves :left]  hold-frames)
-    (= k "d") (assoc-in world [:moves :right] hold-frames)
+    (= k "w") (assoc-in world [:moves :fwd]          hold-frames)
+    (= k "s") (assoc-in world [:moves :back]         hold-frames)
+    (= k "a") (assoc-in world [:moves :strafe-left]  hold-frames)
+    (= k "d") (assoc-in world [:moves :strafe-right] hold-frames)
+    (= k "<") (assoc-in world [:moves :turn-left]    hold-frames)
+    (= k ">") (assoc-in world [:moves :turn-right]   hold-frames)
     :else     world))
 
 (defn- refresh-from-keys
   "Walk the drained input string, resetting the matching direction
-   counter for every w/a/s/d byte. Held keys (terminal repeat) keep
-   refreshing; opposite-direction keys layer onto the same world."
+   counter for every input byte. Arrow-key escape sequences are
+   normalised to single-byte placeholders (`<` and `>`) so the per-byte
+   loop can treat them like the WASD keys. Held keys (terminal repeat)
+   keep refreshing; orthogonal keys layer onto the same world."
   [world keys]
-  (let [n (php/strlen keys)]
-    (loop [i 0 w world]
-      (if (php/>= i n)
-        w
-        (recur (php/+ i 1) (refresh-move w (php/substr keys i 1)))))))
+  (let [normalized (php/str_replace (php/array "\e[D" "\e[C")
+                                    (php/array "<" ">")
+                                    keys)]
+    (let [n (php/strlen normalized)]
+      (loop [i 0 w world]
+        (if (php/>= i n)
+          w
+          (recur (php/+ i 1) (refresh-move w (php/substr normalized i 1))))))))
 
 (defn- apply-physics
-  "Per-frame physics step. Each active direction counter contributes
-   one fraction-of-a-second worth of movement / turning (so motion is
-   smooth regardless of fps), then every counter is decremented. When
-   a counter reaches zero, that direction stops on its own — which is
-   why hold-frames needs to be at least one terminal-repeat interval."
+  "Per-frame physics step. Active direction counters contribute dt-scaled
+   motion: turn first (so strafing and forward use the new heading), then
+   combine longitudinal (fwd/back) and lateral (strafe-left/right) into
+   one composite move along the current facing. Every counter is then
+   decremented; zero means that direction stops on its own."
   [world dt]
   (let [m (:moves world)]
     (assoc
-     (let [turn-by (php/- (if (php/> (:right m) 0) (php/* turn-speed dt) 0.0)
-                          (if (php/> (:left m) 0)  (php/* turn-speed dt) 0.0))]
+     (let [turn-by (php/- (if (php/> (:turn-right m) 0) (php/* turn-speed dt) 0.0)
+                          (if (php/> (:turn-left m) 0)  (php/* turn-speed dt) 0.0))]
        (let [turned (if (php/=== turn-by 0.0) world (turn-player world turn-by))]
-         (let [a          (:angle (:player turned))
-               forward-by (php/- (if (php/> (:fwd m) 0)  (php/* move-speed dt) 0.0)
-                                 (if (php/> (:back m) 0) (php/* move-speed dt) 0.0))]
-           (if (php/=== forward-by 0.0)
+         (let [a      (:angle (:player turned))
+               long-d (php/- (if (php/> (:fwd m) 0)  (php/* move-speed dt) 0.0)
+                             (if (php/> (:back m) 0) (php/* move-speed dt) 0.0))
+               lat-d  (php/- (if (php/> (:strafe-right m) 0) (php/* move-speed dt) 0.0)
+                             (if (php/> (:strafe-left m) 0)  (php/* move-speed dt) 0.0))]
+           (if (and (php/=== long-d 0.0) (php/=== lat-d 0.0))
              turned
              (try-move turned
-                       (php/* forward-by (php/cos a))
-                       (php/* forward-by (php/sin a)))))))
-     :moves {:fwd   (php/max 0 (php/- (:fwd m) 1))
-             :back  (php/max 0 (php/- (:back m) 1))
-             :left  (php/max 0 (php/- (:left m) 1))
-             :right (php/max 0 (php/- (:right m) 1))})))
+                       (php/- (php/* long-d (php/cos a)) (php/* lat-d (php/sin a)))
+                       (php/+ (php/* long-d (php/sin a)) (php/* lat-d (php/cos a))))))))
+     :moves {:fwd          (php/max 0 (php/- (:fwd m) 1))
+             :back         (php/max 0 (php/- (:back m) 1))
+             :strafe-left  (php/max 0 (php/- (:strafe-left m) 1))
+             :strafe-right (php/max 0 (php/- (:strafe-right m) 1))
+             :turn-left    (php/max 0 (php/- (:turn-left m) 1))
+             :turn-right   (php/max 0 (php/- (:turn-right m) 1))})))
 
 (defn- game-loop [world0]
   (loop [world    world0
@@ -124,5 +135,5 @@
 
 (def play-command
   {:name "play"
-   :doc  "Start the DOOM showcase. Controls: WASD to move/turn, M to toggle the minimap, Q to quit."
+   :doc  "Start the DOOM showcase. WASD move (forward/back/strafe), ←→ to turn, M toggles the minimap, Q quits."
    :run  run-play})

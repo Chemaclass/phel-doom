@@ -102,14 +102,16 @@ zooming the walls.
 
 ## Controls
 
-| Key | Action            |
-|-----|-------------------|
-| `w` | Move forward      |
-| `s` | Move back         |
-| `a` | Turn left         |
-| `d` | Turn right        |
-| `m` | Toggle minimap    |
-| `q` | Quit              |
+| Key       | Action            |
+|-----------|-------------------|
+| `w` / `s` | Move forward / back |
+| `a` / `d` | Strafe left / right |
+| `←` / `→` | Turn left / right |
+| `m`       | Toggle minimap    |
+| `q`       | Quit              |
+
+Movement and turning compose freely: holding `w` + `a` + `→` keeps you
+walking forward and to the left while panning right at the same time.
 
 ## Development
 

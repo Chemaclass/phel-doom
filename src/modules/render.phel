@@ -334,6 +334,8 @@
         floor-gradient                     sky-gradient
         ehead                              (or (get stats :enemy-head) enemy-head)
         ebody                              (or (get stats :enemy-body) enemy-body)
+        elegs                              (or (get stats :enemy-legs) enemy-body)
+        eface                              (get stats :enemy-face)
         {:keys [dists hits hxs hys sides]}
         (cast-frame world vw)
         ;; Half-block edge cells need the sky/floor colour CODE for
@@ -363,7 +365,13 @@
         shades-normal                      (php/array)
         shades-top-edge                    (php/array)
         shades-bot-edge                    (php/array)
+        ;; Enemy sprite zone boundaries (head/body/legs). For each
+        ;; column carrying an enemy:
+        ;;   row in [tops, mids)   -> head
+        ;;   row in [mids, lowers) -> body
+        ;;   row in [lowers, bots) -> legs
         mids                               (php/array)
+        lowers                             (php/array)
         emask                              (php/array)
         blood-paint                        (php/array)
         mrows                              (if (:show-map world) (minimap-rows world) (php/array))
@@ -415,14 +423,16 @@
                    h      (php/min vh (php/intval (php// proj-dist
                                                          (php/* (php/max 0.5 d) char-aspect))))]
                (let [e-top (php/intdiv (php/- vh h) 2)]
-                 (let [e-bot (php/+ e-top h)
-                       e-mid (php/+ e-top (php/intdiv h 3))]
+                 (let [e-bot   (php/+ e-top h)
+                       e-mid   (php/+ e-top (php/intdiv h 3))
+                       e-lower (php/+ e-top (php/intdiv (php/* h 2) 3))]
                    (loop [c c-from]
                      (when (php/<= c c-to)
                        (when (php/< d (php/aget dists c))
                          (php/aset tops c e-top)
                          (php/aset bots c e-bot)
                          (php/aset mids c e-mid)
+                         (php/aset lowers c e-lower)
                          (php/aset emask c true))
                        (recur (php/+ c 1)))))))))
     (doseq [fx (or (get stats :fx) [])]
@@ -491,7 +501,10 @@
                                    (php/< row (php/aget tops col))             (php/aget sky-gradient row)
                                    (php/>= row (php/aget bots col))            (php/aget floor-gradient row)
                                    (php/aget emask col)
-                                   (if (php/< row (php/aget mids col)) ehead ebody)
+                                   (cond
+                                     (php/< row (php/aget mids col))   ehead
+                                     (php/< row (php/aget lowers col)) ebody
+                                     :else                             elegs)
                                    (php/=== row (php/aget tops col))
                                    (php/aget shades-top-edge col)
                                    (php/=== row (php/- (php/aget bots col) 1))
@@ -509,6 +522,23 @@
       (php/array_push parts (hud-line world stats))
       (dotimes [i visible-mh]
                (php/array_push parts (str "\e[" (php/+ map-row i) ";" map-col "H" (php/aget mrows i))))
+      ;; Monster face overlay: at each visible enemy's centre column,
+      ;; paint the level's :enemy-face glyph at the upper third of the
+      ;; sprite (the head zone). One glyph per enemy → recognisable
+      ;; silhouette + face per type without smearing the same char
+      ;; across the whole head width.
+      (when eface
+        (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
+               (let [d (:dist proj)]
+                 (let [h (php/min vh (php/intval (php// proj-dist
+                                                        (php/* (php/max 0.5 d) char-aspect))))]
+                   (let [face-row (php/+ (php/intdiv (php/- vh h) 2)
+                                         (php/intdiv h 6))]
+                     (when (and (php/>= face-row 1) (php/<= face-row vh))
+                       (php/array_push parts
+                                       (str "\e[" face-row ";"
+                                            (php/+ (:col proj) 1) "H"
+                                            eface))))))))
       ;; Crosshair: dim white + at exact viewport centre so the player
       ;; always knows where a shot would land. Drawn AFTER walls/sprites
       ;; via absolute cursor positioning so wall colours don't bleed

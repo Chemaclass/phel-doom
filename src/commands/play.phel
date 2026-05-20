@@ -30,22 +30,34 @@
    of overshooting."
   5)
 (def frame-us 1000)
-(def map-w 48)
-(def map-h 30)
-(def num-walls
-  "Roughly the wall-block count we had at the old 32x22 size; kept
-   constant so larger maps feel airier, not denser."
-  55)
-(def num-doors
-  "Closed doors sprinkled into the freshly-generated grid. Press E in
-   front of one to open it."
-  6)
 (def door-reach
   "How many world units in front of the player count as 'within
    reach' for opening a door."
   1.6)
-(def num-enemies 10)
 (def enemy-min-spawn-dist 3.0)
+
+(def levels
+  "Per-level configuration. Each room is bigger, more crowded, and the
+   monsters chase faster + look different. Walking through the door
+   (cell value 3, painted by open-door-near) advances to the next entry."
+  [{:size [22 16]  :walls 12 :enemies 4  :chase 0.8
+    :name "imps"        :head "\e[48;5;196m " :body "\e[48;5;52m "}
+   {:size [28 20]  :walls 22 :enemies 6  :chase 1.0
+    :name "demons"      :head "\e[48;5;165m " :body "\e[48;5;90m "}
+   {:size [36 24]  :walls 38 :enemies 8  :chase 1.3
+    :name "cacodemons"  :head "\e[48;5;51m "  :body "\e[48;5;24m "}
+   {:size [44 28]  :walls 55 :enemies 9  :chase 1.6
+    :name "barons"      :head "\e[48;5;46m "  :body "\e[48;5;22m "}
+   {:size [52 32]  :walls 75 :enemies 12 :chase 2.0
+    :name "cyberdemons" :head "\e[48;5;231m " :body "\e[48;5;240m "}])
+
+(def num-levels (count levels))
+
+(defn- level-config
+  "Look up the config for level N (1-indexed). Clamped to the last
+   entry so out-of-bounds reads just keep the boss room going."
+  [n]
+  (get levels (php/max 0 (php/min (php/- num-levels 1) (php/- n 1)))))
 (def shot-hit-radius
   "How far off-axis a shot may miss the enemy's center and still count
    as a hit. ~half an enemy 'cell'."
@@ -236,8 +248,11 @@
               (do
                 (when (:sound-on world) (play-sfx! :door))
                 (-> world
-                    (update :grid (fn [g] (assoc-in g [cy cx] 0)))
-                    (update :pgrid (fn [pg] (aset pg cy cx 0) pg))))
+                    ;; 3 = open portal: passable but distinct from
+                    ;; ordinary floor, so the level-advance step can
+                    ;; spot when the player stands on it.
+                    (update :grid (fn [g] (assoc-in g [cy cx] 3)))
+                    (update :pgrid (fn [pg] (aset pg cy cx 3) pg))))
               (recur (php/+ s 0.3)))))))))
 
 (defn- handle-toggles
@@ -248,10 +263,12 @@
       (if (:toggle-sound edges) (toggle-sound w1) w1))))
 
 (defn- tick-enemies
-  "Walk every alive enemy one dt-scaled step toward the player."
+  "Walk every alive enemy one dt-scaled step toward the player, using
+   the world's per-level chase-speed when present."
   [world dt]
   (let [p (:player world)]
-    (update world :enemies advance (:grid world) (:x p) (:y p) dt)))
+    (update world :enemies advance (:grid world) (:x p) (:y p) dt
+            (or (:chase-speed world) 0.75))))
 
 (defn- tick-shooting
   "If the trigger was pulled this frame, resolve the hitscan; otherwise
@@ -259,12 +276,19 @@
   [world fire?]
   (if fire? (fire-shot world) world))
 
+(defn- on-portal?
+  "True when the player's current integer cell is an open portal (3),
+   meaning we should advance to the next level this frame."
+  [world]
+  (let [p (:player world)]
+    (= 3 (cell (:grid world) (php/intval (:x p)) (php/intval (:y p))))))
+
 (defn tick-world
   "Pure one-frame state transition. Decoupled from IO so it can be
    unit-tested directly: build a world, hand it inputs, assert what
    comes back. `keys` is the drained input string, `dt` is seconds
    since the previous tick, `edges` is a map of rising-edge events
-   {:fire :toggle-map :toggle-pause}."
+   {:fire :toggle-map :toggle-pause :toggle-sound :open-door}."
   {:export true}
   [world keys dt edges]
   (let [w0 (handle-toggles world edges)]
@@ -310,15 +334,19 @@
       (let [[rows cols] (term-size)]
         (when (not= [rows cols] dims) (clear-screen))
         (render! world
-                 {:fps       fps
-                  :frame-ms  frame-ms
-                  :kills     (:kills world)
-                  :lives     (:lives world)
-                  :iframes   (:iframes world)
-                  :fire-anim (:fire-anim world)
-                  :fx        (:fx world)
-                  :paused    (:paused world)
-                  :sound-on  (:sound-on world)}
+                 {:fps        fps
+                  :frame-ms   frame-ms
+                  :kills      (:kills world)
+                  :lives      (:lives world)
+                  :iframes    (:iframes world)
+                  :fire-anim  (:fire-anim world)
+                  :fx         (:fx world)
+                  :paused     (:paused world)
+                  :sound-on   (:sound-on world)
+                  :level      (:level world)
+                  :level-name (:level-name world)
+                  :enemy-head (:enemy-head world)
+                  :enemy-body (:enemy-body world)}
                  cols rows)
         (php/usleep frame-us)
         (let [keys     (drain-keys)
@@ -329,11 +357,27 @@
               world'   (tick-world world keys (php// ms 1000.0)
                                    (rising-edges now-keys prev-keys))]
           (cond
-            (str/contains? keys "q")   :quit
-            (php/<= (:lives world') 0) {:game-over   true
-                                        :kills       (:kills world')
-                                        :survived-s  (php/intval (php/- now t-start))}
-            :else                      (recur world' now ms f now-keys [rows cols])))))))
+            (str/contains? keys "q")
+            :quit
+
+            (php/<= (:lives world') 0)
+            {:game-over  true
+             :kills      (:kills world')
+             :survived-s (php/intval (php/- now t-start))}
+
+            (on-portal? world')
+            (if (php/>= (:level world') num-levels)
+              {:victory    true
+               :kills      (:kills world')
+               :survived-s (php/intval (php/- now t-start))}
+              {:next-level true
+               :level      (php/+ (:level world') 1)
+               :kills      (:kills world')
+               :lives      (:lives world')
+               :survived-s (php/intval (php/- now t-start))})
+
+            :else
+            (recur world' now ms f now-keys [rows cols])))))))
 
 (def death-box-width
   "Character width between the left and right borders of the centred
@@ -375,27 +419,46 @@
      "\e[2;97m   written in Phel Lang         \e[0m"
      w]))
 
-(defn- render-death-screen
-  "Full-screen dark-red wash + a centred dialog with kills, survival
-   time, restart/quit hint, and credits. Rebuilt each frame so
-   resizing keeps it centred."
-  [cols rows kills survived-s]
+(defn- victory-menu-rows
+  "Same layout as the death menu but with a triumphant title and
+   slightly different copy."
+  [kills survived-s]
+  (let [w (pad-to "" death-box-width)]
+    [w
+     "\e[92;1m            VICTORY!            \e[0m"
+     w
+     :sep
+     w
+     (str "\e[97m" (pad-to (str "   kills:   " kills) death-box-width) "\e[0m")
+     (str "\e[97m" (pad-to (str "   time:    " survived-s "s") death-box-width) "\e[0m")
+     w
+     :sep
+     w
+     "\e[97;1m   r  play again   q  quit      \e[0m"
+     w
+     :sep
+     w
+     "\e[2;97m   phel-doom by Chemaclass      \e[0m"
+     "\e[2;97m   written in Phel Lang         \e[0m"
+     w]))
+
+(defn- render-end-screen
+  "Generic end-of-game screen: full-screen wash in `wash-bg` plus a
+   centred ─┌┐│└┘ box whose contents are `items` (a vector of inner
+   row strings interleaved with :sep markers for horizontal rules)."
+  [cols rows wash-bg items]
   (let [parts (php/array)
-        items (death-menu-rows kills survived-s)
         bar   (php/str_repeat "─" death-box-width)]
     (php/array_push parts "\e[H")
-    ;; Repaint every cell red via absolute cursor positioning. No
-    ;; trailing \n so the buffer never scrolls.
     (loop [r 1]
       (when (php/<= r rows)
-        (php/array_push parts (str "\e[" r ";1H\e[48;5;52m"
+        (php/array_push parts (str "\e[" r ";1H" wash-bg
                                    (php/str_repeat " " cols)))
         (recur (php/+ r 1))))
     (let [n       (count items)
           row-top (php/max 1 (php/- (php/intdiv rows 2) (php/intdiv n 2)))
           col0    (php/max 1 (php/- (php/+ (php/intdiv cols 2) 1)
                                     (php/intdiv (php/+ death-box-width 2) 2)))]
-      ;; Top + bottom of the box.
       (php/array_push parts (str "\e[" row-top ";" col0
                                  "H\e[40;97m┌" bar "┐\e[0m"))
       (php/array_push parts (str "\e[" (php/+ row-top n 1) ";" col0
@@ -413,15 +476,23 @@
     (print (php/implode "" parts))
     (php/flush)))
 
-(defn- death-loop
-  "Render the death screen at the current terminal size each frame and
-   block on the user picking restart (R) or quit (Q). Resizing while
-   dead is handled because we re-poll term-size every iteration."
-  [kills survived-s]
+(defn- render-death-screen [cols rows kills survived-s]
+  (render-end-screen cols rows "\e[48;5;52m"
+                     (death-menu-rows kills survived-s)))
+
+(defn- render-victory-screen [cols rows kills survived-s]
+  (render-end-screen cols rows "\e[48;5;22m"
+                     (victory-menu-rows kills survived-s)))
+
+(defn- end-loop
+  "Render an end screen (death or victory) frame by frame until the
+   user picks R (restart) or Q (quit). `render-fn` takes cols/rows and
+   draws the appropriate variant."
+  [render-fn]
   (loop [dims [0 0]]
     (let [[rows cols] (term-size)]
       (when (not= [rows cols] dims) (clear-screen))
-      (render-death-screen cols rows kills survived-s)
+      (render-fn cols rows)
       (php/usleep 16000)
       (let [keys (drain-keys)]
         (cond
@@ -429,21 +500,64 @@
           (str/contains? keys "r") :restart
           :else                    (recur [rows cols]))))))
 
-(defn- fresh-world []
-  (let [grid (seed-doors (random-grid map-w map-h num-walls) num-doors)]
-    (let [[px py] (random-spawn grid)]
-      (with-enemies
-       (new-world grid (new-player px py (php/* (rand-int 360) (php// php/M_PI 180.0))))
-       (spawn-enemies grid num-enemies enemy-min-spawn-dist px py)))))
+(defn- death-loop [kills survived-s]
+  (end-loop (fn [cols rows] (render-death-screen cols rows kills survived-s))))
+
+(defn- victory-loop [kills survived-s]
+  (end-loop (fn [cols rows] (render-victory-screen cols rows kills survived-s))))
+
+(defn- fresh-world
+  "Build a fresh world for the given level number. The level's config
+   (size, wall count, enemy count, chase speed, sprite colours, name)
+   is stamped onto the world so render/physics can read it without
+   chasing a global."
+  [level-num]
+  (let [cfg (level-config level-num)]
+    (let [[w h] (:size cfg)
+          grid  (seed-doors (random-grid w h (:walls cfg)) 1)]
+      (let [[px py] (random-spawn grid)]
+        (-> (new-world grid (new-player px py (php/* (rand-int 360)
+                                                     (php// php/M_PI 180.0))))
+            (with-enemies (spawn-enemies grid (:enemies cfg)
+                                         enemy-min-spawn-dist px py))
+            (assoc :level       level-num
+                   :chase-speed (:chase cfg)
+                   :enemy-head  (:head cfg)
+                   :enemy-body  (:body cfg)
+                   :level-name  (:name cfg)))))))
 
 (defn- run-play [ctx]
   (init-input!)
-  (loop []
-    (let [result (game-loop (fresh-world))]
-      (if (and (map? result) (:game-over result))
-        (let [choice (death-loop (:kills result) (:survived-s result))]
-          (clear-screen)
-          (when (= choice :restart) (recur)))
+  ;; Outer loop drives one full run: it walks the player through up to
+  ;; `num-levels` rooms by feeding game-loop fresh worlds in sequence.
+  ;; Kills + time accumulate across levels so the death / victory
+  ;; screen shows the cumulative run totals.
+  (loop [level 1 carry-kills 0 carry-time 0]
+    (let [result (game-loop (fresh-world level))]
+      (cond
+        (= result :quit)
+        nil
+
+        (and (map? result) (:next-level result))
+        (recur (:level result)
+               (php/+ carry-kills (:kills result))
+               (php/+ carry-time (:survived-s result)))
+
+        (and (map? result) (:victory result))
+        (let [k (php/+ carry-kills (:kills result))
+              t (php/+ carry-time (:survived-s result))]
+          (when (= :restart (victory-loop k t))
+            (clear-screen)
+            (recur 1 0 0)))
+
+        (and (map? result) (:game-over result))
+        (let [k (php/+ carry-kills (:kills result))
+              t (php/+ carry-time (:survived-s result))]
+          (when (= :restart (death-loop k t))
+            (clear-screen)
+            (recur 1 0 0)))
+
+        :else
         nil)))
   (restore!)
   (clear-screen)

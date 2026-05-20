@@ -7,7 +7,10 @@ A DOOM-lite raycaster in your terminal, written in [Phel Lang](https://phel-lang
 ## Features
 
 - 256-color ANSI raycaster, full-terminal viewport (FOV scales, walls don't)
-- Procedurally generated map per run, with random walls + doors
+- Procedurally generated map per level, with random walls + a door portal
+- 5 levels of escalating difficulty: bigger room each time, more enemies,
+  faster chase, new monster type with its own colour (imps → demons →
+  cacodemons → barons → cyberdemons)
 - Chasing enemies that pathfind around walls; hitscan combat with blood
   splatter, muzzle flash, and auto-respawn so the arena stays populated
 - 3 lives, i-frame window after each hit, blood-red palette flush while

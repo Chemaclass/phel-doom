@@ -157,11 +157,15 @@
 (defn- result-game-over [world ^float t-start ^float now]
   {:game-over  true
    :kills      (:kills world)
+   :level      (:level world)
+   :level-name (:level-name world)
    :survived-s (php/intval (php/- now t-start))})
 
 (defn- result-victory [world ^float t-start ^float now]
   {:victory    true
    :kills      (:kills world)
+   :level      (:level world)
+   :level-name (:level-name world)
    :survived-s (php/intval (php/- now t-start))})
 
 (defn- result-next-level [world ^float t-start ^float now]
@@ -239,11 +243,13 @@
           (str/contains? keys "r") :restart
           :else                    (recur [rows cols]))))))
 
-(defn- death-loop [kills survived-s]
-  (end-loop (fn [cols rows] (render-death-screen cols rows kills survived-s))))
+(defn- death-loop [kills survived-s level level-name]
+  (end-loop (fn [cols rows]
+              (render-death-screen cols rows kills survived-s level level-name))))
 
-(defn- victory-loop [kills survived-s]
-  (end-loop (fn [cols rows] (render-victory-screen cols rows kills survived-s))))
+(defn- victory-loop [kills survived-s level level-name]
+  (end-loop (fn [cols rows]
+              (render-victory-screen cols rows kills survived-s level level-name))))
 
 ;; =====================================================================
 ;; § Run lifecycle (level chain + restart)
@@ -253,9 +259,9 @@
   [(php/+ carry-kills (:kills result))
    (php/+ carry-time  (:survived-s result))])
 
-(defn- maybe-restart [end-fn kills survived-s]
+(defn- maybe-restart [end-fn kills survived-s level level-name]
   (clear-screen)
-  (when (= :restart (end-fn kills survived-s))
+  (when (= :restart (end-fn kills survived-s level level-name))
     (clear-screen)
     :restart))
 
@@ -276,12 +282,16 @@
 
         (and (map? result) (:victory result))
         (let [[k t] (carry-on carry-kills carry-time result)]
-          (when (= :restart (maybe-restart victory-loop k t))
+          (when (= :restart (maybe-restart victory-loop k t
+                                           (:level result)
+                                           (:level-name result)))
             (recur 1 max-lives 0 0)))
 
         (and (map? result) (:game-over result))
         (let [[k t] (carry-on carry-kills carry-time result)]
-          (when (= :restart (maybe-restart death-loop k t))
+          (when (= :restart (maybe-restart death-loop k t
+                                           (:level result)
+                                           (:level-name result)))
             (recur 1 max-lives 0 0)))
 
         :else

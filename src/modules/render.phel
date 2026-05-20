@@ -122,6 +122,21 @@
        ";38;5;" (fade-256 fg-code t)
        "m" glyph))
 
+(def aggro-distance
+  "World-units threshold below which an enemy is considered 'close
+   enough to hit you'. The head zone pulses (blink SGR) for these
+   enemies as a visual danger cue. Slightly more than 2× the touch-
+   damage-dist (0.7) in combat.phel so the player gets a beat of
+   warning before contact."
+  1.8)
+
+(defn- enemy-aggro-head-string
+  "Head zone paint cell with a blink attribute and no distance fade —
+   used when the enemy is within aggro-distance, so the player sees
+   the head pulsing the moment a monster is within striking range."
+  [^int code]
+  (str "\e[5;48;5;" code "m "))
+
 (defn- build-horizon-gradient
   "Per-row PHP array of pre-baked shade strings for the given viewport
    height. Maps each row to a shade-table index based on distance
@@ -502,7 +517,13 @@
                        ;; Faded shade strings for this enemy at its
                        ;; current distance. Computed ONCE per enemy
                        ;; and assigned to every column it covers.
-                       fhead   (if head-code (enemy-shade-string head-code t) ehead)
+                       fhead   (cond
+                                 (and head-code (php/< d aggro-distance))
+                                 (enemy-aggro-head-string head-code)
+                                 head-code
+                                 (enemy-shade-string head-code t)
+                                 :else
+                                 ehead)
                        fbody   (cond
                                  (and body-code body-glyph body-glyph-fg)
                                  (enemy-textured-shade-string body-code t body-glyph body-glyph-fg)

@@ -1,0 +1,29 @@
+(ns phel-doom.modules.enemy
+  (:require phel-doom.modules.map :refer [random-spawn]))
+
+(defn new-enemy
+  "Create an enemy record. `x` and `y` are world-space floats; `:alive`
+   flips to false when the enemy is shot."
+  {:export true}
+  [x y]
+  {:x x :y y :alive true})
+
+(defn spawn-enemies
+  "Place `n` enemies on random open cells of `grid`, well away from the
+   player's spawn so the first frame isn't an ambush."
+  {:export true}
+  [grid n min-dist-from player-x player-y]
+  (loop [acc       []
+         attempts  0
+         remaining n]
+    (cond
+      (php/=== remaining 0) acc
+      (php/> attempts 200)  acc
+      :else
+      (let [[ex ey] (random-spawn grid)
+            d2      (let [dx (php/- ex player-x)
+                          dy (php/- ey player-y)]
+                      (php/+ (php/* dx dx) (php/* dy dy)))]
+        (if (php/< d2 (php/* min-dist-from min-dist-from))
+          (recur acc (php/+ attempts 1) remaining)
+          (recur (conj acc (new-enemy ex ey)) (php/+ attempts 1) (php/- remaining 1)))))))

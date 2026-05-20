@@ -3,6 +3,8 @@
 
 (def sky    "\e[48;5;236m ")
 (def floor  "\e[48;5;239m ")
+(def enemy-shade "\e[48;5;124m ")
+(def enemy-marker "\e[91;1mE\e[0m")
 (def char-aspect 2.0)
 (def hud-rows 1)
 
@@ -41,11 +43,28 @@
 (def minimap-wall  "\e[37;1m#\e[0m")
 (def minimap-floor "\e[90m·\e[0m")
 
+(defn- enemy-cells
+  "Build a PHP array keyed by `row*gw+col` whose truthy entries mark
+   cells currently occupied by an alive enemy. One pass over the
+   enemies vector so the minimap inner loop stays O(1) per cell."
+  [enemies gw]
+  (let [acc (php/array)]
+    (loop [es enemies]
+      (when (php/!== es nil)
+        (let [e (first es)]
+          (when (and e (:alive e))
+            (php/aset acc
+                      (php/+ (php/* (php/intval (:y e)) gw) (php/intval (:x e)))
+                      true)))
+        (recur (next es))))
+    acc))
+
 (defn- minimap-rows
   "Render the world's grid into a PHP array of ANSI-coded strings, one
    per grid row. Reads the grid via :pgrid (PHP-native nested array)
    and builds each row with php/array_push + implode to avoid Phel
-   collection dispatch in a hot per-frame call."
+   collection dispatch in a hot per-frame call. Alive enemies are
+   marked with a red E."
   [world]
   (let [pgrid               (:pgrid world)
         {:keys [x y angle]} (:player world)
@@ -54,6 +73,7 @@
         marker              (str "\e[93;1m" (direction-char angle) "\e[0m")
         gh                  (php/count pgrid)
         gw                  (php/count (php/aget pgrid 0))
+        emap                (enemy-cells (:enemies world) gw)
         rows                (php/array)]
     (loop [row 0]
       (when (php/< row gh)
@@ -65,6 +85,7 @@
                               (cond
                                 (and (php/=== row prow) (php/=== col pcol)) marker
                                 (php/=== 1 (php/aget grow col))             minimap-wall
+                                (php/aget emap (php/+ (php/* row gw) col))  enemy-marker
                                 :else                                       minimap-floor))
               (recur (php/+ col 1))))
           (php/aset rows row (php/implode "" parts)))
@@ -82,6 +103,66 @@
          "  \e[1mfps\e[0m " (or (get stats :fps) 0)
          "  \e[1mframe\e[0m " (or (get stats :frame-ms) 0) "ms"
          "  \e[2m[↑↓ move  ←→ turn  ,. strafe  m map  q quit]\e[0m")))
+
+(defn- project-enemy
+  "Project one enemy into screen space relative to the player. Returns
+   {:col :half-width :dist} or nil if the enemy is behind the player or
+   off-screen. Distance is fish-eye corrected so it can be compared
+   directly to entries in the wall `dists` array."
+  [enemy player vw]
+  (let [dx (php/- (:x enemy) (:x player))
+        dy (php/- (:y enemy) (:y player))]
+    (let [rel-norm (php/- (php/fmod (php/+ (php/- (php/atan2 dy dx) (:angle player))
+                                           (php/* 3.0 php/M_PI))
+                                    (php/* 2.0 php/M_PI))
+                          php/M_PI)
+          cos-rel  (php/cos rel-norm)]
+      (if (php/<= cos-rel 0.05)
+        nil
+        (let [dist (php/* (php/sqrt (php/+ (php/* dx dx) (php/* dy dy))) cos-rel)]
+          {:col        (php/intval (php/+ (php/* 0.5 vw) (php/* (php/tan rel-norm) proj-dist)))
+           :half-width (php/max 1 (php/intval (php// proj-dist (php/* (php/max 0.5 dist) 3.0))))
+           :dist       dist})))))
+
+(defn- overlay-enemy!
+  "Mutate tops/bots/shades so an enemy sprite fills columns where it's
+   closer than the wall behind it. Only the cells actually obscured by
+   the enemy are touched, so unobstructed wall cells keep their shade."
+  [proj dists tops bots shades vw vh]
+  (let [col (:col proj)
+        hw  (:half-width proj)
+        d   (:dist proj)]
+    (let [c-from (php/max 0 (php/- col hw))
+          c-to   (php/min (php/- vw 1) (php/+ col hw))
+          top    (php/intdiv (php/- vh (php/min vh (php/intval
+                                                    (php// proj-dist (php/* (php/max 0.5 d) char-aspect)))))
+                             2)
+          bot    (php/+ top
+                        (php/min vh (php/intval (php// proj-dist (php/* (php/max 0.5 d) char-aspect)))))]
+      (loop [c c-from]
+        (when (php/<= c c-to)
+          (when (php/< d (php/aget dists c))
+            (php/aset tops c top)
+            (php/aset bots c bot)
+            (php/aset shades c enemy-shade))
+          (recur (php/+ c 1)))))))
+
+(defn- overlay-enemies!
+  "Project every alive enemy, sort by distance descending, then paint
+   each into the per-column buffers so closer enemies override farther
+   ones at overlapping columns."
+  [enemies player dists tops bots shades vw vh]
+  (let [projs (loop [es enemies acc []]
+                (if (php/=== es nil)
+                  acc
+                  (let [e (first es)]
+                    (recur (next es)
+                           (if (and e (:alive e))
+                             (let [p (project-enemy e player vw)]
+                               (if p (conj acc p) acc))
+                             acc)))))]
+    (doseq [p (sort-by (fn [x] (php/- 0.0 (:dist x))) projs)]
+           (overlay-enemy! p dists tops bots shades vw vh))))
 
 (defn- layout
   "Viewport fills the whole terminal. The minimap is an overlay in the
@@ -117,6 +198,7 @@
           (php/aset bots col (php/+ top wall-h))
           (php/aset shades col (shade dist))
           (recur (php/+ col 1)))))
+    (overlay-enemies! (:enemies world) (:player world) dists tops bots shades vw vh)
     (let [parts (php/array)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]

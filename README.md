@@ -61,15 +61,55 @@ The game loop is one `loop`/`recur` in `commands/play.phel`. Every frame:
 
 Render time is the throttle; the 1ms `usleep` only yields the CPU.
 
+## Performance
+
+Render is fast enough that the game loop is bounded by `stty size` +
+`microtime` overhead, not by the raycaster. Per-frame `frame->string`
+cost on the bundled bench (32×22 procedural map, minimap visible):
+
+| Viewport | Before optimisation | After       |
+|----------|---------------------|-------------|
+| 80×24    | ~150 ms (~7 fps)    | ~2 ms (~440 fps) |
+| 120×30   | ~220 ms (~5 fps)    | ~3 ms (~310 fps) |
+| 180×40   | n/a (capped)        | ~5 ms (~210 fps) |
+
+The wins came from pushing the hot per-cell loop off Phel's polymorphic
+runtime and onto direct PHP ops:
+
+- `php/aget`, `php/aset`, `php/+`, `php/<`, `php/===`, `php/*`, `php/-`,
+  `php//` instead of `core/aget`, `+`, `<`, `=`, `*`, `-`, `/` — compiles
+  to PHP subscript / operator emission instead of a runtime function
+  call per op.
+- `cast-frame` returns a flat PHP array of per-column distances. The
+  renderer walks it by index with `php/aget`; no lazy seq, no keyword
+  lookup per ray.
+- The 24 grayscale ANSI strings are baked into `shade-table` (a PHP
+  array). Per-cell shade is one `php/aget`, not a `memoize-lru` lookup.
+- The 3D viewport row is built with run-length encoding (one ANSI
+  escape per colour run) into a PHP array, then `php/implode`'d once.
+  Avoids the `(str acc ...)` chain that re-copied the row buffer on
+  every colour change.
+- The minimap reads through `:pgrid` (PHP-native nested array stashed
+  on the world at construction time) instead of through Phel persistent
+  vectors.
+- Alternate screen buffer + cursor-home redraw + autowrap off, so
+  consecutive frames overwrite in place instead of scrolling.
+
+`engine.phel` keeps the projection constant (`proj-dist`) decoupled
+from the viewport width: each ray's angular offset is `atan(col-offset /
+proj-dist)`, so resizing the terminal widens the FOV rather than
+zooming the walls.
+
 ## Controls
 
-| Key | Action       |
-|-----|--------------|
-| `w` | Move forward |
-| `s` | Move back    |
-| `a` | Turn left    |
-| `d` | Turn right   |
-| `q` | Quit         |
+| Key | Action            |
+|-----|-------------------|
+| `w` | Move forward      |
+| `s` | Move back         |
+| `a` | Turn left         |
+| `d` | Turn right        |
+| `m` | Toggle minimap    |
+| `q` | Quit              |
 
 ## Development
 
@@ -85,6 +125,9 @@ composer repl          # interactive REPL
 
 - [x] Static map + raycaster
 - [x] Player movement + collision
+- [x] Procedurally generated map per run
+- [x] Live minimap + HUD (position, heading, fps, frame ms)
+- [x] Full-terminal viewport with constant wall scale on resize
 - [ ] Enemies (sprites)
 - [ ] Doors
 - [ ] WAD file parser (real DOOM levels)

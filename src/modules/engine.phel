@@ -10,47 +10,62 @@
    more of the world without changing wall scale."
   70.0)
 
-(defn- pwall?
-  "Wall test against a PHP-native nested array. Any non-zero cell
-   blocks the ray (1 = wall, 2 = closed door). OOB returns nil from
-   aget, which is also not zero, so the ray runs to max-depth and stops."
+(defn- cell-at
+  "Return the cell value at integer (x, y) in `pgrid`. 0 = floor, 1 =
+   wall, 2 = closed door. Out-of-bounds yields 1 so rays stop at the
+   map edge."
   [pgrid x y]
   (let [row (php/aget pgrid y)]
     (if (php/=== row nil)
-      false
+      1
       (let [v (php/aget row x)]
-        (and (php/!== v nil) (php/!== v 0))))))
+        (if (php/=== v nil) 1 v)))))
 
 (defn cast-ray
-  "March a ray from (px, py) at the given angle until it hits a wall or
-   `max-depth`. Uses incremental position update (no per-step multiply)
-   and a PHP-native grid lookup."
+  "March a ray from (px, py) at the given angle until it hits a non-
+   floor cell or `max-depth`. Returns the travelled distance only
+   (back-compat for shooting code that doesn't care what was hit)."
   {:export true}
   [pgrid px py angle]
   (let [dx (php/* (php/cos angle) step)
         dy (php/* (php/sin angle) step)]
     (loop [dist 0.0 x px y py]
       (cond
-        (php/>= dist max-depth)                      max-depth
-        (pwall? pgrid (php/intval x) (php/intval y)) dist
-        :else                                        (recur (php/+ dist step) (php/+ x dx) (php/+ y dy))))))
+        (php/>= dist max-depth)                                   max-depth
+        (php/!== 0 (cell-at pgrid (php/intval x) (php/intval y))) dist
+        :else                                                     (recur (php/+ dist step) (php/+ x dx) (php/+ y dy))))))
+
+(defn- cast-ray-hit
+  "Like cast-ray but returns [dist hit-cell]: the cell value (0 if the
+   ray escaped to max-depth) lets the renderer pick a wall-vs-door
+   shade per column."
+  [pgrid px py angle]
+  (let [dx (php/* (php/cos angle) step)
+        dy (php/* (php/sin angle) step)]
+    (loop [dist 0.0 x px y py]
+      (let [hit (cell-at pgrid (php/intval x) (php/intval y))]
+        (cond
+          (php/>= dist max-depth) [max-depth 0]
+          (php/!== 0 hit)         [dist hit]
+          :else                   (recur (php/+ dist step) (php/+ x dx) (php/+ y dy)))))))
 
 (defn cast-frame
-  "Cast `width` rays and return a PHP array of fish-eye-corrected
-   distances, one per column. Returning a flat PHP array (not a lazy
-   seq of maps) keeps the column loop in the renderer doing a single
-   aget per column instead of walking a Phel seq + keyword lookup."
+  "Cast `width` rays and return {:dists ... :hits ...}: per-column
+   fish-eye-corrected distances and the cell value the ray hit (0
+   floor / 1 wall / 2 door). Renderer picks the per-column shade
+   from :hits."
   {:export true}
   [world width]
   (let [pgrid               (:pgrid world)
         {:keys [x y angle]} (:player world)
         center              (* 0.5 width)
-        dists               (php/array)]
+        dists               (php/array)
+        hits                (php/array)]
     (loop [col 0]
       (when (php/< col width)
         (let [offset (php/atan (/ (php/- col center) proj-dist))]
-          (php/aset dists col
-                    (php/* (cast-ray pgrid x y (php/+ angle offset))
-                           (php/cos offset)))
+          (let [[d h] (cast-ray-hit pgrid x y (php/+ angle offset))]
+            (php/aset dists col (php/* d (php/cos offset)))
+            (php/aset hits col h))
           (recur (php/+ col 1)))))
-    dists))
+    {:dists dists :hits hits}))

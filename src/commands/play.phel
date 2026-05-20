@@ -30,6 +30,13 @@
    as a hit. ~half an enemy 'cell'."
   0.5)
 (def shot-max-range 12.0)
+(def touch-damage-dist
+  "If an alive enemy gets this close (units), the player loses a life."
+  0.7)
+(def iframe-seconds
+  "Seconds of post-hit invulnerability so a single touch doesn't drain
+   multiple lives across consecutive frames."
+  1.0)
 
 (defn- term-size
   "Query the terminal for [rows cols] via stty. Falls back to a
@@ -76,6 +83,34 @@
         (if (php/>= i n)
           w
           (recur (php/+ i 1) (refresh-move w (php/substr normalized i 1))))))))
+
+(defn- touching?
+  "True iff any alive enemy is within touch-damage-dist of (px, py)."
+  [enemies px py]
+  (loop [es enemies]
+    (cond
+      (php/=== es nil) false
+      :else            (let [e (first es)]
+              (if (and e (:alive e)
+                       (let [dx (php/- (:x e) px)
+                             dy (php/- (:y e) py)]
+                         (php/<= (php/+ (php/* dx dx) (php/* dy dy))
+                                 (php/* touch-damage-dist touch-damage-dist))))
+                true
+                (recur (next es)))))))
+
+(defn- damage-step
+  "Tick the i-frame timer down by dt; if no i-frames are left and an
+   enemy is touching the player, subtract a life and start a fresh
+   i-frame window."
+  [world dt]
+  (let [i (php/max 0.0 (php/- (:iframes world) dt))]
+    (let [w' (assoc world :iframes i)
+          p  (:player world)]
+      (if (and (php/<= i 0.0) (touching? (:enemies w') (:x p) (:y p)))
+        (-> w' (update :lives (fn [l] (php/max 0 (php/- l 1))))
+            (assoc :iframes iframe-seconds))
+        w'))))
 
 (defn- fire-shot
   "Resolve one trigger pull: hitscan along the player's facing, taking
@@ -130,7 +165,11 @@
     (let [[rows cols] (term-size)]
       (when (not= [rows cols] dims) (clear-screen))
       (render! world
-               {:fps fps :frame-ms frame-ms :kills (:kills world)}
+               {:fps      fps
+                :frame-ms frame-ms
+                :kills    (:kills world)
+                :lives    (:lives world)
+                :iframes  (:iframes world)}
                cols rows)
       (php/usleep frame-us)
       (let [keys   (drain-keys)
@@ -145,12 +184,13 @@
                                      (if (and m-now (not m-prev)) (toggle-map world) world)
                                      keys)
                                     dt)]
-                       (let [moved (update stepped :enemies advance
-                                           (:grid stepped)
-                                           (:x (:player stepped))
-                                           (:y (:player stepped))
-                                           dt)]
-                         (if (and sp-now (not sp-prev)) (fire-shot moved) moved))))]
+                       (let [fired (let [moved (update stepped :enemies advance
+                                                       (:grid stepped)
+                                                       (:x (:player stepped))
+                                                       (:y (:player stepped))
+                                                       dt)]
+                                     (if (and sp-now (not sp-prev)) (fire-shot moved) moved))]
+                         (damage-step fired dt))))]
         (if (str/contains? keys "q")
           :quit
           (recur world' now ms f m-now sp-now [rows cols]))))))

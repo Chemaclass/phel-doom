@@ -1,0 +1,61 @@
+(ns phel-doom-tests.modules.wad-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.modules.wad :refer [parse-header parse-directory find-lump
+                                          read-vertexes read-linedefs]))
+
+;; Hand-rolled IWAD blob built in-memory so the parser tests don't need
+;; a real doom.wad on disk. Layout:
+;;   header   : "IWAD", num-lumps=3, dir-offset=12
+;;   vtx data : (1,2), (3,4)  -> 8 bytes at offset 12
+;;   line data: a=0 b=1, flags + side info filler -> 14 bytes at offset 20
+;;   dir      : 3 entries (16 bytes each) starting at offset 34
+;;              - MAP    @ 34: offset=12 size=0 name="MAP01"
+;;              - VTX    @ 50: offset=12 size=8 name="VERTEXES"
+;;              - LIN    @ 66: offset=20 size=14 name="LINEDEFS"
+
+(defn- fake-wad []
+  (php/.
+   (php/pack "a4VV" "IWAD" 3 34)                          ; header
+   (php/pack "vvvv" 1 2 3 4)                              ; 2 vertexes
+   (php/pack "vvvvvvv" 0 1 0 0 0 0 0)                     ; 1 linedef (14 bytes)
+   (php/pack "VVa8" 12 0 "MAP01")
+   (php/pack "VVa8" 12 8 "VERTEXES")
+   (php/pack "VVa8" 20 14 "LINEDEFS")))
+
+(deftest test-parse-header-reads-identifier-and-counts
+  (let [h (parse-header (fake-wad))]
+    (is (= "IWAD" (:id h)))
+    (is (= 3 (:num-lumps h)))
+    (is (= 34 (:dir-offset h)))))
+
+(deftest test-parse-directory-yields-all-entries
+  (let [w (fake-wad)]
+    (let [dir (parse-directory w (parse-header w))]
+      (is (= 3 (php/count dir)))
+      (is (= "MAP01"    (:name (php/aget dir 0))))
+      (is (= "VERTEXES" (:name (php/aget dir 1))))
+      (is (= "LINEDEFS" (:name (php/aget dir 2)))))))
+
+(deftest test-find-lump-locates-by-name
+  (let [w (fake-wad)]
+    (let [dir (parse-directory w (parse-header w))]
+      (is (= "VERTEXES" (:name (find-lump dir "VERTEXES"))))
+      (is (= nil (find-lump dir "NOPE"))))))
+
+(deftest test-read-vertexes-decodes-coords
+  (let [w (fake-wad)]
+    (let [dir (parse-directory w (parse-header w))]
+      (let [vs (read-vertexes w (find-lump dir "VERTEXES"))]
+        (is (= 2 (php/count vs)))
+        (is (= 1 (:x (php/aget vs 0))))
+        (is (= 2 (:y (php/aget vs 0))))
+        (is (= 3 (:x (php/aget vs 1))))
+        (is (= 4 (:y (php/aget vs 1))))))))
+
+(deftest test-read-linedefs-decodes-endpoints
+  (let [w (fake-wad)]
+    (let [dir (parse-directory w (parse-header w))]
+      (let [ls (read-linedefs w (find-lump dir "LINEDEFS"))]
+        (is (= 1 (php/count ls)))
+        (is (= 0 (:a (php/aget ls 0))))
+        (is (= 1 (:b (php/aget ls 0))))))))

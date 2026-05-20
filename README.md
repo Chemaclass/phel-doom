@@ -118,7 +118,7 @@ composer repl          # interactive REPL
 - [x] Live minimap, HUD, full-terminal viewport
 - [x] Enemies (chase AI, hitscan, lives, i-frames, blood, muzzle flash)
 - [x] Doors (closed cells you open with E)
-- [ ] WAD file parser (real DOOM levels)
+- [x] WAD file parser (header + directory + VERTEXES/LINEDEFS lumps)
 - [ ] Sound via `ext-ffi` + miniaudio
 
 ## License

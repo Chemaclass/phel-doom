@@ -112,6 +112,16 @@
   [^int code ^float t]
   (str "\e[48;5;" (fade-256 code t) "m "))
 
+(defn- enemy-textured-shade-string
+  "Like enemy-shade-string but embeds `glyph` (a single character) on
+   top of the BG, using `fg-code` (also faded by t) as foreground.
+   Used for the body zone so each monster has a recognisable scale /
+   muscle / armor pattern beyond just colour."
+  [^int code ^float t glyph ^int fg-code]
+  (str "\e[48;5;" (fade-256 code t)
+       ";38;5;" (fade-256 fg-code t)
+       "m" glyph))
+
 (defn- build-horizon-gradient
   "Per-row PHP array of pre-baked shade strings for the given viewport
    height. Maps each row to a shade-table index based on distance
@@ -374,6 +384,8 @@
         head-code                          (get stats :enemy-head-code)
         body-code                          (get stats :enemy-body-code)
         legs-code                          (get stats :enemy-legs-code)
+        body-glyph                         (get stats :enemy-body-glyph)
+        body-glyph-fg                      (get stats :enemy-body-glyph-fg)
         ;; Idle face animation: cycle between the level's two face
         ;; glyphs on a wall-clock sin wave so monsters look alive
         ;; (eye blinks, fangs flicker, LEDs pulse) without any per-
@@ -491,7 +503,13 @@
                        ;; current distance. Computed ONCE per enemy
                        ;; and assigned to every column it covers.
                        fhead   (if head-code (enemy-shade-string head-code t) ehead)
-                       fbody   (if body-code (enemy-shade-string body-code t) ebody)
+                       fbody   (cond
+                                 (and body-code body-glyph body-glyph-fg)
+                                 (enemy-textured-shade-string body-code t body-glyph body-glyph-fg)
+                                 body-code
+                                 (enemy-shade-string body-code t)
+                                 :else
+                                 ebody)
                        flegs   (if legs-code (enemy-shade-string legs-code t) elegs)]
                    (loop [c c-from]
                      (when (php/<= c c-to)

@@ -66,10 +66,23 @@
   [grid x y]
   (= cell-door (cell grid x y)))
 
+(defn- has-floor-neighbour?
+  "True when at least one of the four orthogonal neighbours of (x, y) is
+   walkable floor. Used by seed-doors to avoid placing an unreachable
+   door inside a wall blob."
+  [grid x y]
+  (or (= cell-floor (cell grid (- x 1) y))
+      (= cell-floor (cell grid (+ x 1) y))
+      (= cell-floor (cell grid x (- y 1)))
+      (= cell-floor (cell grid x (+ y 1)))))
+
 (defn seed-doors
-  "Convert `n` random interior wall cells into closed doors. Returns
-   the updated grid; gives up quietly after 200 attempts when the
-   interior runs out of candidates."
+  "Convert `n` random interior wall cells into closed doors. A
+   candidate cell must (a) currently be a wall and (b) sit next to at
+   least one floor cell so the player can actually touch the door —
+   without that check a door can get hidden inside a 2×2 wall blob
+   and the room becomes inescapable. Gives up quietly after 400
+   attempts when the interior runs out of candidates."
   {:export true}
   [grid n]
   (let [w (count (first grid))
@@ -77,11 +90,12 @@
     (loop [g grid placed 0 attempts 0]
       (cond
         (>= placed n)     g
-        (>= attempts 200) g
+        (>= attempts 400) g
         :else
         (let [x (+ 2 (rand-int (- w 4)))
               y (+ 2 (rand-int (- h 4)))]
-          (if (= cell-wall (cell g x y))
+          (if (and (= cell-wall (cell g x y))
+                   (has-floor-neighbour? g x y))
             (recur (assoc-in g [y x] cell-door) (+ placed 1) (+ attempts 1))
             (recur g placed (+ attempts 1))))))))
 

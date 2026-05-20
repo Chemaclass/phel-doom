@@ -56,19 +56,58 @@
       (is (= 0 interior-sum)))))
 
 
+(deftest test-seed-doors-only-places-on-touchable-walls
+  ;; The door must be adjacent to at least one floor cell, otherwise
+  ;; the room is unreachable. Build a grid with one interior wall
+  ;; isolated inside a 3×3 wall blob and one wall touching floor; the
+  ;; isolated wall should never be picked.
+  ;;
+  ;;   1 1 1 1 1 1 1
+  ;;   1 0 0 0 0 0 1     (1,1)-(5,1) all floor
+  ;;   1 0 1 1 1 0 1     (3,2) and (4,2) walls touching floor
+  ;;   1 0 1 1 1 0 1     (3,3) is fully enclosed by walls/border  <- never a door
+  ;;   1 0 1 1 1 0 1
+  ;;   1 0 0 0 0 0 1
+  ;;   1 1 1 1 1 1 1
+  (let [g [[1 1 1 1 1 1 1]
+           [1 0 0 0 0 0 1]
+           [1 0 1 1 1 0 1]
+           [1 0 1 1 1 0 1]
+           [1 0 1 1 1 0 1]
+           [1 0 0 0 0 0 1]
+           [1 1 1 1 1 1 1]]]
+    ;; Try 50 times to surface the bug if seed-doors picks the locked
+    ;; interior cell.
+    (let [oks (loop [i 0 acc 0]
+                (if (>= i 50)
+                  acc
+                  (let [g' (seed-doors g 1)]
+                    (recur (+ i 1)
+                           (if (= cell-door (php/aget (php/aget (to-php-array g') 3) 3))
+                             ;; landed in the unreachable centre -> bug
+                             (php/- acc 1)
+                             acc)))))]
+      (is (>= oks 0)))))
+
 (deftest test-seed-doors-converts-walls-into-doors
-  ;; Start with a grid that has interior walls (just border on a 5x5 +
-  ;; one interior wall at (2,2) created via assoc-in). seed-doors should
-  ;; either flip that wall into a door, or fail gracefully if it can't
-  ;; find one in 200 tries; whichever happens, no cell value outside
-  ;; {0,1,2} should appear.
-  (let [with-doors (seed-doors
-                    (apply vector (map (fn [_] [1 1 1 1 1 1 1 1]) (range 0 8)))
-                    3)]
-    (is (= 3 (apply + (apply concat
-                             (map (fn [row]
-                                    (map (fn [c] (if (= c 2) 1 0)) row))
-                                  with-doors)))))))
+  ;; Bordered open room with one floor-adjacent wall column inside.
+  ;; seed-doors needs interior walls that border floor cells to convert,
+  ;; otherwise it gives up. With plenty of qualifying candidates, 3
+  ;; doors should be placed.
+  (let [door-count
+        (apply + (apply concat
+                        (map (fn [row]
+                               (map (fn [c] (if (= c 2) 1 0)) row))
+                             (seed-doors
+                              (apply vector
+                                     (concat
+                                      [[1 1 1 1 1 1 1 1]]
+                                      (apply vector
+                                             (map (fn [_] [1 0 0 1 1 0 0 1])
+                                                  (range 0 6)))
+                                      [[1 1 1 1 1 1 1 1]]))
+                              3))))]
+    (is (= 3 door-count))))
 
 (deftest test-random-spawn-lands-on-floor
   (let [g     [[1 1 1 1 1]

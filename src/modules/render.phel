@@ -81,6 +81,28 @@
         (recur (php/+ i 1))))
     t))
 
+(defn- build-horizon-gradient
+  "Per-row PHP array of pre-baked shade strings for the given viewport
+   height. Maps each row to a shade-table index based on distance
+   from the horizon line (vh/2): closer to the horizon = darker
+   (atmospheric haze). Used for both sky AND floor since after a
+   distance the eye stops distinguishing them anyway."
+  [^int vh tbl]
+  (let [arr     (php/array)
+        horizon (php/intdiv vh 2)
+        max-d   (php/max 1 horizon)]
+    (loop [r 0]
+      (when (php/< r vh)
+        (let [idx (php/max 0
+                           (php/min 23
+                                    (php/intval (php/* (php/- 1.0
+                                                              (php// (php/abs (php/- r horizon))
+                                                                     max-d))
+                                                       23))))]
+          (php/aset arr r (php/aget tbl idx)))
+        (recur (php/+ r 1))))
+    arr))
+
 ;; Per-column shading lives inline in frame->string's hot loop:
 ;; base distance index, +1 for vertical wall faces (side-shading),
 ;; ±1 per-cell hash, then resolve TWO shade strings per column
@@ -303,9 +325,13 @@
   (let [{:keys [vw vh map-col map-row]}
         (layout cols rows (count (first (:grid world))))
         bloody?                            (php/> (or (get stats :iframes) 0.0) 0.0)
-        sky'                               (if bloody? sky-blood sky)
-        floor'                             (if bloody? floor-blood floor)
         stbl                               (if bloody? shade-table-blood shade-table)
+        ;; Per-row sky + floor strings shaded by distance-to-horizon.
+        ;; Same gradient for both — atmospheric haze blends ceiling
+        ;; and floor at infinity. Built once per frame (vh might
+        ;; change on terminal resize).
+        sky-gradient                       (build-horizon-gradient vh stbl)
+        floor-gradient                     sky-gradient
         ehead                              (or (get stats :enemy-head) enemy-head)
         ebody                              (or (get stats :enemy-body) enemy-body)
         {:keys [dists hits hxs hys sides]}
@@ -448,11 +474,11 @@
                              ;; Cells under the minimap overlay — emit a
                              ;; cheap placeholder; the minimap blits over
                              ;; them later via absolute cursor positioning.
-                             sky'
+                             (php/aget sky-gradient row)
                              (or (php/aget blood-paint (php/+ (php/* row vw) col))
                                  (cond
-                                   (php/< row (php/aget tops col))             sky'
-                                   (php/>= row (php/aget bots col))            floor'
+                                   (php/< row (php/aget tops col))             (php/aget sky-gradient row)
+                                   (php/>= row (php/aget bots col))            (php/aget floor-gradient row)
                                    (php/aget emask col)
                                    (if (php/< row (php/aget mids col)) ehead ebody)
                                    (php/=== row (php/aget tops col))

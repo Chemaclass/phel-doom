@@ -1,7 +1,7 @@
 (ns phel-doom.commands.play
   (:require phel.cli :as cli)
   (:require phel.string :as str)
-  (:require phel-doom.modules.state  :refer [move-player turn-player
+  (:require phel-doom.modules.state  :refer [move-player turn-player gain-life max-lives
                                              toggle-map toggle-pause toggle-sound])
   (:require phel-doom.modules.map    :refer [wall? door?])
   (:require phel-doom.modules.engine :refer [cast-ray])
@@ -433,6 +433,31 @@
     (update world :enemies advance (:grid world) (:x p) (:y p) dt
             (or (:chase-speed world) 0.75))))
 
+(defn- heart-at-cell?
+  "True when the heart `h` occupies integer cell (px, py)."
+  [h px py]
+  (and (php/=== (php/intval (:x h)) px)
+       (php/=== (php/intval (:y h)) py)))
+
+(defn- hearts-not-at
+  "Drop any heart sitting on integer cell (px, py)."
+  [hearts px py]
+  (apply vector
+         (filter (fn [h] (not (heart-at-cell? h px py))) hearts)))
+
+(defn- pickup-hearts
+  "If the player stands on a heart cell, consume the heart and gain a
+   life (capped at max-lives)."
+  [world]
+  (let [kept (hearts-not-at (:hearts world)
+                            (php/intval (:x (:player world)))
+                            (php/intval (:y (:player world))))]
+    (if (= (count kept) (count (:hearts world)))
+      world
+      (let [healed (assoc world :hearts kept)]
+        (when (:sound-on world) (play-sfx! :door))
+        (gain-life healed)))))
+
 (defn- on-door?
   "True when the player's current cell is a door (which auto-advances
    the level)."
@@ -470,9 +495,10 @@
       w0
       (let [w1 (refresh-from-keys w0 keys)]
         (let [w2 (apply-physics w1 dt)]
-          (let [w3 (tick-enemies w2 dt)]
-            (let [w4 (tick-shooting w3 (:fire edges))]
-              (damage-step w4 dt))))))))
+          (let [w3 (pickup-hearts w2)]
+            (let [w4 (tick-enemies w3 dt)]
+              (let [w5 (tick-shooting w4 (:fire edges))]
+                (damage-step w5 dt)))))))))
 
 ;; =====================================================================
 ;; § Input edge detection
@@ -674,28 +700,29 @@
 
 (defn- run-levels
   "Outer loop driving one full run: feed game-loop fresh worlds in
-   sequence, accumulate kills + time across levels, decide what to
-   show when the level chain ends."
+   sequence, accumulate kills + time across levels, carry lives over
+   so build-world only spawns a heart pickup when the player isn't
+   already at max-lives."
   []
-  (loop [level 1 carry-kills 0 carry-time 0]
-    (let [result (game-loop (build-world level))]
+  (loop [level 1 lives max-lives carry-kills 0 carry-time 0]
+    (let [result (game-loop (build-world level lives))]
       (cond
         (= result :quit)
         nil
 
         (and (map? result) (:next-level result))
         (let [[k t] (carry-on carry-kills carry-time result)]
-          (recur (:level result) k t))
+          (recur (:level result) (:lives result) k t))
 
         (and (map? result) (:victory result))
         (let [[k t] (carry-on carry-kills carry-time result)]
           (when (= :restart (maybe-restart victory-loop k t))
-            (recur 1 0 0)))
+            (recur 1 max-lives 0 0)))
 
         (and (map? result) (:game-over result))
         (let [[k t] (carry-on carry-kills carry-time result)]
           (when (= :restart (maybe-restart death-loop k t))
-            (recur 1 0 0)))
+            (recur 1 max-lives 0 0)))
 
         :else
         nil))))

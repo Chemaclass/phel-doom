@@ -1,5 +1,5 @@
 (ns phel-doom.modules.level
-  (:require phel-doom.modules.state :refer [new-player new-world with-enemies])
+  (:require phel-doom.modules.state :refer [new-player new-world with-enemies max-lives])
   (:require phel-doom.modules.map   :refer [random-grid random-spawn seed-doors])
   (:require phel-doom.modules.enemy :refer [spawn-enemies]))
 
@@ -47,23 +47,38 @@
   [n]
   (get levels (php/max 0 (php/min (php/- num-levels 1) (php/- n 1)))))
 
+(defn- maybe-spawn-heart
+  "Return a one-element vector with a heart pickup at a random open
+   cell, or [] when the player is already at max-lives (no point
+   spawning a heart they can't pick up)."
+  [grid lives px py]
+  (if (php/>= lives max-lives)
+    []
+    (let [[hx hy] (random-spawn grid)]
+      [{:x hx :y hy}])))
+
 (defn build-world
-  "Construct a brand-new world for `level-num`. Walls, enemies, the
-   single door, and the player spawn are all randomised; the level's
-   tuning (chase speed, name, sprite colours) is stamped on the world
-   so the renderer + physics layers can read it without globals."
+  "Construct a brand-new world for `level-num` carrying `lives` over
+   from the previous level. Walls, enemies, the single door, the
+   player spawn, and (when lives < max-lives) one heart pickup are all
+   randomised. Level tuning is stamped onto the world so render and
+   physics can read it without globals."
   {:export true}
-  [level-num]
+  [level-num lives]
   (let [cfg (config-for level-num)]
     (let [[w h] (:size cfg)
           grid  (seed-doors (random-grid w h (:walls cfg)) 1)]
       (let [[px py] (random-spawn grid)]
-        (-> (new-world grid (new-player px py (php/* (rand-int 360)
-                                                     (php// php/M_PI 180.0))))
-            (with-enemies (spawn-enemies grid (:enemies cfg)
-                                         enemy-min-spawn-dist px py))
-            (assoc :level       level-num
+        (let [world (new-world grid (new-player px py (php/* (rand-int 360)
+                                                             (php// php/M_PI 180.0))))]
+          (let [with-foes (with-enemies world
+                                        (spawn-enemies grid (:enemies cfg)
+                                                       enemy-min-spawn-dist px py))]
+            (assoc with-foes
+                   :level       level-num
+                   :lives       lives
+                   :hearts      (maybe-spawn-heart grid lives px py)
                    :chase-speed (:chase cfg)
                    :enemy-head  (:head cfg)
                    :enemy-body  (:body cfg)
-                   :level-name  (:name cfg)))))))
+                   :level-name  (:name cfg))))))))

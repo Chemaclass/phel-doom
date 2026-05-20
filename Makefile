@@ -1,4 +1,4 @@
-.PHONY: help install d dev t test f format fc fix b build export r repl doctor clean
+.PHONY: help install d dev t test f format fc fix b build r repl doctor clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -28,9 +28,6 @@ fc: ## format check only (CI-style, exits non-zero on drift)
 b: build
 build: ## build standalone PHP binary -> out/main.php
 	vendor/bin/phel build
-
-export: ## regenerate PHP wrappers in src/PhelGenerated/
-	vendor/bin/phel export
 
 r: repl
 repl: ## start phel REPL

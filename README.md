@@ -47,6 +47,12 @@ make play
 
 Walk into a door to advance; walk over a heart to refill a life.
 
+## Internals
+
+Detailed write-ups for each subsystem live in [docs/](docs/README.md) —
+architecture, game-loop, raycaster, rendering, monsters, combat,
+levels, input, audio, scores, WAD parser, and performance.
+
 ## Layout
 
 Functional core / imperative shell. Pure code at the bottom, effects at

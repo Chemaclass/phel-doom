@@ -49,7 +49,6 @@ make play
 | `a` / `d` | Strafe left / right |
 | `←` / `→` | Turn left / right   |
 | `space`   | Fire                |
-| `e`       | Open door in front  |
 | `m`       | Toggle minimap      |
 | `n`       | Toggle sound on/off |
 | `p`       | Pause (menu shows sound, credits)  |
@@ -123,7 +122,7 @@ Hot per-cell loop pushed off Phel's polymorphic runtime onto direct PHP ops:
 ## Development
 
 ```bash
-composer test          # phel tests (129 across map/state/engine/enemy/render/wad/level/play)
+composer test          # phel tests (124 across map/state/engine/enemy/render/wad/level/play)
 composer format        # auto-format
 composer lint          # phel-lint (clean policy: zero warnings)
 composer build         # out/main.php standalone

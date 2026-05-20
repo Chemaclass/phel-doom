@@ -3,7 +3,7 @@
   (:require phel.string :as str)
   (:require phel-doom.modules.state  :refer [move-player turn-player
                                              toggle-map toggle-pause toggle-sound])
-  (:require phel-doom.modules.map    :refer [wall? cell cell-door cell-portal portal?])
+  (:require phel-doom.modules.map    :refer [wall? door?])
   (:require phel-doom.modules.engine :refer [cast-ray])
   (:require phel-doom.modules.enemy  :refer [advance shoot spawn-enemies])
   (:require phel-doom.modules.sound  :refer [play-sfx!])
@@ -32,10 +32,6 @@
    of overshooting."
   5)
 (def frame-us 1000)
-(def door-reach
-  "How many world units in front of the player count as 'within
-   reach' for opening a door."
-  1.6)
 (def enemy-min-spawn-dist-respawn
   "Min spawn distance reused when a kill triggers an in-game respawn."
   3.0)
@@ -210,32 +206,6 @@
              :turn-left    (php/max 0 (php/- (:turn-left m) 1))
              :turn-right   (php/max 0 (php/- (:turn-right m) 1))})))
 
-(defn- open-door-near
-  "Walk forward from the player a short distance; if the first solid
-   cell encountered is a closed door, rewrite both the persistent grid
-   (for collision / minimap) and the PHP-native pgrid (for the
-   raycaster) so the cell becomes open floor. Beeps on success."
-  [world]
-  (let [p (:player world)]
-    (let [px (:x p)
-          py (:y p)
-          a  (:angle p)]
-      (loop [s 0.5]
-        (if (php/> s door-reach)
-          world
-          (let [cx (php/intval (php/+ px (php/* s (php/cos a))))
-                cy (php/intval (php/+ py (php/* s (php/sin a))))]
-            (if (= cell-door (cell (:grid world) cx cy))
-              (do
-                (when (:sound-on world) (play-sfx! :door))
-                (-> world
-                    ;; Door becomes a portal: passable but distinct
-                    ;; from ordinary floor so the level-advance step
-                    ;; can spot when the player stands on it.
-                    (update :grid (fn [g] (assoc-in g [cy cx] cell-portal)))
-                    (update :pgrid (fn [pg] (aset pg cy cx cell-portal) pg))))
-              (recur (php/+ s 0.3)))))))))
-
 (defn- handle-toggles
   "Apply edge-triggered toggles (pause, minimap, sound) for one frame."
   [world edges]
@@ -257,30 +227,29 @@
   [world fire?]
   (if fire? (fire-shot world) world))
 
-(defn- on-portal?
-  "True when the player's current integer cell is an opened portal,
-   meaning we should advance to the next level this frame."
+(defn- on-door?
+  "True when the player's current integer cell is a door, meaning we
+   should advance to the next level this frame."
   [world]
   (let [p (:player world)]
-    (portal? (:grid world) (php/intval (:x p)) (php/intval (:y p)))))
+    (door? (:grid world) (php/intval (:x p)) (php/intval (:y p)))))
 
 (defn tick-world
   "Pure one-frame state transition. Decoupled from IO so it can be
    unit-tested directly: build a world, hand it inputs, assert what
    comes back. `keys` is the drained input string, `dt` is seconds
    since the previous tick, `edges` is a map of rising-edge events
-   {:fire :toggle-map :toggle-pause :toggle-sound :open-door}."
+   {:fire :toggle-map :toggle-pause :toggle-sound}."
   {:export true}
   [world keys dt edges]
   (let [w0 (handle-toggles world edges)]
     (if (:paused w0)
       w0
-      (let [w1 (if (:open-door edges) (open-door-near w0) w0)]
-        (let [w2 (refresh-from-keys w1 keys)]
-          (let [w3 (apply-physics w2 dt)]
-            (let [w4 (tick-enemies w3 dt)]
-              (let [w5 (tick-shooting w4 (:fire edges))]
-                (damage-step w5 dt)))))))))
+      (let [w1 (refresh-from-keys w0 keys)]
+        (let [w2 (apply-physics w1 dt)]
+          (let [w3 (tick-enemies w2 dt)]
+            (let [w4 (tick-shooting w3 (:fire edges))]
+              (damage-step w4 dt))))))))
 
 (defn- key-states
   "Snapshot which of the tracked keys appear anywhere in `keys`."
@@ -288,7 +257,6 @@
   {:m  (str/contains? keys "m")
    :sp (str/contains? keys " ")
    :p  (str/contains? keys "p")
-   :e  (str/contains? keys "e")
    :n  (str/contains? keys "n")})
 
 (defn- rising-edges
@@ -298,11 +266,10 @@
   {:fire         (and (:sp now) (not (:sp prev)))
    :toggle-map   (and (:m now)  (not (:m prev)))
    :toggle-pause (and (:p now)  (not (:p prev)))
-   :toggle-sound (and (:n now)  (not (:n prev)))
-   :open-door    (and (:e now)  (not (:e prev)))})
+   :toggle-sound (and (:n now)  (not (:n prev)))})
 
 (def initial-key-snapshot
-  {:m false :sp false :p false :e false :n false})
+  {:m false :sp false :p false :n false})
 
 (defn- game-loop [world0]
   (let [t-start (php/microtime true)]
@@ -346,16 +313,18 @@
              :kills      (:kills world')
              :survived-s (php/intval (php/- now t-start))}
 
-            (on-portal? world')
-            (if (php/>= (:level world') num-levels)
-              {:victory    true
-               :kills      (:kills world')
-               :survived-s (php/intval (php/- now t-start))}
-              {:next-level true
-               :level      (php/+ (:level world') 1)
-               :kills      (:kills world')
-               :lives      (:lives world')
-               :survived-s (php/intval (php/- now t-start))})
+            (on-door? world')
+            (do
+              (when (:sound-on world') (play-sfx! :door))
+              (if (php/>= (:level world') num-levels)
+                {:victory    true
+                 :kills      (:kills world')
+                 :survived-s (php/intval (php/- now t-start))}
+                {:next-level true
+                 :level      (php/+ (:level world') 1)
+                 :kills      (:kills world')
+                 :lives      (:lives world')
+                 :survived-s (php/intval (php/- now t-start))}))
 
             :else
             (recur world' now ms f now-keys [rows cols])))))))

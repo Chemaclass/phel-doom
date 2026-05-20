@@ -7,12 +7,19 @@ A DOOM-lite raycaster in your terminal, written in [Phel Lang](https://phel-lang
 ## Features
 
 - 256-color ANSI raycaster, full-terminal viewport (FOV scales, walls don't)
-- Procedurally generated map per run
-- Chasing enemies with hitscan combat, blood splatter, muzzle flash
-- Lives + i-frames + kill counter, "YOU DIED" on game over
-- Live minimap, HUD (lives, kills, pos, heading, fps, frame ms)
+- Procedurally generated map per run, with random walls + doors
+- Chasing enemies that pathfind around walls; hitscan combat with blood
+  splatter, muzzle flash, and auto-respawn so the arena stays populated
+- 3 lives, i-frame window after each hit, blood-red palette flush while
+  hit, "YOU DIED" screen with final kill count
+- Live minimap (top-right overlay, toggleable), top-left heart HUD,
+  bottom HUD with kills / fps / frame ms / pos / heading
+- Pause toggle and a bottom-of-screen gun glyph with on-fire flash
+- WAD parser: reads any IWAD / PWAD's header + lump directory and
+  decodes VERTEXES / LINEDEFS lumps
+- Sound effects via terminal bell on shoot / hit / door open
 - Pure-functional world state, single `loop`/`recur` game loop
-- ~440 fps at 80×24, ~210 fps at 180×40
+- Sub-5ms `frame->string` even at 180×40 viewport
 
 ## Requirements
 
@@ -51,16 +58,19 @@ Inputs layer freely: `w` + `a` + `→` walks forward, strafes left, pans view ri
 ```
 src/
 ├── main.phel                 ; CLI entrypoint + Application wiring
-├── commands/play.phel        ; subcommand: play (game loop)
+├── commands/play.phel        ; subcommand: play (game loop, tick-world)
 └── modules/
     ├── state.phel            ; player + world records, pure updates
-    ├── map.phel              ; procedural grid + wall lookup
-    ├── engine.phel           ; raycaster (step march)
-    ├── enemy.phel            ; spawn, chase AI, hitscan
-    ├── render.phel           ; ANSI frame + minimap + HUD
-    └── input.phel            ; raw STDIN, non-blocking key reads
-tests/modules/                ; unit tests per module
+    ├── map.phel              ; procedural grid + walls + doors
+    ├── engine.phel           ; raycaster (step march, proj-dist)
+    ├── enemy.phel            ; spawn, chase AI, shoot, blood fx
+    ├── render.phel           ; ANSI frame + sprites + minimap + HUD
+    ├── input.phel            ; raw STDIN, non-blocking key reads
+    ├── sound.phel            ; terminal bell on game events
+    └── wad.phel              ; DOOM .wad parser (header, lumps, geometry)
+tests/                        ; mirrors src/, one *-test.phel per module
 phel-config.php               ; build / export / format config
+.github/workflows/ci.yml      ; CI: format-check, lint, test, build
 ```
 
 ## Architecture
@@ -68,7 +78,7 @@ phel-config.php               ; build / export / format config
 ```
 ┌─────────────┐    ┌───────────┐    ┌────────────┐    ┌─────────────────────┐
 │ input.phel  │───▶│ state.phel│───▶│ engine.phel│───▶│ render.phel         │
-│ drain-keys  │    │ pure step │    │ raycast    │    │ viewport+minimap+HUD│
+│ drain-keys  │    │ pure step │    │ raycast    │    │ viewport+sprites+HUD│
 └─────────────┘    └───────────┘    └────────────┘    └─────────────────────┘
                          ▲                 ▲
                          │                 │
@@ -76,14 +86,17 @@ phel-config.php               ; build / export / format config
                              chase + shoot
 ```
 
-Per frame in `commands/play.phel`:
+`commands/play.phel` splits IO from pure logic:
 
-1. `render!` paints viewport + minimap + HUD in one ANSI write.
-2. `drain-keys` reads queued STDIN bytes (held key = multiple steps).
-3. `apply-physics` folds inputs into the world; `advance` walks enemies.
-4. `damage-step` ticks i-frames and applies touch damage.
+- `game-loop` is the IO shell: it polls `stty size`, calls `render!`,
+  sleeps 1ms, drains keys, edge-detects toggle keys, and hands the
+  world to one pure function.
+- `tick-world(world, keys, dt, edges)` is that pure function: apply
+  toggles, refresh input counters, run physics, advance enemies,
+  resolve a fire shot, decay timers. Same fn the test suite calls
+  directly to assert per-frame behaviour.
 
-Render time is the throttle; 1ms `usleep` only yields the CPU.
+Render time is the throttle; the 1ms `usleep` only yields the CPU.
 
 ## Performance
 
@@ -105,12 +118,16 @@ Hot per-cell loop pushed off Phel's polymorphic runtime onto direct PHP ops:
 ## Development
 
 ```bash
-composer test          # phel tests
+composer test          # phel tests (107 across map/state/engine/enemy/render/wad/play)
 composer format        # auto-format
-composer lint          # phel-lint
+composer lint          # phel-lint (clean policy: zero warnings)
 composer build         # out/main.php standalone
 composer repl          # interactive REPL
 ```
+
+CI on every push runs `phel doctor`, `phel format --dry-run`, `phel lint`,
+`phel test`, `phel build` against PHP 8.4 and 8.5
+(`.github/workflows/ci.yml`).
 
 ## Roadmap
 
@@ -120,6 +137,13 @@ composer repl          # interactive REPL
 - [x] Doors (closed cells you open with E)
 - [x] WAD file parser (header + directory + VERTEXES/LINEDEFS lumps)
 - [x] Sound (terminal bell on shoot / hit / door open; `ext-ffi`+miniaudio left as a future swap)
+
+### Next steps
+
+- BSP-based renderer that consumes parsed WAD geometry (real DOOM levels)
+- `ext-ffi` + miniaudio backend behind the existing `sound/play-async!` surface
+- Weapon switching + ammo
+- Power-ups / pickups on the procedural map
 
 ## License
 

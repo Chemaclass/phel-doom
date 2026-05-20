@@ -168,25 +168,59 @@
                            acc)))))]
     (sort-by (fn [x] (php/- 0.0 (:dist x))) raw)))
 
+(def pause-inner-width
+  "Character width of each interior row of the pause menu (between the
+   left and right borders). Every row pads to this width so the box
+   aligns cleanly regardless of label length."
+  28)
+
+(defn- pause-pad
+  "Pad `text` to `width` with trailing spaces. Used to make every menu
+   row the same width so the right border lines up."
+  [text width]
+  (str text (php/str_repeat " " (php/max 0 (php/- width (php/strlen text))))))
+
 (defn- pause-menu-string
   "Build the pause overlay as a single ANSI string with absolute cursor
    moves. Pure: caller pushes it into the parts array."
   [vw vh sound-on?]
-  (let [center-col (php/+ (php/intdiv vw 2) 1)
-        row0       (php/max 1 (php/- (php/intdiv vh 2) 3))]
-    (let [line (fn [r text]
-                 (str "\e[" r ";"
-                      (php/max 1 (php/- center-col (php/intdiv (php/strlen text) 2)))
-                      "H" text "\e[0m"))]
-      (str
-       (line row0                "\e[40;93;1m         PAUSED         ")
-       (line (php/+ row0 2)      (str "\e[40;97m  n  sound: \e[1m"
-                                      (if sound-on? "on " "off")
-                                      "\e[0m\e[40;97m         "))
-       (line (php/+ row0 3)      "\e[40;97m  p  resume                ")
-       (line (php/+ row0 4)      "\e[40;97m  q  quit                  ")
-       (line (php/+ row0 6)      "\e[40;90m  phel-doom  by Chemaclass ")
-       (line (php/+ row0 7)      "\e[40;90m  written in Phel Lang     ")))))
+  (let [rows
+        (let [w pause-inner-width]
+          (let [bar  (php/str_repeat "─" w)
+                blnk (str "│" (pause-pad "" w) "│")
+                bord (fn [text]
+                       (str "│\e[97m" (pause-pad text w) "│"))]
+            [(str "┌" bar "┐")
+             blnk
+             (str "│\e[1;93m" (pause-pad "           PAUSED" w) "\e[0;97m│")
+             blnk
+             (str "├" bar "┤")
+             blnk
+             ;; Sound row: pad accounts for invisible bold escape bytes.
+             (str "│\e[97m"
+                  (pause-pad (str "  n   sound: \e[1m"
+                                  (if sound-on? "on" "off")
+                                  "\e[0;97m")
+                             (php/+ w 10))
+                  "│")
+             (bord "  p   resume")
+             (bord "  q   quit")
+             blnk
+             (str "├" bar "┤")
+             blnk
+             (str "│\e[2;97m" (pause-pad "  phel-doom by Chemaclass" w) "\e[0;97m│")
+             (str "│\e[2;97m" (pause-pad "  written in Phel Lang"   w) "\e[0;97m│")
+             blnk
+             (str "└" bar "┘")]))]
+    (let [col0 (php/max 1 (php/- (php/+ (php/intdiv vw 2) 1)
+                                 (php/intdiv (php/+ pause-inner-width 2) 2)))
+          row0 (php/max 1 (php/- (php/intdiv vh 2) 4))]
+      (loop [i 0 acc ""]
+        (if (php/>= i (count rows))
+          acc
+          (recur (php/+ i 1)
+                 (str acc "\e[" (php/+ row0 i) ";" col0 "H\e[40;97m"
+                      (get rows i) "\e[0m")))))))
 
 (defn- layout
   "Viewport fills the whole terminal. The minimap is an overlay in the

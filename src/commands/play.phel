@@ -300,61 +300,82 @@
   {:m false :sp false :p false :e false :n false})
 
 (defn- game-loop [world0]
-  (loop [world     world0
-         t-last    (php/microtime true)
-         frame-ms  0
-         fps       0
-         prev-keys initial-key-snapshot
-         dims      [0 0]]
-    (let [[rows cols] (term-size)]
-      (when (not= [rows cols] dims) (clear-screen))
-      (render! world
-               {:fps       fps
-                :frame-ms  frame-ms
-                :kills     (:kills world)
-                :lives     (:lives world)
-                :iframes   (:iframes world)
-                :fire-anim (:fire-anim world)
-                :fx        (:fx world)
-                :paused    (:paused world)
-                :sound-on  (:sound-on world)}
-               cols rows)
-      (php/usleep frame-us)
-      (let [keys     (drain-keys)
-            now      (php/microtime true)
-            ms       (php/intval (php/* (php/- now t-last) 1000))
-            f        (if (php/> ms 0) (php/intval (php// 1000.0 ms)) 0)
-            now-keys (key-states keys)
-            world'   (tick-world world keys (php// ms 1000.0)
-                                 (rising-edges now-keys prev-keys))]
-        (cond
-          (str/contains? keys "q")   :quit
-          (php/<= (:lives world') 0) {:game-over true :kills (:kills world')}
-          :else                      (recur world' now ms f now-keys [rows cols]))))))
+  (let [t-start (php/microtime true)]
+    (loop [world     world0
+           t-last    t-start
+           frame-ms  0
+           fps       0
+           prev-keys initial-key-snapshot
+           dims      [0 0]]
+      (let [[rows cols] (term-size)]
+        (when (not= [rows cols] dims) (clear-screen))
+        (render! world
+                 {:fps       fps
+                  :frame-ms  frame-ms
+                  :kills     (:kills world)
+                  :lives     (:lives world)
+                  :iframes   (:iframes world)
+                  :fire-anim (:fire-anim world)
+                  :fx        (:fx world)
+                  :paused    (:paused world)
+                  :sound-on  (:sound-on world)}
+                 cols rows)
+        (php/usleep frame-us)
+        (let [keys     (drain-keys)
+              now      (php/microtime true)
+              ms       (php/intval (php/* (php/- now t-last) 1000))
+              f        (if (php/> ms 0) (php/intval (php// 1000.0 ms)) 0)
+              now-keys (key-states keys)
+              world'   (tick-world world keys (php// ms 1000.0)
+                                   (rising-edges now-keys prev-keys))]
+          (cond
+            (str/contains? keys "q")   :quit
+            (php/<= (:lives world') 0) {:game-over   true
+                                        :kills       (:kills world')
+                                        :survived-s  (php/intval (php/- now t-start))}
+            :else                      (recur world' now ms f now-keys [rows cols])))))))
+
+(defn- death-screen-rows
+  "Build the centred death-screen rows as a vector of [visible-text,
+   sgr-prefix] pairs. Two halves are split so the centring math uses
+   visible-width and the ANSI styling stays independent."
+  [kills survived-s]
+  [["          YOU  DIED          "    "\e[48;5;52;97;1;5m"]
+   [""                                  ""]
+   [(str "   kills:    " kills "   ")     "\e[48;5;52;97m"]
+   [(str "   time:     " survived-s "s") "\e[48;5;52;97m"]
+   [""                                  ""]
+   ["   r  restart      q  quit   "     "\e[48;5;52;97;1m"]])
 
 (defn- render-death-screen
-  "Full-screen red wash with YOU DIED + final kill count + restart /
-   quit hint, centred. Rebuilt every frame so resizing keeps it
+  "Full-screen red wash + a small centred menu (kills + survival time
+   + restart / quit hint). Rebuilt each frame so resizing keeps it
    centred."
-  [cols rows kills]
+  [cols rows kills survived-s]
   (let [parts (php/array)]
     (php/array_push parts "\e[H")
+    ;; Paint every cell red via absolute cursor positioning, so we
+    ;; never emit a trailing \n that would scroll the buffer.
     (loop [r 1]
       (when (php/<= r rows)
-        (php/array_push parts (php/str_repeat "\e[48;5;52m " cols))
-        (php/array_push parts "\e[0m\n")
+        (php/array_push parts (str "\e[" r ";1H\e[48;5;52m"
+                                   (php/str_repeat " " cols)))
         (recur (php/+ r 1))))
-    (let [center-col (php/+ (php/intdiv cols 2) 1)
-          row0       (php/max 1 (php/- (php/intdiv rows 2) 2))]
-      (let [line (fn [r text]
-                   (php/array_push
-                    parts
-                    (str "\e[" r ";"
-                         (php/max 1 (php/- center-col (php/intdiv (php/strlen text) 2)))
-                         "H" text "\e[0m")))]
-        (line row0           "\e[48;5;88;97;1;5m         YOU DIED         ")
-        (line (php/+ row0 2) (str "\e[48;5;52;97m   kills: " kills "   "))
-        (line (php/+ row0 4) "\e[48;5;52;97m  r  restart    q  quit   ")))
+    (let [items   (death-screen-rows kills survived-s)
+          n       (count items)
+          row-top (php/max 1 (php/- (php/intdiv rows 2) (php/intdiv n 2)))
+          ctr     (php/+ (php/intdiv cols 2) 1)]
+      (loop [i 0]
+        (when (php/< i n)
+          (let [text (get (get items i) 0)
+                sgr  (get (get items i) 1)]
+            (when (php/> (php/strlen text) 0)
+              (php/array_push
+               parts
+               (str "\e[" (php/+ row-top i) ";"
+                    (php/max 1 (php/- ctr (php/intdiv (php/strlen text) 2)))
+                    "H" sgr text "\e[0m"))))
+          (recur (php/+ i 1)))))
     (print (php/implode "" parts))
     (php/flush)))
 
@@ -362,11 +383,11 @@
   "Render the death screen at the current terminal size each frame and
    block on the user picking restart (R) or quit (Q). Resizing while
    dead is handled because we re-poll term-size every iteration."
-  [kills]
+  [kills survived-s]
   (loop [dims [0 0]]
     (let [[rows cols] (term-size)]
       (when (not= [rows cols] dims) (clear-screen))
-      (render-death-screen cols rows kills)
+      (render-death-screen cols rows kills survived-s)
       (php/usleep 16000)
       (let [keys (drain-keys)]
         (cond
@@ -386,13 +407,17 @@
   (loop []
     (let [result (game-loop (fresh-world))]
       (if (and (map? result) (:game-over result))
-        (let [choice (death-loop (:kills result))]
+        (let [choice (death-loop (:kills result) (:survived-s result))]
           (clear-screen)
           (when (= choice :restart) (recur)))
         nil)))
   (restore!)
   (clear-screen)
   (cli/success ctx "Thanks for playing.")
+  (println)
+  (println "  \e[1mphel-doom\e[0m  by \e[1mChemaclass\e[0m  https://github.com/Chemaclass/phel-doom")
+  (println "  written in \e[1mPhel Lang\e[0m  https://phel-lang.org/")
+  (println)
   0)
 
 (def play-command

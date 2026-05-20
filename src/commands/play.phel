@@ -1,11 +1,12 @@
 (ns phel-doom.commands.play
   (:require phel.cli :as cli)
   (:require phel.string :as str)
-  (:require phel-doom.modules.state  :refer [new-player new-world move-player turn-player toggle-map toggle-pause with-enemies])
+  (:require phel-doom.modules.state  :refer [new-player new-world move-player turn-player
+                                             toggle-map toggle-pause toggle-sound with-enemies])
   (:require phel-doom.modules.map    :refer [random-grid random-spawn wall? cell seed-doors])
   (:require phel-doom.modules.engine :refer [cast-ray])
   (:require phel-doom.modules.enemy  :refer [spawn-enemies advance shoot])
-  (:require phel-doom.modules.sound  :refer [play-beep!])
+  (:require phel-doom.modules.sound  :refer [play-sfx!])
   (:require phel-doom.modules.render :refer [render! clear-screen])
   (:require phel-doom.modules.input  :refer [init-input! restore! drain-keys]))
 
@@ -144,7 +145,7 @@
           p  (:player world)]
       (if (and (php/<= i 0.0) (touching? (:enemies w') (:x p) (:y p)))
         (do
-          (play-beep!)
+          (when (:sound-on world) (play-sfx! :hit))
           (-> w' (update :lives (fn [l] (php/max 0 (php/- l 1))))
               (assoc :iframes iframe-seconds)))
         w'))))
@@ -160,7 +161,7 @@
       (let [[es hit? hit-pos idx] (shoot (:enemies world) (:x p) (:y p) (:angle p)
                                          wall-d shot-hit-radius shot-max-range)]
         (do
-          (play-beep!)
+          (when (:sound-on world) (play-sfx! :shoot))
           (if hit?
             (let [respawn (first (spawn-enemies (:grid world) 1
                                                 enemy-min-spawn-dist (:x p) (:y p)))]
@@ -219,17 +220,18 @@
                 cy (php/intval (php/+ py (php/* s (php/sin a))))]
             (if (= 2 (cell (:grid world) cx cy))
               (do
-                (play-beep!)
+                (when (:sound-on world) (play-sfx! :door))
                 (-> world
                     (update :grid (fn [g] (assoc-in g [cy cx] 0)))
                     (update :pgrid (fn [pg] (aset pg cy cx 0) pg))))
               (recur (php/+ s 0.3)))))))))
 
 (defn- handle-toggles
-  "Apply edge-triggered toggles (pause, minimap visibility) for one frame."
+  "Apply edge-triggered toggles (pause, minimap, sound) for one frame."
   [world edges]
-  (let [w (if (:toggle-pause edges) (toggle-pause world) world)]
-    (if (:toggle-map edges) (toggle-map w) w)))
+  (let [w0 (if (:toggle-pause edges) (toggle-pause world) world)]
+    (let [w1 (if (:toggle-map edges) (toggle-map w0) w0)]
+      (if (:toggle-sound edges) (toggle-sound w1) w1))))
 
 (defn- tick-enemies
   "Walk every alive enemy one dt-scaled step toward the player."
@@ -270,6 +272,7 @@
          sp-prev  false
          p-prev   false
          e-prev   false
+         n-prev   false
          dims     [0 0]]
     (let [[rows cols] (term-size)]
       (when (not= [rows cols] dims) (clear-screen))
@@ -281,7 +284,8 @@
                 :iframes   (:iframes world)
                 :fire-anim (:fire-anim world)
                 :fx        (:fx world)
-                :paused    (:paused world)}
+                :paused    (:paused world)
+                :sound-on  (:sound-on world)}
                cols rows)
       (php/usleep frame-us)
       (let [keys   (drain-keys)
@@ -289,6 +293,7 @@
             sp-now (str/contains? keys " ")
             p-now  (str/contains? keys "p")
             e-now  (str/contains? keys "e")
+            n-now  (str/contains? keys "n")
             now    (php/microtime true)
             ms     (php/intval (php/* (php/- now t-last) 1000))
             f      (if (php/> ms 0) (php/intval (php// 1000.0 ms)) 0)
@@ -296,11 +301,12 @@
                                {:fire         (and sp-now (not sp-prev))
                                 :toggle-map   (and m-now (not m-prev))
                                 :toggle-pause (and p-now (not p-prev))
+                                :toggle-sound (and n-now (not n-prev))
                                 :open-door    (and e-now (not e-prev))})]
         (cond
           (str/contains? keys "q")   :quit
           (php/<= (:lives world') 0) {:game-over true :kills (:kills world')}
-          :else                      (recur world' now ms f m-now sp-now p-now e-now [rows cols]))))))
+          :else                      (recur world' now ms f m-now sp-now p-now e-now n-now [rows cols]))))))
 
 (defn- fresh-world []
   (let [grid (seed-doors (random-grid map-w map-h num-walls) num-doors)]

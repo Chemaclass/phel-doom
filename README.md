@@ -48,7 +48,8 @@ make play
 | `space`   | Fire                |
 | `e`       | Open door in front  |
 | `m`       | Toggle minimap      |
-| `p`       | Pause / resume      |
+| `n`       | Toggle sound on/off |
+| `p`       | Pause (menu shows sound, credits)  |
 | `q`       | Quit                |
 
 Inputs layer freely: `w` + `a` + `→` walks forward, strafes left, pans view right.

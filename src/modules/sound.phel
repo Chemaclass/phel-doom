@@ -1,36 +1,45 @@
 (ns phel-doom.modules.sound)
 
 ;; ---------------------------------------------------------------------
-;; Sound effects via OS shell-out. NOT the ext-ffi + miniaudio backend
-;; on the roadmap (that's a heavy native binding with its own
-;; cross-platform install story). This is the pragmatic minimum: fire
-;; an async background process per event using whichever player is on
-;; PATH.
+;; Sound effects via OS shell-out.
 ;;
-;; Per-event cost is one fork + exec, ~5–10 ms; tolerable for sparse
-;; events like shoot / hit / open-door. Effects skip silently if the
-;; player binary is missing, so the game never blocks waiting for
-;; audio on a system without speakers.
+;; Strategy:
+;;   1. Try a real audio file via the first audio player on PATH
+;;      (afplay/paplay/aplay/play). Use built-in system sound files so
+;;      we don't have to ship audio assets. macOS has a stable set
+;;      under /System/Library/Sounds; Linux distros vary too much to
+;;      hardcode, so the bell is the fallback there.
+;;   2. If no player is on PATH or the file doesn't exist, fall back
+;;      to writing \a to STDOUT (terminal bell).
+;;
+;; Cost per event: one fork+exec via system(), fired in the background
+;; with & so the game loop never blocks. ext-ffi + miniaudio would be
+;; cheaper and bundled, but it's a heavy native binding; keeping the
+;; public surface here (play-sfx!) lets that swap happen later without
+;; touching callers.
 ;; ---------------------------------------------------------------------
 
 (def player-binaries
   "Audio players we'll try in order. First one present on PATH wins."
-  ["afplay"      ; macOS
-   "paplay"      ; Linux + PulseAudio
-   "aplay"       ; Linux + ALSA
-   "play"])      ; sox
+  ["afplay" "paplay" "aplay" "play"])
 
-(def cached-player
-  "Memoised result of resolving an audio player on $PATH. nil = not
-   resolved yet; false = no player available, skip all sounds; string
-   = the binary name to invoke."
-  (atom nil))
+(def macos-sounds
+  "macOS ships these .aiff files in every install. Map game events to
+   short, distinctive ones."
+  {:shoot "/System/Library/Sounds/Pop.aiff"
+   :hit   "/System/Library/Sounds/Sosumi.aiff"
+   :door  "/System/Library/Sounds/Tink.aiff"})
+
+(def state
+  "Memoised session state: the resolved player binary and per-event
+   sound files for this host. nil entries mean 'not yet resolved'."
+  (atom {:player nil :sounds nil :probed false}))
 
 (defn- which
-  "Return the absolute path of `bin` if it's on PATH, else nil."
+  "Return the path of `bin` if it's on PATH, else nil."
   [bin]
-  (let [out (php/array)
-        _   (php/exec (str "command -v " bin " 2>/dev/null") out)]
+  (let [out (php/array)]
+    (php/exec (str "command -v " bin " 2>/dev/null") out)
     (let [line (php/aget out 0)]
       (if (or (php/=== line nil) (= line ""))
         nil
@@ -39,40 +48,45 @@
 (defn- resolve-player []
   (loop [bins player-binaries]
     (if (empty? bins)
-      false
-      (let [bin (first bins)]
-        (if (which bin)
-          bin
-          (recur (rest bins)))))))
+      nil
+      (if (which (first bins))
+        (first bins)
+        (recur (rest bins))))))
 
-(defn player
-  "Return the audio player binary to use this session, or false when no
-   supported player is on PATH (sound calls then become no-ops)."
-  {:export true}
+(defn- resolve-sounds
+  "Pick a per-event sound map appropriate for this OS. Returns nil if
+   the OS doesn't ship usable defaults."
   []
-  (let [v @cached-player]
-    (if (php/=== v nil)
-      (let [r (resolve-player)]
-        (reset! cached-player r)
-        r)
-      v)))
+  (let [os (php/strtolower (php/php_uname "s"))]
+    (if (php/str_contains os "darwin")
+      macos-sounds
+      nil)))
 
-(defn play-async!
-  "Fire-and-forget: spawn the player in the background pointing at
-   `path`. Returns immediately. If no player is available or the file
-   doesn't exist, this is a silent no-op so the game keeps running on
-   bare/headless systems."
-  {:export true}
-  [path]
-  (let [p (player)]
-    (when (and p path (php/file_exists path))
-      (php/exec (str p " " (php/escapeshellarg path) " > /dev/null 2>&1 &")))))
+(defn- ensure-probed! []
+  (let [s @state]
+    (when (not (:probed s))
+      (reset! state {:player (resolve-player)
+                     :sounds (resolve-sounds)
+                     :probed true}))))
 
-(defn play-beep!
-  "Cross-platform bell as a last-resort fallback: write \\a to STDOUT.
-   Terminal handles it (typically a short audible beep, sometimes a
-   visual flash, sometimes nothing depending on user prefs)."
-  {:export true}
-  []
+(defn- play-file-async! [player path]
+  (php/exec (str player " " (php/escapeshellarg path) " > /dev/null 2>&1 &")))
+
+(defn- bell! []
   (php/fwrite php/STDOUT "\a")
   (php/fflush php/STDOUT))
+
+(defn play-sfx!
+  "Play the sound effect tagged `event` (:shoot, :hit, :door). Falls
+   through to the terminal bell when no native player + file is
+   available, so the game still gives feedback on bare/headless
+   systems."
+  {:export true}
+  [event]
+  (ensure-probed!)
+  (let [s @state]
+    (let [p    (:player s)
+          path (and (:sounds s) (get (:sounds s) event))]
+      (if (and p path (php/file_exists path))
+        (play-file-async! p path)
+        (bell!)))))

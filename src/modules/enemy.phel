@@ -1,5 +1,14 @@
 (ns phel-doom.modules.enemy
-  (:require phel-doom.modules.map :refer [random-spawn]))
+  (:require phel-doom.modules.map :refer [random-spawn wall?]))
+
+(def chase-speed
+  "Enemy walking speed in world units per second. Set slower than the
+   player so they're catchable."
+  2.0)
+(def stop-dist
+  "Enemies stop closing in once this close, so they don't pile up
+   inside the player's cell."
+  0.6)
 
 (defn new-enemy
   "Create an enemy record. `x` and `y` are world-space floats; `:alive`
@@ -7,6 +16,38 @@
   {:export true}
   [x y]
   {:x x :y y :alive true})
+
+(defn- step-toward
+  "Move enemy one frame of chase-speed * dt toward (target-x, target-y),
+   skipping any axis whose new cell would collide with a wall. Returns
+   an updated enemy map."
+  [enemy grid target-x target-y dt]
+  (let [ex (:x enemy)
+        ey (:y enemy)]
+    (let [dx (php/- target-x ex)
+          dy (php/- target-y ey)]
+      (let [dist (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
+        (if (php/<= dist stop-dist)
+          enemy
+          (let [step (php/* chase-speed dt)]
+            (let [nx (php/+ ex (php/* step (php// dx dist)))
+                  ny (php/+ ey (php/* step (php// dy dist)))]
+              (let [nx' (if (wall? grid (php/intval nx) (php/intval ey)) ex nx)
+                    ny' (if (wall? grid (php/intval ex) (php/intval ny)) ey ny)]
+                (assoc enemy :x nx' :y ny')))))))))
+
+(defn advance
+  "Per-frame update: walk every alive enemy a dt-scaled step toward the
+   player, with axis-separated wall collision so they slide along walls
+   instead of getting stuck."
+  {:export true}
+  [enemies grid player-x player-y dt]
+  (apply vector
+         (map (fn [e]
+                (if (:alive e)
+                  (step-toward e grid player-x player-y dt)
+                  e))
+              enemies)))
 
 (defn spawn-enemies
   "Place `n` enemies on random open cells of `grid`, well away from the

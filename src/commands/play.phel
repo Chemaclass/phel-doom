@@ -3,7 +3,7 @@
   (:require phel.string :as str)
   (:require phel-doom.modules.state  :refer [new-player new-world move-player turn-player toggle-map with-enemies])
   (:require phel-doom.modules.map    :refer [random-grid random-spawn wall?])
-  (:require phel-doom.modules.enemy  :refer [spawn-enemies])
+  (:require phel-doom.modules.enemy  :refer [spawn-enemies advance])
   (:require phel-doom.modules.render :refer [render! clear-screen])
   (:require phel-doom.modules.input  :refer [init-input! restore! drain-keys]))
 
@@ -116,11 +116,17 @@
             now    (php/microtime true)
             ms     (php/intval (php/* (php/- now t-last) 1000))
             f      (if (php/> ms 0) (php/intval (php// 1000.0 ms)) 0)
-            world' (apply-physics
-                    (refresh-from-keys
-                     (if (and m-now (not m-prev)) (toggle-map world) world)
-                     keys)
-                    (php// ms 1000.0))]
+            world' (let [dt (php// ms 1000.0)]
+                     (let [moved (apply-physics
+                                  (refresh-from-keys
+                                   (if (and m-now (not m-prev)) (toggle-map world) world)
+                                   keys)
+                                  dt)]
+                       (update moved :enemies advance
+                               (:grid moved)
+                               (:x (:player moved))
+                               (:y (:player moved))
+                               dt)))]
         (if (str/contains? keys "q")
           :quit
           (recur world' now ms f m-now [rows cols]))))))

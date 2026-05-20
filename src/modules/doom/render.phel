@@ -1,0 +1,51 @@
+(ns phel-doom.modules.doom.render
+  (:require phel-doom.modules.doom.engine :refer [cast-frame max-depth]))
+
+(def width 80)
+(def height 24)
+(def sky    "\e[48;5;236m ")
+(def floor  "\e[48;5;239m ")
+
+(defn- shade [dist]
+  (let [t (- 1.0 (php/min 1.0 (/ dist max-depth)))
+        c (php/intval (* t 255))]
+    (str "\e[48;2;" c ";" c ";" c "m ")))
+
+(defn- col-meta [col-info]
+  (let [dist   (:dist col-info)
+        wall-h (php/intval (/ height (php/max 0.1 dist)))
+        top    (php/intval (/ (- height wall-h) 2))]
+    {:top    top
+     :bottom (+ top wall-h)
+     :shade  (shade dist)}))
+
+(defn frame->string
+  "Render the world to one ANSI-coded multi-line frame string."
+  {:export true}
+  [world]
+  (let [metas (apply vector (map col-meta (cast-frame world width)))
+        line  (fn [row]
+                (apply str
+                       (map (fn [col]
+                              (let [m (get metas col)]
+                                (cond
+                                  (< row (:top m))     sky
+                                  (>= row (:bottom m)) floor
+                                  :else                (:shade m))))
+                            (range 0 width))))]
+    (apply str
+           (map (fn [row] (str (line row) "\e[0m\n"))
+                (range 0 height)))))
+
+(defn clear-screen
+  "ANSI clear + cursor home."
+  {:export true}
+  []
+  (print "\e[2J\e[H"))
+
+(defn render!
+  "Clear screen and print one frame."
+  {:export true}
+  [world]
+  (clear-screen)
+  (print (frame->string world)))

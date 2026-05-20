@@ -1,0 +1,49 @@
+(ns phel-doom.commands.play
+  (:require phel.cli :as cli)
+  (:require phel-doom.modules.doom.state  :refer [new-player new-world move-player turn-player])
+  (:require phel-doom.modules.doom.map    :refer [default-grid wall?])
+  (:require phel-doom.modules.doom.render :refer [render! clear-screen])
+  (:require phel-doom.modules.doom.input  :refer [init-input! restore! read-key]))
+
+(def move-speed 0.2)
+(def turn-speed 0.1)
+(def frame-us 33000)
+
+(defn- try-move [world dx dy]
+  (let [{:keys [grid player]} world
+        nx                    (+ (:x player) dx)
+        ny                    (+ (:y player) dy)]
+    (if (wall? grid (php/intval nx) (php/intval ny))
+      world
+      (move-player world dx dy))))
+
+(defn- step-input [world key]
+  (let [a (:angle (:player world))]
+    (cond
+      (= key "w") (try-move world (* move-speed (php/cos a)) (* move-speed (php/sin a)))
+      (= key "s") (try-move world (* (- 0 move-speed) (php/cos a)) (* (- 0 move-speed) (php/sin a)))
+      (= key "a") (turn-player world (- 0 turn-speed))
+      (= key "d") (turn-player world turn-speed)
+      :else       world)))
+
+(defn- game-loop [world0]
+  (loop [world world0]
+    (render! world)
+    (php/usleep frame-us)
+    (let [key (read-key)]
+      (if (= key "q")
+        :quit
+        (recur (step-input world key))))))
+
+(defn- run-play [ctx]
+  (init-input!)
+  (game-loop (new-world default-grid (new-player 8.0 8.0 0.0)))
+  (restore!)
+  (clear-screen)
+  (cli/success ctx "Thanks for playing.")
+  0)
+
+(def play-command
+  {:name "play"
+   :doc  "Start the DOOM showcase. Controls: WASD to move/turn, Q to quit."
+   :run  run-play})

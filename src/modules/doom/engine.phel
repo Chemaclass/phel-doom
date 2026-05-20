@@ -1,0 +1,38 @@
+(ns phel-doom.modules.doom.engine
+  (:require phel-doom.modules.doom.map :refer [wall?]))
+
+(def fov (/ php/M_PI 3.0))
+(def max-depth 16.0)
+(def step 0.05)
+
+(defn cast-ray
+  "March a ray from (px, py) at the given angle until it hits a wall or `max-depth`.
+   Returns the travelled distance."
+  {:export true}
+  [grid px py angle]
+  (let [cos-a (php/cos angle)
+        sin-a (php/sin angle)]
+    (loop [dist 0.0]
+      (if (>= dist max-depth)
+        max-depth
+        (let [x (+ px (* dist cos-a))
+              y (+ py (* dist sin-a))]
+          (if (wall? grid (php/intval x) (php/intval y))
+            dist
+            (recur (+ dist step))))))))
+
+(defn cast-frame
+  "Cast `width` rays across the player's FOV. Returns a sequence of
+   {:dist d :angle a} entries, one per screen column. `:dist` is fish-eye
+   corrected so straight walls render straight."
+  {:export true}
+  [world width]
+  (let [grid                (:grid world)
+        {:keys [x y angle]} (:player world)
+        half-fov            (/ fov 2.0)]
+    (map (fn [col]
+           (let [ray-angle (+ angle (- (* fov (/ col width)) half-fov))
+                 dist      (cast-ray grid x y ray-angle)
+                 corrected (* dist (php/cos (- ray-angle angle)))]
+             {:dist corrected :angle ray-angle}))
+         (range 0 width))))

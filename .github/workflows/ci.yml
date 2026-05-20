@@ -1,0 +1,59 @@
+on: [push]
+
+name: CI
+
+jobs:
+
+  tests:
+    name: Tests (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.4', '8.5']
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: composer
+
+      - name: Get composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache dependencies
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-php${{ matrix.php }}-composer-${{ hashFiles('composer.json') }}
+          restore-keys: ${{ runner.os }}-php${{ matrix.php }}-composer-
+
+      - name: Cache phel compiled output
+        uses: actions/cache@v5
+        with:
+          path: .phel/cache
+          key: ${{ runner.os }}-php${{ matrix.php }}-phel-${{ hashFiles('src/**/*.phel', 'tests/**/*.phel', 'phel-config.php', 'composer.json') }}
+          restore-keys: |
+            ${{ runner.os }}-php${{ matrix.php }}-phel-
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-ansi --no-progress
+
+      - name: Phel doctor
+        run: vendor/bin/phel doctor
+
+      - name: Phel format check
+        run: vendor/bin/phel format --dry-run
+
+      - name: Phel lint
+        run: vendor/bin/phel lint --format=github src tests
+
+      - name: Run phel tests
+        run: vendor/bin/phel test
+
+      - name: Build standalone binary
+        run: vendor/bin/phel build

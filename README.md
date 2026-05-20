@@ -1,20 +1,13 @@
 # phel-doom
 
+![phel-doom in action](docs/screenshot.png)
+
 A DOOM-lite showcase written in [Phel Lang](https://phel-lang.org/), a
 functional Lisp that compiles to PHP.
 
 `phel-doom` ships a terminal raycaster: pure-functional world state, ANSI 24-bit
-shaded walls, WASD controls. Runs entirely in your shell.
-
-```
-┌──────────────────────────────────────────────┐
-│ ░░░░░░░░░ sky ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ │
-│ ░░░░ ███████ wall ███████ ░░░░░░░░░░░░░░░░░ │
-│      ███████ shaded by ░░░░░░░░░░░░░░░░░░░░ │
-│      ███████ distance  ░░░░░░░░░░░░░░░░░░░░ │
-│ ▓▓▓▓▓▓▓▓▓▓▓▓ floor ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ │
-└──────────────────────────────────────────────┘
-```
+shaded walls, WASD controls, a live minimap, and a HUD with position, heading,
+fps, and per-frame timings. Runs entirely in your shell.
 
 ## Requirements
 

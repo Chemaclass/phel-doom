@@ -1,5 +1,5 @@
 (ns phel-doom.modules.render
-  (:require phel-doom.modules.engine :refer [cast-frame fov max-depth]))
+  (:require phel-doom.modules.engine :refer [cast-frame max-depth proj-dist]))
 
 (def sky    "\e[48;5;236m ")
 (def floor  "\e[48;5;239m ")
@@ -31,16 +31,14 @@
 
 (defn- minimap-rows
   "Render the world's grid into a vector of ANSI-coded strings, one per
-   grid row. Player cell shows a directional marker derived from angle.
-   `scale` repeats each cell horizontally so big-map mode renders wider."
-  [world scale]
+   grid row. Player cell shows a directional marker derived from angle."
+  [world]
   (let [grid                (:grid world)
         {:keys [x y angle]} (:player world)
         pcol                (php/intval x)
         prow                (php/intval y)
         marker              (direction-char angle)
-        gw                  (count (first grid))
-        pad                 (php/str_repeat " " (- scale 1))]
+        gw                  (count (first grid))]
     (apply vector
            (map (fn [row]
                   (let [grow (get grid row)]
@@ -48,12 +46,10 @@
                            (map (fn [col]
                                   (cond
                                     (and (= row prow) (= col pcol))
-                                    (str "\e[93;1m" marker "\e[0m" pad)
+                                    (str "\e[93;1m" marker "\e[0m")
                                     (= 1 (get grow col))
-                                    (str "\e[37;1m#\e[0m"
-                                         (if (> scale 1) (str "\e[37;1m#\e[0m"
-                                                              (php/str_repeat " " (- scale 2))) ""))
-                                    :else                           (str "\e[90m·\e[0m" pad)))
+                                    "\e[37;1m#\e[0m"
+                                    :else                           "\e[90m·\e[0m"))
                                 (range 0 gw)))))
                 (range 0 (count grid))))))
 
@@ -70,44 +66,29 @@
          "  \e[2m[wasd move, m map, q quit]\e[0m")))
 
 (defn- layout
-  "Pick viewport dims, minimap anchor, and minimap cell scale based on
-   terminal size and whether the big map is toggled. Overlay mode:
-   viewport fills the screen, minimap sits in the top-right corner at
-   1:1 scale. Big-map mode: viewport shrinks to leave a 2x-scaled
-   minimap in a dedicated right-hand column."
-  [cols rows show-map mw]
-  (let [vh (- rows hud-rows)]
-    (if show-map
-      (let [scale 2
-            vw    (php/max 10 (- cols (* mw scale) 2))]
-        {:vw      vw
-         :vh      vh
-         :map-col (+ vw 3)
-         :map-row 1
-         :scale   scale})
-      {:vw      cols
-       :vh      vh
-       :map-col (php/max 1 (+ (- cols mw) 1))
-       :map-row 1
-       :scale   1})))
+  "Viewport always fills the terminal; the minimap is an overlay in the
+   top-right corner that the M key shows or hides."
+  [cols rows mw]
+  {:vw      cols
+   :vh      (- rows hud-rows)
+   :map-col (php/max 1 (+ (- cols mw) 1))
+   :map-row 1})
 
 (defn frame->string
-  "Render the world sized to cols x rows. Walls use a fixed horizontal
-   FOV plus a 2:1 character-aspect correction so perspective stays
-   consistent across terminal sizes. Minimap is overlaid top-right by
-   default, or moved to a dedicated right column when (:show-map world)
-   is truthy."
+  "Render the world sized to cols x rows. Walls project at a constant
+   scale (proj-dist from engine) with a 2:1 character-aspect correction,
+   so resizing the terminal widens the FOV instead of growing the walls.
+   Minimap is overlaid top-right when (:show-map world) is truthy."
   {:export true}
   [world stats cols rows]
-  (let [{:keys [vw vh map-col map-row scale]}
-        (layout cols rows (:show-map world) (count (first (:grid world))))
-        proj-dist                             (/ (* 0.5 vw) (php/tan (* 0.5 fov)))
-        columns                               (cast-frame world vw)
-        tops                                  (php/array)
-        bots                                  (php/array)
-        shades                                (php/array)
-        mrows                                 (minimap-rows world scale)
-        visible-mh                            (php/min (count mrows) vh)]
+  (let [{:keys [vw vh map-col map-row]}
+        (layout cols rows (count (first (:grid world))))
+        columns                         (cast-frame world vw)
+        tops                            (php/array)
+        bots                            (php/array)
+        shades                          (php/array)
+        mrows                           (if (:show-map world) (minimap-rows world) [])
+        visible-mh                      (php/min (count mrows) vh)]
     (loop [col 0 cs columns]
       (when (< col vw)
         (let [dist   (:dist (first cs))

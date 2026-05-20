@@ -1,8 +1,14 @@
 (ns phel-doom.modules.engine)
 
-(def fov (/ php/M_PI 3.0))
 (def max-depth 16.0)
 (def step 0.25)
+(def proj-dist
+  "Horizontal projection distance in screen cells. Wall heights are
+   `proj-dist / (dist * char-aspect)`, so this controls how big walls
+   look at a given world distance. The horizontal FOV emerges as
+   `2 * atan(viewport-width / 2 / proj-dist)` — wider terminals show
+   more of the world without changing wall scale."
+  70.0)
 
 (defn- pwall?
   "Wall test against a PHP-native nested array. OOB returns nil from
@@ -25,16 +31,17 @@
         :else                                        (recur (+ dist step) (+ x dx) (+ y dy))))))
 
 (defn cast-frame
-  "Cast `width` rays across the player's FOV. Returns a sequence of
-   {:dist d :angle a} entries, one per screen column. `:dist` is fish-eye
-   corrected so straight walls render straight."
+  "Cast `width` rays from the player. Each ray's angular offset is
+   atan(col-offset / proj-dist), so wider viewports widen the FOV
+   instead of changing wall scale. Fish-eye correction multiplies by
+   cos of the offset angle to keep straight walls straight."
   {:export true}
   [world width]
   (let [pgrid               (:pgrid world)
         {:keys [x y angle]} (:player world)
-        half-fov            (/ fov 2.0)]
+        center              (* 0.5 width)]
     (map (fn [col]
-           (let [ray-angle (+ angle (- (* fov (/ col width)) half-fov))
+           (let [ray-angle (+ angle (php/atan (/ (- col center) proj-dist)))
                  corrected (* (cast-ray pgrid x y ray-angle)
                               (php/cos (- ray-angle angle)))]
              {:dist corrected :angle ray-angle}))

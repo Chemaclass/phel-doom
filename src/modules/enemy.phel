@@ -10,6 +10,19 @@
   "Enemies stop closing in once this close, so they don't pile up
    inside the player's cell."
   0.6)
+(def respawn-delay-min
+  "Lower bound (seconds) on the respawn cooldown that fires when an
+   enemy is killed. A dead enemy sits invisible for this long before
+   reappearing — gives the player breathing room and a clear feedback
+   beat per kill."
+  3.0)
+(def respawn-delay-max
+  "Upper bound (seconds) on the respawn cooldown."
+  6.0)
+(def respawn-min-dist
+  "Minimum spawn distance from the player a revived enemy must claim,
+   so the next frame isn't an ambush."
+  3.0)
 
 (defn new-enemy
   "Create an enemy record. `x` and `y` are world-space floats; `:alive`
@@ -100,23 +113,58 @@
                          (recur (php/+ i 1) best-i best-d (next es)))))))]
       (if (php/=== best -1)
         [enemies false nil -1]
-        (let [killed (get enemies best)]
-          [(assoc-in (apply vector enemies) [best :alive] false)
+        (let [killed       (get enemies best)
+              delay        (php/+ respawn-delay-min
+                                  (php/* (php// (php/mt_rand) (php/mt_getrandmax))
+                                         (php/- respawn-delay-max respawn-delay-min)))
+              after-killed (assoc-in (apply vector enemies) [best :alive] false)]
+          [(assoc-in after-killed [best :respawn-after] delay)
            true
            {:x (:x killed) :y (:y killed)}
            best])))))
 
+(defn- random-spawn-far-from
+  "Random open cell at least min-dist from (px, py). Falls back to nil
+   after a few attempts so the caller can keep the enemy dead another
+   frame instead of forcing an ambush spawn."
+  [grid min-dist px py]
+  (loop [attempts 8]
+    (if (php/<= attempts 0)
+      nil
+      (let [[ex ey] (random-spawn grid)
+            dx      (php/- ex px)
+            dy      (php/- ey py)]
+        (if (php/< (php/+ (php/* dx dx) (php/* dy dy))
+                   (php/* min-dist min-dist))
+          (recur (php/- attempts 1))
+          [ex ey])))))
+
+(defn- tick-one
+  "One frame of update for a single enemy. Alive → walk toward the
+   player. Dead WITH a respawn timer → decrement; on expiry revive at
+   a random open cell at least respawn-min-dist away. Dead WITHOUT a
+   timer (e.g. spawned that way in a test) stays untouched."
+  [e grid player-x player-y ^float dt ^float speed]
+  (cond
+    (:alive e)                       (step-toward e grid player-x player-y dt speed)
+    (php/=== (:respawn-after e) nil) e
+    :else
+    (let [t (php/- (:respawn-after e) dt)]
+      (if (php/> t 0.0)
+        (assoc e :respawn-after t)
+        (let [pos (random-spawn-far-from grid respawn-min-dist player-x player-y)]
+          (if pos
+            {:x (first pos) :y (second pos) :alive true}
+            (assoc e :respawn-after 0.5)))))))
+
 (defn advance
-  "Per-frame update: walk every alive enemy a dt-scaled step toward the
-   player at `speed` units per second. Pass default-chase-speed when
-   you don't have a per-level override handy."
+  "Per-frame update for every enemy: alive enemies chase the player at
+   `speed` units/sec; dead enemies tick their respawn timer and rejoin
+   the fight once it expires."
   {:export true}
   [enemies grid player-x player-y dt speed]
   (apply vector
-         (map (fn [e]
-                (if (:alive e)
-                  (step-toward e grid player-x player-y dt speed)
-                  e))
+         (map (fn [e] (tick-one e grid player-x player-y dt speed))
               enemies)))
 
 (defn spawn-enemies

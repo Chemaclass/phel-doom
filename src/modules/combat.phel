@@ -1,6 +1,6 @@
 (ns phel-doom.modules.combat
   (:require phel-doom.modules.engine :refer [cast-ray])
-  (:require phel-doom.modules.enemy  :refer [shoot spawn-enemies])
+  (:require phel-doom.modules.enemy  :refer [shoot])
   (:require phel-doom.modules.sound  :refer [play-sfx!]))
 
 ;; ---------------------------------------------------------------------
@@ -39,10 +39,6 @@
   "Initial life of a blood splatter, fades to nothing over this many
    seconds."
   0.45)
-
-(def enemy-min-spawn-dist-respawn
-  "Min spawn distance when a kill triggers an in-arena respawn."
-  3.0)
 
 ;; =====================================================================
 ;; § Damage step (timer decay + touch collision)
@@ -130,19 +126,17 @@
             (conj (or fx [])
                   {:x (:x hit-pos) :y (:y hit-pos) :ttl fx-ttl-seconds}))))
 
-(defn- respawn-into-slot [world enemies-with-dead idx]
-  (let [respawn (first (spawn-enemies (:grid world) 1
-                                      enemy-min-spawn-dist-respawn
-                                      (:x (:player world))
-                                      (:y (:player world))))]
-    (assoc world :enemies
-           (if respawn (assoc enemies-with-dead idx respawn) enemies-with-dead))))
-
-(defn- on-shot-hit [world enemies-after hit-pos idx]
-  (let [respawned (respawn-into-slot world enemies-after idx)]
-    (let [scored (update respawned :kills (fn [k] (php/+ k 1)))]
-      (let [flashed (assoc scored :fire-anim fire-anim-seconds)]
-        (push-blood-fx flashed hit-pos)))))
+(defn- on-shot-hit
+  "World update on a successful hit: take the new enemies vector
+   (with the killed slot flipped to :alive false + a respawn timer
+   set by enemy/shoot), bump kills, light the muzzle flash, and push
+   a blood splatter at the hit position. The dead enemy revives
+   automatically inside the per-frame advance step once its
+   :respawn-after timer expires (3-6s later)."
+  [world enemies-after hit-pos _idx]
+  (let [scored (update (assoc world :enemies enemies-after)
+                       :kills (fn [k] (php/+ k 1)))]
+    (push-blood-fx (assoc scored :fire-anim fire-anim-seconds) hit-pos)))
 
 (defn- on-shot-miss [world]
   (assoc world :fire-anim fire-anim-seconds))

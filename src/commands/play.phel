@@ -3,7 +3,8 @@
   (:require phel.string :as str)
   (:require phel-doom.modules.state  :refer [new-player new-world move-player turn-player toggle-map with-enemies])
   (:require phel-doom.modules.map    :refer [random-grid random-spawn wall?])
-  (:require phel-doom.modules.enemy  :refer [spawn-enemies advance])
+  (:require phel-doom.modules.engine :refer [cast-ray])
+  (:require phel-doom.modules.enemy  :refer [spawn-enemies advance shoot])
   (:require phel-doom.modules.render :refer [render! clear-screen])
   (:require phel-doom.modules.input  :refer [init-input! restore! drain-keys]))
 
@@ -24,6 +25,11 @@
 (def map-h 22)
 (def num-enemies 6)
 (def enemy-min-spawn-dist 5.0)
+(def shot-hit-radius
+  "How far off-axis a shot may miss the enemy's center and still count
+   as a hit. ~half an enemy 'cell'."
+  0.5)
+(def shot-max-range 12.0)
 
 (defn- term-size
   "Query the terminal for [rows cols] via stty. Falls back to a
@@ -71,6 +77,19 @@
           w
           (recur (php/+ i 1) (refresh-move w (php/substr normalized i 1))))))))
 
+(defn- fire-shot
+  "Resolve one trigger pull: hitscan along the player's facing, taking
+   wall occlusion and a small off-axis tolerance into account, and
+   bump :kills when an enemy goes down."
+  [world]
+  (let [p (:player world)]
+    (let [wall-d (cast-ray (:pgrid world) (:x p) (:y p) (:angle p))]
+      (let [[es hit?] (shoot (:enemies world) (:x p) (:y p) (:angle p)
+                             wall-d shot-hit-radius shot-max-range)]
+        (-> world
+            (assoc :enemies es)
+            (update :kills (fn [k] (if hit? (php/+ k 1) k))))))))
+
 (defn- apply-physics
   "Per-frame physics step. Active direction counters contribute dt-scaled
    motion: turn first (so strafing and forward use the new heading), then
@@ -106,30 +125,35 @@
          frame-ms 0
          fps      0
          m-prev   false
+         sp-prev  false
          dims     [0 0]]
     (let [[rows cols] (term-size)]
       (when (not= [rows cols] dims) (clear-screen))
-      (render! world {:fps fps :frame-ms frame-ms} cols rows)
+      (render! world
+               {:fps fps :frame-ms frame-ms :kills (:kills world)}
+               cols rows)
       (php/usleep frame-us)
       (let [keys   (drain-keys)
             m-now  (str/contains? keys "m")
+            sp-now (str/contains? keys " ")
             now    (php/microtime true)
             ms     (php/intval (php/* (php/- now t-last) 1000))
             f      (if (php/> ms 0) (php/intval (php// 1000.0 ms)) 0)
             world' (let [dt (php// ms 1000.0)]
-                     (let [moved (apply-physics
-                                  (refresh-from-keys
-                                   (if (and m-now (not m-prev)) (toggle-map world) world)
-                                   keys)
-                                  dt)]
-                       (update moved :enemies advance
-                               (:grid moved)
-                               (:x (:player moved))
-                               (:y (:player moved))
-                               dt)))]
+                     (let [stepped (apply-physics
+                                    (refresh-from-keys
+                                     (if (and m-now (not m-prev)) (toggle-map world) world)
+                                     keys)
+                                    dt)]
+                       (let [moved (update stepped :enemies advance
+                                           (:grid stepped)
+                                           (:x (:player stepped))
+                                           (:y (:player stepped))
+                                           dt)]
+                         (if (and sp-now (not sp-prev)) (fire-shot moved) moved))))]
         (if (str/contains? keys "q")
           :quit
-          (recur world' now ms f m-now [rows cols]))))))
+          (recur world' now ms f m-now sp-now [rows cols]))))))
 
 (defn- run-play [ctx]
   (init-input!)

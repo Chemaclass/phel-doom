@@ -36,6 +36,41 @@
                     ny' (if (wall? grid (php/intval ex) (php/intval ny)) ey ny)]
                 (assoc enemy :x nx' :y ny')))))))))
 
+(defn shoot
+  "Fire a hitscan from the player along their facing. Returns
+   [new-enemies hit?]: the nearest alive enemy whose distance-to-ray is
+   under `hit-radius` and whose distance-along-ray is under `max-range`
+   AND closer than the wall in that direction is flipped to :alive false;
+   `hit?` is true when an enemy was killed this shot."
+  {:export true}
+  [enemies px py angle wall-dist hit-radius max-range]
+  (let [cos-a (php/cos angle)
+        sin-a (php/sin angle)]
+    (let [best (loop [i      0
+                      best-i -1
+                      best-d max-range
+                      es     enemies]
+                 (if (php/=== es nil)
+                   best-i
+                   (let [e (first es)]
+                     (let [along (when (and e (:alive e))
+                                   (let [dx (php/- (:x e) px)
+                                         dy (php/- (:y e) py)]
+                                     (let [proj (php/+ (php/* dx cos-a) (php/* dy sin-a))]
+                                       (when (and (php/> proj 0.0) (php/< proj best-d)
+                                                  (php/< proj wall-dist))
+                                         (let [perp-x (php/- dx (php/* proj cos-a))
+                                               perp-y (php/- dy (php/* proj sin-a))]
+                                           (let [perp2 (php/+ (php/* perp-x perp-x) (php/* perp-y perp-y))]
+                                             (when (php/<= perp2 (php/* hit-radius hit-radius))
+                                               proj)))))))]
+                       (if along
+                         (recur (php/+ i 1) i along (next es))
+                         (recur (php/+ i 1) best-i best-d (next es)))))))]
+      (if (php/=== best -1)
+        [enemies false]
+        [(assoc-in (apply vector enemies) [best :alive] false) true]))))
+
 (defn advance
   "Per-frame update: walk every alive enemy a dt-scaled step toward the
    player, with axis-separated wall collision so they slide along walls

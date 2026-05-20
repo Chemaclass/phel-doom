@@ -14,12 +14,18 @@
 (def turn-speed
   "Radians per second when the player holds a turn arrow."
   3.0)
-(def hold-frames
-  "Frames a direction stays active after each input byte for that
-   direction. Decoupling movement from key bytes lets opposite/diagonal
-   keys overlap smoothly even though terminal repeat only sends one
-   stream of bytes at a time."
-  4)
+(def move-hold-frames
+  "Frames a movement direction (W/S/A/D) stays active after each input
+   byte. Terminal auto-repeat typically interrupts when another key is
+   pressed, so we keep movement 'warm' for ~200ms — long enough to
+   compose forward + turn even when the W repeat pauses while the arrow
+   takes over the byte stream."
+  12)
+(def turn-hold-frames
+  "Frames a turn direction (←/→) stays active. Shorter than the move
+   hold so a single arrow tap rotates a precise small amount instead
+   of overshooting."
+  5)
 (def frame-us 1000)
 (def map-w 32)
 (def map-h 22)
@@ -66,12 +72,12 @@
 
 (defn- refresh-move [world k]
   (cond
-    (or (= k "^") (= k "w")) (assoc-in world [:moves :fwd]          hold-frames)
-    (or (= k "_") (= k "s")) (assoc-in world [:moves :back]         hold-frames)
-    (= k "<")                (assoc-in world [:moves :turn-left]    hold-frames)
-    (= k ">")                (assoc-in world [:moves :turn-right]   hold-frames)
-    (= k "a")                (assoc-in world [:moves :strafe-left]  hold-frames)
-    (= k "d")                (assoc-in world [:moves :strafe-right] hold-frames)
+    (or (= k "^") (= k "w")) (assoc-in world [:moves :fwd]          move-hold-frames)
+    (or (= k "_") (= k "s")) (assoc-in world [:moves :back]         move-hold-frames)
+    (= k "<")                (assoc-in world [:moves :turn-left]    turn-hold-frames)
+    (= k ">")                (assoc-in world [:moves :turn-right]   turn-hold-frames)
+    (= k "a")                (assoc-in world [:moves :strafe-left]  move-hold-frames)
+    (= k "d")                (assoc-in world [:moves :strafe-right] move-hold-frames)
     :else                    world))
 
 (defn- refresh-from-keys

@@ -2,18 +2,17 @@
 
 ![phel-doom in action](docs/screenshot.png)
 
-A DOOM-lite showcase written in [Phel Lang](https://phel-lang.org/), a
-functional Lisp that compiles to PHP.
+DOOM-lite showcase in [Phel Lang](https://phel-lang.org/) — functional Lisp on PHP.
 
-`phel-doom` ships a terminal raycaster: pure-functional world state, 256-color
-ANSI shaded walls, WASD controls, a live minimap, and a HUD with position,
-heading, fps, and per-frame timings. Runs entirely in your shell.
+Terminal raycaster: pure-functional world state, 256-color ANSI walls, WASD,
+live minimap, HUD (lives, kills, pos, heading, fps, frame ms), chasing enemies.
+Runs in your shell.
 
 ## Requirements
 
 - PHP **>= 8.4**
 - [Composer](https://getcomposer.org/)
-- A terminal that supports 256-color ANSI (most modern terminals)
+- 256-color ANSI terminal
 
 ## Quick start
 
@@ -24,7 +23,7 @@ make install
 make play          # WASD to move/turn, Q to quit
 ```
 
-Composer equivalents (`composer install`, `composer play`) work too.
+`composer install` / `composer play` work too.
 
 ## Project layout
 
@@ -37,6 +36,7 @@ src/
     ├── state.phel                     ; player + world records, pure updates
     ├── map.phel                       ; level grid + wall lookup
     ├── engine.phel                    ; raycaster (step march)
+    ├── enemy.phel                     ; enemy spawn, chase AI, damage
     ├── render.phel                    ; ANSI frame composer + minimap + HUD
     └── input.phel                     ; raw STDIN, non-blocking key reads
 tests/
@@ -53,56 +53,44 @@ phel-config.php                        ; build / export / format config
 └─────────────┘    └───────────┘    └────────────┘    └─────────────────────┘
 ```
 
-The game loop is one `loop`/`recur` in `commands/play.phel`. Every frame:
+Game loop is one `loop`/`recur` in `commands/play.phel`. Each frame:
 
-1. `render!` paints the 3D viewport, minimap, and HUD in one ANSI string.
-2. `drain-keys` reads all queued bytes from STDIN (held keys = multiple steps).
+1. `render!` paints 3D viewport, minimap, HUD in one ANSI string.
+2. `drain-keys` reads queued STDIN bytes (held key = multiple steps).
 3. `apply-keys` folds each byte through pure `step-input` → recur.
 
-Render time is the throttle; the 1ms `usleep` only yields the CPU.
+Render time is the throttle; 1ms `usleep` only yields the CPU.
 
 ## Performance
 
-Render is fast enough that the game loop is bounded by `stty size` +
-`microtime` overhead, not by the raycaster. Per-frame `frame->string`
-cost on the bundled bench (32×22 procedural map, minimap visible):
+Loop is bounded by `stty size` + `microtime` overhead, not the raycaster.
+Per-frame `frame->string` on bundled bench (32×22 procedural map, minimap on):
+~2 ms (80×24, ~440 fps), ~3 ms (120×30, ~310 fps), ~5 ms (180×40, ~210 fps).
 
-| Viewport | Before optimisation | After       |
-|----------|---------------------|-------------|
-| 80×24    | ~150 ms (~7 fps)    | ~2 ms (~440 fps) |
-| 120×30   | ~220 ms (~5 fps)    | ~3 ms (~310 fps) |
-| 180×40   | n/a (capped)        | ~5 ms (~210 fps) |
-
-The wins came from pushing the hot per-cell loop off Phel's polymorphic
-runtime and onto direct PHP ops:
+Hot per-cell loop pushed off Phel's polymorphic runtime onto direct PHP ops:
 
 - `php/aget`, `php/aset`, `php/+`, `php/<`, `php/===`, `php/*`, `php/-`,
-  `php//` instead of `core/aget`, `+`, `<`, `=`, `*`, `-`, `/` — compiles
-  to PHP subscript / operator emission instead of a runtime function
-  call per op.
-- `cast-frame` returns a flat PHP array of per-column distances. The
-  renderer walks it by index with `php/aget`; no lazy seq, no keyword
-  lookup per ray.
-- The 24 grayscale ANSI strings are baked into `shade-table` (a PHP
-  array). Per-cell shade is one `php/aget`, not a `memoize-lru` lookup.
-- The 3D viewport row is built with run-length encoding (one ANSI
-  escape per colour run) into a PHP array, then `php/implode`'d once.
-  Avoids the `(str acc ...)` chain that re-copied the row buffer on
-  every colour change.
-- The minimap reads through `:pgrid` (PHP-native nested array stashed
-  on the world at construction time) instead of through Phel persistent
-  vectors.
-- Alternate screen buffer + cursor-home redraw + autowrap off, so
-  consecutive frames overwrite in place instead of scrolling.
+  `php//` instead of `core/aget`, `+`, `<`, `=`, `*`, `-`, `/` — compiles to
+  PHP subscript / operator emission, not runtime function calls.
+- `cast-frame` returns flat PHP array of per-column distances. Renderer walks
+  it by index with `php/aget`; no lazy seq, no keyword lookup per ray.
+- 24 grayscale ANSI strings baked into `shade-table` (PHP array). Per-cell
+  shade is one `php/aget`, not a `memoize-lru` lookup.
+- 3D viewport row built with run-length encoding (one ANSI escape per colour
+  run) into a PHP array, then `php/implode`'d once. No `(str acc ...)` chain
+  re-copying the row buffer on every colour change.
+- Minimap reads `:pgrid` (PHP-native nested array, stashed at construction)
+  instead of Phel persistent vectors.
+- Alternate screen buffer + cursor-home redraw + autowrap off — frames
+  overwrite in place, no scrolling.
 
-`engine.phel` keeps the projection constant (`proj-dist`) decoupled
-from the viewport width: each ray's angular offset is `atan(col-offset /
-proj-dist)`, so resizing the terminal widens the FOV rather than
-zooming the walls.
+`engine.phel` keeps `proj-dist` decoupled from viewport width: each ray's
+angular offset is `atan(col-offset / proj-dist)`. Resizing the terminal widens
+the FOV instead of zooming the walls.
 
 ## Controls
 
-Modern DOOM-style — no mouse needed.
+DOOM-style, no mouse.
 
 | Key       | Action              |
 |-----------|---------------------|
@@ -114,8 +102,7 @@ Modern DOOM-style — no mouse needed.
 | `m`       | Toggle minimap      |
 | `q`       | Quit                |
 
-Movement, turning, and strafing compose freely: holding `w` + `a` + `→`
-walks forward, strafes left, and pans the view right all at once.
+Compose freely: `w` + `a` + `→` walks forward, strafes left, pans view right.
 
 ## Development
 
@@ -132,9 +119,9 @@ composer repl          # interactive REPL
 - [x] Static map + raycaster
 - [x] Player movement + collision
 - [x] Procedurally generated map per run
-- [x] Live minimap + HUD (position, heading, fps, frame ms)
+- [x] Live minimap + HUD (lives, kills, pos, heading, fps, frame ms)
 - [x] Full-terminal viewport with constant wall scale on resize
-- [ ] Enemies (sprites)
+- [x] Enemies (chase AI, damage, i-frames, gun + muzzle flash)
 - [ ] Doors
 - [ ] WAD file parser (real DOOM levels)
 - [ ] Sound via `ext-ffi` + miniaudio

@@ -35,3 +35,61 @@
   {:export true}
   [grid x y]
   (= 1 (cell grid x y)))
+
+(defn- border-row [w]
+  (apply vector (map (fn [_] 1) (range 0 w))))
+
+(defn- interior-row [w]
+  (apply vector
+         (concat [1]
+                 (map (fn [_] 0) (range 0 (- w 2)))
+                 [1])))
+
+(defn- place-block [grid w h x y bw bh]
+  (loop [yy 0 g grid]
+    (if (>= yy bh)
+      g
+      (recur (+ yy 1)
+             (loop [xx 0 gg g]
+               (if (>= xx bw)
+                 gg
+                 (let [px (+ x xx)
+                       py (+ y yy)]
+                   (if (and (< px (- w 1)) (< py (- h 1)) (> px 0) (> py 0))
+                     (recur (+ xx 1) (assoc-in gg [py px] 1))
+                     (recur (+ xx 1) gg)))))))))
+
+(defn random-grid
+  "Build a w×h grid with a solid border and ~n random rectangular wall
+   blobs (1x1 to 2x2). Different layout each call."
+  {:export true}
+  [w h]
+  (let [base     (apply vector
+                        (concat
+                         [(border-row w)]
+                         (map (fn [_] (interior-row w)) (range 0 (- h 2)))
+                         [(border-row w)]))
+        n-blocks (php/intval (/ (* w h) 14))]
+    (loop [grid base i 0]
+      (if (>= i n-blocks)
+        grid
+        (recur (place-block grid w h
+                            (+ 2 (rand-int (- w 5)))
+                            (+ 2 (rand-int (- h 5)))
+                            (+ 1 (rand-int 2))
+                            (+ 1 (rand-int 2)))
+               (+ i 1))))))
+
+(defn random-spawn
+  "Return [x y] floats at the center of a random open cell. Loops until
+   it finds floor; the bordered grid guarantees at least one floor cell."
+  {:export true}
+  [grid]
+  (let [h (count grid)
+        w (count (first grid))]
+    (loop []
+      (let [x (+ 1 (rand-int (- w 2)))
+            y (+ 1 (rand-int (- h 2)))]
+        (if (= 0 (get (get grid y) x))
+          [(+ 0.5 x) (+ 0.5 y)]
+          (recur))))))

@@ -1,0 +1,69 @@
+(ns phel-doom.modules.level
+  (:require phel-doom.modules.state :refer [new-player new-world with-enemies])
+  (:require phel-doom.modules.map   :refer [random-grid random-spawn seed-doors])
+  (:require phel-doom.modules.enemy :refer [spawn-enemies]))
+
+;; ---------------------------------------------------------------------
+;; Level catalog + fresh-world factory.
+;;
+;; All progression knobs (room size, wall count, monster count, monster
+;; type, chase speed, sprite colours) live in `levels`. Adding a new
+;; level is a single map literal; nothing else needs to change.
+;;
+;; build-world wires a chosen level into a brand-new world record by
+;; combining the random map generator, door seeding, player spawn, and
+;; monster spawning. The IO shell (play.phel) doesn't know any of these
+;; numbers — it just asks for level N.
+;; ---------------------------------------------------------------------
+
+(def enemy-min-spawn-dist
+  "How far from the player a fresh enemy must spawn (world units), so
+   the first frame isn't an ambush."
+  3.0)
+
+(def levels
+  "Per-level configuration. Each entry bumps difficulty: bigger room,
+   more enemies, faster chase, a distinct monster type with its own
+   head/body shade strings shown in the 3D viewport and minimap."
+  [{:size [22 16] :walls 12 :enemies 4 :chase 0.8
+    :name "imps"        :head "\e[48;5;196m " :body "\e[48;5;52m "}
+   {:size [28 20] :walls 22 :enemies 6 :chase 1.0
+    :name "demons"      :head "\e[48;5;165m " :body "\e[48;5;90m "}
+   {:size [36 24] :walls 38 :enemies 8 :chase 1.3
+    :name "cacodemons"  :head "\e[48;5;51m "  :body "\e[48;5;24m "}
+   {:size [44 28] :walls 55 :enemies 9 :chase 1.6
+    :name "barons"      :head "\e[48;5;46m "  :body "\e[48;5;22m "}
+   {:size [52 32] :walls 75 :enemies 12 :chase 2.0
+    :name "cyberdemons" :head "\e[48;5;231m " :body "\e[48;5;240m "}])
+
+(def num-levels
+  "Total levels in the catalog; clamped on every lookup."
+  (count levels))
+
+(defn config-for
+  "Return the config for level N (1-indexed). Out-of-range numbers
+   clamp to the boundary so callers don't have to guard."
+  {:export true}
+  [n]
+  (get levels (php/max 0 (php/min (php/- num-levels 1) (php/- n 1)))))
+
+(defn build-world
+  "Construct a brand-new world for `level-num`. Walls, enemies, the
+   single door, and the player spawn are all randomised; the level's
+   tuning (chase speed, name, sprite colours) is stamped on the world
+   so the renderer + physics layers can read it without globals."
+  {:export true}
+  [level-num]
+  (let [cfg (config-for level-num)]
+    (let [[w h] (:size cfg)
+          grid  (seed-doors (random-grid w h (:walls cfg)) 1)]
+      (let [[px py] (random-spawn grid)]
+        (-> (new-world grid (new-player px py (php/* (rand-int 360)
+                                                     (php// php/M_PI 180.0))))
+            (with-enemies (spawn-enemies grid (:enemies cfg)
+                                         enemy-min-spawn-dist px py))
+            (assoc :level       level-num
+                   :chase-speed (:chase cfg)
+                   :enemy-head  (:head cfg)
+                   :enemy-body  (:body cfg)
+                   :level-name  (:name cfg)))))))

@@ -1,7 +1,31 @@
 (ns phel-doom.modules.map)
 
+;; ---------------------------------------------------------------------
+;; Map / grid layer.
+;;
+;; A grid is a Phel vector-of-vectors of cell values. Every cell holds
+;; one of the small set of cell-* constants below. The raycaster and the
+;; player-collision code interpret them; nothing else in the codebase
+;; should write magic 0/1/2/3 literals — use the named constants.
+;; ---------------------------------------------------------------------
+
+(def cell-floor
+  "Walkable empty cell."
+  0)
+(def cell-wall
+  "Solid wall: blocks player movement and the raycaster."
+  1)
+(def cell-door
+  "Closed door: still blocks like a wall until the player opens it.
+   Painted distinctly in the 3D view + on the minimap."
+  2)
+(def cell-portal
+  "Opened door: passable, but distinguishable from regular floor so the
+   level-advance check can spot when the player stands on one."
+  3)
+
 (def default-grid
-  "16x16 starter map. 1 = wall, 0 = empty floor."
+  "16×16 starter map kept around for deterministic tests."
   [[1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1]
    [1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1]
    [1 0 1 1 0 0 0 0 0 0 0 0 1 1 0 1]
@@ -20,34 +44,42 @@
    [1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1]])
 
 (defn cell
-  "Read map cell at (x, y). Out-of-bounds treated as wall (1)."
+  "Read map cell at integer (x, y). Out-of-bounds reads return cell-wall
+   so the raycaster never escapes off the map."
   {:export true}
   [grid x y]
   (if (or (< x 0) (< y 0))
-    1
+    cell-wall
     (let [row (get grid y)]
       (if (nil? row)
-        1
-        (or (get row x) 1)))))
+        cell-wall
+        (or (get row x) cell-wall)))))
 
 (defn wall?
-  "True when (x, y) is solid: a regular wall (1) OR a closed door (2).
-   Open doors are 0 (floor) and therefore passable."
+  "True when (x, y) is solid for player movement: a wall or a closed
+   door. Portals and floor cells are passable."
   {:export true}
   [grid x y]
   (let [c (cell grid x y)]
-    (or (= c 1) (= c 2))))
+    (or (= c cell-wall) (= c cell-door))))
 
 (defn door?
-  "True when (x, y) holds a closed door (cell value 2). Open doors get
-   rewritten to 0 the moment the player opens them."
+  "True when (x, y) is a closed door (cell-door). Opened doors are
+   rewritten to cell-portal and tested separately."
   {:export true}
   [grid x y]
-  (= 2 (cell grid x y)))
+  (= cell-door (cell grid x y)))
+
+(defn portal?
+  "True when (x, y) is an opened door / level-exit (cell-portal)."
+  {:export true}
+  [grid x y]
+  (= cell-portal (cell grid x y)))
 
 (defn seed-doors
-  "Convert `n` random interior wall cells of `grid` into closed doors
-   (value 2). Returns the updated grid."
+  "Convert `n` random interior wall cells into closed doors. Returns
+   the updated grid; gives up quietly after 200 attempts when the
+   interior runs out of candidates."
   {:export true}
   [grid n]
   (let [w (count (first grid))
@@ -59,18 +91,18 @@
         :else
         (let [x (+ 2 (rand-int (- w 4)))
               y (+ 2 (rand-int (- h 4)))]
-          (if (= 1 (cell g x y))
-            (recur (assoc-in g [y x] 2) (+ placed 1) (+ attempts 1))
+          (if (= cell-wall (cell g x y))
+            (recur (assoc-in g [y x] cell-door) (+ placed 1) (+ attempts 1))
             (recur g placed (+ attempts 1))))))))
 
 (defn- border-row [w]
-  (apply vector (map (fn [_] 1) (range 0 w))))
+  (apply vector (map (fn [_] cell-wall) (range 0 w))))
 
 (defn- interior-row [w]
   (apply vector
-         (concat [1]
-                 (map (fn [_] 0) (range 0 (- w 2)))
-                 [1])))
+         (concat [cell-wall]
+                 (map (fn [_] cell-floor) (range 0 (- w 2)))
+                 [cell-wall])))
 
 (defn- place-block [grid w h x y bw bh]
   (loop [yy 0 g grid]
@@ -83,13 +115,13 @@
                  (let [px (+ x xx)
                        py (+ y yy)]
                    (if (and (< px (- w 1)) (< py (- h 1)) (> px 0) (> py 0))
-                     (recur (+ xx 1) (assoc-in gg [py px] 1))
+                     (recur (+ xx 1) (assoc-in gg [py px] cell-wall))
                      (recur (+ xx 1) gg)))))))))
 
 (defn random-grid
-  "Build a w×h grid with a solid border and `n-blocks` random 1x1–2x2
+  "Build a w×h grid with a solid border and `n-blocks` random 1×1–2×2
    wall blobs. Caller controls the wall count so changing the map size
-   doesn't drag the obstacle density with it."
+   doesn't drag obstacle density with it."
   {:export true}
   [w h n-blocks]
   (let [base (apply vector
@@ -108,8 +140,9 @@
                (+ i 1))))))
 
 (defn random-spawn
-  "Return [x y] floats at the center of a random open cell. Loops until
-   it finds floor; the bordered grid guarantees at least one floor cell."
+  "Return [x y] floats at the centre of a random open cell. The
+   bordered grid guarantees at least one floor cell so the loop
+   terminates."
   {:export true}
   [grid]
   (let [h (count grid)
@@ -117,6 +150,6 @@
     (loop []
       (let [x (+ 1 (rand-int (- w 2)))
             y (+ 1 (rand-int (- h 2)))]
-        (if (= 0 (get (get grid y) x))
+        (if (= cell-floor (get (get grid y) x))
           [(+ 0.5 x) (+ 0.5 y)]
           (recur))))))

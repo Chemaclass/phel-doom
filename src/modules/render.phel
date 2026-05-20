@@ -381,3 +381,93 @@
   (print "\e[H")
   (print (frame->string world stats cols rows))
   (php/flush))
+
+;; ---------------------------------------------------------------------
+;; End-of-game screens (death / victory).
+;;
+;; Same box geometry as the pause menu but full-screen washed in either
+;; dark red (death) or dark green (victory). Both screens share
+;; render-end-screen — the only thing each variant supplies is the
+;; wash colour and the 32-wide row strings.
+;; ---------------------------------------------------------------------
+
+(def end-box-width 32)
+
+(defn- end-pad
+  "Right-pad `text` with spaces up to `width` visible columns."
+  [text width]
+  (str text (php/str_repeat " " (php/max 0 (php/- width (php/strlen text))))))
+
+(defn- death-rows [kills survived-s]
+  (let [w (end-pad "" end-box-width)]
+    [w
+     "\e[91;1m            YOU DIED            \e[0m"
+     w :sep w
+     (str "\e[97m" (end-pad (str "   kills:   " kills)        end-box-width) "\e[0m")
+     (str "\e[97m" (end-pad (str "   time:    " survived-s "s") end-box-width) "\e[0m")
+     w :sep w
+     "\e[97;1m   r  restart      q  quit      \e[0m"
+     w :sep w
+     "\e[2;97m   phel-doom by Chemaclass      \e[0m"
+     "\e[2;97m   written in Phel Lang         \e[0m"
+     w]))
+
+(defn- victory-rows [kills survived-s]
+  (let [w (end-pad "" end-box-width)]
+    [w
+     "\e[92;1m            VICTORY!            \e[0m"
+     w :sep w
+     (str "\e[97m" (end-pad (str "   kills:   " kills)        end-box-width) "\e[0m")
+     (str "\e[97m" (end-pad (str "   time:    " survived-s "s") end-box-width) "\e[0m")
+     w :sep w
+     "\e[97;1m   r  play again   q  quit      \e[0m"
+     w :sep w
+     "\e[2;97m   phel-doom by Chemaclass      \e[0m"
+     "\e[2;97m   written in Phel Lang         \e[0m"
+     w]))
+
+(defn- render-end-screen
+  "Generic end-of-game overlay: full-screen wash in `wash-bg` plus a
+   centred ─┌┐│└┘ box whose contents are `items` (interior strings
+   interleaved with :sep markers)."
+  [cols rows wash-bg items]
+  (let [parts (php/array)
+        bar   (php/str_repeat "─" end-box-width)]
+    (php/array_push parts "\e[H")
+    (loop [r 1]
+      (when (php/<= r rows)
+        (php/array_push parts (str "\e[" r ";1H" wash-bg
+                                   (php/str_repeat " " cols)))
+        (recur (php/+ r 1))))
+    (let [n       (count items)
+          row-top (php/max 1 (php/- (php/intdiv rows 2) (php/intdiv n 2)))
+          col0    (php/max 1 (php/- (php/+ (php/intdiv cols 2) 1)
+                                    (php/intdiv (php/+ end-box-width 2) 2)))]
+      (php/array_push parts (str "\e[" row-top ";" col0
+                                 "H\e[40;97m┌" bar "┐\e[0m"))
+      (php/array_push parts (str "\e[" (php/+ row-top n 1) ";" col0
+                                 "H\e[40;97m└" bar "┘\e[0m"))
+      (loop [i 0]
+        (when (php/< i n)
+          (let [item (get items i)
+                row  (php/+ row-top 1 i)]
+            (if (= item :sep)
+              (php/array_push parts (str "\e[" row ";" col0
+                                         "H\e[40;97m├" bar "┤\e[0m"))
+              (php/array_push parts (str "\e[" row ";" col0
+                                         "H\e[40;97m│" item "\e[40;97m│\e[0m"))))
+          (recur (php/+ i 1)))))
+    (print (php/implode "" parts))
+    (php/flush)))
+
+(defn render-death-screen
+  "Centred YOU DIED box on a dark-red wash with cumulative kills + time."
+  {:export true}
+  [cols rows kills survived-s]
+  (render-end-screen cols rows "\e[48;5;52m" (death-rows kills survived-s)))
+
+(defn render-victory-screen
+  "Centred VICTORY box on a dark-green wash after clearing all levels."
+  {:export true}
+  [cols rows kills survived-s]
+  (render-end-screen cols rows "\e[48;5;22m" (victory-rows kills survived-s)))

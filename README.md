@@ -65,12 +65,13 @@ src/
 ├── commands/play.phel        ; subcommand: play (game loop, tick-world)
 └── modules/
     ├── state.phel            ; player + world records, pure updates
-    ├── map.phel              ; procedural grid + walls + doors
+    ├── map.phel              ; grid generators + cell constants + lookups
     ├── engine.phel           ; raycaster (step march, proj-dist)
     ├── enemy.phel            ; spawn, chase AI, shoot, blood fx
-    ├── render.phel           ; ANSI frame + sprites + minimap + HUD
+    ├── level.phel            ; 5-level catalog + build-world factory
+    ├── render.phel           ; ANSI frame + sprites + HUD + end screens
     ├── input.phel            ; raw STDIN, non-blocking key reads
-    ├── sound.phel            ; terminal bell on game events
+    ├── sound.phel            ; OS shell-out sfx (afplay/paplay/aplay)
     └── wad.phel              ; DOOM .wad parser (header, lumps, geometry)
 tests/                        ; mirrors src/, one *-test.phel per module
 phel-config.php               ; build / export / format config
@@ -122,7 +123,7 @@ Hot per-cell loop pushed off Phel's polymorphic runtime onto direct PHP ops:
 ## Development
 
 ```bash
-composer test          # phel tests (107 across map/state/engine/enemy/render/wad/play)
+composer test          # phel tests (129 across map/state/engine/enemy/render/wad/level/play)
 composer format        # auto-format
 composer lint          # phel-lint (clean policy: zero warnings)
 composer build         # out/main.php standalone

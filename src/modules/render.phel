@@ -81,6 +81,37 @@
         (recur (php/+ i 1))))
     t))
 
+(defn- fade-256
+  "Darken a 256-color code by factor `t` in [0.0, 1.0]. Handles the
+   6×6×6 cube (16-231) by scaling each RGB component, and the 24-step
+   grayscale (232-255) by pulling toward the darkest entry. Codes 0-15
+   (system palette) are left alone — they're too coarse to fade
+   smoothly. Used to fade enemy sprites with distance so they blend
+   into the atmospheric haze instead of staying full-saturated
+   wherever they are."
+  [^int code ^float t]
+  (cond
+    (php/>= code 232)
+    (php/max 232 (php/intval (php/round (php/- code (php/* t (php/- code 232))))))
+
+    (php/>= code 16)
+    (let [c (php/- code 16)]
+      (let [r (php/intdiv c 36)
+            g (php/intdiv (mod c 36) 6)
+            b (mod c 6)]
+        (let [r' (php/max 0 (php/intval (php/round (php/* (php/- 1.0 t) r))))
+              g' (php/max 0 (php/intval (php/round (php/* (php/- 1.0 t) g))))
+              b' (php/max 0 (php/intval (php/round (php/* (php/- 1.0 t) b))))]
+          (php/+ 16 (php/* 36 r') (php/* 6 g') b'))))
+
+    :else             code))
+
+(defn- enemy-shade-string
+  "Compose the ANSI BG-only paint cell for one enemy zone at the
+   given fade factor."
+  [^int code ^float t]
+  (str "\e[48;5;" (fade-256 code t) "m "))
+
 (defn- build-horizon-gradient
   "Per-row PHP array of pre-baked shade strings for the given viewport
    height. Maps each row to a shade-table index based on distance
@@ -332,9 +363,17 @@
         ;; change on terminal resize).
         sky-gradient                       (build-horizon-gradient vh stbl)
         floor-gradient                     sky-gradient
+        ;; Per-enemy distance-fade is composed in the projection loop
+        ;; below and assigned to the per-column arrays. These are the
+        ;; FALLBACK shades used when no level config provides codes
+        ;; (e.g. test worlds built via new-world without going through
+        ;; build-world).
         ehead                              (or (get stats :enemy-head) enemy-head)
         ebody                              (or (get stats :enemy-body) enemy-body)
         elegs                              (or (get stats :enemy-legs) enemy-body)
+        head-code                          (get stats :enemy-head-code)
+        body-code                          (get stats :enemy-body-code)
+        legs-code                          (get stats :enemy-legs-code)
         ;; Idle face animation: cycle between the level's two face
         ;; glyphs on a wall-clock sin wave so monsters look alive
         ;; (eye blinks, fangs flicker, LEDs pulse) without any per-
@@ -381,6 +420,13 @@
         mids                               (php/array)
         lowers                             (php/array)
         emask                              (php/array)
+        ;; Per-column enemy shade strings. Each enemy projection
+        ;; computes faded variants of head/body/legs based on its
+        ;; distance and writes them into these arrays for the
+        ;; columns it covers.
+        eheads                             (php/array)
+        ebodys                             (php/array)
+        elegss                             (php/array)
         blood-paint                        (php/array)
         mrows                              (if (:show-map world) (minimap-rows world) (php/array))
         visible-mh                         (php/min (php/count mrows) vh)
@@ -429,11 +475,24 @@
              (let [c-from (php/max 0 (php/- col hw))
                    c-to   (php/min (php/- vw 1) (php/+ col hw))
                    h      (php/min vh (php/intval (php// proj-dist
-                                                         (php/* (php/max 0.5 d) char-aspect))))]
+                                                         (php/* (php/max 0.5 d) char-aspect))))
+                   ;; Distance-fade factor: 0 at the player's feet,
+                   ;; ~0.85 at max-depth. Squared so things stay
+                   ;; saturated up close and only really dim once
+                   ;; they're past mid-range.
+                   t      (php/min 0.85
+                                   (php/* (php// d max-depth)
+                                          (php// d max-depth)))]
                (let [e-top (php/intdiv (php/- vh h) 2)]
                  (let [e-bot   (php/+ e-top h)
                        e-mid   (php/+ e-top (php/intdiv h 3))
-                       e-lower (php/+ e-top (php/intdiv (php/* h 2) 3))]
+                       e-lower (php/+ e-top (php/intdiv (php/* h 2) 3))
+                       ;; Faded shade strings for this enemy at its
+                       ;; current distance. Computed ONCE per enemy
+                       ;; and assigned to every column it covers.
+                       fhead   (if head-code (enemy-shade-string head-code t) ehead)
+                       fbody   (if body-code (enemy-shade-string body-code t) ebody)
+                       flegs   (if legs-code (enemy-shade-string legs-code t) elegs)]
                    (loop [c c-from]
                      (when (php/<= c c-to)
                        (when (php/< d (php/aget dists c))
@@ -441,6 +500,9 @@
                          (php/aset bots c e-bot)
                          (php/aset mids c e-mid)
                          (php/aset lowers c e-lower)
+                         (php/aset eheads c fhead)
+                         (php/aset ebodys c fbody)
+                         (php/aset elegss c flegs)
                          (php/aset emask c true))
                        (recur (php/+ c 1)))))))))
     (doseq [fx (or (get stats :fx) [])]
@@ -510,9 +572,9 @@
                                    (php/>= row (php/aget bots col))            (php/aget floor-gradient row)
                                    (php/aget emask col)
                                    (cond
-                                     (php/< row (php/aget mids col))   ehead
-                                     (php/< row (php/aget lowers col)) ebody
-                                     :else                             elegs)
+                                     (php/< row (php/aget mids col))   (php/aget eheads col)
+                                     (php/< row (php/aget lowers col)) (php/aget ebodys col)
+                                     :else                             (php/aget elegss col))
                                    (php/=== row (php/aget tops col))
                                    (php/aget shades-top-edge col)
                                    (php/=== row (php/- (php/aget bots col) 1))

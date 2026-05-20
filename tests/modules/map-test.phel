@@ -1,6 +1,6 @@
 (ns phel-doom-tests.modules.map-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.modules.map :refer [default-grid wall? random-grid random-spawn]))
+  (:require phel-doom.modules.map :refer [default-grid wall? door? random-grid random-spawn seed-doors]))
 
 (deftest test-walls-on-perimeter
   (is (wall? default-grid 0 0))
@@ -38,6 +38,26 @@
                                                       (to-php-array row) 1 8)))
                                             (php/array_slice (to-php-array g) 1 8))))]
       (is (= 0 interior-sum)))))
+
+(deftest test-wall?-blocks-closed-doors-passes-open
+  (let [g [[1 1 1] [1 2 1] [1 1 1]]]
+    (is (wall? g 1 1))
+    (is (door? g 1 1))
+    (is (not (wall? (assoc-in g [1 1] 0) 1 1)))))
+
+(deftest test-seed-doors-converts-walls-into-doors
+  ;; Start with a grid that has interior walls (just border on a 5x5 +
+  ;; one interior wall at (2,2) created via assoc-in). seed-doors should
+  ;; either flip that wall into a door, or fail gracefully if it can't
+  ;; find one in 200 tries; whichever happens, no cell value outside
+  ;; {0,1,2} should appear.
+  (let [with-doors (seed-doors
+                    (apply vector (map (fn [_] [1 1 1 1 1 1 1 1]) (range 0 8)))
+                    3)]
+    (is (= 3 (apply + (apply concat
+                             (map (fn [row]
+                                    (map (fn [c] (if (= c 2) 1 0)) row))
+                                  with-doors)))))))
 
 (deftest test-random-spawn-lands-on-floor
   (let [g     [[1 1 1 1 1]

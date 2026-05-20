@@ -39,6 +39,7 @@ make play
 | `a` / `d` | Strafe left / right |
 | `←` / `→` | Turn left / right   |
 | `space`   | Fire                |
+| `e`       | Open door in front  |
 | `m`       | Toggle minimap      |
 | `p`       | Pause / resume      |
 | `q`       | Quit                |
@@ -116,7 +117,7 @@ composer repl          # interactive REPL
 - [x] Raycaster + procedural map + player movement & collision
 - [x] Live minimap, HUD, full-terminal viewport
 - [x] Enemies (chase AI, hitscan, lives, i-frames, blood, muzzle flash)
-- [ ] Doors
+- [x] Doors (closed cells you open with E)
 - [ ] WAD file parser (real DOOM levels)
 - [ ] Sound via `ext-ffi` + miniaudio
 

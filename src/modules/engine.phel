@@ -34,18 +34,21 @@
         :else                                        (recur (php/+ dist step) (php/+ x dx) (php/+ y dy))))))
 
 (defn cast-frame
-  "Cast `width` rays from the player. Each ray's angular offset is
-   atan(col-offset / proj-dist), so wider viewports widen the FOV
-   instead of changing wall scale. Fish-eye correction multiplies by
-   cos of the offset angle to keep straight walls straight."
+  "Cast `width` rays and return a PHP array of fish-eye-corrected
+   distances, one per column. Returning a flat PHP array (not a lazy
+   seq of maps) keeps the column loop in the renderer doing a single
+   aget per column instead of walking a Phel seq + keyword lookup."
   {:export true}
   [world width]
   (let [pgrid               (:pgrid world)
         {:keys [x y angle]} (:player world)
-        center              (* 0.5 width)]
-    (map (fn [col]
-           (let [ray-angle (+ angle (php/atan (/ (- col center) proj-dist)))
-                 corrected (* (cast-ray pgrid x y ray-angle)
-                              (php/cos (- ray-angle angle)))]
-             {:dist corrected :angle ray-angle}))
-         (range 0 width))))
+        center              (* 0.5 width)
+        dists               (php/array)]
+    (loop [col 0]
+      (when (php/< col width)
+        (let [offset (php/atan (/ (php/- col center) proj-dist))]
+          (php/aset dists col
+                    (php/* (cast-ray pgrid x y (php/+ angle offset))
+                           (php/cos offset)))
+          (recur (php/+ col 1)))))
+    dists))

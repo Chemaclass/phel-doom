@@ -6,12 +6,21 @@
 (def char-aspect 2.0)
 (def hud-rows 1)
 
-(defn- ^{:memoize-lru 64} shade-c [c]
-  (str "\e[48;5;" c "m "))
+(def shade-table
+  "Pre-baked ANSI strings for the 24 grayscale palette entries (codes
+   232-255). Indexed by an integer shade level 0-23, so the per-cell
+   shade lookup is just one PHP array fetch — no memoize, no string
+   alloc, no Phel runtime dispatch."
+  (let [t (php/array)]
+    (loop [i 0]
+      (when (php/< i 24)
+        (php/aset t i (str "\e[48;5;" (php/+ 232 i) "m "))
+        (recur (php/+ i 1))))
+    t))
 
 (defn- shade [dist]
-  (shade-c (+ 232
-              (php/intval (* (- 1.0 (php/min 1.0 (/ dist max-depth))) 23)))))
+  (php/aget shade-table
+            (php/intval (php/* (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 23))))
 
 (defn- direction-char [angle]
   (let [q (mod (php/intval
@@ -29,29 +38,38 @@
       (= q 6) "↑"
       :else   "↗")))
 
+(def minimap-wall  "\e[37;1m#\e[0m")
+(def minimap-floor "\e[90m·\e[0m")
+
 (defn- minimap-rows
-  "Render the world's grid into a vector of ANSI-coded strings, one per
-   grid row. Player cell shows a directional marker derived from angle."
+  "Render the world's grid into a PHP array of ANSI-coded strings, one
+   per grid row. Reads the grid via :pgrid (PHP-native nested array)
+   and builds each row with php/array_push + implode to avoid Phel
+   collection dispatch in a hot per-frame call."
   [world]
-  (let [grid                (:grid world)
+  (let [pgrid               (:pgrid world)
         {:keys [x y angle]} (:player world)
         pcol                (php/intval x)
         prow                (php/intval y)
-        marker              (direction-char angle)
-        gw                  (count (first grid))]
-    (apply vector
-           (map (fn [row]
-                  (let [grow (get grid row)]
-                    (apply str
-                           (map (fn [col]
-                                  (cond
-                                    (and (= row prow) (= col pcol))
-                                    (str "\e[93;1m" marker "\e[0m")
-                                    (= 1 (get grow col))
-                                    "\e[37;1m#\e[0m"
-                                    :else                           "\e[90m·\e[0m"))
-                                (range 0 gw)))))
-                (range 0 (count grid))))))
+        marker              (str "\e[93;1m" (direction-char angle) "\e[0m")
+        gh                  (php/count pgrid)
+        gw                  (php/count (php/aget pgrid 0))
+        rows                (php/array)]
+    (loop [row 0]
+      (when (php/< row gh)
+        (let [grow  (php/aget pgrid row)
+              parts (php/array)]
+          (loop [col 0]
+            (when (php/< col gw)
+              (php/array_push parts
+                              (cond
+                                (and (php/=== row prow) (php/=== col pcol)) marker
+                                (php/=== 1 (php/aget grow col))             minimap-wall
+                                :else                                       minimap-floor))
+              (recur (php/+ col 1))))
+          (php/aset rows row (php/implode "" parts)))
+        (recur (php/+ row 1))))
+    rows))
 
 (defn- hud-line [world stats]
   (let [{:keys [x y angle]} (:player world)]
@@ -83,22 +101,22 @@
   [world stats cols rows]
   (let [{:keys [vw vh map-col map-row]}
         (layout cols rows (count (first (:grid world))))
-        columns                         (cast-frame world vw)
+        dists                           (cast-frame world vw)
         tops                            (php/array)
         bots                            (php/array)
         shades                          (php/array)
-        mrows                           (if (:show-map world) (minimap-rows world) [])
-        visible-mh                      (php/min (count mrows) vh)]
-    (loop [col 0 cs columns]
-      (when (< col vw)
-        (let [dist   (:dist (first cs))
+        mrows                           (if (:show-map world) (minimap-rows world) (php/array))
+        visible-mh                      (php/min (php/count mrows) vh)]
+    (loop [col 0]
+      (when (php/< col vw)
+        (let [dist   (php/aget dists col)
               wall-h (php/min vh (php/intval
-                                  (/ proj-dist (* (php/max 0.3 dist) char-aspect))))
-              top    (php/intdiv (- vh wall-h) 2)]
+                                  (/ proj-dist (php/* (php/max 0.3 dist) char-aspect))))
+              top    (php/intdiv (php/- vh wall-h) 2)]
           (php/aset tops col top)
           (php/aset bots col (php/+ top wall-h))
           (php/aset shades col (shade dist))
-          (recur (+ col 1) (next cs)))))
+          (recur (php/+ col 1)))))
     (let [parts (php/array)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]
@@ -120,7 +138,7 @@
                (php/array_push parts "\e[0m\n"))
       (php/array_push parts (hud-line world stats))
       (dotimes [i visible-mh]
-               (php/array_push parts (str "\e[" (+ map-row i) ";" map-col "H" (get mrows i))))
+               (php/array_push parts (str "\e[" (php/+ map-row i) ";" map-col "H" (php/aget mrows i))))
       (php/implode "" parts))))
 
 (defn clear-screen

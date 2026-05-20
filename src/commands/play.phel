@@ -1,7 +1,7 @@
 (ns phel-doom.commands.play
   (:require phel.cli :as cli)
   (:require phel.string :as str)
-  (:require phel-doom.modules.state  :refer [new-player new-world move-player turn-player toggle-map with-enemies])
+  (:require phel-doom.modules.state  :refer [new-player new-world move-player turn-player toggle-map toggle-pause with-enemies])
   (:require phel-doom.modules.map    :refer [random-grid random-spawn wall?])
   (:require phel-doom.modules.engine :refer [cast-ray])
   (:require phel-doom.modules.enemy  :refer [spawn-enemies advance shoot])
@@ -196,6 +196,7 @@
          fps      0
          m-prev   false
          sp-prev  false
+         p-prev   false
          dims     [0 0]]
     (let [[rows cols] (term-size)]
       (when (not= [rows cols] dims) (clear-screen))
@@ -206,32 +207,37 @@
                 :lives     (:lives world)
                 :iframes   (:iframes world)
                 :fire-anim (:fire-anim world)
-                :fx        (:fx world)}
+                :fx        (:fx world)
+                :paused    (:paused world)}
                cols rows)
       (php/usleep frame-us)
       (let [keys   (drain-keys)
             m-now  (str/contains? keys "m")
             sp-now (str/contains? keys " ")
+            p-now  (str/contains? keys "p")
             now    (php/microtime true)
             ms     (php/intval (php/* (php/- now t-last) 1000))
             f      (if (php/> ms 0) (php/intval (php// 1000.0 ms)) 0)
-            world' (let [dt (php// ms 1000.0)]
-                     (let [stepped (apply-physics
-                                    (refresh-from-keys
-                                     (if (and m-now (not m-prev)) (toggle-map world) world)
-                                     keys)
-                                    dt)]
-                       (let [fired (let [moved (update stepped :enemies advance
-                                                       (:grid stepped)
-                                                       (:x (:player stepped))
-                                                       (:y (:player stepped))
-                                                       dt)]
-                                     (if (and sp-now (not sp-prev)) (fire-shot moved) moved))]
-                         (damage-step fired dt))))]
+            world' (let [w0 (if (and p-now (not p-prev)) (toggle-pause world) world)]
+                     (if (:paused w0)
+                       w0
+                       (let [dt (php// ms 1000.0)]
+                         (let [stepped (apply-physics
+                                        (refresh-from-keys
+                                         (if (and m-now (not m-prev)) (toggle-map w0) w0)
+                                         keys)
+                                        dt)]
+                           (let [fired (let [moved (update stepped :enemies advance
+                                                           (:grid stepped)
+                                                           (:x (:player stepped))
+                                                           (:y (:player stepped))
+                                                           dt)]
+                                         (if (and sp-now (not sp-prev)) (fire-shot moved) moved))]
+                             (damage-step fired dt))))))]
         (cond
           (str/contains? keys "q")   :quit
           (php/<= (:lives world') 0) {:game-over true :kills (:kills world')}
-          :else                      (recur world' now ms f m-now sp-now [rows cols]))))))
+          :else                      (recur world' now ms f m-now sp-now p-now [rows cols]))))))
 
 (defn- fresh-world []
   (let [grid (random-grid map-w map-h num-walls)]

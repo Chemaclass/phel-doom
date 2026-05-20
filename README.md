@@ -2,7 +2,7 @@
 
 ![phel-doom in action](docs/screenshot.png)
 
-A DOOM-lite raycaster in your terminal, written in [Phel Lang](https://phel-lang.org/) — a functional Lisp on PHP.
+A DOOM-lite raycaster in your terminal, written in [Phel Lang](https://phel-lang.org/), a functional Lisp on PHP.
 
 ## Features
 
@@ -40,6 +40,7 @@ make play
 | `←` / `→` | Turn left / right   |
 | `space`   | Fire                |
 | `m`       | Toggle minimap      |
+| `p`       | Pause / resume      |
 | `q`       | Quit                |
 
 Inputs layer freely: `w` + `a` + `→` walks forward, strafes left, pans view right.
@@ -91,12 +92,12 @@ Per-frame `frame->string` on the bundled bench (32×22 map, minimap on):
 
 Hot per-cell loop pushed off Phel's polymorphic runtime onto direct PHP ops:
 
-- `php/aget`, `php/+`, `php/<`, `php/*` etc. compile to PHP subscript / operator emission — no runtime dispatch.
+- `php/aget`, `php/+`, `php/<`, `php/*` etc. compile to PHP subscript / operator emission, skipping the runtime dispatch path.
 - `cast-frame` returns a flat PHP array of distances; renderer walks it by index, no lazy seq.
-- 24 grayscale ANSI strings baked into `shade-table` — per-cell shade is one `php/aget`.
+- 24 grayscale ANSI strings baked into `shade-table`, so per-cell shade is one `php/aget`.
 - Viewport row run-length encoded into a PHP array, `php/implode`'d once. No `(str acc ...)` chain.
 - Minimap reads `:pgrid` (PHP-native nested array) instead of Phel persistent vectors.
-- Alternate screen buffer + cursor-home redraw + autowrap off — frames overwrite in place.
+- Alternate screen buffer + cursor-home redraw + autowrap off, so frames overwrite in place.
 
 `proj-dist` is decoupled from viewport width: each ray's angular offset is `atan(col-offset / proj-dist)`, so resizing the terminal widens the FOV instead of zooming the walls.
 

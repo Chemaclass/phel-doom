@@ -84,15 +84,28 @@
       world
       (move-player world dx dy))))
 
+(def key->slot
+  "Normalised single-byte input -> direction counter slot. Arrow keys
+   are normalised to ^ _ < > before lookup (refresh-from-keys); the
+   WASD aliases sit alongside so either keyboard half plays."
+  {"^" :fwd          "w" :fwd
+   "_" :back         "s" :back
+   "<" :turn-left
+   ">" :turn-right
+   "a" :strafe-left
+   "d" :strafe-right})
+
+(def turn-slots
+  "Slots that use the shorter turn-hold-frames timer (precise taps)
+   instead of move-hold-frames (forgiving holds)."
+  #{:turn-left :turn-right})
+
 (defn- refresh-move [world k]
-  (cond
-    (or (= k "^") (= k "w")) (assoc-in world [:moves :fwd]          move-hold-frames)
-    (or (= k "_") (= k "s")) (assoc-in world [:moves :back]         move-hold-frames)
-    (= k "<")                (assoc-in world [:moves :turn-left]    turn-hold-frames)
-    (= k ">")                (assoc-in world [:moves :turn-right]   turn-hold-frames)
-    (= k "a")                (assoc-in world [:moves :strafe-left]  move-hold-frames)
-    (= k "d")                (assoc-in world [:moves :strafe-right] move-hold-frames)
-    :else                    world))
+  (let [slot (get key->slot k)]
+    (if (nil? slot)
+      world
+      (assoc-in world [:moves slot]
+                (if (turn-slots slot) turn-hold-frames move-hold-frames)))))
 
 (defn- refresh-from-keys
   "Walk the drained input string, resetting the matching direction
@@ -263,17 +276,35 @@
               (let [w5 (tick-shooting w4 (:fire edges))]
                 (damage-step w5 dt)))))))))
 
+(defn- key-states
+  "Snapshot which of the tracked keys appear anywhere in `keys`."
+  [keys]
+  {:m  (str/contains? keys "m")
+   :sp (str/contains? keys " ")
+   :p  (str/contains? keys "p")
+   :e  (str/contains? keys "e")
+   :n  (str/contains? keys "n")})
+
+(defn- rising-edges
+  "Given the current and previous key snapshots, build the edges map
+   tick-world consumes (truthy only for keys that just turned on)."
+  [now prev]
+  {:fire         (and (:sp now) (not (:sp prev)))
+   :toggle-map   (and (:m now)  (not (:m prev)))
+   :toggle-pause (and (:p now)  (not (:p prev)))
+   :toggle-sound (and (:n now)  (not (:n prev)))
+   :open-door    (and (:e now)  (not (:e prev)))})
+
+(def initial-key-snapshot
+  {:m false :sp false :p false :e false :n false})
+
 (defn- game-loop [world0]
-  (loop [world    world0
-         t-last   (php/microtime true)
-         frame-ms 0
-         fps      0
-         m-prev   false
-         sp-prev  false
-         p-prev   false
-         e-prev   false
-         n-prev   false
-         dims     [0 0]]
+  (loop [world     world0
+         t-last    (php/microtime true)
+         frame-ms  0
+         fps       0
+         prev-keys initial-key-snapshot
+         dims      [0 0]]
     (let [[rows cols] (term-size)]
       (when (not= [rows cols] dims) (clear-screen))
       (render! world
@@ -288,25 +319,17 @@
                 :sound-on  (:sound-on world)}
                cols rows)
       (php/usleep frame-us)
-      (let [keys   (drain-keys)
-            m-now  (str/contains? keys "m")
-            sp-now (str/contains? keys " ")
-            p-now  (str/contains? keys "p")
-            e-now  (str/contains? keys "e")
-            n-now  (str/contains? keys "n")
-            now    (php/microtime true)
-            ms     (php/intval (php/* (php/- now t-last) 1000))
-            f      (if (php/> ms 0) (php/intval (php// 1000.0 ms)) 0)
-            world' (tick-world world keys (php// ms 1000.0)
-                               {:fire         (and sp-now (not sp-prev))
-                                :toggle-map   (and m-now (not m-prev))
-                                :toggle-pause (and p-now (not p-prev))
-                                :toggle-sound (and n-now (not n-prev))
-                                :open-door    (and e-now (not e-prev))})]
+      (let [keys     (drain-keys)
+            now      (php/microtime true)
+            ms       (php/intval (php/* (php/- now t-last) 1000))
+            f        (if (php/> ms 0) (php/intval (php// 1000.0 ms)) 0)
+            now-keys (key-states keys)
+            world'   (tick-world world keys (php// ms 1000.0)
+                                 (rising-edges now-keys prev-keys))]
         (cond
           (str/contains? keys "q")   :quit
           (php/<= (:lives world') 0) {:game-over true :kills (:kills world')}
-          :else                      (recur world' now ms f m-now sp-now p-now e-now n-now [rows cols]))))))
+          :else                      (recur world' now ms f now-keys [rows cols]))))))
 
 (defn- fresh-world []
   (let [grid (seed-doors (random-grid map-w map-h num-walls) num-doors)]

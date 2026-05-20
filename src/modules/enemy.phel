@@ -17,6 +17,16 @@
   [x y]
   {:x x :y y :alive true})
 
+(def chase-angle-offsets
+  "Angle deltas (radians) tried when an enemy can't walk straight at the
+   player. Ordered straight-ahead -> 45° -> 90° -> 135° on both sides,
+   so the chase first cuts corners, then slides along walls, then
+   backs out of dead ends."
+  (let [q (php/* 0.25 php/M_PI)
+        h (php/* 0.5 php/M_PI)
+        t (php/* 0.75 php/M_PI)]
+    [0.0 q (php/- 0.0 q) h (php/- 0.0 h) t (php/- 0.0 t)]))
+
 (defn- try-step
   "Attempt to step `dist` units from (ex, ey) along `angle`. Returns
    [nx ny] if the destination cell is open, nil otherwise."
@@ -27,11 +37,20 @@
       nil
       [nx ny])))
 
+(defn- pick-step
+  "Walk chase-angle-offsets in order and return the first [nx ny] whose
+   destination is open. nil if the enemy is sealed in."
+  [grid ex ey step desired]
+  (loop [offsets chase-angle-offsets]
+    (cond
+      (empty? offsets) nil
+      :else            (let [hit (try-step grid ex ey step (php/+ desired (first offsets)))]
+                         (if hit hit (recur (rest offsets)))))))
+
 (defn- step-toward
   "Walk one frame of chase-speed * dt toward (target-x, target-y). The
-   enemy first tries the straight line; if blocked, it tries angles
-   offset by ±45°, ±90°, ±135° (in that order) so it slides around
-   corners and walks around obstacles instead of bumping forever."
+   enemy slides around obstacles via pick-step's offset cascade
+   instead of bumping forever."
   [enemy grid target-x target-y dt]
   (let [ex (:x enemy)
         ey (:y enemy)]
@@ -40,21 +59,12 @@
           dist (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
       (if (php/<= dist stop-dist)
         enemy
-        (let [step    (php/* chase-speed dt)
-              desired (php/atan2 dy dx)
-              q       (php/* 0.25 php/M_PI)
-              h       (php/* 0.5 php/M_PI)
-              t       (php/* 0.75 php/M_PI)]
-          (let [hit (or (try-step grid ex ey step desired)
-                        (try-step grid ex ey step (php/+ desired q))
-                        (try-step grid ex ey step (php/- desired q))
-                        (try-step grid ex ey step (php/+ desired h))
-                        (try-step grid ex ey step (php/- desired h))
-                        (try-step grid ex ey step (php/+ desired t))
-                        (try-step grid ex ey step (php/- desired t)))]
-            (if hit
-              (assoc enemy :x (first hit) :y (second hit))
-              enemy)))))))
+        (let [hit (pick-step grid ex ey
+                             (php/* chase-speed dt)
+                             (php/atan2 dy dx))]
+          (if hit
+            (assoc enemy :x (first hit) :y (second hit))
+            enemy))))))
 
 (defn shoot
   "Fire a hitscan from the player along their facing. Returns

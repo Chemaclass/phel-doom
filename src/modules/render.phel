@@ -168,6 +168,26 @@
                            acc)))))]
     (sort-by (fn [x] (php/- 0.0 (:dist x))) raw)))
 
+(defn- pause-menu-string
+  "Build the pause overlay as a single ANSI string with absolute cursor
+   moves. Pure: caller pushes it into the parts array."
+  [vw vh sound-on?]
+  (let [center-col (php/+ (php/intdiv vw 2) 1)
+        row0       (php/max 1 (php/- (php/intdiv vh 2) 3))]
+    (let [line (fn [r text]
+                 (str "\e[" r ";"
+                      (php/max 1 (php/- center-col (php/intdiv (php/strlen text) 2)))
+                      "H" text "\e[0m"))]
+      (str
+       (line row0                "\e[40;93;1m         PAUSED         ")
+       (line (php/+ row0 2)      (str "\e[40;97m  n  sound: \e[1m"
+                                      (if sound-on? "on " "off")
+                                      "\e[0m\e[40;97m         "))
+       (line (php/+ row0 3)      "\e[40;97m  p  resume                ")
+       (line (php/+ row0 4)      "\e[40;97m  q  quit                  ")
+       (line (php/+ row0 6)      "\e[40;90m  phel-doom  by Chemaclass ")
+       (line (php/+ row0 7)      "\e[40;90m  written in Phel Lang     ")))))
+
 (defn- layout
   "Viewport fills the whole terminal. The minimap is an overlay in the
    top-right corner that the M key shows or hides."
@@ -298,23 +318,7 @@
                                "\e[" (php/- vh 2) ";" (php/- cc 1) "H\e[93;1m*★*"
                                "\e[0m"))))
       (when (get stats :paused)
-        (let [sound-on?  (get stats :sound-on)
-              center-col (php/+ (php/intdiv vw 2) 1)
-              row0       (php/max 1 (php/- (php/intdiv vh 2) 3))]
-          (let [draw (fn [r text]
-                       (php/array_push
-                        parts
-                        (str "\e[" r ";"
-                             (php/max 1 (php/- center-col (php/intdiv (php/strlen text) 2)))
-                             "H" text "\e[0m")))]
-            (draw row0                  "\e[40;93;1m         PAUSED         ")
-            (draw (php/+ row0 2)        (str "\e[40;97m  n  sound: \e[1m"
-                                             (if sound-on? "on " "off")
-                                             "\e[0m\e[40;97m         "))
-            (draw (php/+ row0 3)        "\e[40;97m  p  resume                ")
-            (draw (php/+ row0 4)        "\e[40;97m  q  quit                  ")
-            (draw (php/+ row0 6)        "\e[40;90m  phel-doom  by Chemaclass ")
-            (draw (php/+ row0 7)        "\e[40;90m  written in Phel Lang     "))))
+        (php/array_push parts (pause-menu-string vw vh (get stats :sound-on))))
       (php/implode "" parts))))
 
 (defn clear-screen

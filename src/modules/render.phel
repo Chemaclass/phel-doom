@@ -5,14 +5,6 @@
 (def floor  "\e[48;5;239m ")
 (def char-aspect 2.0)
 (def hud-rows 1)
-(def max-vw
-  "Cap on viewport width in cells. Render cost scales linearly with cells,
-   so bigger terminals would tank fps without this. Bump if you have CPU
-   to spare; the unused columns fall back to the terminal's own bg."
-  90)
-(def max-vh
-  "Cap on viewport height in cells. Same rationale as max-vw."
-  28)
 
 (defn- ^{:memoize-lru 64} shade-c [c]
   (str "\e[48;5;" c "m "))
@@ -74,15 +66,13 @@
          "  \e[2m[wasd move, m map, q quit]\e[0m")))
 
 (defn- layout
-  "Viewport fills the terminal up to max-vw/max-vh. The minimap is an
-   overlay in the top-right corner that the M key shows or hides."
+  "Viewport fills the whole terminal. The minimap is an overlay in the
+   top-right corner that the M key shows or hides."
   [cols rows mw]
-  (let [vw (php/min cols max-vw)
-        vh (php/min (- rows hud-rows) max-vh)]
-    {:vw      vw
-     :vh      vh
-     :map-col (php/max 1 (+ (- vw mw) 1))
-     :map-row 1}))
+  {:vw      cols
+   :vh      (- rows hud-rows)
+   :map-col (php/max 1 (+ (- cols mw) 1))
+   :map-row 1})
 
 (defn frame->string
   "Render the world sized to cols x rows. Walls project at a constant
@@ -105,28 +95,28 @@
               wall-h (php/min vh (php/intval
                                   (/ proj-dist (* (php/max 0.3 dist) char-aspect))))
               top    (php/intdiv (- vh wall-h) 2)]
-          (aset tops col top)
-          (aset bots col (+ top wall-h))
-          (aset shades col (shade dist))
+          (php/aset tops col top)
+          (php/aset bots col (php/+ top wall-h))
+          (php/aset shades col (shade dist))
           (recur (+ col 1) (next cs)))))
     (let [parts (php/array)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]
-                 (if (>= col vw)
-                   (when (> run 0)
+                 (if (php/>= col vw)
+                   (when (php/> run 0)
                      (php/array_push parts prev)
-                     (php/array_push parts (php/str_repeat " " (- run 1))))
+                     (php/array_push parts (php/str_repeat " " (php/- run 1))))
                    (let [c (cond
-                             (< row (aget tops col))  sky
-                             (>= row (aget bots col)) floor
-                             :else                    (aget shades col))]
+                             (php/< row (php/aget tops col))  sky
+                             (php/>= row (php/aget bots col)) floor
+                             :else                            (php/aget shades col))]
                      (cond
-                       (zero? run) (recur (+ col 1) c 1)
-                       (= c prev)  (recur (+ col 1) prev (+ run 1))
-                       :else       (do
-                                     (php/array_push parts prev)
-                                     (php/array_push parts (php/str_repeat " " (- run 1)))
-                                     (recur (+ col 1) c 1))))))
+                       (php/=== run 0)  (recur (php/+ col 1) c 1)
+                       (php/=== c prev) (recur (php/+ col 1) prev (php/+ run 1))
+                       :else            (do
+                                          (php/array_push parts prev)
+                                          (php/array_push parts (php/str_repeat " " (php/- run 1)))
+                                          (recur (php/+ col 1) c 1))))))
                (php/array_push parts "\e[0m\n"))
       (php/array_push parts (hud-line world stats))
       (dotimes [i visible-mh]

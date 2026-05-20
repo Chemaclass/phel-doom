@@ -606,35 +606,56 @@
   [text width]
   (str text (php/str_repeat " " (php/max 0 (php/- width (php/strlen text))))))
 
-(defn- death-rows [kills survived-s level level-name]
-  (let [w (end-pad "" end-box-width)]
-    [w
-     "\e[91;1m            YOU DIED            \e[0m"
-     w :sep w
-     (str "\e[97m" (end-pad (str "   died on L" level " " level-name) end-box-width) "\e[0m")
-     (str "\e[97m" (end-pad (str "   kills:   " kills)                end-box-width) "\e[0m")
-     (str "\e[97m" (end-pad (str "   time:    " survived-s "s")       end-box-width) "\e[0m")
-     w :sep w
-     "\e[97;1m   r  restart      q  quit      \e[0m"
-     w :sep w
-     "\e[2;97m   phel-doom by Chemaclass      \e[0m"
-     "\e[2;97m   written in Phel Lang         \e[0m"
-     w]))
+(defn- best-victory-cell [s]
+  (if (php/<= s 0) "--" (str s "s")))
 
-(defn- victory-rows [kills survived-s level level-name]
+(defn- best-rows
+  "Tiny 3-line block summarising the persisted best scores. Same
+   end-pad width so the box border stays aligned."
+  [scores]
+  [(str "\e[2;93m" (end-pad (str "   best kills:   " (:best-kills scores)) end-box-width) "\e[0m")
+   (str "\e[2;93m" (end-pad (str "   best level:   " (:best-level scores)) end-box-width) "\e[0m")
+   (str "\e[2;93m" (end-pad (str "   best time:    "
+                                 (best-victory-cell (:fastest-victory-s scores)))
+                            end-box-width) "\e[0m")])
+
+(defn- death-rows [kills survived-s level level-name scores]
   (let [w (end-pad "" end-box-width)]
-    [w
-     "\e[92;1m            VICTORY!            \e[0m"
-     w :sep w
-     (str "\e[97m" (end-pad (str "   cleared L" level " " level-name) end-box-width) "\e[0m")
-     (str "\e[97m" (end-pad (str "   kills:   " kills)                end-box-width) "\e[0m")
-     (str "\e[97m" (end-pad (str "   time:    " survived-s "s")       end-box-width) "\e[0m")
-     w :sep w
-     "\e[97;1m   r  play again   q  quit      \e[0m"
-     w :sep w
-     "\e[2;97m   phel-doom by Chemaclass      \e[0m"
-     "\e[2;97m   written in Phel Lang         \e[0m"
-     w]))
+    (apply vector
+           (concat
+            [w
+             "\e[91;1m            YOU DIED            \e[0m"
+             w :sep w
+             (str "\e[97m" (end-pad (str "   died on L" level " " level-name) end-box-width) "\e[0m")
+             (str "\e[97m" (end-pad (str "   kills:   " kills)                end-box-width) "\e[0m")
+             (str "\e[97m" (end-pad (str "   time:    " survived-s "s")       end-box-width) "\e[0m")
+             w :sep w]
+            (best-rows scores)
+            [w :sep w
+             "\e[97;1m   r  restart      q  quit      \e[0m"
+             w :sep w
+             "\e[2;97m   phel-doom by Chemaclass      \e[0m"
+             "\e[2;97m   written in Phel Lang         \e[0m"
+             w]))))
+
+(defn- victory-rows [kills survived-s level level-name scores]
+  (let [w (end-pad "" end-box-width)]
+    (apply vector
+           (concat
+            [w
+             "\e[92;1m            VICTORY!            \e[0m"
+             w :sep w
+             (str "\e[97m" (end-pad (str "   cleared L" level " " level-name) end-box-width) "\e[0m")
+             (str "\e[97m" (end-pad (str "   kills:   " kills)                end-box-width) "\e[0m")
+             (str "\e[97m" (end-pad (str "   time:    " survived-s "s")       end-box-width) "\e[0m")
+             w :sep w]
+            (best-rows scores)
+            [w :sep w
+             "\e[97;1m   r  play again   q  quit      \e[0m"
+             w :sep w
+             "\e[2;97m   phel-doom by Chemaclass      \e[0m"
+             "\e[2;97m   written in Phel Lang         \e[0m"
+             w]))))
 
 (defn- render-end-screen
   "Generic end-of-game overlay: full-screen wash in `wash-bg` plus a
@@ -671,18 +692,16 @@
     (php/flush)))
 
 (defn render-death-screen
-  "Centred YOU DIED box on a dark-red wash with cumulative kills + time
-   and the level + monster the player went down on."
+  "Centred YOU DIED box on a dark-red wash. Shows this run + the
+   persisted bests from the scores file."
   {:export true}
-  [cols rows kills survived-s level level-name]
+  [cols rows kills survived-s level level-name scores]
   (render-end-screen cols rows "\e[48;5;52m"
-                     (death-rows kills survived-s level level-name)))
+                     (death-rows kills survived-s level level-name scores)))
 
 (defn render-victory-screen
-  "Centred VICTORY box on a dark-green wash after clearing all levels.
-   Last-level info echoed so the screen reads as a triumphant
-   summary, not just a generic 'you won' card."
+  "Centred VICTORY box on a dark-green wash. Run + persisted bests."
   {:export true}
-  [cols rows kills survived-s level level-name]
+  [cols rows kills survived-s level level-name scores]
   (render-end-screen cols rows "\e[48;5;22m"
-                     (victory-rows kills survived-s level level-name)))
+                     (victory-rows kills survived-s level level-name scores)))

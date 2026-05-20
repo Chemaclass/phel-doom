@@ -11,6 +11,7 @@
   (:require phel-doom.modules.enemy    :refer [advance])
   (:require phel-doom.modules.sound    :refer [play-sfx!])
   (:require phel-doom.modules.level    :refer [build-world num-levels])
+  (:require phel-doom.modules.scores   :refer [update-scores!])
   (:require phel-doom.modules.render   :refer [render! clear-screen
                                                render-death-screen render-victory-screen])
   (:require phel-doom.modules.input    :refer [init-input! restore! drain-keys]))
@@ -244,13 +245,13 @@
           (str/contains? keys "r") :restart
           :else                    (recur [rows cols]))))))
 
-(defn- death-loop [kills survived-s level level-name]
+(defn- death-loop [kills survived-s level level-name scores]
   (end-loop (fn [cols rows]
-              (render-death-screen cols rows kills survived-s level level-name))))
+              (render-death-screen cols rows kills survived-s level level-name scores))))
 
-(defn- victory-loop [kills survived-s level level-name]
+(defn- victory-loop [kills survived-s level level-name scores]
   (end-loop (fn [cols rows]
-              (render-victory-screen cols rows kills survived-s level level-name))))
+              (render-victory-screen cols rows kills survived-s level level-name scores))))
 
 ;; =====================================================================
 ;; § Run lifecycle (level chain + restart)
@@ -260,9 +261,9 @@
   [(php/+ carry-kills (:kills result))
    (php/+ carry-time  (:survived-s result))])
 
-(defn- maybe-restart [end-fn kills survived-s level level-name]
+(defn- maybe-restart [end-fn kills survived-s level level-name scores]
   (clear-screen)
-  (when (= :restart (end-fn kills survived-s level level-name))
+  (when (= :restart (end-fn kills survived-s level level-name scores))
     (clear-screen)
     :restart))
 
@@ -283,17 +284,21 @@
 
         (and (map? result) (:victory result))
         (let [[k t] (carry-on carry-kills carry-time result)]
-          (when (= :restart (maybe-restart victory-loop k t
-                                           (:level result)
-                                           (:level-name result)))
-            (recur 1 max-lives 0 0)))
+          (let [scores (update-scores! k (:level result) t true)]
+            (when (= :restart (maybe-restart victory-loop k t
+                                             (:level result)
+                                             (:level-name result)
+                                             scores))
+              (recur 1 max-lives 0 0))))
 
         (and (map? result) (:game-over result))
         (let [[k t] (carry-on carry-kills carry-time result)]
-          (when (= :restart (maybe-restart death-loop k t
-                                           (:level result)
-                                           (:level-name result)))
-            (recur 1 max-lives 0 0)))
+          (let [scores (update-scores! k (:level result) t false)]
+            (when (= :restart (maybe-restart death-loop k t
+                                             (:level result)
+                                             (:level-name result)
+                                             scores))
+              (recur 1 max-lives 0 0))))
 
         :else
         nil))))

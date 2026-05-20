@@ -13,6 +13,18 @@
   "Solid orange-yellow column drawn when a ray hit a closed door.
    Distinct from the grey wall gradient so doors pop in the 3D view."
   "\e[48;5;172m ")
+
+;; Color CODES used for half-block edge anti-aliasing. The outer
+;; column loop composes 'top edge' and 'bottom edge' cells by
+;; combining a wall code with the sky / floor code into a single
+;; ▀ glyph (upper-half block — FG paints top half, BG paints
+;; bottom half). The eye reads it as a sub-cell wall boundary
+;; instead of a staircase.
+(def sky-code         "236")
+(def floor-code       "239")
+(def sky-blood-code   "52")
+(def floor-blood-code "88")
+(def door-code        "172")
 (def blood-bright "\e[48;5;160m ")
 (def blood-mid    "\e[48;5;88m ")
 (def blood-dim    "\e[48;5;52m ")
@@ -35,6 +47,18 @@
         (recur (php/+ i 1))))
     t))
 
+(def shade-code-table
+  "Parallel palette to shade-table holding ONLY the 256-color code as
+   a string (e.g. \"240\"). Used to compose ▀ half-block edge cells
+   that mix a wall colour with sky / floor for sub-pixel-looking wall
+   tops and bottoms."
+  (let [t (php/array)]
+    (loop [i 0]
+      (when (php/< i 24)
+        (php/aset t i (php/strval (php/+ 232 i)))
+        (recur (php/+ i 1))))
+    t))
+
 (def shade-table-blood
   "Red gradient palette swapped in for the duration of the player's
    post-hit i-frames so the whole viewport flushes red — instant 'you
@@ -45,6 +69,15 @@
         ;; bright red (close) -> dark red (far) along the 256-color
         ;; reds: 196 -> 58, every shade step ~6 indices.
         (php/aset t i (str "\e[48;5;" (php/- 196 (php/intval (php/* i 6))) "m "))
+        (recur (php/+ i 1))))
+    t))
+
+(def shade-code-table-blood
+  "Code-only twin of shade-table-blood for edge-cell composition."
+  (let [t (php/array)]
+    (loop [i 0]
+      (when (php/< i 24)
+        (php/aset t i (php/strval (php/- 196 (php/intval (php/* i 6)))))
         (recur (php/+ i 1))))
     t))
 
@@ -277,15 +310,22 @@
         ebody                              (or (get stats :enemy-body) enemy-body)
         {:keys [dists hits hxs hys sides]}
         (cast-frame world vw)
+        ;; Half-block edge cells need the sky/floor colour CODE for
+        ;; the current palette so the composer can write
+        ;; "\e[48;5;WALL;38;5;SKYm▀" and let ▀'s upper half show sky.
+        sky-c                              (if bloody? sky-blood-code sky-code)
+        floor-c                            (if bloody? floor-blood-code floor-code)
+        ctbl                               (if bloody? shade-code-table-blood shade-code-table)
         tops                               (php/array)
         bots                               (php/array)
-        ;; Two pre-baked ANSI strings per column. shades-normal is the
-        ;; middle of a wall column; shades-edge is the same column at
-        ;; its top/bottom row (one shade step darker → cast shadow).
-        ;; Door columns get door-shade in BOTH so the row loop doesn't
-        ;; need a branch.
+        ;; Three pre-baked ANSI strings per column:
+        ;;   shades-normal    interior wall cell (single colour BG)
+        ;;   shades-top-edge  ▀ char w/ sky above + wall below (anti-aliased top)
+        ;;   shades-bot-edge  ▀ char w/ wall above + floor below (anti-aliased bottom)
+        ;; Door columns get door-shade in all three.
         shades-normal                      (php/array)
-        shades-edge                        (php/array)
+        shades-top-edge                    (php/array)
+        shades-bot-edge                    (php/array)
         mids                               (php/array)
         emask                              (php/array)
         blood-paint                        (php/array)
@@ -308,21 +348,26 @@
           (php/aset tops col top)
           (php/aset bots col (php/+ top wall-h))
           (if (php/=== 2 (php/aget hits col))
-            (do (php/aset shades-normal col door-shade)
-                (php/aset shades-edge   col door-shade))
-            ;; Inlined: distance-shade-idx + side darken + cell hash
-            ;; + clamp + edge darken. Two PHP-array lookups land the
-            ;; final strings for this column.
-            (let [raw (php/+ (php/intval (php/* (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 23))
-                             (if (php/=== (php/aget sides col) 0) 1 0)
-                             (php/- (mod (php/+ (php/* (php/aget hxs col) 37)
-                                                (php/* (php/aget hys col) 91))
-                                         3)
-                                    1))]
-              (php/aset shades-normal col
-                        (php/aget stbl (php/max 0 (php/min 23 raw))))
-              (php/aset shades-edge col
-                        (php/aget stbl (php/max 0 (php/min 23 (php/+ raw 2)))))))
+            (do (php/aset shades-normal   col door-shade)
+                (php/aset shades-top-edge col (str "\e[48;5;" door-code ";38;5;" sky-c "m▀"))
+                (php/aset shades-bot-edge col (str "\e[48;5;" floor-c ";38;5;" door-code "m▀")))
+            (let [idx (php/max 0
+                               (php/min 23
+                                        (php/+ (php/intval (php/* (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 23))
+                                               (if (php/=== (php/aget sides col) 0) 1 0)
+                                               (php/- (mod (php/+ (php/* (php/aget hxs col) 37)
+                                                                  (php/* (php/aget hys col) 91))
+                                                           3)
+                                                      1))))]
+              (let [wcode (php/aget ctbl idx)]
+                (php/aset shades-normal col (php/aget stbl idx))
+              ;; Upper-half block: FG paints top half (= sky), BG paints
+              ;; bottom half (= wall). Visually anti-aliases the top.
+                (php/aset shades-top-edge col
+                          (str "\e[48;5;" wcode ";38;5;" sky-c "m▀"))
+              ;; Same trick at the bottom but with wall on top, floor below.
+                (php/aset shades-bot-edge col
+                          (str "\e[48;5;" floor-c ";38;5;" wcode "m▀")))))
           (recur (php/+ col 1)))))
     (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
            (let [col (:col proj)
@@ -406,13 +451,14 @@
                              sky'
                              (or (php/aget blood-paint (php/+ (php/* row vw) col))
                                  (cond
-                                   (php/< row (php/aget tops col))  sky'
-                                   (php/>= row (php/aget bots col)) floor'
+                                   (php/< row (php/aget tops col))             sky'
+                                   (php/>= row (php/aget bots col))            floor'
                                    (php/aget emask col)
                                    (if (php/< row (php/aget mids col)) ehead ebody)
-                                   (or (php/=== row (php/aget tops col))
-                                       (php/=== row (php/- (php/aget bots col) 1)))
-                                   (php/aget shades-edge col)
+                                   (php/=== row (php/aget tops col))
+                                   (php/aget shades-top-edge col)
+                                   (php/=== row (php/- (php/aget bots col) 1))
+                                   (php/aget shades-bot-edge col)
                                    :else
                                    (php/aget shades-normal col))))]
                      (cond

@@ -5,6 +5,14 @@
 (def floor  "\e[48;5;239m ")
 (def char-aspect 2.0)
 (def hud-rows 1)
+(def max-vw
+  "Cap on viewport width in cells. Render cost scales linearly with cells,
+   so bigger terminals would tank fps without this. Bump if you have CPU
+   to spare; the unused columns fall back to the terminal's own bg."
+  90)
+(def max-vh
+  "Cap on viewport height in cells. Same rationale as max-vw."
+  28)
 
 (defn- ^{:memoize-lru 64} shade-c [c]
   (str "\e[48;5;" c "m "))
@@ -66,13 +74,15 @@
          "  \e[2m[wasd move, m map, q quit]\e[0m")))
 
 (defn- layout
-  "Viewport always fills the terminal; the minimap is an overlay in the
-   top-right corner that the M key shows or hides."
+  "Viewport fills the terminal up to max-vw/max-vh. The minimap is an
+   overlay in the top-right corner that the M key shows or hides."
   [cols rows mw]
-  {:vw      cols
-   :vh      (- rows hud-rows)
-   :map-col (php/max 1 (+ (- cols mw) 1))
-   :map-row 1})
+  (let [vw (php/min cols max-vw)
+        vh (php/min (- rows hud-rows) max-vh)]
+    {:vw      vw
+     :vh      vh
+     :map-col (php/max 1 (+ (- vw mw) 1))
+     :map-row 1}))
 
 (defn frame->string
   "Render the world sized to cols x rows. Walls project at a constant
@@ -99,31 +109,29 @@
           (aset bots col (+ top wall-h))
           (aset shades col (shade dist))
           (recur (+ col 1) (next cs)))))
-    (str
-     (loop [row 0 acc ""]
-       (if (>= row vh)
-         acc
-         (recur (+ row 1)
-                (str acc
-                     (loop [col 0 prev nil run 0 line ""]
-                       (if (>= col vw)
-                         (if (zero? run) line (str line prev (php/str_repeat " " (- run 1))))
-                         (let [c (cond
-                                   (< row (aget tops col))  sky
-                                   (>= row (aget bots col)) floor
-                                   :else                    (aget shades col))]
-                           (cond
-                             (zero? run) (recur (+ col 1) c 1 line)
-                             (= c prev)  (recur (+ col 1) prev (+ run 1) line)
-                             :else       (recur (+ col 1) c 1
-                                                (str line prev (php/str_repeat " " (- run 1))))))))
-                     "\e[0m\n"))))
-     (hud-line world stats)
-     (apply str
-            (map (fn [i]
-                   (str "\e[" (+ map-row i) ";" map-col "H"
-                        (get mrows i)))
-                 (range 0 visible-mh))))))
+    (let [parts (php/array)]
+      (dotimes [row vh]
+               (loop [col 0 prev nil run 0]
+                 (if (>= col vw)
+                   (when (> run 0)
+                     (php/array_push parts prev)
+                     (php/array_push parts (php/str_repeat " " (- run 1))))
+                   (let [c (cond
+                             (< row (aget tops col))  sky
+                             (>= row (aget bots col)) floor
+                             :else                    (aget shades col))]
+                     (cond
+                       (zero? run) (recur (+ col 1) c 1)
+                       (= c prev)  (recur (+ col 1) prev (+ run 1))
+                       :else       (do
+                                     (php/array_push parts prev)
+                                     (php/array_push parts (php/str_repeat " " (- run 1)))
+                                     (recur (+ col 1) c 1))))))
+               (php/array_push parts "\e[0m\n"))
+      (php/array_push parts (hud-line world stats))
+      (dotimes [i visible-mh]
+               (php/array_push parts (str "\e[" (+ map-row i) ";" map-col "H" (get mrows i))))
+      (php/implode "" parts))))
 
 (defn clear-screen
   "ANSI clear + cursor home."

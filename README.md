@@ -39,14 +39,13 @@ src/
 ├── commands/
 │   └── play.phel                      ; subcommand: play
 └── modules/
-    └── doom/
-        ├── state.phel                 ; player + world records, pure updates
-        ├── map.phel                   ; level grid + wall lookup
-        ├── engine.phel                ; raycaster (DDA-ish step march)
-        ├── render.phel                ; ANSI 24-bit frame composer
-        └── input.phel                 ; raw STDIN, non-blocking key reads
+    ├── state.phel                     ; player + world records, pure updates
+    ├── map.phel                       ; level grid + wall lookup
+    ├── engine.phel                    ; raycaster (step march)
+    ├── render.phel                    ; ANSI frame composer + minimap + HUD
+    └── input.phel                     ; raw STDIN, non-blocking key reads
 tests/
-└── modules/doom/                      ; unit tests per module
+└── modules/                           ; unit tests per module
 phel-config.php                        ; build / export / format config
 ```
 

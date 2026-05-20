@@ -37,6 +37,9 @@
   "Seconds of post-hit invulnerability so a single touch doesn't drain
    multiple lives across consecutive frames."
   1.0)
+(def fire-anim-seconds
+  "How long the muzzle flash / tracer stays visible after each shot."
+  0.09)
 
 (defn- term-size
   "Query the terminal for [rows cols] via stty. Falls back to a
@@ -100,12 +103,13 @@
                            (recur (next es)))))))
 
 (defn- damage-step
-  "Tick the i-frame timer down by dt; if no i-frames are left and an
-   enemy is touching the player, subtract a life and start a fresh
-   i-frame window."
+  "Tick the i-frame and fire-anim timers down by dt; if no i-frames are
+   left and an enemy is touching the player, subtract a life and start
+   a fresh i-frame window."
   [world dt]
-  (let [i (php/max 0.0 (php/- (:iframes world) dt))]
-    (let [w' (assoc world :iframes i)
+  (let [i  (php/max 0.0 (php/- (:iframes world) dt))
+        fa (php/max 0.0 (php/- (or (:fire-anim world) 0.0) dt))]
+    (let [w' (-> world (assoc :iframes i) (assoc :fire-anim fa))
           p  (:player world)]
       (if (and (php/<= i 0.0) (touching? (:enemies w') (:x p) (:y p)))
         (-> w' (update :lives (fn [l] (php/max 0 (php/- l 1))))
@@ -123,7 +127,8 @@
                              wall-d shot-hit-radius shot-max-range)]
         (-> world
             (assoc :enemies es)
-            (update :kills (fn [k] (if hit? (php/+ k 1) k))))))))
+            (update :kills (fn [k] (if hit? (php/+ k 1) k)))
+            (assoc :fire-anim fire-anim-seconds))))))
 
 (defn- apply-physics
   "Per-frame physics step. Active direction counters contribute dt-scaled
@@ -165,11 +170,12 @@
     (let [[rows cols] (term-size)]
       (when (not= [rows cols] dims) (clear-screen))
       (render! world
-               {:fps      fps
-                :frame-ms frame-ms
-                :kills    (:kills world)
-                :lives    (:lives world)
-                :iframes  (:iframes world)}
+               {:fps       fps
+                :frame-ms  frame-ms
+                :kills     (:kills world)
+                :lives     (:lives world)
+                :iframes   (:iframes world)
+                :fire-anim (:fire-anim world)}
                cols rows)
       (php/usleep frame-us)
       (let [keys   (drain-keys)

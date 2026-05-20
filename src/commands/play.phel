@@ -91,13 +91,13 @@
     (cond
       (php/=== es nil) false
       :else            (let [e (first es)]
-              (if (and e (:alive e)
-                       (let [dx (php/- (:x e) px)
-                             dy (php/- (:y e) py)]
-                         (php/<= (php/+ (php/* dx dx) (php/* dy dy))
-                                 (php/* touch-damage-dist touch-damage-dist))))
-                true
-                (recur (next es)))))))
+                         (if (and e (:alive e)
+                                  (let [dx (php/- (:x e) px)
+                                        dy (php/- (:y e) py)]
+                                    (php/<= (php/+ (php/* dx dx) (php/* dy dy))
+                                            (php/* touch-damage-dist touch-damage-dist))))
+                           true
+                           (recur (next es)))))))
 
 (defn- damage-step
   "Tick the i-frame timer down by dt; if no i-frames are left and an
@@ -191,21 +191,32 @@
                                                        dt)]
                                      (if (and sp-now (not sp-prev)) (fire-shot moved) moved))]
                          (damage-step fired dt))))]
-        (if (str/contains? keys "q")
-          :quit
-          (recur world' now ms f m-now sp-now [rows cols]))))))
+        (cond
+          (str/contains? keys "q")   :quit
+          (php/<= (:lives world') 0) {:game-over true :kills (:kills world')}
+          :else                      (recur world' now ms f m-now sp-now [rows cols]))))))
+
+(defn- fresh-world []
+  (let [grid (random-grid map-w map-h)]
+    (let [[px py] (random-spawn grid)]
+      (with-enemies
+       (new-world grid (new-player px py (php/* (rand-int 360) (php// php/M_PI 180.0))))
+       (spawn-enemies grid num-enemies enemy-min-spawn-dist px py)))))
 
 (defn- run-play [ctx]
   (init-input!)
-  (let [grid    (random-grid map-w map-h)
-        [px py] (random-spawn grid)
-        angle   (php/* (rand-int 360) (php// php/M_PI 180.0))
-        enemies (spawn-enemies grid num-enemies enemy-min-spawn-dist px py)]
-    (game-loop (with-enemies (new-world grid (new-player px py angle)) enemies)))
-  (restore!)
-  (clear-screen)
-  (cli/success ctx "Thanks for playing.")
-  0)
+  (let [result (game-loop (fresh-world))]
+    (restore!)
+    (clear-screen)
+    (if (and (map? result) (:game-over result))
+      (do
+        (println)
+        (println "\e[1;91m  YOU DIED  \e[0m")
+        (println "\e[1m  kills:\e[0m" (:kills result))
+        (println)
+        (cli/info ctx "Better luck next run."))
+      (cli/success ctx "Thanks for playing."))
+    0))
 
 (def play-command
   {:name "play"

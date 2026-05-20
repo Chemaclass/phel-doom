@@ -527,18 +527,27 @@
       ;; sprite (the head zone). One glyph per enemy → recognisable
       ;; silhouette + face per type without smearing the same char
       ;; across the whole head width.
+      ;;
+      ;; Occlusion: only emit the glyph when the enemy at this column
+      ;; is closer than the wall at that column. Same check the main
+      ;; sprite paint uses; without it the face would x-ray through
+      ;; walls and reveal enemies anywhere in the room.
       (when eface
         (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
-               (let [d (:dist proj)]
-                 (let [h (php/min vh (php/intval (php// proj-dist
-                                                        (php/* (php/max 0.5 d) char-aspect))))]
-                   (let [face-row (php/+ (php/intdiv (php/- vh h) 2)
-                                         (php/intdiv h 6))]
-                     (when (and (php/>= face-row 1) (php/<= face-row vh))
-                       (php/array_push parts
-                                       (str "\e[" face-row ";"
-                                            (php/+ (:col proj) 1) "H"
-                                            eface))))))))
+               (let [col (:col proj)
+                     d   (:dist proj)]
+                 (when (and (php/>= col 0)
+                            (php/< col vw)
+                            (php/< d (php/aget dists col)))
+                   (let [h (php/min vh (php/intval (php// proj-dist
+                                                          (php/* (php/max 0.5 d) char-aspect))))]
+                     (let [face-row (php/+ (php/intdiv (php/- vh h) 2)
+                                           (php/intdiv h 6))]
+                       (when (and (php/>= face-row 1) (php/<= face-row vh))
+                         (php/array_push parts
+                                         (str "\e[" face-row ";"
+                                              (php/+ col 1) "H"
+                                              eface)))))))))
       ;; Crosshair: dim white + at exact viewport centre so the player
       ;; always knows where a shot would land. Drawn AFTER walls/sprites
       ;; via absolute cursor positioning so wall colours don't bleed

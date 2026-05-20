@@ -3,7 +3,8 @@
 
 (def sky    "\e[48;5;236m ")
 (def floor  "\e[48;5;239m ")
-(def enemy-shade "\e[48;5;124m ")
+(def enemy-head "\e[48;5;196m ")
+(def enemy-body "\e[48;5;52m ")
 (def enemy-marker "\e[91;1mE\e[0m")
 (def char-aspect 2.0)
 (def hud-rows 1)
@@ -132,33 +133,34 @@
            :dist       dist})))))
 
 (defn- overlay-enemy!
-  "Mutate tops/bots/shades so an enemy sprite fills columns where it's
-   closer than the wall behind it. Only the cells actually obscured by
-   the enemy are touched, so unobstructed wall cells keep their shade."
-  [proj dists tops bots shades vw vh]
+  "Paint one enemy sprite into the per-column buffers. tops/bots define
+   the sprite vertical span; mids marks the head/body split row; emask
+   flags the col as 'this is an enemy, not a wall' so the render loop
+   picks the head/body palette instead of the wall shade."
+  [proj dists tops bots mids emask vw vh]
   (let [col (:col proj)
         hw  (:half-width proj)
         d   (:dist proj)]
     (let [c-from (php/max 0 (php/- col hw))
           c-to   (php/min (php/- vw 1) (php/+ col hw))
-          top    (php/intdiv (php/- vh (php/min vh (php/intval
-                                                    (php// proj-dist (php/* (php/max 0.5 d) char-aspect)))))
-                             2)
-          bot    (php/+ top
-                        (php/min vh (php/intval (php// proj-dist (php/* (php/max 0.5 d) char-aspect)))))]
-      (loop [c c-from]
-        (when (php/<= c c-to)
-          (when (php/< d (php/aget dists c))
-            (php/aset tops c top)
-            (php/aset bots c bot)
-            (php/aset shades c enemy-shade))
-          (recur (php/+ c 1)))))))
+          h      (php/min vh (php/intval (php// proj-dist (php/* (php/max 0.5 d) char-aspect))))]
+      (let [top (php/intdiv (php/- vh h) 2)]
+        (let [bot (php/+ top h)
+              mid (php/+ top (php/intdiv h 3))]
+          (loop [c c-from]
+            (when (php/<= c c-to)
+              (when (php/< d (php/aget dists c))
+                (php/aset tops c top)
+                (php/aset bots c bot)
+                (php/aset mids c mid)
+                (php/aset emask c true))
+              (recur (php/+ c 1)))))))))
 
 (defn- overlay-enemies!
   "Project every alive enemy, sort by distance descending, then paint
    each into the per-column buffers so closer enemies override farther
    ones at overlapping columns."
-  [enemies player dists tops bots shades vw vh]
+  [enemies player dists tops bots mids emask vw vh]
   (let [projs (loop [es enemies acc []]
                 (if (php/=== es nil)
                   acc
@@ -169,7 +171,7 @@
                                (if p (conj acc p) acc))
                              acc)))))]
     (doseq [p (sort-by (fn [x] (php/- 0.0 (:dist x))) projs)]
-           (overlay-enemy! p dists tops bots shades vw vh))))
+           (overlay-enemy! p dists tops bots mids emask vw vh))))
 
 (defn- layout
   "Viewport fills the whole terminal. The minimap is an overlay in the
@@ -193,6 +195,8 @@
         tops                            (php/array)
         bots                            (php/array)
         shades                          (php/array)
+        mids                            (php/array)
+        emask                           (php/array)
         mrows                           (if (:show-map world) (minimap-rows world) (php/array))
         visible-mh                      (php/min (php/count mrows) vh)]
     (loop [col 0]
@@ -205,7 +209,7 @@
           (php/aset bots col (php/+ top wall-h))
           (php/aset shades col (shade dist))
           (recur (php/+ col 1)))))
-    (overlay-enemies! (:enemies world) (:player world) dists tops bots shades vw vh)
+    (overlay-enemies! (:enemies world) (:player world) dists tops bots mids emask vw vh)
     (let [parts (php/array)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]
@@ -216,6 +220,9 @@
                    (let [c (cond
                              (php/< row (php/aget tops col))  sky
                              (php/>= row (php/aget bots col)) floor
+                             (php/aget emask col)             (if (php/< row (php/aget mids col))
+                                                                enemy-head
+                                                                enemy-body)
                              :else                            (php/aget shades col))]
                      (cond
                        (php/=== run 0)  (recur (php/+ col 1) c 1)

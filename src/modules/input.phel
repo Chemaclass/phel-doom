@@ -5,25 +5,22 @@
    without waiting for Enter. Switch to the alternate screen buffer and
    hide the cursor to avoid flicker during the render loop.
 
-   Also opts into the Kitty keyboard protocol (`CSI >3u`): flag 1 =
-   disambiguate escape codes, flag 2 = report event types (so the
-   terminal sends real key-release events as well as press / repeat).
-   Terminals that don't support the protocol silently ignore the
-   escape; controls.phel parses both kitty CSI-u events AND legacy
-   single-byte input so either path works."
+   NOTE: kitty-keyboard-protocol opt-in (`CSI >Nu`) was tried and
+   reverted — flag 2 (report event types) makes some terminals emit
+   arrow keys as `\\e[1;1:1D` instead of plain `\\e[D`, which the
+   arrow normalisation in controls.phel doesn't recognise → turning
+   silently dies. Stick with legacy raw bytes for now."
   {:export true}
   []
   (php/exec "stty -icanon -echo min 0 time 0")
   (php/stream_set_blocking php/STDIN false)
-  (print "\e[?1049h\e[?25l\e[?7l\e[2J\e[H\e[>3u"))
+  (print "\e[?1049h\e[?25l\e[?7l\e[2J\e[H"))
 
 (defn restore!
-  "Restore cooked terminal mode, leave the alternate screen buffer, and
-   pop the kitty-keyboard-protocol flags so the terminal goes back to
-   plain bytes for subsequent shell commands."
+  "Restore cooked terminal mode and leave the alternate screen buffer."
   {:export true}
   []
-  (print "\e[<u\e[?25h\e[?7h\e[?1049l")
+  (print "\e[?25h\e[?7h\e[?1049l")
   (php/exec "stty sane"))
 
 (defn read-key

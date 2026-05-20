@@ -1,8 +1,10 @@
 (ns phel-doom.modules.render
   (:require phel-doom.modules.engine :refer [cast-frame max-depth proj-dist]))
 
-(def sky    "\e[48;5;236m ")
-(def floor  "\e[48;5;239m ")
+(def sky        "\e[48;5;236m ")
+(def floor      "\e[48;5;239m ")
+(def sky-blood  "\e[48;5;52m ")
+(def floor-blood "\e[48;5;88m ")
 (def enemy-head "\e[48;5;196m ")
 (def enemy-body "\e[48;5;52m ")
 (def enemy-marker "\e[91;1mE\e[0m")
@@ -21,8 +23,21 @@
         (recur (php/+ i 1))))
     t))
 
-(defn- shade [dist]
-  (php/aget shade-table
+(def shade-table-blood
+  "Red gradient palette swapped in for the duration of the player's
+   post-hit i-frames so the whole viewport flushes red — instant 'you
+   just got hit' feedback without rendering a separate overlay."
+  (let [t (php/array)]
+    (loop [i 0]
+      (when (php/< i 24)
+        ;; bright red (close) -> dark red (far) along the 256-color
+        ;; reds: 196 -> 58, every shade step ~6 indices.
+        (php/aset t i (str "\e[48;5;" (php/- 196 (php/intval (php/* i 6))) "m "))
+        (recur (php/+ i 1))))
+    t))
+
+(defn- shade [tbl dist]
+  (php/aget tbl
             (php/intval (php/* (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 23))))
 
 (defn- direction-char [angle]
@@ -101,13 +116,7 @@
          (php/intval (* (php/fmod (+ angle (* 4.0 php/M_PI)) (* 2.0 php/M_PI))
                         (/ 180.0 php/M_PI)))
          "°"
-         "  \e[1mlives\e[0m "
-         (let [l (or (get stats :lives) 0)]
-           (str (if (php/> (or (get stats :iframes) 0.0) 0.0) "\e[5;91m" "\e[91m")
-                (php/str_repeat "♥ " l)
-                (php/str_repeat "· " (php/max 0 (php/- 3 l)))
-                "\e[0m"))
-         " \e[1mkills\e[0m " (or (get stats :kills) 0)
+         "  \e[1mkills\e[0m " (or (get stats :kills) 0)
          "  \e[1mfps\e[0m " (or (get stats :fps) 0)
          "  \e[1mframe\e[0m " (or (get stats :frame-ms) 0) "ms"
          "  \e[2m[wasd / ↑↓←→ move+turn  ,. strafe  space fire  m map  q quit]\e[0m")))
@@ -166,6 +175,10 @@
   [world stats cols rows]
   (let [{:keys [vw vh map-col map-row]}
         (layout cols rows (count (first (:grid world))))
+        bloody?                         (php/> (or (get stats :iframes) 0.0) 0.0)
+        sky'                            (if bloody? sky-blood sky)
+        floor'                          (if bloody? floor-blood floor)
+        stbl                            (if bloody? shade-table-blood shade-table)
         dists                           (cast-frame world vw)
         tops                            (php/array)
         bots                            (php/array)
@@ -182,7 +195,7 @@
               top    (php/intdiv (php/- vh wall-h) 2)]
           (php/aset tops col top)
           (php/aset bots col (php/+ top wall-h))
-          (php/aset shades col (shade dist))
+          (php/aset shades col (shade stbl dist))
           (recur (php/+ col 1)))))
     (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
            (let [col (:col proj)
@@ -211,8 +224,8 @@
                      (php/array_push parts prev)
                      (php/array_push parts (php/str_repeat " " (php/- run 1))))
                    (let [c (cond
-                             (php/< row (php/aget tops col))  sky
-                             (php/>= row (php/aget bots col)) floor
+                             (php/< row (php/aget tops col))  sky'
+                             (php/>= row (php/aget bots col)) floor'
                              (php/aget emask col)             (if (php/< row (php/aget mids col))
                                                                 enemy-head
                                                                 enemy-body)
@@ -228,6 +241,14 @@
       (php/array_push parts (hud-line world stats))
       (dotimes [i visible-mh]
                (php/array_push parts (str "\e[" (php/+ map-row i) ";" map-col "H" (php/aget mrows i))))
+      (let [l     (or (get stats :lives) 0)
+            blink (if bloody? "\e[5;1m" "\e[1m")]
+        (php/array_push parts
+                        (str "\e[1;1H" blink "\e[91m"
+                             (php/str_repeat "♥ " l)
+                             "\e[90m"
+                             (php/str_repeat "♡ " (php/max 0 (php/- 3 l)))
+                             "\e[0m")))
       (php/implode "" parts))))
 
 (defn clear-screen

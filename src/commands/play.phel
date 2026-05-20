@@ -52,31 +52,33 @@
         (let [k (php/substr keys i 1)]
           (recur (+ i 1) (if (= k "m") w (step-movement w k))))))))
 
-(defn- game-loop [world0 cols rows]
+(defn- game-loop [world0]
   (loop [world    world0
          t-last   (php/microtime true)
          frame-ms 0
          fps      0
-         m-prev   false]
-    (render! world {:fps fps :frame-ms frame-ms} cols rows)
-    (php/usleep frame-us)
-    (let [keys   (drain-keys)
-          m-now  (str-contains? keys "m")
-          world' (if (and m-now (not m-prev)) (toggle-map world) world)
-          now    (php/microtime true)
-          ms     (php/intval (* (- now t-last) 1000))
-          f      (if (> ms 0) (php/intval (/ 1000.0 ms)) 0)]
-      (if (str-contains? keys "q")
-        :quit
-        (recur (apply-movement world' keys) now ms f m-now)))))
+         m-prev   false
+         dims     [0 0]]
+    (let [[rows cols] (term-size)]
+      (when (not= [rows cols] dims) (clear-screen))
+      (render! world {:fps fps :frame-ms frame-ms} cols rows)
+      (php/usleep frame-us)
+      (let [keys   (drain-keys)
+            m-now  (str-contains? keys "m")
+            world' (if (and m-now (not m-prev)) (toggle-map world) world)
+            now    (php/microtime true)
+            ms     (php/intval (* (- now t-last) 1000))
+            f      (if (> ms 0) (php/intval (/ 1000.0 ms)) 0)]
+        (if (str-contains? keys "q")
+          :quit
+          (recur (apply-movement world' keys) now ms f m-now [rows cols]))))))
 
 (defn- run-play [ctx]
   (init-input!)
-  (let [[rows cols] (term-size)
-        grid        (random-grid map-w map-h)
-        [px py]     (random-spawn grid)
-        angle       (* (rand-int 360) (/ php/M_PI 180.0))]
-    (game-loop (new-world grid (new-player px py angle)) cols rows))
+  (let [grid    (random-grid map-w map-h)
+        [px py] (random-spawn grid)
+        angle   (* (rand-int 360) (/ php/M_PI 180.0))]
+    (game-loop (new-world grid (new-player px py angle))))
   (restore!)
   (clear-screen)
   (cli/success ctx "Thanks for playing.")

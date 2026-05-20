@@ -36,36 +36,56 @@
         :else                                                     (recur (php/+ dist step) (php/+ x dx) (php/+ y dy))))))
 
 (defn- cast-ray-hit
-  "Like cast-ray but returns [dist hit-cell]: the cell value (0 if the
-   ray escaped to max-depth) lets the renderer pick a wall-vs-door
-   shade per column."
+  "Like cast-ray but returns [dist hit-cell hx hy side]:
+     dist     fish-eye uncorrected travel distance
+     hit-cell cell value at the hit (0 if escaped to max-depth)
+     hx, hy   integer grid coords of the hit cell
+     side     0 if the ray crossed an x-axis boundary last (vertical
+              wall face), 1 if a y-axis boundary (horizontal face).
+   Side enables Wolfenstein-style directional shading; (hx, hy)
+   feeds a per-cell variation hash."
   [pgrid px py angle]
   (let [dx (php/* (php/cos angle) step)
         dy (php/* (php/sin angle) step)]
-    (loop [dist 0.0 x px y py]
-      (let [hit (cell-at pgrid (php/intval x) (php/intval y))]
+    (loop [dist    0.0 x       px y       py
+           prev-cx (php/intval px)]
+      (let [cx  (php/intval x)
+            cy  (php/intval y)
+            hit (cell-at pgrid cx cy)]
         (cond
-          (php/>= dist max-depth) [max-depth 0]
-          (php/!== 0 hit)         [dist hit]
-          :else                   (recur (php/+ dist step) (php/+ x dx) (php/+ y dy)))))))
+          (php/>= dist max-depth) [max-depth 0 cx cy 0]
+          (php/!== 0 hit)
+          (let [side (if (php/!== cx prev-cx) 0 1)]
+            [dist hit cx cy side])
+          :else
+          (recur (php/+ dist step) (php/+ x dx) (php/+ y dy) cx))))))
 
 (defn cast-frame
-  "Cast `width` rays and return {:dists ... :hits ...}: per-column
-   fish-eye-corrected distances and the cell value the ray hit (0
-   floor / 1 wall / 2 door). Renderer picks the per-column shade
-   from :hits."
+  "Cast `width` rays and return a map of parallel PHP arrays, one
+   entry per screen column:
+     :dists  fish-eye corrected wall distance
+     :hits   cell value at the hit
+     :hxs    integer x of the hit cell (per-cell shade variation)
+     :hys    integer y of the hit cell
+     :sides  0 = vertical face, 1 = horizontal face (side-shading)"
   {:export true}
   [world width]
   (let [pgrid               (:pgrid world)
         {:keys [x y angle]} (:player world)
         center              (* 0.5 width)
         dists               (php/array)
-        hits                (php/array)]
+        hits                (php/array)
+        hxs                 (php/array)
+        hys                 (php/array)
+        sides               (php/array)]
     (loop [col 0]
       (when (php/< col width)
         (let [offset (php/atan (/ (php/- col center) proj-dist))]
-          (let [[d h] (cast-ray-hit pgrid x y (php/+ angle offset))]
+          (let [[d h hx hy side] (cast-ray-hit pgrid x y (php/+ angle offset))]
             (php/aset dists col (php/* d (php/cos offset)))
-            (php/aset hits col h))
+            (php/aset hits col h)
+            (php/aset hxs col hx)
+            (php/aset hys col hy)
+            (php/aset sides col side))
           (recur (php/+ col 1)))))
-    {:dists dists :hits hits}))
+    {:dists dists :hits hits :hxs hxs :hys hys :sides sides}))

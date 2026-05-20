@@ -48,9 +48,39 @@
         (recur (php/+ i 1))))
     t))
 
-(defn- shade [tbl dist]
-  (php/aget tbl
-            (php/intval (php/* (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 23))))
+(defn- distance-shade-idx
+  "Map a fish-eye corrected distance to a 0..23 shade-table index.
+   0 = brightest (close), 23 = darkest (max-depth)."
+  [^float dist]
+  (php/intval (php/* (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 23)))
+
+(defn- clamp-shade-idx
+  "Keep a shade index inside the table bounds [0, 23]."
+  [i]
+  (php/max 0 (php/min 23 i)))
+
+(defn- cell-variation
+  "Tiny deterministic hash of (hx, hy) -> small shade offset in
+   [-1, 0, 1]. Adds subtle mottling across walls so a long corridor
+   isn't a single flat band."
+  [hx hy]
+  (php/- (mod (php/+ (php/* hx 37) (php/* hy 91)) 3) 1))
+
+(defn- wall-shade-idx
+  "Per-column shade index combining distance, side-shading
+   (vertical faces drawn one step darker, classic Wolfenstein
+   directional-light fake), and a per-cell variation hash."
+  [^float dist hx hy side]
+  (clamp-shade-idx (php/+ (distance-shade-idx dist)
+                          (if (php/=== side 0) 1 0)
+                          (cell-variation hx hy))))
+
+(defn- shade-at
+  "Resolve a shade-table entry by index, with an optional edge-darken
+   bump (top/bottom row of a wall column rendered slightly darker
+   to suggest ceiling/floor cast shadow)."
+  [tbl idx edge?]
+  (php/aget tbl (clamp-shade-idx (if edge? (php/+ idx 2) idx))))
 
 (defn direction-char
   "Map an angle in radians to one of 8 unicode arrow chars, snapping to
@@ -267,21 +297,25 @@
   [world stats cols rows]
   (let [{:keys [vw vh map-col map-row]}
         (layout cols rows (count (first (:grid world))))
-        bloody?                         (php/> (or (get stats :iframes) 0.0) 0.0)
-        sky'                            (if bloody? sky-blood sky)
-        floor'                          (if bloody? floor-blood floor)
-        stbl                            (if bloody? shade-table-blood shade-table)
-        ehead                           (or (get stats :enemy-head) enemy-head)
-        ebody                           (or (get stats :enemy-body) enemy-body)
-        {:keys [dists hits]}            (cast-frame world vw)
-        tops                            (php/array)
-        bots                            (php/array)
-        shades                          (php/array)
-        mids                            (php/array)
-        emask                           (php/array)
-        blood-paint                     (php/array)
-        mrows                           (if (:show-map world) (minimap-rows world) (php/array))
-        visible-mh                      (php/min (php/count mrows) vh)]
+        bloody?                            (php/> (or (get stats :iframes) 0.0) 0.0)
+        sky'                               (if bloody? sky-blood sky)
+        floor'                             (if bloody? floor-blood floor)
+        stbl                               (if bloody? shade-table-blood shade-table)
+        ehead                              (or (get stats :enemy-head) enemy-head)
+        ebody                              (or (get stats :enemy-body) enemy-body)
+        {:keys [dists hits hxs hys sides]}
+        (cast-frame world vw)
+        tops                               (php/array)
+        bots                               (php/array)
+        ;; Per-column shade index (0..23). Door columns store -1 so the
+        ;; inner loop can route them to door-shade without a string
+        ;; compare. Edge-darken happens in the inner loop too.
+        shade-idxs                         (php/array)
+        mids                               (php/array)
+        emask                              (php/array)
+        blood-paint                        (php/array)
+        mrows                              (if (:show-map world) (minimap-rows world) (php/array))
+        visible-mh                         (php/min (php/count mrows) vh)]
     (loop [col 0]
       (when (php/< col vw)
         (let [dist   (php/aget dists col)
@@ -290,10 +324,13 @@
               top    (php/intdiv (php/- vh wall-h) 2)]
           (php/aset tops col top)
           (php/aset bots col (php/+ top wall-h))
-          (php/aset shades col
+          (php/aset shade-idxs col
                     (if (php/=== 2 (php/aget hits col))
-                      door-shade
-                      (shade stbl dist)))
+                      -1
+                      (wall-shade-idx dist
+                                      (php/aget hxs col)
+                                      (php/aget hys col)
+                                      (php/aget sides col))))
           (recur (php/+ col 1)))))
     (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
            (let [col (:col proj)
@@ -377,7 +414,13 @@
                                  (php/aget emask col)             (if (php/< row (php/aget mids col))
                                                                     ehead
                                                                     ebody)
-                                 :else                            (php/aget shades col)))]
+                                 :else
+                                 (let [si    (php/aget shade-idxs col)
+                                       edge? (or (php/=== row (php/aget tops col))
+                                                 (php/=== row (php/- (php/aget bots col) 1)))]
+                                   (if (php/=== si -1)
+                                     door-shade
+                                     (shade-at stbl si edge?)))))]
                      (cond
                        (php/=== run 0)  (recur (php/+ col 1) c 1)
                        (php/=== c prev) (recur (php/+ col 1) prev (php/+ run 1))

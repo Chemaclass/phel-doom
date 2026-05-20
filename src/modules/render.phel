@@ -48,39 +48,11 @@
         (recur (php/+ i 1))))
     t))
 
-(defn- distance-shade-idx
-  "Map a fish-eye corrected distance to a 0..23 shade-table index.
-   0 = brightest (close), 23 = darkest (max-depth)."
-  [^float dist]
-  (php/intval (php/* (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 23)))
-
-(defn- clamp-shade-idx
-  "Keep a shade index inside the table bounds [0, 23]."
-  [i]
-  (php/max 0 (php/min 23 i)))
-
-(defn- cell-variation
-  "Tiny deterministic hash of (hx, hy) -> small shade offset in
-   [-1, 0, 1]. Adds subtle mottling across walls so a long corridor
-   isn't a single flat band."
-  [hx hy]
-  (php/- (mod (php/+ (php/* hx 37) (php/* hy 91)) 3) 1))
-
-(defn- wall-shade-idx
-  "Per-column shade index combining distance, side-shading
-   (vertical faces drawn one step darker, classic Wolfenstein
-   directional-light fake), and a per-cell variation hash."
-  [^float dist hx hy side]
-  (clamp-shade-idx (php/+ (distance-shade-idx dist)
-                          (if (php/=== side 0) 1 0)
-                          (cell-variation hx hy))))
-
-(defn- shade-at
-  "Resolve a shade-table entry by index, with an optional edge-darken
-   bump (top/bottom row of a wall column rendered slightly darker
-   to suggest ceiling/floor cast shadow)."
-  [tbl idx edge?]
-  (php/aget tbl (clamp-shade-idx (if edge? (php/+ idx 2) idx))))
+;; Per-column shading lives inline in frame->string's hot loop:
+;; base distance index, +1 for vertical wall faces (side-shading),
+;; ±1 per-cell hash, then resolve TWO shade strings per column
+;; (normal + edge-darkened). Inner row loop becomes one aget +
+;; one ===-compare against tops/bots-1.
 
 (defn direction-char
   "Map an angle in radians to one of 8 unicode arrow chars, snapping to
@@ -307,15 +279,26 @@
         (cast-frame world vw)
         tops                               (php/array)
         bots                               (php/array)
-        ;; Per-column shade index (0..23). Door columns store -1 so the
-        ;; inner loop can route them to door-shade without a string
-        ;; compare. Edge-darken happens in the inner loop too.
-        shade-idxs                         (php/array)
+        ;; Two pre-baked ANSI strings per column. shades-normal is the
+        ;; middle of a wall column; shades-edge is the same column at
+        ;; its top/bottom row (one shade step darker → cast shadow).
+        ;; Door columns get door-shade in BOTH so the row loop doesn't
+        ;; need a branch.
+        shades-normal                      (php/array)
+        shades-edge                        (php/array)
         mids                               (php/array)
         emask                              (php/array)
         blood-paint                        (php/array)
         mrows                              (if (:show-map world) (minimap-rows world) (php/array))
-        visible-mh                         (php/min (php/count mrows) vh)]
+        visible-mh                         (php/min (php/count mrows) vh)
+        ;; First 0-indexed column the minimap overdraws. When the
+        ;; minimap is on, the inner row loop emits sky' for those
+        ;; cells (rows < visible-mh) since the minimap blits over
+        ;; them via absolute cursor positioning anyway — saves a
+        ;; chain of aget + cond per cell in the overlay region.
+        mini-col0                          (if (php/> visible-mh 0)
+                                             (php/max 0 (php/- map-col 1))
+                                             vw)]
     (loop [col 0]
       (when (php/< col vw)
         (let [dist   (php/aget dists col)
@@ -324,13 +307,22 @@
               top    (php/intdiv (php/- vh wall-h) 2)]
           (php/aset tops col top)
           (php/aset bots col (php/+ top wall-h))
-          (php/aset shade-idxs col
-                    (if (php/=== 2 (php/aget hits col))
-                      -1
-                      (wall-shade-idx dist
-                                      (php/aget hxs col)
-                                      (php/aget hys col)
-                                      (php/aget sides col))))
+          (if (php/=== 2 (php/aget hits col))
+            (do (php/aset shades-normal col door-shade)
+                (php/aset shades-edge   col door-shade))
+            ;; Inlined: distance-shade-idx + side darken + cell hash
+            ;; + clamp + edge darken. Two PHP-array lookups land the
+            ;; final strings for this column.
+            (let [raw (php/+ (php/intval (php/* (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 23))
+                             (if (php/=== (php/aget sides col) 0) 1 0)
+                             (php/- (mod (php/+ (php/* (php/aget hxs col) 37)
+                                                (php/* (php/aget hys col) 91))
+                                         3)
+                                    1))]
+              (php/aset shades-normal col
+                        (php/aget stbl (php/max 0 (php/min 23 raw))))
+              (php/aset shades-edge col
+                        (php/aget stbl (php/max 0 (php/min 23 (php/+ raw 2)))))))
           (recur (php/+ col 1)))))
     (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
            (let [col (:col proj)
@@ -407,20 +399,22 @@
                    (when (php/> run 0)
                      (php/array_push parts prev)
                      (php/array_push parts (php/str_repeat " " (php/- run 1))))
-                   (let [c (or (php/aget blood-paint (php/+ (php/* row vw) col))
-                               (cond
-                                 (php/< row (php/aget tops col))  sky'
-                                 (php/>= row (php/aget bots col)) floor'
-                                 (php/aget emask col)             (if (php/< row (php/aget mids col))
-                                                                    ehead
-                                                                    ebody)
-                                 :else
-                                 (let [si    (php/aget shade-idxs col)
-                                       edge? (or (php/=== row (php/aget tops col))
-                                                 (php/=== row (php/- (php/aget bots col) 1)))]
-                                   (if (php/=== si -1)
-                                     door-shade
-                                     (shade-at stbl si edge?)))))]
+                   (let [c (if (and (php/< row visible-mh) (php/>= col mini-col0))
+                             ;; Cells under the minimap overlay — emit a
+                             ;; cheap placeholder; the minimap blits over
+                             ;; them later via absolute cursor positioning.
+                             sky'
+                             (or (php/aget blood-paint (php/+ (php/* row vw) col))
+                                 (cond
+                                   (php/< row (php/aget tops col))  sky'
+                                   (php/>= row (php/aget bots col)) floor'
+                                   (php/aget emask col)
+                                   (if (php/< row (php/aget mids col)) ehead ebody)
+                                   (or (php/=== row (php/aget tops col))
+                                       (php/=== row (php/- (php/aget bots col) 1)))
+                                   (php/aget shades-edge col)
+                                   :else
+                                   (php/aget shades-normal col))))]
                      (cond
                        (php/=== run 0)  (recur (php/+ col 1) c 1)
                        (php/=== c prev) (recur (php/+ col 1) prev (php/+ run 1))

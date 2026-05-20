@@ -75,18 +75,100 @@
 (defn- normalise-arrows [keys]
   (php/str_replace arrow-escape-keys arrow-escape-replacements keys))
 
+;; ---------------------------------------------------------------------
+;; Kitty keyboard protocol parsing.
+;;
+;; When init-input! sent CSI >3u the terminal (if it supports the
+;; protocol) replaces plain key bytes with CSI-u events of the form:
+;;     ESC [ <code> [;<mods>[:<event>]] u
+;; where <event> is 1 (press), 2 (repeat), or 3 (release). This lets
+;; us track real release transitions instead of guessing from absence
+;; of input — which is the whole point of the opt-in.
+;;
+;; The keycode for ASCII keys is the codepoint of the lowercase
+;; letter (w=119, a=97, s=115, d=100). Arrow keys are CSI ~ sequences
+;; under the legacy protocol but become regular CSI u codes here:
+;;     left  57417, right 57415... actually kitty assigns 1-based
+;; functional codes. To keep parsing simple we only recognise the
+;; ASCII direction keys (w/a/s/d) — players using ↑↓←→ still get
+;; legacy CSI sequences via the arrow-normalisation path above, which
+;; works regardless of protocol support.
+;; ---------------------------------------------------------------------
+
+(def ascii->slot
+  "ASCII codepoint -> direction-counter slot. Only WASD movement +
+   ←→ turn (kitty reports left-arrow as 57351, right as 57349)."
+  {119 :fwd
+   115 :back
+   97 :strafe-left
+   100 :strafe-right
+   57351 :turn-left
+   57349 :turn-right})
+
+(defn- clear-slot
+  "Force a counter to 0 (immediate stop)."
+  [world slot]
+  (assoc-in world [:moves slot] 0))
+
+(defn- press-slot
+  "Press / repeat event: set the counter to the slot's normal hold."
+  [world slot]
+  (assoc-in world [:moves slot] (hold-frames-for slot)))
+
+(defn- handle-kitty-event
+  "Apply one parsed kitty event [code event-type] to `world`. Press +
+   repeat refresh the slot's hold; release clears the slot to 0 so
+   the player stops the instant they let go."
+  [world code event-type]
+  (let [slot (get ascii->slot code)]
+    (if (nil? slot)
+      world
+      (cond
+        (php/=== event-type 3) (clear-slot world slot)
+        :else                  (press-slot world slot)))))
+
+(defn- apply-kitty-events
+  "Scan `keys` for kitty CSI-u sequences and fold them into `world`.
+   Returns [world-after-events leftover-string]; leftover-string is
+   what's left after stripping recognised CSI-u tokens so the legacy
+   byte path can handle anything that wasn't a kitty event."
+  [world keys]
+  (let [matches (php/array)
+        ;; Regex: ESC [ <code> ( ; mods ( : event )? )? u
+        ;; - code is digits
+        ;; - optional ;mods (digits)
+        ;; - optional :event (digits) inside the mods group
+        re      "/\\x1b\\[(\\d+)(?:;\\d+(?::(\\d+))?)?u/"]
+    (php/preg_match_all re keys matches)
+    (let [codes  (php/aget matches 1)
+          events (php/aget matches 2)
+          n      (php/count codes)]
+      (loop [i 0 w world]
+        (if (php/>= i n)
+          [w (php/preg_replace re "" keys)]
+          (let [code (php/intval (php/aget codes i))]
+            (let [evraw (php/aget events i)]
+              ;; Missing :event capture means press (event-type 1).
+              (let [event (if (or (php/=== evraw nil) (php/=== evraw ""))
+                            1
+                            (php/intval evraw))]
+                (recur (php/+ i 1) (handle-kitty-event w code event))))))))))
+
 (defn refresh-from-keys
-  "Fold every byte of the drained input into `world` by calling
-   refresh-move once per byte."
+  "Fold every input byte into `world`. First consumes any kitty CSI-u
+   events (press / repeat refresh counters, release clears them) and
+   strips them from the string. Anything left runs through the legacy
+   single-byte path so terminals without kitty support still play."
   {:export true}
   [world keys]
-  (let [normalised (normalise-arrows keys)
-        n          (php/strlen normalised)]
-    (loop [i 0 w world]
-      (if (php/>= i n)
-        w
-        (recur (php/+ i 1)
-               (refresh-move w (php/substr normalised i 1)))))))
+  (let [[w1 leftover] (apply-kitty-events world keys)]
+    (let [normalised (normalise-arrows leftover)
+          n          (php/strlen normalised)]
+      (loop [i 0 w w1]
+        (if (php/>= i n)
+          w
+          (recur (php/+ i 1)
+                 (refresh-move w (php/substr normalised i 1))))))))
 
 ;; =====================================================================
 ;; § Edge detection (one-shot actions)

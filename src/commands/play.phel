@@ -1,6 +1,6 @@
 (ns phel-doom.commands.play
   (:require phel.cli :as cli)
-  (:require phel-doom.modules.state  :refer [new-player new-world move-player turn-player])
+  (:require phel-doom.modules.state  :refer [new-player new-world move-player turn-player toggle-map])
   (:require phel-doom.modules.map    :refer [random-grid random-spawn wall?])
   (:require phel-doom.modules.render :refer [render! clear-screen])
   (:require phel-doom.modules.input  :refer [init-input! restore! drain-keys]))
@@ -8,6 +8,20 @@
 (def move-speed 0.35)
 (def turn-speed 0.15)
 (def frame-us 1000)
+(def map-w 32)
+(def map-h 22)
+
+(defn- term-size
+  "Query the terminal for [rows cols] via stty. Falls back to a
+   sensible default if stty isn't available (e.g. piped input)."
+  []
+  (let [out (php/array)]
+    (php/exec "stty size 2>/dev/null" out)
+    (let [line (aget out 0)]
+      (if (or (nil? line) (= line ""))
+        [24 80]
+        (let [parts (php/explode " " line)]
+          [(php/intval (aget parts 0)) (php/intval (aget parts 1))])))))
 
 (defn- try-move [world dx dy]
   (let [{:keys [grid player]} world
@@ -17,7 +31,7 @@
       world
       (move-player world dx dy))))
 
-(defn- step-input [world key]
+(defn- step-movement [world key]
   (let [a (:angle (:player world))]
     (cond
       (= key "w") (try-move world (* move-speed (php/cos a)) (* move-speed (php/sin a)))
@@ -26,37 +40,43 @@
       (= key "d") (turn-player world turn-speed)
       :else       world)))
 
-(defn- apply-keys [world keys]
+(defn- apply-movement
+  "Fold every byte in the drained input through step-movement. `m` is
+   handled at the edge-detect layer above, so skip it here to avoid
+   toggling once per byte of a held key."
+  [world keys]
   (let [n (php/strlen keys)]
     (loop [i 0 w world]
       (if (>= i n)
         w
-        (recur (+ i 1) (step-input w (php/substr keys i 1)))))))
+        (let [k (php/substr keys i 1)]
+          (recur (+ i 1) (if (= k "m") w (step-movement w k))))))))
 
-(defn- game-loop [world0]
+(defn- game-loop [world0 cols rows]
   (loop [world    world0
          t-last   (php/microtime true)
          frame-ms 0
-         fps      0]
-    (render! world {:fps fps :frame-ms frame-ms})
+         fps      0
+         m-prev   false]
+    (render! world {:fps fps :frame-ms frame-ms} cols rows)
     (php/usleep frame-us)
-    (let [keys (drain-keys)
-          now  (php/microtime true)
-          ms   (php/intval (* (- now t-last) 1000))
-          f    (if (> ms 0) (php/intval (/ 1000.0 ms)) 0)]
+    (let [keys   (drain-keys)
+          m-now  (str-contains? keys "m")
+          world' (if (and m-now (not m-prev)) (toggle-map world) world)
+          now    (php/microtime true)
+          ms     (php/intval (* (- now t-last) 1000))
+          f      (if (> ms 0) (php/intval (/ 1000.0 ms)) 0)]
       (if (str-contains? keys "q")
         :quit
-        (recur (apply-keys world keys) now ms f)))))
-
-(def map-w 32)
-(def map-h 22)
+        (recur (apply-movement world' keys) now ms f m-now)))))
 
 (defn- run-play [ctx]
   (init-input!)
-  (let [grid    (random-grid map-w map-h)
-        [px py] (random-spawn grid)
-        angle   (* (rand-int 360) (/ php/M_PI 180.0))]
-    (game-loop (new-world grid (new-player px py angle))))
+  (let [[rows cols] (term-size)
+        grid        (random-grid map-w map-h)
+        [px py]     (random-spawn grid)
+        angle       (* (rand-int 360) (/ php/M_PI 180.0))]
+    (game-loop (new-world grid (new-player px py angle)) cols rows))
   (restore!)
   (clear-screen)
   (cli/success ctx "Thanks for playing.")
@@ -64,5 +84,5 @@
 
 (def play-command
   {:name "play"
-   :doc  "Start the DOOM showcase. Controls: WASD to move/turn, Q to quit."
+   :doc  "Start the DOOM showcase. Controls: WASD to move/turn, M to toggle the big map, Q to quit."
    :run  run-play})

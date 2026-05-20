@@ -1,10 +1,10 @@
 (ns phel-doom.modules.render
-  (:require phel-doom.modules.engine :refer [cast-frame max-depth]))
+  (:require phel-doom.modules.engine :refer [cast-frame fov max-depth]))
 
-(def width 80)
-(def height 22)
 (def sky    "\e[48;5;236m ")
 (def floor  "\e[48;5;239m ")
+(def char-aspect 2.0)
+(def hud-rows 1)
 
 (defn- ^{:memoize-lru 64} shade-c [c]
   (str "\e[48;5;" c "m "))
@@ -54,66 +54,86 @@
                 (range 0 (count grid))))))
 
 (defn- hud-line [world stats]
-  (let [{:keys [x y angle]} (:player world)
-        a-deg               (php/intval
-                             (* (php/fmod (+ angle (* 4.0 php/M_PI)) (* 2.0 php/M_PI))
-                                (/ 180.0 php/M_PI)))
-        fps                 (or (get stats :fps) 0)
-        ms                  (or (get stats :frame-ms) 0)]
-    (str "\e[1mpos\e[0m ("
+  (let [{:keys [x y angle]} (:player world)]
+    (str "\e[0m\e[1mpos\e[0m ("
          (php/number_format x 1) ", " (php/number_format y 1) ")"
-         "  \e[1mangle\e[0m " a-deg "°"
-         "  \e[1mfps\e[0m " fps
-         "  \e[1mframe\e[0m " ms "ms"
-         "  \e[2m[wasd move, q quit]\e[0m")))
+         "  \e[1mangle\e[0m "
+         (php/intval (* (php/fmod (+ angle (* 4.0 php/M_PI)) (* 2.0 php/M_PI))
+                        (/ 180.0 php/M_PI)))
+         "°"
+         "  \e[1mfps\e[0m " (or (get stats :fps) 0)
+         "  \e[1mframe\e[0m " (or (get stats :frame-ms) 0) "ms"
+         "  \e[2m[wasd move, m map, q quit]\e[0m")))
+
+(defn- layout
+  "Pick viewport dims + minimap anchor based on terminal size and
+   whether the big map is toggled. Overlay mode: viewport fills the
+   screen, minimap sits in the top-right corner. Big-map mode: viewport
+   shrinks to leave a dedicated right column for the minimap."
+  [cols rows show-map mw]
+  (let [vh (- rows hud-rows)]
+    (if show-map
+      {:vw      (php/max 10 (- cols mw 2))
+       :vh      vh
+       :map-col (+ (php/max 10 (- cols mw 2)) 3)
+       :map-row 1}
+      {:vw      cols
+       :vh      vh
+       :map-col (php/max 1 (+ (- cols mw) 1))
+       :map-row 1})))
 
 (defn frame->string
-  "Render the world to one ANSI-coded multi-line frame string. Per-column
-   metadata is unrolled into three PHP-native arrays (tops, bottoms, shades)
-   so the inner cell loop is just integer compares + aget. Equal adjacent
-   cells are run-length encoded as one escape + N spaces. Each viewport
-   row is suffixed with the matching minimap row, and a HUD line is
-   appended below the viewport."
+  "Render the world sized to cols x rows. Walls use a fixed horizontal
+   FOV plus a 2:1 character-aspect correction so perspective stays
+   consistent across terminal sizes. Minimap is overlaid top-right by
+   default, or moved to a dedicated right column when (:show-map world)
+   is truthy."
   {:export true}
-  [world stats]
-  (let [columns (cast-frame world width)
-        tops    (php/array)
-        bots    (php/array)
-        shades  (php/array)
-        mrows   (minimap-rows world)
-        mh      (count mrows)]
+  [world stats cols rows]
+  (let [{:keys [vw vh map-col map-row]}
+        (layout cols rows (:show-map world) (count (first (:grid world))))
+        proj-dist                       (/ (* 0.5 vw) (php/tan (* 0.5 fov)))
+        columns                         (cast-frame world vw)
+        tops                            (php/array)
+        bots                            (php/array)
+        shades                          (php/array)
+        mrows                           (minimap-rows world)
+        visible-mh                      (php/min (count mrows) vh)]
     (loop [col 0 cs columns]
-      (when (< col width)
+      (when (< col vw)
         (let [dist   (:dist (first cs))
-              wall-h (php/intval (/ height (php/max 0.1 dist)))
-              top    (php/intdiv (- height wall-h) 2)]
+              wall-h (php/min vh (php/intval
+                                  (/ proj-dist (* (php/max 0.3 dist) char-aspect))))
+              top    (php/intdiv (- vh wall-h) 2)]
           (aset tops col top)
           (aset bots col (+ top wall-h))
           (aset shades col (shade dist))
           (recur (+ col 1) (next cs)))))
     (str
      (loop [row 0 acc ""]
-       (if (>= row height)
+       (if (>= row vh)
          acc
-         (recur
-          (+ row 1)
-          (str acc
-               (loop [col 0 prev nil run 0 line ""]
-                 (if (>= col width)
-                   (if (zero? run) line (str line prev (php/str_repeat " " (- run 1))))
-                   (let [c (cond
-                             (< row (aget tops col))  sky
-                             (>= row (aget bots col)) floor
-                             :else                    (aget shades col))]
-                     (cond
-                       (zero? run) (recur (+ col 1) c 1 line)
-                       (= c prev)  (recur (+ col 1) prev (+ run 1) line)
-                       :else       (recur (+ col 1) c 1
-                                          (str line prev (php/str_repeat " " (- run 1))))))))
-               "\e[0m  "
-               (if (< row mh) (get mrows row) "")
-               "\n"))))
-     (hud-line world stats) "\n")))
+         (recur (+ row 1)
+                (str acc
+                     (loop [col 0 prev nil run 0 line ""]
+                       (if (>= col vw)
+                         (if (zero? run) line (str line prev (php/str_repeat " " (- run 1))))
+                         (let [c (cond
+                                   (< row (aget tops col))  sky
+                                   (>= row (aget bots col)) floor
+                                   :else                    (aget shades col))]
+                           (cond
+                             (zero? run) (recur (+ col 1) c 1 line)
+                             (= c prev)  (recur (+ col 1) prev (+ run 1) line)
+                             :else       (recur (+ col 1) c 1
+                                                (str line prev (php/str_repeat " " (- run 1))))))))
+                     "\e[0m\n"))))
+     (hud-line world stats) "\n"
+     (apply str
+            (map (fn [i]
+                   (str "\e[" (+ map-row i) ";" map-col "H"
+                        (get mrows i)))
+                 (range 0 visible-mh))))))
 
 (defn clear-screen
   "ANSI clear + cursor home."
@@ -125,7 +145,7 @@
   "Move cursor home and overwrite the previous frame in place. Avoids
    the full-screen clear that would otherwise flicker each frame."
   {:export true}
-  [world stats]
+  [world stats cols rows]
   (print "\e[H")
-  (print (frame->string world stats))
+  (print (frame->string world stats cols rows))
   (php/flush))

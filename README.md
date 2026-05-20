@@ -102,16 +102,18 @@ zooming the walls.
 
 ## Controls
 
-| Key       | Action            |
-|-----------|-------------------|
-| `w` / `s` | Move forward / back |
-| `a` / `d` | Strafe left / right |
-| `←` / `→` | Turn left / right |
-| `m`       | Toggle minimap    |
-| `q`       | Quit              |
+Classic DOOM layout — no mouse needed.
 
-Movement and turning compose freely: holding `w` + `a` + `→` keeps you
-walking forward and to the left while panning right at the same time.
+| Key       | Action              |
+|-----------|---------------------|
+| `↑` / `↓` | Move forward / back |
+| `←` / `→` | Turn left / right   |
+| `,` / `.` | Strafe left / right |
+| `m`       | Toggle minimap      |
+| `q`       | Quit                |
+
+Movement and turning compose freely: holding `↑` + `,` + `→` walks
+forward, strafes left, and pans the view right all at once.
 
 ## Development
 

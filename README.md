@@ -2,7 +2,7 @@
 
 ![phel-doom in action](docs/screenshot.png)
 
-A DOOM-lite raycaster in your terminal. [Phel Lang](https://phel-lang.org/) (Lisp on PHP).
+A DOOM-lite raycaster that runs in your terminal — written in [Phel](https://phel-lang.org/), a Lisp that compiles to PHP. Built as a real-world example app to show what a non-trivial Phel project looks like: 256-color ANSI rendering, raycasting, procedural levels, FPS combat, persisted scores, WAD parser, ~5ms frame time.
 
 ## Features
 

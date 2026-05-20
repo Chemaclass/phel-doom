@@ -231,8 +231,13 @@
 ;; =====================================================================
 
 (defn- end-loop
-  "Render an end screen each frame until the user picks R (restart) or
-   Q (quit). `render-fn` takes (cols rows) and draws the variant."
+  "Render an end screen each frame until the user picks:
+     q  quit
+     r  restart with a fresh random seed (new maps)
+     R  restart with the SAME random seed (same map sequence) —
+        useful when the player wants a replay attempt at a tough
+        spawn or wall layout.
+   `render-fn` takes (cols rows) and draws the variant."
   [render-fn]
   (loop [dims [0 0]]
     (let [[rows cols] (term-size)]
@@ -242,6 +247,7 @@
       (let [keys (drain-keys)]
         (cond
           (str/contains? keys "q") :quit
+          (str/contains? keys "R") :restart-same
           (str/contains? keys "r") :restart
           :else                    (recur [rows cols]))))))
 
@@ -261,18 +267,47 @@
   [(php/+ carry-kills (:kills result))
    (php/+ carry-time  (:survived-s result))])
 
-(defn- maybe-restart [end-fn kills survived-s level level-name scores]
+(defn- maybe-restart
+  "Run the end-loop and pass the raw choice (:quit / :restart /
+   :restart-same) back to run-levels so it can branch on which kind
+   of restart the player asked for."
+  [end-fn kills survived-s level level-name scores]
   (clear-screen)
-  (when (= :restart (end-fn kills survived-s level level-name scores))
+  (let [choice (end-fn kills survived-s level level-name scores)]
     (clear-screen)
-    :restart))
+    choice))
+
+(defn- handle-end
+  "Show the end screen for `end-fn` (death or victory), persist the
+   bests, and translate the player's choice into a vector that
+   run-levels can match on:
+     [:quit]              quit out
+     [:fresh]             restart with a fresh PRNG seed
+     [:same seed]         restart re-using the saved seed
+   Anything else returns [:quit]."
+  [end-fn k t result seed victory?]
+  (let [choice (maybe-restart end-fn k t
+                              (:level result)
+                              (:level-name result)
+                              (update-scores! k (:level result) t victory?))]
+    (cond
+      (= choice :restart-same) [:same seed]
+      (= choice :restart)      [:fresh]
+      :else                    [:quit])))
 
 (defn- run-levels
-  "Outer loop driving one full run: feed game-loop fresh worlds in
-   sequence, carry lives + kills + time, show death/victory when the
-   chain ends. R on the end screen starts a fresh run."
+  "Outer loop driving one full run. Each iteration captures a fresh
+   PRNG seed before calling build-world so the player can replay the
+   SAME map sequence by hitting R on an end screen (fresh seed = lower
+   r, same seed = capital R). Lives + kills + time carry across
+   levels; death/victory both update the persisted scores file."
   []
-  (loop [level 1 lives max-lives carry-kills 0 carry-time 0]
+  (loop [level       1
+         lives       max-lives
+         carry-kills 0
+         carry-time  0
+         seed        (php/mt_rand)]
+    (php/mt_srand seed)
     (let [result (game-loop (build-world level lives))]
       (cond
         (= result :quit)
@@ -280,25 +315,23 @@
 
         (and (map? result) (:next-level result))
         (let [[k t] (carry-on carry-kills carry-time result)]
-          (recur (:level result) (:lives result) k t))
+          (recur (:level result) (:lives result) k t (php/mt_rand)))
 
         (and (map? result) (:victory result))
-        (let [[k t] (carry-on carry-kills carry-time result)]
-          (let [scores (update-scores! k (:level result) t true)]
-            (when (= :restart (maybe-restart victory-loop k t
-                                             (:level result)
-                                             (:level-name result)
-                                             scores))
-              (recur 1 max-lives 0 0))))
+        (let [[k t]           (carry-on carry-kills carry-time result)
+              [kind new-seed] (handle-end victory-loop k t result seed true)]
+          (cond
+            (= kind :fresh) (recur 1 max-lives 0 0 (php/mt_rand))
+            (= kind :same)  (recur 1 max-lives 0 0 new-seed)
+            :else           nil))
 
         (and (map? result) (:game-over result))
-        (let [[k t] (carry-on carry-kills carry-time result)]
-          (let [scores (update-scores! k (:level result) t false)]
-            (when (= :restart (maybe-restart death-loop k t
-                                             (:level result)
-                                             (:level-name result)
-                                             scores))
-              (recur 1 max-lives 0 0))))
+        (let [[k t]           (carry-on carry-kills carry-time result)
+              [kind new-seed] (handle-end death-loop k t result seed false)]
+          (cond
+            (= kind :fresh) (recur 1 max-lives 0 0 (php/mt_rand))
+            (= kind :same)  (recur 1 max-lives 0 0 new-seed)
+            :else           nil))
 
         :else
         nil))))

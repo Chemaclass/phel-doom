@@ -1,0 +1,106 @@
+(ns phel-doom.modules.controls
+  (:require phel.string :as str))
+
+;; ---------------------------------------------------------------------
+;; Controls: drained terminal bytes -> direction counters + rising-edge
+;; one-shots. This module is intentionally pure: it doesn't touch the
+;; terminal (input.phel does that), it just consumes the byte string
+;; drain-keys returns.
+;; ---------------------------------------------------------------------
+
+;; =====================================================================
+;; § Directional input
+;; =====================================================================
+
+(def move-hold-frames
+  "Frames a movement direction (W/S/A/D) stays active after each input
+   byte. ~200ms of forward-warm so a turn keystroke pausing the W
+   repeat doesn't stop the player walking."
+  12)
+
+(def turn-hold-frames
+  "Frames a turn direction (←/→) stays active after each input byte.
+   Short, so rotation halts within ~50ms of releasing the arrow. The
+   OS terminal sends no key-release event; this counter is the only
+   way the game can tell the player let go."
+  3)
+
+(def key->slot
+  "Map a single-byte input to the direction-counter slot it activates.
+   Arrow-key escape sequences are normalised to ^ _ < > before lookup
+   so they slot in alongside WASD."
+  {"^" :fwd    "w" :fwd
+   "_" :back   "s" :back
+   "<" :turn-left
+   ">" :turn-right
+   "a" :strafe-left
+   "d" :strafe-right})
+
+(def turn-slots
+  "Slots that use turn-hold-frames instead of move-hold-frames."
+  #{:turn-left :turn-right})
+
+(defn- hold-frames-for [slot]
+  (if (turn-slots slot) turn-hold-frames move-hold-frames))
+
+(defn refresh-move
+  "If `byte` maps to a direction slot, refresh that slot's counter on
+   `world`. Anything else (unmapped bytes) leaves the world untouched."
+  {:export true}
+  [world byte]
+  (let [slot (get key->slot byte)]
+    (if (nil? slot)
+      world
+      (assoc-in world [:moves slot] (hold-frames-for slot)))))
+
+(def arrow-escape-keys
+  "Search-side PHP array for php/str_replace: arrow-key CSI escapes."
+  (php/array "\e[A" "\e[B" "\e[D" "\e[C"))
+
+(def arrow-escape-replacements
+  "Replace-side PHP array for php/str_replace: single-byte stand-ins
+   for ↑↓←→ so refresh-from-keys can walk the input one byte at a time."
+  (php/array "^"    "_"    "<"    ">"))
+
+(defn- normalise-arrows [keys]
+  (php/str_replace arrow-escape-keys arrow-escape-replacements keys))
+
+(defn refresh-from-keys
+  "Fold every byte of the drained input into `world` by calling
+   refresh-move once per byte."
+  {:export true}
+  [world keys]
+  (let [normalised (normalise-arrows keys)
+        n          (php/strlen normalised)]
+    (loop [i 0 w world]
+      (if (php/>= i n)
+        w
+        (recur (php/+ i 1)
+               (refresh-move w (php/substr normalised i 1)))))))
+
+;; =====================================================================
+;; § Edge detection (one-shot actions)
+;; =====================================================================
+
+(def initial-key-snapshot
+  "First-frame snapshot — nothing held yet."
+  {:m false :sp false :p false :n false})
+
+(defn key-states
+  "Which of the tracked one-shot keys appear in `keys` this frame."
+  {:export true}
+  [keys]
+  {:m  (str/contains? keys "m")
+   :sp (str/contains? keys " ")
+   :p  (str/contains? keys "p")
+   :n  (str/contains? keys "n")})
+
+(defn rising-edges
+  "Build the edges map tick consumes — truthy only for keys that just
+   turned on relative to the previous snapshot."
+  {:export true}
+  [now prev]
+  {:fire         (and (:sp now) (not (:sp prev)))
+   :toggle-map   (and (:m now)  (not (:m prev)))
+   :toggle-pause (and (:p now)  (not (:p prev)))
+   :toggle-sound (and (:n now)  (not (:n prev)))})

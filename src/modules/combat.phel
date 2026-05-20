@@ -1,0 +1,157 @@
+(ns phel-doom.modules.combat
+  (:require phel-doom.modules.engine :refer [cast-ray])
+  (:require phel-doom.modules.enemy  :refer [shoot spawn-enemies])
+  (:require phel-doom.modules.sound  :refer [play-sfx!]))
+
+;; ---------------------------------------------------------------------
+;; Combat: the hitscan trigger pull (fire-shot) and the damage / i-frame
+;; ticking (damage-step). Both consume and produce a world; only
+;; play-sfx! side-effects, gated by (:sound-on world).
+;; ---------------------------------------------------------------------
+
+;; =====================================================================
+;; § Tunables
+;; =====================================================================
+
+(def shot-hit-radius
+  "Off-axis tolerance for a hitscan — half an enemy 'cell'."
+  0.5)
+
+(def shot-max-range
+  "Maximum hitscan range in world units."
+  12.0)
+
+(def touch-damage-dist
+  "If an alive enemy is closer than this in world units, the player
+   loses a life."
+  0.7)
+
+(def iframe-seconds
+  "Seconds of post-hit invulnerability so one touch doesn't drain
+   multiple lives across consecutive frames."
+  1.0)
+
+(def fire-anim-seconds
+  "Visibility duration of the muzzle flash + tracer after a shot."
+  0.09)
+
+(def fx-ttl-seconds
+  "Initial life of a blood splatter, fades to nothing over this many
+   seconds."
+  0.45)
+
+(def enemy-min-spawn-dist-respawn
+  "Min spawn distance when a kill triggers an in-arena respawn."
+  3.0)
+
+;; =====================================================================
+;; § Damage step (timer decay + touch collision)
+;; =====================================================================
+
+(defn- enemy-distance-sq
+  [enemy ^float px ^float py]
+  (let [dx (php/- (:x enemy) px)
+        dy (php/- (:y enemy) py)]
+    (php/+ (php/* dx dx) (php/* dy dy))))
+
+(defn- enemies-touching?
+  [enemies ^float px ^float py]
+  (let [threshold-sq (php/* touch-damage-dist touch-damage-dist)]
+    (loop [es enemies]
+      (cond
+        (php/=== es nil) false
+        :else
+        (let [e (first es)]
+          (if (and e (:alive e) (php/<= (enemy-distance-sq e px py) threshold-sq))
+            true
+            (recur (next es))))))))
+
+(defn- decay-fx [fx ^float dt]
+  (apply vector
+         (filter (fn [e] (php/> (:ttl e) 0.0))
+                 (map (fn [e] (assoc e :ttl (php/- (:ttl e) dt)))
+                      (or fx [])))))
+
+(defn- decay-timers [world ^float dt]
+  (let [iframes   (php/max 0.0 (php/- (:iframes world) dt))
+        fire-anim (php/max 0.0 (php/- (or (:fire-anim world) 0.0) dt))]
+    (assoc world
+           :iframes   iframes
+           :fire-anim fire-anim
+           :fx        (decay-fx (:fx world) dt))))
+
+(defn- vulnerable? [world]
+  (and (php/<= (:iframes world) 0.0)
+       (enemies-touching? (:enemies world)
+                          (:x (:player world))
+                          (:y (:player world)))))
+
+(defn- take-damage [world]
+  (when (:sound-on world) (play-sfx! :hit))
+  (assoc (update world :lives (fn [l] (php/max 0 (php/- l 1))))
+         :iframes iframe-seconds))
+
+(defn damage-step
+  "Per-frame: decay every timer, then apply a touch hit if i-frames
+   have elapsed and an enemy is in range."
+  {:export true}
+  [world ^float dt]
+  (let [w (decay-timers world dt)]
+    (if (vulnerable? w) (take-damage w) w)))
+
+;; =====================================================================
+;; § Shooting (one trigger pull → world update)
+;; =====================================================================
+
+(defn- cast-wall-distance [world]
+  (let [p (:player world)]
+    (cast-ray (:pgrid world) (:x p) (:y p) (:angle p))))
+
+(defn- resolve-shot [world]
+  (let [p (:player world)]
+    (shoot (:enemies world) (:x p) (:y p) (:angle p)
+           (cast-wall-distance world)
+           shot-hit-radius shot-max-range)))
+
+(defn- push-blood-fx [world hit-pos]
+  (update world :fx
+          (fn [fx]
+            (conj (or fx [])
+                  {:x (:x hit-pos) :y (:y hit-pos) :ttl fx-ttl-seconds}))))
+
+(defn- respawn-into-slot [world enemies-with-dead idx]
+  (let [respawn (first (spawn-enemies (:grid world) 1
+                                      enemy-min-spawn-dist-respawn
+                                      (:x (:player world))
+                                      (:y (:player world))))]
+    (assoc world :enemies
+           (if respawn (assoc enemies-with-dead idx respawn) enemies-with-dead))))
+
+(defn- on-shot-hit [world enemies-after hit-pos idx]
+  (let [respawned (respawn-into-slot world enemies-after idx)]
+    (let [scored (update respawned :kills (fn [k] (php/+ k 1)))]
+      (let [flashed (assoc scored :fire-anim fire-anim-seconds)]
+        (push-blood-fx flashed hit-pos)))))
+
+(defn- on-shot-miss [world]
+  (assoc world :fire-anim fire-anim-seconds))
+
+(defn- play-shot-sfx [world hit?]
+  (when (:sound-on world)
+    (play-sfx! (if hit? :kill :shoot))))
+
+(defn fire-shot
+  "Resolve one trigger pull end-to-end."
+  {:export true}
+  [world]
+  (let [[enemies' hit? hit-pos idx] (resolve-shot world)]
+    (play-shot-sfx world hit?)
+    (if hit?
+      (on-shot-hit world enemies' hit-pos idx)
+      (on-shot-miss world))))
+
+(defn tick-shooting
+  "Resolve a shot if the trigger was pulled this frame, otherwise no-op."
+  {:export true}
+  [world fire?]
+  (if fire? (fire-shot world) world))

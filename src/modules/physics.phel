@@ -1,0 +1,89 @@
+(ns phel-doom.modules.physics
+  (:require phel-doom.modules.state :refer [move-player turn-player])
+  (:require phel-doom.modules.map   :refer [wall?]))
+
+;; ---------------------------------------------------------------------
+;; Player physics: rotation + translation + counter decay.
+;;
+;; The world holds six direction counters (:moves). Physics consumes
+;; whatever is non-zero (scaled by dt) and decays each counter by one
+;; frame. Controls refresh the counters when keys arrive; this module
+;; just reads them.
+;; ---------------------------------------------------------------------
+
+(def move-speed
+  "World units per second when the player holds forward, back, or strafe."
+  4.5)
+
+(def turn-speed
+  "Radians per second of sustained rotation."
+  2.0)
+
+(defn try-move
+  "Translate the player by (dx, dy) unless the destination cell holds
+   a wall."
+  {:export true}
+  [world ^float dx ^float dy]
+  (let [{:keys [grid player]} world
+        nx                    (+ (:x player) dx)
+        ny                    (+ (:y player) dy)]
+    (if (wall? grid (php/intval nx) (php/intval ny))
+      world
+      (move-player world dx dy))))
+
+(defn- counter-on? [moves slot]
+  (php/> (get moves slot) 0))
+
+(defn- contribution
+  [moves slot ^float speed ^float dt]
+  (if (counter-on? moves slot) (php/* speed dt) 0.0))
+
+(defn- turn-delta [moves ^float dt]
+  (php/- (contribution moves :turn-right turn-speed dt)
+         (contribution moves :turn-left  turn-speed dt)))
+
+(defn- longitudinal-delta [moves ^float dt]
+  (php/- (contribution moves :fwd  move-speed dt)
+         (contribution moves :back move-speed dt)))
+
+(defn- lateral-delta [moves ^float dt]
+  (php/- (contribution moves :strafe-right move-speed dt)
+         (contribution moves :strafe-left  move-speed dt)))
+
+(defn- apply-rotation [world ^float turn-by]
+  (if (php/=== turn-by 0.0)
+    world
+    (turn-player world turn-by)))
+
+(defn- apply-translation [world ^float long-d ^float lat-d]
+  (if (and (php/=== long-d 0.0) (php/=== lat-d 0.0))
+    world
+    (let [a (:angle (:player world))]
+      (try-move world
+                (php/- (php/* long-d (php/cos a)) (php/* lat-d (php/sin a)))
+                (php/+ (php/* long-d (php/sin a)) (php/* lat-d (php/cos a)))))))
+
+(defn- decay-counter [n]
+  (php/max 0 (php/- n 1)))
+
+(defn- decay-move-counters [world]
+  (let [m (:moves world)]
+    (assoc world :moves
+           {:fwd          (decay-counter (:fwd m))
+            :back         (decay-counter (:back m))
+            :strafe-left  (decay-counter (:strafe-left m))
+            :strafe-right (decay-counter (:strafe-right m))
+            :turn-left    (decay-counter (:turn-left m))
+            :turn-right   (decay-counter (:turn-right m))})))
+
+(defn apply-physics
+  "Per-frame: rotate, then translate using the new heading, then
+   decay every counter by one frame."
+  {:export true}
+  [world ^float dt]
+  (let [moves (:moves world)]
+    (let [turned (apply-rotation world (turn-delta moves dt))]
+      (let [walked (apply-translation turned
+                                      (longitudinal-delta moves dt)
+                                      (lateral-delta moves dt))]
+        (decay-move-counters walked)))))

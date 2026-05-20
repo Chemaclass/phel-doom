@@ -1,90 +1,34 @@
 (ns phel-doom.commands.play
   (:require phel.cli :as cli)
   (:require phel.string :as str)
-  (:require phel-doom.modules.state  :refer [move-player turn-player gain-life max-lives
-                                             toggle-map toggle-pause toggle-sound])
-  (:require phel-doom.modules.map    :refer [wall? door?])
-  (:require phel-doom.modules.engine :refer [cast-ray])
-  (:require phel-doom.modules.enemy  :refer [advance shoot spawn-enemies])
-  (:require phel-doom.modules.sound  :refer [play-sfx!])
-  (:require phel-doom.modules.level  :refer [build-world num-levels])
-  (:require phel-doom.modules.render :refer [render! clear-screen
-                                             render-death-screen render-victory-screen])
-  (:require phel-doom.modules.input  :refer [init-input! restore! drain-keys]))
+  (:require phel-doom.modules.state    :refer [gain-life max-lives
+                                               toggle-map toggle-pause toggle-sound])
+  (:require phel-doom.modules.map      :refer [door?])
+  (:require phel-doom.modules.controls :refer [refresh-from-keys key-states rising-edges
+                                               initial-key-snapshot])
+  (:require phel-doom.modules.physics  :refer [apply-physics])
+  (:require phel-doom.modules.combat   :refer [damage-step tick-shooting])
+  (:require phel-doom.modules.enemy    :refer [advance])
+  (:require phel-doom.modules.sound    :refer [play-sfx!])
+  (:require phel-doom.modules.level    :refer [build-world num-levels])
+  (:require phel-doom.modules.render   :refer [render! clear-screen
+                                               render-death-screen render-victory-screen])
+  (:require phel-doom.modules.input    :refer [init-input! restore! drain-keys]))
 
 ;; ---------------------------------------------------------------------
 ;; The play subcommand wires together:
 ;;   - Terminal IO            (term-size, render!, drain-keys, sleep)
-;;   - Per-frame state tick   (tick-world, pure)
-;;   - Per-run lifecycle      (run-play -> level transitions, end screens)
+;;   - Per-frame state tick   (tick-world, pure — exported for tests)
+;;   - Per-run lifecycle      (run-play → levels, end screens, restart)
 ;;
-;; The file reads top-to-bottom in roughly that order. Helpers are kept
-;; small and single-purpose; tunable constants live in their own section
-;; up top so a balance pass touches one block, not 12 inline literals.
+;; Per-domain logic (physics, combat, controls) lives in dedicated
+;; modules; this file is the orchestration layer.
 ;; ---------------------------------------------------------------------
-
-;; =====================================================================
-;; § Tunables
-;; =====================================================================
-
-(def move-speed
-  "World units per second when the player holds forward, back, or strafe."
-  4.5)
-
-(def turn-speed
-  "Radians per second of sustained rotation."
-  2.0)
-
-(def move-hold-frames
-  "Frames a movement direction (W/S/A/D) stays active after each input
-   byte. ~200ms of forward-warm so a turn keystroke pausing the W
-   repeat doesn't stop the player walking."
-  12)
-
-(def turn-hold-frames
-  "Frames a turn direction (←/→) stays active after each input byte.
-   Short, so rotation halts within ~50ms of releasing the arrow. The
-   OS terminal sends no key-release event; this counter is the only
-   way the game can tell the player let go."
-  3)
 
 (def frame-us
   "Microseconds to usleep at the end of each frame. Render time is the
    real throttle; this just yields the CPU."
   1000)
-
-(def enemy-min-spawn-dist-respawn
-  "Minimum spawn distance when a kill triggers an in-arena respawn,
-   so the replacement doesn't appear on top of the player."
-  3.0)
-
-(def shot-hit-radius
-  "Off-axis tolerance for a hitscan — how far the ray may pass from an
-   enemy's centre and still count as a hit."
-  0.5)
-
-(def shot-max-range
-  "Maximum hitscan range in world units."
-  12.0)
-
-(def touch-damage-dist
-  "If an alive enemy is closer than this in world units, the player
-   loses a life."
-  0.7)
-
-(def iframe-seconds
-  "Seconds of post-hit invulnerability so one touch doesn't drain
-   several lives across consecutive frames."
-  1.0)
-
-(def fire-anim-seconds
-  "How long the muzzle flash + tracer stay visible after a shot."
-  0.09)
-
-(def fx-ttl-seconds
-  "Initial life of a blood splatter — fades to nothing over this many
-   seconds."
-  0.45)
 
 ;; =====================================================================
 ;; § Terminal IO helpers
@@ -94,10 +38,7 @@
   "Fallback [rows cols] when stty isn't available (CI, piped input)."
   [24 80])
 
-(defn- parse-stty-line
-  "Turn the 'rows cols' string returned by `stty size` into [rows cols]
-   of integers, or nil when the string is empty / malformed."
-  [line]
+(defn- parse-stty-line [line]
   (if (or (nil? line) (= line ""))
     nil
     (let [parts (php/explode " " line)]
@@ -105,349 +46,42 @@
        (php/intval (php/aget parts 1))])))
 
 (defn- term-size
-  "Current terminal [rows cols]. Falls back to a sensible default when
-   the host can't answer (e.g. piped input)."
+  "Current terminal [rows cols]. Falls back when stty can't answer."
   []
   (let [out (php/array)]
     (php/exec "stty size 2>/dev/null" out)
     (or (parse-stty-line (php/aget out 0)) default-term-size)))
 
 ;; =====================================================================
-;; § Input refresh (raw key bytes → direction counters)
-;;
-;; The game model represents motion as six time-limited counters on the
-;; world (:moves). Each input byte refreshes the counter for its slot;
-;; per-frame physics consumes whatever is non-zero. That keeps movement
-;; on a continuous wall-clock cadence even when terminal key repeat is
-;; spotty.
+;; § Per-frame tick orchestration (pure, exported for tests)
 ;; =====================================================================
 
-(def key->slot
-  "Map a single-byte input to the direction-counter slot it activates.
-   Arrow-key escape sequences are normalised to ^ _ < > before lookup
-   so they slot in alongside WASD."
-  {"^" :fwd    "w" :fwd
-   "_" :back   "s" :back
-   "<" :turn-left
-   ">" :turn-right
-   "a" :strafe-left
-   "d" :strafe-right})
-
-(def turn-slots
-  "Slots that use turn-hold-frames (precision taps) instead of
-   move-hold-frames (forgiving holds)."
-  #{:turn-left :turn-right})
-
-(defn- hold-frames-for
-  "Pick the right hold length for `slot`."
-  [slot]
-  (if (turn-slots slot) turn-hold-frames move-hold-frames))
-
-(defn- refresh-move
-  "If `byte` maps to a direction slot, refresh that slot's counter on
-   `world`. Anything else (unmapped bytes) leaves the world untouched."
-  [world byte]
-  (let [slot (get key->slot byte)]
-    (if (nil? slot)
-      world
-      (assoc-in world [:moves slot] (hold-frames-for slot)))))
-
-(def arrow-escape-keys
-  "PHP-array tuple of (arrow-escape, single-byte stand-in) pairs.
-   Used as the search/replace args for php/str_replace."
-  (php/array "\e[A" "\e[B" "\e[D" "\e[C"))
-
-(def arrow-escape-replacements
-  (php/array "^"    "_"    "<"    ">"))
-
-(defn- normalise-arrows
-  "Rewrite arrow-key escape sequences (`\\e[A` etc.) as single-byte
-   placeholders so refresh-from-keys can walk the input byte by byte."
-  [keys]
-  (php/str_replace arrow-escape-keys arrow-escape-replacements keys))
-
-(defn- refresh-from-keys
-  "Fold every byte of the drained input into `world` by calling
-   refresh-move once per byte. Held keys (terminal auto-repeat) keep
-   refreshing; orthogonal keys layer onto the same world."
-  [world keys]
-  (let [normalised (normalise-arrows keys)
-        n          (php/strlen normalised)]
-    (loop [i 0 w world]
-      (if (php/>= i n)
-        w
-        (recur (php/+ i 1)
-               (refresh-move w (php/substr normalised i 1)))))))
-
-;; =====================================================================
-;; § Player physics
-;;
-;; apply-physics does three things in order, each delegated to a small
-;; helper: rotate (so subsequent moves use the new heading), translate
-;; (composite of forward/back + strafe relative to the heading), and
-;; decay every counter by one frame.
-;; =====================================================================
-
-(defn- try-move
-  "Translate the player by (dx, dy) unless the destination cell holds
-   a wall."
-  [world dx dy]
-  (let [{:keys [grid player]} world
-        nx                    (+ (:x player) dx)
-        ny                    (+ (:y player) dy)]
-    (if (wall? grid (php/intval nx) (php/intval ny))
-      world
-      (move-player world dx dy))))
-
-(defn- counter-on?
-  "True when the named counter slot is currently active."
-  [moves slot]
-  (php/> (get moves slot) 0))
-
-(defn- contribution
-  "Per-frame magnitude contributed by `slot`: speed * dt if active,
-   else 0.0."
-  [moves slot speed dt]
-  (if (counter-on? moves slot) (php/* speed dt) 0.0))
-
-(defn- turn-delta
-  "Net rotation this frame: right-turn contribution minus left-turn
-   contribution."
-  [moves dt]
-  (php/- (contribution moves :turn-right turn-speed dt)
-         (contribution moves :turn-left  turn-speed dt)))
-
-(defn- longitudinal-delta
-  "Net forward/back distance this frame."
-  [moves dt]
-  (php/- (contribution moves :fwd  move-speed dt)
-         (contribution moves :back move-speed dt)))
-
-(defn- lateral-delta
-  "Net strafe-right/strafe-left distance this frame."
-  [moves dt]
-  (php/- (contribution moves :strafe-right move-speed dt)
-         (contribution moves :strafe-left  move-speed dt)))
-
-(defn- apply-rotation
-  "Rotate the player by `turn-by` radians, or return the world
-   unchanged when the rotation is exactly zero (avoids touching state
-   for stationary frames)."
-  [world turn-by]
-  (if (php/=== turn-by 0.0)
-    world
-    (turn-player world turn-by)))
-
-(defn- apply-translation
-  "Translate the player by the composite long/lat vector, rotated into
-   world space by the current heading. Skips the operation when both
-   components are zero."
-  [world long-d lat-d]
-  (if (and (php/=== long-d 0.0) (php/=== lat-d 0.0))
-    world
-    (let [a (:angle (:player world))]
-      (try-move world
-                (php/- (php/* long-d (php/cos a))
-                       (php/* lat-d  (php/sin a)))
-                (php/+ (php/* long-d (php/sin a))
-                       (php/* lat-d  (php/cos a)))))))
-
-(defn- decay-counter
-  "One frame's worth of counter decay, clamped at zero."
-  [n]
-  (php/max 0 (php/- n 1)))
-
-(defn- decay-move-counters
-  "Decrement every direction counter on the world by one frame."
-  [world]
-  (let [m (:moves world)]
-    (assoc world :moves
-           {:fwd          (decay-counter (:fwd m))
-            :back         (decay-counter (:back m))
-            :strafe-left  (decay-counter (:strafe-left m))
-            :strafe-right (decay-counter (:strafe-right m))
-            :turn-left    (decay-counter (:turn-left m))
-            :turn-right   (decay-counter (:turn-right m))})))
-
-(defn- apply-physics
-  "Per-frame: rotate, then translate using the new heading, then
-   decay every counter by one frame."
-  [world dt]
-  (let [moves (:moves world)]
-    (let [turned (apply-rotation world (turn-delta moves dt))]
-      (let [walked (apply-translation turned
-                                      (longitudinal-delta moves dt)
-                                      (lateral-delta moves dt))]
-        (decay-move-counters walked)))))
-
-;; =====================================================================
-;; § Damage (timer decay + collision)
-;; =====================================================================
-
-(defn- enemy-distance-sq
-  "Squared distance from (px, py) to an enemy. Squared to avoid a sqrt
-   when we just need a threshold compare."
-  [enemy px py]
-  (let [dx (php/- (:x enemy) px)
-        dy (php/- (:y enemy) py)]
-    (php/+ (php/* dx dx) (php/* dy dy))))
-
-(defn- enemies-touching?
-  "True iff any alive enemy is within touch-damage-dist of (px, py)."
-  [enemies px py]
-  (let [threshold-sq (php/* touch-damage-dist touch-damage-dist)]
-    (loop [es enemies]
-      (cond
-        (php/=== es nil) false
-        :else
-        (let [e (first es)]
-          (if (and e (:alive e) (php/<= (enemy-distance-sq e px py) threshold-sq))
-            true
-            (recur (next es))))))))
-
-(defn- decay-fx
-  "Walk the blood-fx vector, ticking each entry's ttl down by dt and
-   dropping the ones that expired."
-  [fx dt]
-  (apply vector
-         (filter (fn [e] (php/> (:ttl e) 0.0))
-                 (map (fn [e] (assoc e :ttl (php/- (:ttl e) dt)))
-                      (or fx [])))))
-
-(defn- decay-timers
-  "Tick i-frame, fire-anim, and fx timers down by dt. Pure: returns
-   a world with updated timers."
-  [world dt]
-  (let [iframes   (php/max 0.0 (php/- (:iframes world) dt))
-        fire-anim (php/max 0.0 (php/- (or (:fire-anim world) 0.0) dt))]
-    (assoc world
-           :iframes   iframes
-           :fire-anim fire-anim
-           :fx        (decay-fx (:fx world) dt))))
-
-(defn- vulnerable?
-  "True when the player is out of i-frames and an enemy is touching."
-  [world]
-  (and (php/<= (:iframes world) 0.0)
-       (enemies-touching? (:enemies world)
-                          (:x (:player world))
-                          (:y (:player world)))))
-
-(defn- take-damage
-  "Lose one life and start a fresh i-frame window. Plays the hit sfx
-   when sound is on."
-  [world]
-  (when (:sound-on world) (play-sfx! :hit))
-  (assoc (update world :lives (fn [l] (php/max 0 (php/- l 1))))
-         :iframes iframe-seconds))
-
-(defn- damage-step
-  "Per-frame: decay every timer, then apply a touch hit if i-frames
-   have elapsed and an enemy is in range."
-  [world dt]
-  (let [w (decay-timers world dt)]
-    (if (vulnerable? w) (take-damage w) w)))
-
-;; =====================================================================
-;; § Shooting (one trigger pull → world update)
-;; =====================================================================
-
-(defn- cast-wall-distance
-  "Distance to the first wall along the player's facing — the hitscan
-   stops at this distance even if an enemy is further out."
-  [world]
-  (let [p (:player world)]
-    (cast-ray (:pgrid world) (:x p) (:y p) (:angle p))))
-
-(defn- resolve-shot
-  "Run the hitscan and return [enemies' hit? hit-pos idx]."
-  [world]
-  (let [p (:player world)]
-    (shoot (:enemies world) (:x p) (:y p) (:angle p)
-           (cast-wall-distance world)
-           shot-hit-radius shot-max-range)))
-
-(defn- push-blood-fx
-  "Append a fresh blood splatter at the kill position."
-  [world hit-pos]
-  (update world :fx
-          (fn [fx]
-            (conj (or fx [])
-                  {:x (:x hit-pos) :y (:y hit-pos) :ttl fx-ttl-seconds}))))
-
-(defn- respawn-into-slot
-  "Replace the dead enemy at index `idx` with a fresh spawn so the
-   arena population stays constant."
-  [world enemies-with-dead idx]
-  (let [respawn (first (spawn-enemies (:grid world) 1
-                                      enemy-min-spawn-dist-respawn
-                                      (:x (:player world))
-                                      (:y (:player world))))]
-    (assoc world :enemies
-           (if respawn (assoc enemies-with-dead idx respawn) enemies-with-dead))))
-
-(defn- on-shot-hit
-  "World update for a successful hit: respawn, bump kills, fire-flash,
-   and a blood splatter."
-  [world enemies-after hit-pos idx]
-  (let [respawned (respawn-into-slot world enemies-after idx)]
-    (let [scored (update respawned :kills (fn [k] (php/+ k 1)))]
-      (let [flashed (assoc scored :fire-anim fire-anim-seconds)]
-        (push-blood-fx flashed hit-pos)))))
-
-(defn- on-shot-miss
-  "World update for a miss: just the muzzle flash."
-  [world]
-  (assoc world :fire-anim fire-anim-seconds))
-
-(defn- play-shot-sfx
-  "Audio cue for a trigger pull. Different sound on hit vs miss so the
-   player gets feedback without having to look at the kill counter."
-  [world hit?]
-  (when (:sound-on world)
-    (play-sfx! (if hit? :kill :shoot))))
-
-(defn- fire-shot
-  "Resolve one trigger pull end-to-end."
-  [world]
-  (let [[enemies' hit? hit-pos idx] (resolve-shot world)]
-    (play-shot-sfx world hit?)
-    (if hit?
-      (on-shot-hit world enemies' hit-pos idx)
-      (on-shot-miss world))))
-
-(defn- tick-shooting
-  "Resolve a shot if the trigger was pulled this frame, otherwise no-op."
-  [world fire?]
-  (if fire? (fire-shot world) world))
-
-;; =====================================================================
-;; § Enemies + portals
-;; =====================================================================
+(defn- handle-toggles
+  "Apply rising-edge toggle keys (pause / minimap / sound) for this
+   frame."
+  [world edges]
+  (let [after-pause (if (:toggle-pause edges) (toggle-pause world) world)]
+    (let [after-map (if (:toggle-map edges) (toggle-map after-pause) after-pause)]
+      (if (:toggle-sound edges) (toggle-sound after-map) after-map))))
 
 (defn- tick-enemies
   "Step every alive enemy one dt-scaled frame toward the player, using
    the world's per-level chase speed."
-  [world dt]
+  [world ^float dt]
   (let [p (:player world)]
     (update world :enemies advance (:grid world) (:x p) (:y p) dt
             (or (:chase-speed world) 0.75))))
 
-(defn- heart-at-cell?
-  "True when the heart `h` occupies integer cell (px, py)."
-  [h px py]
+(defn- heart-at-cell? [h px py]
   (and (php/=== (php/intval (:x h)) px)
        (php/=== (php/intval (:y h)) py)))
 
-(defn- hearts-not-at
-  "Drop any heart sitting on integer cell (px, py)."
-  [hearts px py]
+(defn- hearts-not-at [hearts px py]
   (apply vector
          (filter (fn [h] (not (heart-at-cell? h px py))) hearts)))
 
 (defn- pickup-hearts
-  "If the player stands on a heart cell, consume the heart and gain a
-   life (capped at max-lives)."
+  "If the player stands on a heart cell, consume it and gain a life."
   [world]
   (let [kept (hearts-not-at (:hearts world)
                             (php/intval (:x (:player world)))
@@ -459,37 +93,18 @@
         (gain-life healed)))))
 
 (defn- on-door?
-  "True when the player's current cell is a door (which auto-advances
-   the level)."
+  "True when the player's current cell is a door (auto-advances level)."
   [world]
   (let [p (:player world)]
     (door? (:grid world) (php/intval (:x p)) (php/intval (:y p)))))
 
-;; =====================================================================
-;; § Edge-triggered toggles (pause / minimap / sound)
-;; =====================================================================
-
-(defn- handle-toggles
-  "Apply any rising-edge toggle keys for this frame."
-  [world edges]
-  (let [after-pause (if (:toggle-pause edges) (toggle-pause world) world)]
-    (let [after-map (if (:toggle-map edges) (toggle-map after-pause) after-pause)]
-      (if (:toggle-sound edges) (toggle-sound after-map) after-map))))
-
-;; =====================================================================
-;; § Pure per-frame state transition
-;;
-;; Exported so the test suite can drive it without spinning up the
-;; terminal IO loop.
-;; =====================================================================
-
 (defn tick-world
   "Pure one-frame state transition. `keys` is the drained input string,
-   `dt` is seconds since the previous tick, `edges` is a map of
-   rising-edge events: {:fire :toggle-map :toggle-pause :toggle-sound}.
-   Skips physics + AI while the world is paused."
+   `dt` is seconds since the previous tick, `edges` is the rising-edge
+   map ({:fire :toggle-map :toggle-pause :toggle-sound}). Physics and
+   AI skip while the world is paused."
   {:export true}
-  [world keys dt edges]
+  [world keys ^float dt edges]
   (let [w0 (handle-toggles world edges)]
     (if (:paused w0)
       w0
@@ -501,36 +116,7 @@
                 (damage-step w5 dt)))))))))
 
 ;; =====================================================================
-;; § Input edge detection
-;;
-;; The game cares about *transitions* for one-shot actions (fire,
-;; pause, map, sound). We compare a snapshot of "which keys appear in
-;; this frame's input" against the previous frame's snapshot and
-;; surface only the rising edges.
-;; =====================================================================
-
-(def initial-key-snapshot
-  {:m false :sp false :p false :n false})
-
-(defn- key-states
-  "Which of the tracked keys appear in `keys` this frame."
-  [keys]
-  {:m  (str/contains? keys "m")
-   :sp (str/contains? keys " ")
-   :p  (str/contains? keys "p")
-   :n  (str/contains? keys "n")})
-
-(defn- rising-edges
-  "Build the edges map tick-world consumes — truthy only for keys that
-   just turned on relative to the previous snapshot."
-  [now prev]
-  {:fire         (and (:sp now) (not (:sp prev)))
-   :toggle-map   (and (:m now)  (not (:m prev)))
-   :toggle-pause (and (:p now)  (not (:p prev)))
-   :toggle-sound (and (:n now)  (not (:n prev)))})
-
-;; =====================================================================
-;; § Per-frame IO
+;; § Per-frame IO + stats
 ;; =====================================================================
 
 (defn- frame-stats
@@ -559,17 +145,12 @@
   (php/intval (php/* (php/- t-now t-then) 1000)))
 
 (defn- fps-from-ms
-  "Instant fps estimate from one frame's ms cost. 0 if the delta is too
-   small to measure."
+  "Instant fps estimate from one frame's ms cost. 0 if delta < 1ms."
   [ms]
   (if (php/> ms 0) (php/intval (php// 1000.0 ms)) 0))
 
 ;; =====================================================================
 ;; § Per-level result kinds returned by game-loop
-;;
-;; The outer loop in run-play matches on these maps to decide whether
-;; to feed game-loop another level, show the death screen, show the
-;; victory screen, or exit.
 ;; =====================================================================
 
 (defn- result-game-over [world ^float t-start ^float now]
@@ -589,14 +170,12 @@
    :lives      (:lives world)
    :survived-s (php/intval (php/- now t-start))})
 
-(defn- play-door-sfx
-  "Trigger the door sfx when the world wants sound."
-  [world]
+(defn- play-door-sfx [world]
   (when (:sound-on world) (play-sfx! :door)))
 
 (defn- door-result
-  "Build the appropriate result map when the player steps on a door:
-   either victory (final level) or next-level."
+  "When the player steps on a door: either victory (final level) or
+   the next-level result."
   [world ^float t-start ^float now]
   (play-door-sfx world)
   (if (php/>= (:level world) num-levels)
@@ -605,27 +184,12 @@
 
 ;; =====================================================================
 ;; § Game loop (one level)
-;;
-;; Reads the terminal, calls render!, sleeps, drains input, edge-
-;; detects, hands the world to the pure tick, then decides whether the
-;; level continues, the player died, the player walked through the
-;; door, or the player quit. The result is one of:
-;;   :quit
-;;   {:game-over true ...}
-;;   {:victory   true ...}
-;;   {:next-level true :level N ...}
 ;; =====================================================================
 
-(defn- redraw-if-resized
-  "Clear the buffer when the terminal dimensions changed since the
-   previous frame so the new size starts clean."
-  [dims rows cols]
+(defn- redraw-if-resized [dims rows cols]
   (when (not= [rows cols] dims) (clear-screen)))
 
-(defn- draw-frame
-  "One render + one usleep. Pulled out so the loop body reads as a
-   sequence of named steps instead of an IO blob."
-  [world fps frame-ms rows cols]
+(defn- draw-frame [world fps frame-ms rows cols]
   (render! world (frame-stats world fps frame-ms) cols rows)
   (php/usleep frame-us))
 
@@ -684,16 +248,11 @@
 ;; § Run lifecycle (level chain + restart)
 ;; =====================================================================
 
-(defn- carry-on
-  "Add this level's kills + survival to the running totals."
-  [carry-kills carry-time result]
+(defn- carry-on [carry-kills carry-time result]
   [(php/+ carry-kills (:kills result))
    (php/+ carry-time  (:survived-s result))])
 
-(defn- maybe-restart
-  "Run an end-loop and return :restart or nil so the outer loop knows
-   whether to start a fresh run from level 1."
-  [end-fn kills survived-s]
+(defn- maybe-restart [end-fn kills survived-s]
   (clear-screen)
   (when (= :restart (end-fn kills survived-s))
     (clear-screen)
@@ -701,9 +260,8 @@
 
 (defn- run-levels
   "Outer loop driving one full run: feed game-loop fresh worlds in
-   sequence, accumulate kills + time across levels, carry lives over
-   so build-world only spawns a heart pickup when the player isn't
-   already at max-lives."
+   sequence, carry lives + kills + time, show death/victory when the
+   chain ends. R on the end screen starts a fresh run."
   []
   (loop [level 1 lives max-lives carry-kills 0 carry-time 0]
     (let [result (game-loop (build-world level lives))]
@@ -728,9 +286,7 @@
         :else
         nil))))
 
-(defn- print-credits
-  "Two-line credits printed to STDOUT after the game loop exits."
-  []
+(defn- print-credits []
   (println)
   (println "  \e[1mphel-doom\e[0m  by \e[1mChemaclass\e[0m  https://github.com/Chemaclass/phel-doom")
   (println "  written in \e[1mPhel Lang\e[0m  https://phel-lang.org/")
@@ -744,10 +300,6 @@
   (cli/success ctx "Thanks for playing.")
   (print-credits)
   0)
-
-;; =====================================================================
-;; § CLI command registration
-;; =====================================================================
 
 (def play-command
   {:name "play"

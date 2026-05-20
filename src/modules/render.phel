@@ -542,17 +542,39 @@
                              "\e[90m"
                              (php/str_repeat "♡ " (php/max 0 (php/- cap l)))
                              "\e[0m")))
-      (let [cc (php/+ (php/intdiv vw 2) 1)]
-        (php/array_push parts
-                        (str "\e[" (php/- vh 1) ";" (php/- cc 1) "H\e[97;1m ║ "
-                             "\e[" vh ";" (php/- cc 1) "H\e[97;1m███"
-                             "\e[0m"))
-        (when (php/> (or (get stats :fire-anim) 0.0) 0.0)
+      ;; Pistol HUD: a 4-row side-view of a held gun at the bottom
+      ;; centre. Foreground-only colouring (no BG escapes) so the
+      ;; cells around the glyph still show whatever wall/floor was
+      ;; painted underneath — gives the gun a 'held in front of the
+      ;; world' silhouette instead of a solid sprite block. Shades go
+      ;; light → dark → brown top-to-bottom to suggest a steel slide
+      ;; with a wooden grip. Drawn only when vh ≥ 4 so a tiny
+      ;; terminal doesn't get a gun jammed into its HUD line.
+      (when (php/>= vh 4)
+        (let [cc        (php/+ (php/intdiv vw 2) 1)
+              slide-top "\e[1;38;5;252m"
+              slide-mid "\e[1;38;5;245m"
+              frame     "\e[1;38;5;238m"
+              grip      "\e[1;38;5;94m"
+              trigger   "\e[1;38;5;232m"]
           (php/array_push parts
-                          (str "\e[" (php/- vh 4) ";" cc "H\e[93;1m✦"
-                               "\e[" (php/- vh 3) ";" cc "H\e[93;1m*"
-                               "\e[" (php/- vh 2) ";" (php/- cc 1) "H\e[93;1m*★*"
-                               "\e[0m"))))
+                          (str
+                           ;; row vh-3 : slide top edge (front sight + barrel)
+                           "\e[" (php/- vh 3) ";" cc "H" slide-top "▄▄▄▄"
+                           ;; row vh-2 : slide body, widest part
+                           "\e[" (php/- vh 2) ";" (php/- cc 1) "H" slide-mid "▐████▌"
+                           ;; row vh-1 : frame + trigger guard
+                           "\e[" (php/- vh 1) ";" cc "H" frame "█" trigger "▙" frame "█▌"
+                           ;; row vh   : wooden grip
+                           "\e[" vh ";" (php/+ cc 1) "H" grip "██"
+                           "\e[0m"))
+          (when (php/> (or (get stats :fire-anim) 0.0) 0.0)
+            (php/array_push parts
+                            (str
+                             ;; muzzle flash above the barrel
+                             "\e[" (php/- vh 5) ";" (php/+ cc 1) "H\e[1;93m✦"
+                             "\e[" (php/- vh 4) ";" cc          "H\e[1;93m*★★*"
+                             "\e[0m")))))
       (when (get stats :paused)
         (php/array_push parts (pause-menu-string vw vh (get stats :sound-on))))
       (php/implode "" parts))))

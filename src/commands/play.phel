@@ -335,46 +335,76 @@
                                         :survived-s  (php/intval (php/- now t-start))}
             :else                      (recur world' now ms f now-keys [rows cols])))))))
 
-(defn- death-screen-rows
-  "Build the centred death-screen rows as a vector of [visible-text,
-   sgr-prefix] pairs. Two halves are split so the centring math uses
-   visible-width and the ANSI styling stays independent."
+(def death-box-width
+  "Character width between the left and right borders of the centred
+   death menu."
+  32)
+
+(defn- pad-to
+  "Pad `text` with trailing spaces up to `width`."
+  [text width]
+  (str text (php/str_repeat " " (php/max 0 (php/- width (php/strlen text))))))
+
+(defn- death-menu-rows
+  "Build the death menu as a vector of pre-padded inner strings (no
+   border chars yet — those are added when the row is placed). Centred
+   visually inside death-box-width columns."
   [kills survived-s]
-  [["          YOU  DIED          "    "\e[48;5;52;97;1;5m"]
-   [""                                  ""]
-   [(str "   kills:    " kills "   ")     "\e[48;5;52;97m"]
-   [(str "   time:     " survived-s "s") "\e[48;5;52;97m"]
-   [""                                  ""]
-   ["   r  restart      q  quit   "     "\e[48;5;52;97;1m"]])
+  (let [w          death-box-width
+        kills-line (str "   kills:   " kills)
+        time-line  (str "   time:    " survived-s "s")]
+    ["                                "                          ; row 0 blank
+     "\e[91;1m            YOU  DIED          "                    ; row 1 title
+     "                                "                          ; row 2 blank
+     :sep
+     "                                "                          ; row 4 blank
+     (str "\e[97m" (pad-to kills-line w))
+     (str "\e[97m" (pad-to time-line w))
+     "                                "                          ; row 7 blank
+     :sep
+     "                                "
+     "\e[97;1m   r  restart      q  quit      "
+     "                                "
+     :sep
+     "                                "
+     "\e[2;97m   phel-doom by Chemaclass      "
+     "\e[2;97m   written in Phel Lang         "
+     "                                "]))
 
 (defn- render-death-screen
-  "Full-screen red wash + a small centred menu (kills + survival time
-   + restart / quit hint). Rebuilt each frame so resizing keeps it
-   centred."
+  "Full-screen dark-red wash + a centred dialog with kills, survival
+   time, restart/quit hint, and credits. Rebuilt each frame so
+   resizing keeps it centred."
   [cols rows kills survived-s]
-  (let [parts (php/array)]
+  (let [parts (php/array)
+        items (death-menu-rows kills survived-s)
+        bar   (php/str_repeat "─" death-box-width)]
     (php/array_push parts "\e[H")
-    ;; Paint every cell red via absolute cursor positioning, so we
-    ;; never emit a trailing \n that would scroll the buffer.
+    ;; Repaint every cell red via absolute cursor positioning. No
+    ;; trailing \n so the buffer never scrolls.
     (loop [r 1]
       (when (php/<= r rows)
         (php/array_push parts (str "\e[" r ";1H\e[48;5;52m"
                                    (php/str_repeat " " cols)))
         (recur (php/+ r 1))))
-    (let [items   (death-screen-rows kills survived-s)
-          n       (count items)
+    (let [n       (count items)
           row-top (php/max 1 (php/- (php/intdiv rows 2) (php/intdiv n 2)))
-          ctr     (php/+ (php/intdiv cols 2) 1)]
+          col0    (php/max 1 (php/- (php/+ (php/intdiv cols 2) 1)
+                                    (php/intdiv (php/+ death-box-width 2) 2)))]
+      ;; Top + bottom of the box.
+      (php/array_push parts (str "\e[" row-top ";" col0
+                                 "H\e[40;97m┌" bar "┐\e[0m"))
+      (php/array_push parts (str "\e[" (php/+ row-top n 1) ";" col0
+                                 "H\e[40;97m└" bar "┘\e[0m"))
       (loop [i 0]
         (when (php/< i n)
-          (let [text (get (get items i) 0)
-                sgr  (get (get items i) 1)]
-            (when (php/> (php/strlen text) 0)
-              (php/array_push
-               parts
-               (str "\e[" (php/+ row-top i) ";"
-                    (php/max 1 (php/- ctr (php/intdiv (php/strlen text) 2)))
-                    "H" sgr text "\e[0m"))))
+          (let [item (get items i)
+                row  (php/+ row-top 1 i)]
+            (if (= item :sep)
+              (php/array_push parts (str "\e[" row ";" col0
+                                         "H\e[40;97m├" bar "┤\e[0m"))
+              (php/array_push parts (str "\e[" row ";" col0
+                                         "H\e[40;97m│" item "\e[40;97m│\e[0m"))))
           (recur (php/+ i 1)))))
     (print (php/implode "" parts))
     (php/flush)))

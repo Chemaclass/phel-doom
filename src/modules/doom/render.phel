@@ -1,41 +1,58 @@
 (ns phel-doom.modules.doom.render
   (:require phel-doom.modules.doom.engine :refer [cast-frame max-depth]))
 
-(def width 80)
-(def height 24)
+(def width 50)
+(def height 16)
 (def sky    "\e[48;5;236m ")
 (def floor  "\e[48;5;239m ")
 
+(defn- ^{:memoize-lru 64} shade-c [c]
+  (str "\e[48;5;" c "m "))
+
 (defn- shade [dist]
   (let [t (- 1.0 (php/min 1.0 (/ dist max-depth)))
-        c (php/intval (* t 255))]
-    (str "\e[48;2;" c ";" c ";" c "m ")))
-
-(defn- col-meta [col-info]
-  (let [dist   (:dist col-info)
-        wall-h (php/intval (/ height (php/max 0.1 dist)))
-        top    (php/intval (/ (- height wall-h) 2))]
-    {:top    top
-     :bottom (+ top wall-h)
-     :shade  (shade dist)}))
+        c (+ 232 (php/intval (* t 23)))]
+    (shade-c c)))
 
 (defn frame->string
-  "Render the world to one ANSI-coded multi-line frame string."
+  "Render the world to one ANSI-coded multi-line frame string. Per-column
+   metadata is unrolled into three PHP-native arrays (tops, bottoms, shades)
+   so the inner cell loop is just integer compares + aget. Equal adjacent
+   cells are run-length encoded as one escape + N spaces."
   {:export true}
   [world]
-  (let [metas (apply vector (map col-meta (cast-frame world width)))
-        line  (fn [row]
-                (apply str
-                       (map (fn [col]
-                              (let [m (get metas col)]
-                                (cond
-                                  (< row (:top m))     sky
-                                  (>= row (:bottom m)) floor
-                                  :else                (:shade m))))
-                            (range 0 width))))]
-    (apply str
-           (map (fn [row] (str (line row) "\e[0m\n"))
-                (range 0 height)))))
+  (let [columns (cast-frame world width)
+        tops    (php/array)
+        bots    (php/array)
+        shades  (php/array)]
+    (loop [col 0 cs columns]
+      (when (< col width)
+        (let [dist   (:dist (first cs))
+              wall-h (php/intval (/ height (php/max 0.1 dist)))
+              top    (php/intdiv (- height wall-h) 2)]
+          (aset tops col top)
+          (aset bots col (+ top wall-h))
+          (aset shades col (shade dist))
+          (recur (+ col 1) (next cs)))))
+    (loop [row 0 acc ""]
+      (if (>= row height)
+        acc
+        (recur
+         (+ row 1)
+         (str acc
+              (loop [col 0 prev nil run 0 line ""]
+                (if (>= col width)
+                  (if (zero? run) line (str line prev (php/str_repeat " " (- run 1))))
+                  (let [c (cond
+                            (< row (aget tops col))  sky
+                            (>= row (aget bots col)) floor
+                            :else                    (aget shades col))]
+                    (cond
+                      (zero? run) (recur (+ col 1) c 1 line)
+                      (= c prev)  (recur (+ col 1) prev (+ run 1) line)
+                      :else       (recur (+ col 1) c 1
+                                         (str line prev (php/str_repeat " " (- run 1))))))))
+              "\e[0m\n"))))))
 
 (defn clear-screen
   "ANSI clear + cursor home."
@@ -44,8 +61,10 @@
   (print "\e[2J\e[H"))
 
 (defn render!
-  "Clear screen and print one frame."
+  "Move cursor home and overwrite the previous frame in place. Avoids
+   the full-screen clear that would otherwise flicker each frame."
   {:export true}
   [world]
-  (clear-screen)
-  (print (frame->string world)))
+  (print "\e[H")
+  (print (frame->string world))
+  (php/flush))

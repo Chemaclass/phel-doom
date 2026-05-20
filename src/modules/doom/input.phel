@@ -2,17 +2,20 @@
 
 (defn init-input!
   "Put the terminal in non-blocking raw mode so we can read single keys
-   without waiting for Enter."
+   without waiting for Enter. Switch to the alternate screen buffer and
+   hide the cursor to avoid flicker during the render loop."
   {:export true}
   []
-  (php/system "stty -icanon -echo min 0 time 0")
-  (php/stream_set_blocking php/STDIN false))
+  (php/exec "stty -icanon -echo min 0 time 0")
+  (php/stream_set_blocking php/STDIN false)
+  (print "\e[?1049h\e[?25l\e[2J\e[H"))
 
 (defn restore!
-  "Restore cooked terminal mode."
+  "Restore cooked terminal mode and leave the alternate screen buffer."
   {:export true}
   []
-  (php/system "stty sane"))
+  (print "\e[?25h\e[?1049l")
+  (php/exec "stty sane"))
 
 (defn read-key
   "Read one key from STDIN. Returns the character or nil if nothing pending."
@@ -22,3 +25,12 @@
     (if (or (= s false) (= s ""))
       nil
       s)))
+
+(defn drain-keys
+  "Drain all pending input bytes as a raw string (possibly empty). Lets
+   a held key apply its motion multiple times per frame instead of being
+   throttled by the loop's read-one-key cadence."
+  {:export true}
+  []
+  (let [s (php/fread php/STDIN 64)]
+    (if (= s false) "" s)))

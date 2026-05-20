@@ -3,11 +3,11 @@
   (:require phel-doom.modules.doom.state  :refer [new-player new-world move-player turn-player])
   (:require phel-doom.modules.doom.map    :refer [default-grid wall?])
   (:require phel-doom.modules.doom.render :refer [render! clear-screen])
-  (:require phel-doom.modules.doom.input  :refer [init-input! restore! read-key]))
+  (:require phel-doom.modules.doom.input  :refer [init-input! restore! drain-keys]))
 
-(def move-speed 0.2)
-(def turn-speed 0.1)
-(def frame-us 33000)
+(def move-speed 0.35)
+(def turn-speed 0.15)
+(def frame-us 1000)
 
 (defn- try-move [world dx dy]
   (let [{:keys [grid player]} world
@@ -26,14 +26,21 @@
       (= key "d") (turn-player world turn-speed)
       :else       world)))
 
+(defn- apply-keys [world keys]
+  (let [n (php/strlen keys)]
+    (loop [i 0 w world]
+      (if (>= i n)
+        w
+        (recur (+ i 1) (step-input w (php/substr keys i 1)))))))
+
 (defn- game-loop [world0]
   (loop [world world0]
     (render! world)
     (php/usleep frame-us)
-    (let [key (read-key)]
-      (if (= key "q")
+    (let [keys (drain-keys)]
+      (if (str-contains? keys "q")
         :quit
-        (recur (step-input world key))))))
+        (recur (apply-keys world keys))))))
 
 (defn- run-play [ctx]
   (init-input!)

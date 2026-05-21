@@ -454,9 +454,14 @@
                 blnk (str "│" (pause-pad "" w) "│")
                 bord (fn [text]
                        (str "│\e[97m" (pause-pad text w) "│"))]
+            ;; Internal SGR resets use `\e[40;97m` (menu wash) instead
+            ;; of `\e[0;97m` so the trailing pad + right `│` border
+            ;; stay on the menu's dark BG. With a bare `\e[0;97m` the
+            ;; BG drops to terminal default and the row reads as a
+            ;; light block on transparent / light iTerm2 themes.
             [(str "┌" bar "┐")
              blnk
-             (str "│\e[1;93m" (pause-pad "           PAUSED" w) "\e[0;97m│")
+             (str "│\e[1;93m" (pause-pad "           PAUSED" w) "\e[40;97m│")
              blnk
              (str "├" bar "┤")
              blnk
@@ -464,7 +469,7 @@
              ;; border lines up no matter how many ANSI bytes the
              ;; emphasis adds inside.
              (let [val (if sound-on? "on" "off")]
-               (str "│\e[97m  n   sound: \e[1m" val "\e[0;97m"
+               (str "│\e[40;97m  n   sound: \e[1m" val "\e[40;97m"
                     (php/str_repeat " " (php/max 0 (php/- w (php/+ (php/strlen "  n   sound: ")
                                                                    (php/strlen val)))))
                     "│"))
@@ -473,8 +478,8 @@
              blnk
              (str "├" bar "┤")
              blnk
-             (str "│\e[2;97m" (pause-pad "  phel-doom by Chemaclass" w) "\e[0;97m│")
-             (str "│\e[2;97m" (pause-pad "  written in Phel Lang"   w) "\e[0;97m│")
+             (str "│\e[2;97m" (pause-pad "  phel-doom by Chemaclass" w) "\e[40;97m│")
+             (str "│\e[2;97m" (pause-pad "  written in Phel Lang"   w) "\e[40;97m│")
              blnk
              (str "└" bar "┘")]))]
     (let [col0 (php/max 1 (php/- (php/+ (php/intdiv vw 2) 1)
@@ -1190,14 +1195,32 @@
       ;; PHP arrays pass by value across fn boundaries. Rebind every
       ;; step so the pushed escapes actually accumulate.
       ;;
-      ;; The crosshair needs the SGR-only prefix of whatever cell sits
-      ;; at the centre column so it can paint `+` on the wall's real
-      ;; colour instead of clobbering it with the terminal default
-      ;; (which on some iTerm2 themes reads as bright white). Strip
-      ;; the trailing glyph (one mb-character) off shades-normal at
-      ;; the centre column.
-      (let [center-col  (php/intdiv vw 2)
-            center-cell (buf-get shades-normal center-col)
+      ;; The crosshair needs the SGR-only prefix of whatever cell
+      ;; sits at the centre column so `+` paints on the real cell
+      ;; colour (wall, floor, sky, enemy, blood) instead of clobbering
+      ;; it with the terminal default. Replays the same priority chain
+      ;; the inner row loop uses (blood-paint > sky / floor > enemy
+      ;; zones > wall edges / shadows > wall body). Centre row tracks
+      ;; the firing kick so the resolved cell follows the crosshair.
+      (let [c-col       (php/intdiv vw 2)
+            firing?     (php/> (or (get stats :fire-anim) 0.0) 0.0)
+            c-row       (php/+ (php/intdiv vh 2) (if firing? -1 0))
+            top-col     (buf-get tops c-col)
+            bot-col     (buf-get bots c-col)
+            center-cell (or (buf-get blood-paint (php/+ (php/* c-row vw) c-col))
+                            (cond
+                              (php/< c-row top-col)             (buf-get sky-gradient c-row)
+                              (php/>= c-row bot-col)            (buf-get floor-gradient c-row)
+                              (buf-get emask c-col)
+                              (cond
+                                (php/< c-row (buf-get mids c-col))   (buf-get eheads c-col)
+                                (php/< c-row (buf-get lowers c-col)) (buf-get ebodys c-col)
+                                :else                                (buf-get elegss c-col))
+                              (php/=== c-row top-col)           (buf-get shades-top-edge c-col)
+                              (php/=== c-row (php/+ top-col 1)) (buf-get shades-top-shadow c-col)
+                              (php/=== c-row (php/- bot-col 1)) (buf-get shades-bot-edge c-col)
+                              (php/=== c-row (php/- bot-col 2)) (buf-get shades-bot-shadow c-col)
+                              :else                             (buf-get shades-normal c-col)))
             center-bg   (php/mb_substr center-cell 0
                                        (php/max 0 (php/- (php/mb_strlen center-cell) 1)))
             parts       (paint-face-overlay parts world stats vw vh dists eface)

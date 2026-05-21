@@ -218,6 +218,41 @@
            :prev-min-enemy-dist cur
            :scare-secs          (if crossed-in? scare-duration active'))))
 
+(def rear-arc-half-width
+  "Angle (radians) past facing that counts as 'behind'. 3π/4 = 135°
+   from facing covers the player's back 90° wedge — the part of the
+   world they literally can't see."
+  (php/* 0.75 php/M_PI))
+
+(def rear-warn-max-dist
+  "World-units beyond which a rear enemy is too far to register on
+   the breathing-behind-you cue."
+  10.0)
+
+(defn rear-attacker?
+  "True when at least one alive enemy sits in the rear arc AND within
+   rear-warn-max-dist of the player. Pure: one pass; bails on first
+   match. Exported so render + tests share the same rule."
+  {:export true}
+  [enemies ^float px ^float py ^float pangle]
+  (let [max-d2 (php/* rear-warn-max-dist rear-warn-max-dist)]
+    (loop [es enemies]
+      (cond
+        (empty? es) false
+        :else
+        (let [e (first es)]
+          (if (:alive e)
+            (let [dx    (php/- (:x e) px)
+                  dy    (php/- (:y e) py)
+                  d2    (php/+ (php/* dx dx) (php/* dy dy))
+                  delta (php/- (php/atan2 dy dx) pangle)
+                  norm  (php/abs (php/atan2 (php/sin delta) (php/cos delta)))]
+              (if (and (php/<= d2 max-d2)
+                       (php/>= norm rear-arc-half-width))
+                true
+                (recur (rest es))))
+            (recur (rest es))))))))
+
 (defn spawn-enemies
   "Place `n` enemies on random open cells of `grid`, well away from the
    player's spawn so the first frame isn't an ambush."

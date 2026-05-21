@@ -1,6 +1,6 @@
 (ns phel-doom-tests.modules.core.enemy-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.modules.core.enemy :refer [new-enemy spawn-enemies shoot advance tick-scare]))
+  (:require phel-doom.modules.core.enemy :refer [new-enemy spawn-enemies shoot advance tick-scare rear-attacker?]))
 
 (def open-grid
   "Bordered 10x10 open arena, no interior walls."
@@ -148,3 +148,30 @@
   (let [w  (scare-world 5.0 5.0 [{:x 6.0 :y 5.0 :alive false}] 100.0 0.0)
         w' (tick-scare w 0.05)]
     (is (= 0.0 (:scare-secs w')))))
+
+;; ---------------------------------------------------------------------
+;; rear-attacker?: pure angular check. Player at (5,5) facing +x
+;; (angle 0). +x is east, so directly behind is west (negative x).
+;; ---------------------------------------------------------------------
+
+(deftest test-rear-attacker-true-when-directly-behind
+  ;; Enemy at (2,5): due west of player facing east. Behind, in range.
+  (is (= true (rear-attacker? [{:x 2.0 :y 5.0 :alive true}] 5.0 5.0 0.0))))
+
+(deftest test-rear-attacker-false-when-in-front
+  ;; Enemy at (8,5): due east, the way the player is facing.
+  (is (= false (rear-attacker? [{:x 8.0 :y 5.0 :alive true}] 5.0 5.0 0.0))))
+
+(deftest test-rear-attacker-false-when-behind-but-too-far
+  ;; 30 units west — well past the 10-unit audible range.
+  (is (= false (rear-attacker? [{:x -25.0 :y 5.0 :alive true}] 5.0 5.0 0.0))))
+
+(deftest test-rear-attacker-false-when-dead
+  (is (= false (rear-attacker? [{:x 2.0 :y 5.0 :alive false}] 5.0 5.0 0.0))))
+
+(deftest test-rear-attacker-false-with-no-enemies
+  (is (= false (rear-attacker? [] 5.0 5.0 0.0))))
+
+(deftest test-rear-attacker-side-arc-doesnt-trigger
+  ;; Enemy due north (90° off facing) — flank, not back.
+  (is (= false (rear-attacker? [{:x 5.0 :y 8.0 :alive true}] 5.0 5.0 0.0))))

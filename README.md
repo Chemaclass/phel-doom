@@ -47,6 +47,17 @@ make play
 
 Walk into a door to advance. Walk over a heart to refill a life.
 
+### Best input feel
+
+Movement uses the [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/)
+when the terminal supports it: real press / release events, so motion
+stops the instant you let go of WASD or arrows. Falls back to legacy
+auto-repeat (~300ms post-release glide) on terminals without it.
+
+- **Instant release**: kitty, WezTerm, Ghostty, Alacritty ≥ 0.13, iTerm2 ≥ 3.5
+- **Legacy fallback**: macOS Terminal.app, GNOME Terminal, xterm
+- **Inside tmux**: add `set -g extended-keys on` (and `setw -g xterm-keys on`) to pass kitty events through
+
 ## Internals
 
 Per-subsystem write-ups in [docs/](docs/README.md): architecture, game-loop, raycaster, rendering, monsters, combat, levels, input, audio, scores, WAD parser, performance.

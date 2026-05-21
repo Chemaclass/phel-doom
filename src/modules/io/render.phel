@@ -621,6 +621,40 @@
                      "\e[0m"))))
   parts)
 
+(defn- paint-tunnel-vision
+  "Corner-darkening vignette at low life. The four corners grow into
+   the play area as a stepped staircase of black cells: 5-deep at 1
+   life, 2-deep at 2 lives, off at 3+. Skips the compass strip (row
+   1) and the pistol band (last 6 rows) so the HUD stays readable.
+   Pairs with the heartbeat vignette — pulse fires AFTER this so the
+   red strip reads on top of the closing-in darkness."
+  [parts stats vw vh]
+  (let [lives (or (get stats :lives) 0)
+        depth (cond
+                (php/<= lives 0) 0
+                (php/<= lives 1) 5
+                (php/<= lives 2) 2
+                :else            0)]
+    (when (php/> depth 0)
+      (let [r-top 2
+            r-bot (php/max r-top (php/- vh 6))
+            bg    "\e[48;5;232m"]
+        (loop [d 0]
+          (when (php/< d depth)
+            (let [step (php/- depth d)
+                  pad  (php/str_repeat " " step)
+                  rt   (php/+ r-top d)
+                  rb   (php/- r-bot d)
+                  cr   (php/+ (php/- vw step) 1)]
+              (when (php/<= rt r-bot)
+                (buf-push parts (str "\e[" rt ";1H"  bg pad "\e[0m"))
+                (buf-push parts (str "\e[" rt ";" cr "H" bg pad "\e[0m")))
+              (when (and (php/>= rb r-top) (not (php/=== rb rt)))
+                (buf-push parts (str "\e[" rb ";1H"  bg pad "\e[0m"))
+                (buf-push parts (str "\e[" rb ";" cr "H" bg pad "\e[0m"))))
+            (recur (php/+ d 1)))))))
+  parts)
+
 (defn- paint-rear-warning
   "Tiny blinking '‹ behind ›' label below the compass when at least
    one alive enemy is in the rear arc + within audible range. Dim
@@ -1306,6 +1340,7 @@
             parts       (paint-crosshair    parts stats vw vh center-bg)
             parts       (paint-intro-splash parts stats vw vh)
             parts       (paint-flicker parts stats vw vh)
+            parts       (paint-tunnel-vision parts stats vw vh)
             parts       (paint-heartbeat-vignette parts stats vw vh)
             parts       (paint-hit-vignette parts stats bloody? vw vh)
             parts       (paint-heat-bar     parts stats vw vh)

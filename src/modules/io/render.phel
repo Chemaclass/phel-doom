@@ -889,6 +889,30 @@
             (when (php/<= r vh)
               (php/array_push parts (str "\e[" r ";" edge-c0 "H" edge-bg "\e[0m"))
               (recur (php/+ r 1))))))
+      ;; Pistol heat bar + JAMMED indicator. Painted under the pistol
+      ;; sprite centre so the player reads it without looking away from
+      ;; the crosshair. Bar is 10 cells wide, fills proportional to
+      ;; :heat in [0, 1]; jam state replaces the bar with red 'JAMMED'.
+      (let [heat (or (get stats :heat) 0.0)
+            jam  (or (get stats :jam-secs) 0.0)
+            cc   (php/+ (php/intdiv vw 2) 1)
+            row  (php/- vh 6)]
+        (when (or (php/> heat 0.0) (php/> jam 0.0))
+          (cond
+            (php/> jam 0.0)
+            (php/array_push parts
+                            (str "\e[" row ";" (php/- cc 3) "H\e[5;91;1mJAMMED\e[0m"))
+            :else
+            (let [filled (php/intval (php/* heat 10.0))
+                  empty  (php/- 10 filled)
+                  colour (cond (php/>= heat 0.85) "\e[41m"
+                               (php/>= heat 0.6)  "\e[43m"
+                               :else              "\e[42m")]
+              (php/array_push parts
+                              (str "\e[" row ";" (php/- cc 5) "H"
+                                   colour (php/str_repeat " " filled)
+                                   "\e[100m" (php/str_repeat " " empty)
+                                   "\e[0m"))))))
       ;; Kill-streak counter: shown top-right under the minimap while
       ;; the streak window is active. Bright yellow for 2+, bolder
       ;; (red) for 5+. Streak resets to 0 when the timer expires in

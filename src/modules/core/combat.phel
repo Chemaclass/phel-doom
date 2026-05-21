@@ -46,6 +46,25 @@
    Counter resets to 1 if the player waits longer without a kill."
   4.0)
 
+(def fire-cooldown-seconds
+  "Minimum interval between shots so trigger-mashing doesn't fire on
+   every frame (~8 shots/sec cap)."
+  0.12)
+
+(def heat-per-shot
+  "Heat added on each shot. Heat decays continuously; when it crosses
+   1.0 the pistol jams."
+  0.18)
+
+(def heat-cool-rate
+  "Heat units shed per second when not firing."
+  0.55)
+
+(def jam-seconds
+  "How long the pistol stays jammed (locked-out + visual indicator)
+   after overheat."
+  0.7)
+
 ;; =====================================================================
 ;; § Damage step (timer decay + touch collision)
 ;; =====================================================================
@@ -79,17 +98,23 @@
         fire-anim    (php/max 0.0 (php/- (or (:fire-anim world) 0.0) dt))
         intro-secs   (php/max 0.0 (php/- (or (:intro-secs world) 0.0) dt))
         flash-secs   (php/max 0.0 (php/- (or (:flash-secs world) 0.0) dt))
-        streak-secs' (php/max 0.0 (php/- (or (:streak-secs world) 0.0) dt))]
+        streak-secs' (php/max 0.0 (php/- (or (:streak-secs world) 0.0) dt))
+        cooldown'    (php/max 0.0 (php/- (or (:fire-cooldown world) 0.0) dt))
+        heat'        (php/max 0.0 (php/- (or (:heat world) 0.0) (php/* heat-cool-rate dt)))
+        jam-secs'    (php/max 0.0 (php/- (or (:jam-secs world) 0.0) dt))]
     (assoc world
-           :iframes     iframes
-           :fire-anim   fire-anim
-           :intro-secs  intro-secs
-           :flash-secs  flash-secs
-           :streak-secs streak-secs'
+           :iframes       iframes
+           :fire-anim     fire-anim
+           :intro-secs    intro-secs
+           :flash-secs    flash-secs
+           :streak-secs   streak-secs'
+           :fire-cooldown cooldown'
+           :heat          heat'
+           :jam-secs      jam-secs'
            ;; Window expired: streak counter goes back to 0 so the HUD
            ;; stops showing it.
-           :streak      (if (php/<= streak-secs' 0.0) 0 (or (:streak world) 0))
-           :fx          (decay-fx (:fx world) dt))))
+           :streak        (if (php/<= streak-secs' 0.0) 0 (or (:streak world) 0))
+           :fx            (decay-fx (:fx world) dt))))
 
 (defn- vulnerable? [world]
   (and (php/<= (:iframes world) 0.0)
@@ -203,18 +228,36 @@
         (play-sfx! (kill-event-for-level world) (distance-volume d)))
       (play-sfx! :shoot 1.0))))
 
+(defn- can-fire? [world]
+  (and (php/<= (or (:fire-cooldown world) 0.0) 0.0)
+       (php/<= (or (:jam-secs world) 0.0) 0.0)))
+
+(defn- apply-heat
+  "After a shot lands, bump heat + arm the cooldown. If heat crosses
+   1.0 the pistol overheats and jams for jam-seconds (heat resets so
+   the player isn't punished twice)."
+  [world]
+  (let [heat' (php/+ (or (:heat world) 0.0) heat-per-shot)
+        jam?  (php/>= heat' 1.0)]
+    (assoc world
+           :fire-cooldown fire-cooldown-seconds
+           :heat          (if jam? 0.0 heat')
+           :jam-secs      (if jam? jam-seconds (or (:jam-secs world) 0.0)))))
+
 (defn fire-shot
   "Resolve one trigger pull end-to-end."
   {:export true}
   [world]
   (let [[enemies' hit? hit-pos idx] (resolve-shot world)]
     (play-shot-sfx world hit? hit-pos)
-    (if hit?
-      (on-shot-hit world enemies' hit-pos idx)
-      (on-shot-miss world))))
+    (apply-heat (if hit?
+                  (on-shot-hit world enemies' hit-pos idx)
+                  (on-shot-miss world)))))
 
 (defn tick-shooting
-  "Resolve a shot if the trigger was pulled this frame, otherwise no-op."
+  "Resolve a shot if the trigger was pulled this frame AND the pistol
+   is ready (not on cooldown, not jammed). Trigger pulls during a jam
+   are dropped silently."
   {:export true}
   [world fire?]
-  (if fire? (fire-shot world) world))
+  (if (and fire? (can-fire? world)) (fire-shot world) world))

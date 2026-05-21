@@ -11,7 +11,7 @@ Raw stdin to world state. Two modules:
 (defn init-input! []
   (php/exec "stty -icanon -echo min 0 time 0")
   (php/stream_set_blocking php/STDIN false)
-  (print "\e[?1049h\e[?25l\e[?7l\e[2J\e[H"))
+  (print "\e[?1049h\e[?25l\e[?7l\e[2J\e[H\e[>3u"))
 ```
 
 - `stty -icanon -echo min 0 time 0`: raw mode, no line buffer, no echo, return immediately.
@@ -20,8 +20,9 @@ Raw stdin to world state. Two modules:
 - `\e[?25l`: hide cursor.
 - `\e[?7l`: disable autowrap (long lines at right edge don't scroll buffer).
 - `\e[2J\e[H`: clear + cursor home.
+- `\e[>3u`: push kitty keyboard protocol flags (disambiguate=1 | event-types=2). Supporting terminals (kitty, WezTerm, Ghostty, Alacritty ≥ 0.13, iTerm2 ≥ 3.5) then emit press / repeat / release events. Non-supporting terminals ignore it.
 
-`restore!` undoes: `\e[?25h\e[?7h\e[?1049l` then `stty sane`.
+`restore!` sends `\e[<u` (pop kitty flags) then `\e[?25h\e[?7h\e[?1049l` and `stty sane`.
 
 ## Reading input
 
@@ -61,15 +62,49 @@ Each byte refreshes its slot's counter on `:moves`. Counter is the only thing ph
 ## Hold-frames trade-off
 
 ```phel
-(def move-hold-frames 12)   ; ~75ms warm
-(def turn-hold-frames  3)   ; ~25ms warm
+(def move-hold-frames 18)   ; ~300ms warm
+(def turn-hold-frames  3)   ; ~50ms warm
 ```
 
 Per byte, matching counter is set to its hold value. Each frame `apply-physics` decays by 1. Counter hits 0 = direction stops.
 
-Two values because turn precision matters more than turn fluency (arrows aim, WASD walks). Short turn-hold stops arrow within ~25ms of release. Short move-hold keeps WASD crisp. Both rely on OS auto-repeat to keep a held key alive across the inter-byte gap.
+`move-hold-frames` is sized to bridge the OS initial-key-repeat delay (~250-500ms on macOS/Linux). Without it the first byte arrives, motion runs for a few frames, then stalls until the OS finally starts auto-repeating, reading as a stutter on every press. The trade-off is ~300ms post-release glide on terminals without kitty release events. Kitty-protocol release events override this with an instant clear (see below).
 
-Cost on stock terminals: walk-and-turn combos are best-effort. OS auto-repeat is single-track on macOS Terminal.app / iTerm2; pressing an arrow stops W repeating. Kitty-keyboard-protocol opt-in sketched in `glue/controls.phel` (dormant `apply-kitty-events` parser, commented out, revertible).
+`turn-hold-frames` is short so arrow rotation halts within ~50ms of release; turning is for aiming, not warm-up.
+
+## Kitty keyboard protocol (instant release)
+
+When the terminal supports the [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/), `init-input!`'s `\e[>3u` push opts in. From then on keys arrive as escape sequences carrying explicit press / repeat / release events:
+
+```
+\e[<code>;<mods>:<event>u        ASCII keys + functional codes (CSI u)
+\e[1;<mods>:<event><A|B|C|D>     arrow keys (legacy letter suffix)
+```
+
+`refresh-from-keys` parses both forms before falling through to the legacy byte path:
+
+```phel
+(let [[w1 leftover1] (apply-kitty-events       world keys)
+      [w2 leftover2] (apply-kitty-arrow-events w1    leftover1)]
+  ; ... legacy normalise + single-byte refresh on leftover2
+  )
+```
+
+`event` codes: 1 = press, 2 = repeat, 3 = release. Press/repeat refresh the slot to its hold value; release clears the slot to 0 the same frame.
+
+Best-tier terminals (instant release): kitty, WezTerm, Ghostty, Alacritty ≥ 0.13, iTerm2 ≥ 3.5.
+Legacy fallback (hold-frames bridge): macOS Terminal.app, GNOME Terminal, xterm.
+
+## About-face (dedicated `e` key)
+
+`e` snaps the player 180°. Rises through `rising-edges` like the other one-shots (`:about-face`), handled in `handle-toggles` alongside pause/map/sound:
+
+```phel
+(defn- about-face [world]
+  (update-in world [:player :angle] (fn [a] (php/+ a php/M_PI))))
+```
+
+Dedicated key was chosen over double-tap S so a brake-walk mid-combat never accidentally spins the camera.
 
 ## Edge detection for one-shot keys
 

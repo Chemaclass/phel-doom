@@ -34,16 +34,17 @@ make play
 
 ## Controls
 
-| Key            | Action               |
-|----------------|----------------------|
-| `w` / `s` / ↑↓ | Move forward / back  |
-| `a` / `d`      | Strafe left / right  |
-| `←` / `→`      | Turn left / right    |
-| `space`        | Fire                 |
-| `m`            | Toggle minimap       |
-| `n`            | Toggle sound         |
-| `p`            | Pause                |
-| `q`            | Quit                 |
+| Key            | Action                       |
+|----------------|------------------------------|
+| `w` / `s` / ↑↓ | Move forward / back          |
+| `a` / `d`      | Strafe left / right          |
+| `←` / `→`      | Turn left / right            |
+| `e`            | About-face (snap 180° turn)  |
+| `space`        | Fire                         |
+| `m`            | Toggle minimap               |
+| `n`            | Toggle sound                 |
+| `p`            | Pause                        |
+| `q`            | Quit                         |
 
 Walk into a door to advance. Walk over a heart to refill a life.
 

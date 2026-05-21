@@ -1,6 +1,48 @@
 (ns phel-doom.modules.io.render
   (:require phel-doom.modules.core.engine :refer [cast-frame max-depth proj-dist]))
 
+;; =====================================================================
+;; § Hot-loop buffer macros
+;;
+;; The inner row + col loops read/write ~7200 cells per frame at 180×40.
+;; Bench (docs/contributing.md → Phel gotchas) puts Phel persistent
+;; vectors at ~680× slower than php-array on a per-cell read; the row
+;; loop would drop from ~60fps to <2fps if we used (get v i) here.
+;;
+;; To avoid leaking php/* call shapes across the module we wrap the
+;; raw php interop in zero-cost macros. Reader stays at the Phel
+;; level (`(buf-mk)`, `(buf-set b i v)`, `(buf-get b i)`); the macro
+;; expands at compile time to the underlying php/array op.
+;;
+;; CAVEAT: these are macros, not fns. They compile inline. Trying to
+;; pass `buf-set` as a value (e.g. to `map`) won't work. Use them
+;; only at direct call sites in hot loops.
+;;
+;; PHP arrays still pass by value across fn boundaries. Helpers that
+;; build a buffer must RETURN it; callers rebind via let. See
+;; compute-wall-shades / paint-* helpers for the pattern.
+;; =====================================================================
+
+(defmacro buf-mk
+  "Create an empty buffer (php-array)."
+  []
+  `(php/array))
+
+(defmacro buf-set
+  "Write `v` at `i` in buffer `b`. Inlines to php/aset."
+  [b i v]
+  `(php/aset ~b ~i ~v))
+
+(defmacro buf-get
+  "Read `b[i]`. Inlines to php/aget."
+  [b i]
+  `(php/aget ~b ~i))
+
+(defmacro buf-push
+  "Append `v` to the end of buffer `b`. Inlines to php/array_push."
+  [b v]
+  `(php/array_push ~b ~v))
+
 (def sky        "\e[48;5;236m ")
 (def floor      "\e[48;5;239m ")
 (def sky-blood  "\e[48;5;52m ")
@@ -84,10 +126,10 @@
    232-255). Indexed by an integer shade level 0-23, so the per-cell
    shade lookup is just one PHP array fetch — no memoize, no string
    alloc, no Phel runtime dispatch."
-  (let [t (php/array)]
+  (let [t (buf-mk)]
     (loop [i 0]
       (when (php/< i 24)
-        (php/aset t i (str "\e[48;5;" (php/+ 232 i) "m "))
+        (buf-set t i (str "\e[48;5;" (php/+ 232 i) "m "))
         (recur (php/+ i 1))))
     t))
 
@@ -96,10 +138,10 @@
    a string (e.g. \"240\"). Used to compose ▀ half-block edge cells
    that mix a wall colour with sky / floor for sub-pixel-looking wall
    tops and bottoms."
-  (let [t (php/array)]
+  (let [t (buf-mk)]
     (loop [i 0]
       (when (php/< i 24)
-        (php/aset t i (php/strval (php/+ 232 i)))
+        (buf-set t i (php/strval (php/+ 232 i)))
         (recur (php/+ i 1))))
     t))
 
@@ -107,21 +149,21 @@
   "Red gradient palette swapped in for the duration of the player's
    post-hit i-frames so the whole viewport flushes red — instant 'you
    just got hit' feedback without rendering a separate overlay."
-  (let [t (php/array)]
+  (let [t (buf-mk)]
     (loop [i 0]
       (when (php/< i 24)
         ;; bright red (close) -> dark red (far) along the 256-color
         ;; reds: 196 -> 58, every shade step ~6 indices.
-        (php/aset t i (str "\e[48;5;" (php/- 196 (php/intval (php/* i 6))) "m "))
+        (buf-set t i (str "\e[48;5;" (php/- 196 (php/intval (php/* i 6))) "m "))
         (recur (php/+ i 1))))
     t))
 
 (def shade-code-table-blood
   "Code-only twin of shade-table-blood for edge-cell composition."
-  (let [t (php/array)]
+  (let [t (buf-mk)]
     (loop [i 0]
       (when (php/< i 24)
-        (php/aset t i (php/strval (php/- 196 (php/intval (php/* i 6)))))
+        (buf-set t i (php/strval (php/- 196 (php/intval (php/* i 6)))))
         (recur (php/+ i 1))))
     t))
 
@@ -188,7 +230,7 @@
    (atmospheric haze). Used for both sky AND floor since after a
    distance the eye stops distinguishing them anyway."
   [^int vh tbl]
-  (let [arr     (php/array)
+  (let [arr     (buf-mk)
         horizon (php/intdiv vh 2)
         max-d   (php/max 1 horizon)]
     (loop [r 0]
@@ -199,7 +241,7 @@
                                                               (php// (php/abs (php/- r horizon))
                                                                      max-d))
                                                        23))))]
-          (php/aset arr r (php/aget tbl idx)))
+          (buf-set arr r (buf-get tbl idx)))
         (recur (php/+ r 1))))
     arr))
 
@@ -211,7 +253,7 @@
    horizontal banding (tile lines). One pass over vh rows per frame;
    vh is small (~30-40) so the cost is negligible."
   [^int vh ^int base-code stripe?]
-  (let [arr     (php/array)
+  (let [arr     (buf-mk)
         horizon (php/intdiv vh 2)
         max-d   (php/max 1 horizon)]
     (loop [r 0]
@@ -222,7 +264,7 @@
                       (php/max 0.0 (php/- fade 0.12))
                       fade)
               code  (fade-256 base-code fade')]
-          (php/aset arr r (str "\e[48;5;" code "m ")))
+          (buf-set arr r (str "\e[48;5;" code "m ")))
         (recur (php/+ r 1))))
     arr))
 
@@ -272,14 +314,14 @@
    cells currently occupied by an alive enemy. One pass over the
    enemies vector so the minimap inner loop stays O(1) per cell."
   [enemies gw]
-  (let [acc (php/array)]
+  (let [acc (buf-mk)]
     (loop [es enemies]
       (when (php/!== es nil)
         (let [e (first es)]
           (when (and e (:alive e))
-            (php/aset acc
-                      (php/+ (php/* (php/intval (:y e)) gw) (php/intval (:x e)))
-                      true)))
+            (buf-set acc
+                     (php/+ (php/* (php/intval (:y e)) gw) (php/intval (:x e)))
+                     true)))
         (recur (next es))))
     acc))
 
@@ -287,14 +329,14 @@
   "Build a PHP array keyed by `row*gw+col` whose truthy entries mark
    cells currently holding a heart pickup."
   [hearts gw]
-  (let [acc (php/array)]
+  (let [acc (buf-mk)]
     (loop [hs hearts]
       (when (php/!== hs nil)
         (let [h (first hs)]
           (when h
-            (php/aset acc
-                      (php/+ (php/* (php/intval (:y h)) gw) (php/intval (:x h)))
-                      true)))
+            (buf-set acc
+                     (php/+ (php/* (php/intval (:y h)) gw) (php/intval (:x h)))
+                     true)))
         (recur (next hs))))
     acc))
 
@@ -312,26 +354,26 @@
         prow                (php/intval y)
         marker              (str "\e[93;1m" (direction-char angle) "\e[0m")
         gh                  (php/count pgrid)
-        gw                  (php/count (php/aget pgrid 0))
+        gw                  (php/count (buf-get pgrid 0))
         emap                (enemy-cells (:enemies world) gw)
         hmap                (heart-cells (:hearts world) gw)
-        rows                (php/array)]
+        rows                (buf-mk)]
     (loop [row 0]
       (when (php/< row gh)
-        (let [grow  (php/aget pgrid row)
-              parts (php/array)]
+        (let [grow  (buf-get pgrid row)
+              parts (buf-mk)]
           (loop [col 0]
             (when (php/< col gw)
-              (php/array_push parts
-                              (cond
-                                (and (php/=== row prow) (php/=== col pcol)) marker
-                                (php/=== 1 (php/aget grow col))             minimap-wall
-                                (php/=== 2 (php/aget grow col))             door-glyph
-                                (php/aget emap (php/+ (php/* row gw) col))  enemy-marker
-                                (php/aget hmap (php/+ (php/* row gw) col))  heart-marker
-                                :else                                       minimap-floor))
+              (buf-push parts
+                        (cond
+                          (and (php/=== row prow) (php/=== col pcol)) marker
+                          (php/=== 1 (buf-get grow col))              minimap-wall
+                          (php/=== 2 (buf-get grow col))              door-glyph
+                          (buf-get emap (php/+ (php/* row gw) col))   enemy-marker
+                          (buf-get hmap (php/+ (php/* row gw) col))   heart-marker
+                          :else                                       minimap-floor))
               (recur (php/+ col 1))))
-          (php/aset rows row (php/implode "" parts)))
+          (buf-set rows row (php/implode "" parts)))
         (recur (php/+ row 1))))
     rows))
 
@@ -487,14 +529,14 @@
                            eface)]
                (when (and (php/>= col 0)
                           (php/< col vw)
-                          (php/< d (php/aget dists col)))
+                          (php/< d (buf-get dists col)))
                  (let [h        (php/min vh (php/intval (php// proj-dist
                                                                (php/* (php/max 0.5 d) char-aspect))))
                        face-row (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 6))]
                    (when (and (php/>= face-row 1) (php/<= face-row vh))
-                     (php/array_push parts
-                                     (str "\e[" face-row ";"
-                                          (php/+ col 1) "H" glyph)))))))))
+                     (buf-push parts
+                               (str "\e[" face-row ";"
+                                    (php/+ col 1) "H" glyph)))))))))
   parts)
 
 (defn- paint-wall-lights
@@ -502,22 +544,22 @@
    wall top. Deduped per (hx, hy) so adjacent screen cols of the same
    wall cell share one torch."
   [parts vw vh hits hxs hys tops]
-  (let [seen (php/array)
+  (let [seen (buf-mk)
         tcol (if (pulse 7.0) "\e[1;38;5;220m" "\e[1;38;5;208m")]
     (loop [col 0]
       (when (php/< col vw)
-        (when (php/=== 1 (php/aget hits col))
-          (let [hx   (php/aget hxs col)
-                hy   (php/aget hys col)
+        (when (php/=== 1 (buf-get hits col))
+          (let [hx   (buf-get hxs col)
+                hy   (buf-get hys col)
                 k    (str hx "-" hy)
                 hash (mod (php/+ (php/* hx 73856093) (php/* hy 19349663)) 100)]
-            (when (and (php/< hash 3) (php/=== (php/aget seen k) nil))
-              (php/aset seen k true)
-              (let [r (php/max 1 (php/+ (php/aget tops col) 1))]
+            (when (and (php/< hash 3) (php/=== (buf-get seen k) nil))
+              (buf-set seen k true)
+              (let [r (php/max 1 (php/+ (buf-get tops col) 1))]
                 (when (php/<= r vh)
-                  (php/array_push parts
-                                  (str "\e[" r ";" (php/+ col 1) "H"
-                                       tcol "✦\e[0m")))))))
+                  (buf-push parts
+                            (str "\e[" r ";" (php/+ col 1) "H"
+                                 tcol "✦\e[0m")))))))
         (recur (php/+ col 1)))))
   parts)
 
@@ -529,8 +571,8 @@
         ch-row  (php/+ (php/intdiv vh 2) (if firing? 0 1))
         ch-col  (php/+ (php/intdiv vw 2) 1)
         ch-att  (if firing? "\e[97;1m" "\e[97;2m")]
-    (php/array_push parts
-                    (str "\e[" ch-row ";" ch-col "H" ch-att "+\e[0m")))
+    (buf-push parts
+              (str "\e[" ch-row ";" ch-col "H" ch-att "+\e[0m")))
   parts)
 
 (defn- paint-intro-splash
@@ -545,11 +587,11 @@
           row0  (php/max 1 (php/- (php/intdiv vh 2) 2))
           col0  (php/max 1 (php/- (php/+ (php/intdiv vw 2) 1)
                                   (php/intdiv (php/+ bw 2) 2)))]
-      (php/array_push parts
-                      (str "\e[" row0 ";" col0 "H\e[40;93;1m┌" bar "┐"
-                           "\e[" (php/+ row0 1) ";" col0 "H\e[40;93;1m│" pad title pad "│"
-                           "\e[" (php/+ row0 2) ";" col0 "H\e[40;93;1m└" bar "┘"
-                           "\e[0m"))))
+      (buf-push parts
+                (str "\e[" row0 ";" col0 "H\e[40;93;1m┌" bar "┐"
+                     "\e[" (php/+ row0 1) ";" col0 "H\e[40;93;1m│" pad title pad "│"
+                     "\e[" (php/+ row0 2) ";" col0 "H\e[40;93;1m└" bar "┘"
+                     "\e[0m"))))
   parts)
 
 (defn- paint-hit-vignette
@@ -562,7 +604,7 @@
           edge-c0 (if (php/=== side :left) 1 (php/max 1 (php/- vw 1)))]
       (loop [r 1]
         (when (php/<= r vh)
-          (php/array_push parts (str "\e[" r ";" edge-c0 "H" edge-bg "\e[0m"))
+          (buf-push parts (str "\e[" r ";" edge-c0 "H" edge-bg "\e[0m"))
           (recur (php/+ r 1))))))
   parts)
 
@@ -577,19 +619,19 @@
     (when (or (php/> heat 0.0) (php/> jam 0.0))
       (cond
         (php/> jam 0.0)
-        (php/array_push parts
-                        (str "\e[" row ";" (php/- cc 3) "H\e[5;91;1mJAMMED\e[0m"))
+        (buf-push parts
+                  (str "\e[" row ";" (php/- cc 3) "H\e[5;91;1mJAMMED\e[0m"))
         :else
         (let [filled (php/intval (php/* heat 10.0))
               empty  (php/- 10 filled)
               colour (cond (php/>= heat 0.85) "\e[41m"
                            (php/>= heat 0.6)  "\e[43m"
                            :else              "\e[42m")]
-          (php/array_push parts
-                          (str "\e[" row ";" (php/- cc 5) "H"
-                               colour (php/str_repeat " " filled)
-                               "\e[100m" (php/str_repeat " " empty)
-                               "\e[0m"))))))
+          (buf-push parts
+                    (str "\e[" row ";" (php/- cc 5) "H"
+                         colour (php/str_repeat " " filled)
+                         "\e[100m" (php/str_repeat " " empty)
+                         "\e[0m"))))))
   parts)
 
 (defn- paint-kill-streak
@@ -602,9 +644,9 @@
             label  (str colour "x" streak " streak\e[0m")
             col0   (php/max 1 (php/- (php/+ map-col (php/strlen "x99 streak"))
                                      (php/strlen "x99 streak")))]
-        (php/array_push parts
-                        (str "\e[" (php/+ map-row visible-mh) ";"
-                             col0 "H" label)))))
+        (buf-push parts
+                  (str "\e[" (php/+ map-row visible-mh) ";"
+                       col0 "H" label)))))
   parts)
 
 (defn- paint-compass
@@ -626,9 +668,9 @@
                                  (str "\e[1;93m" (get labels i) "\e[0m")
                                  (str "\e[2;97m" (get labels i) "\e[0m"))
                                (if (php/< i 3) "  " "")))))]
-    (php/array_push parts
-                    (str "\e[1;" (php/max 1 (php/- (php/intdiv vw 2) 3))
-                         "H" cells)))
+    (buf-push parts
+              (str "\e[1;" (php/max 1 (php/- (php/intdiv vw 2) 3))
+                   "H" cells)))
   parts)
 
 (defn- paint-hearts-hud
@@ -638,15 +680,15 @@
         cap   (or (get stats :max-lives) 5)
         armor (or (get stats :armor) 0)
         blink (if bloody? "\e[5;1m" "\e[1m")]
-    (php/array_push parts
-                    (str "\e[1;1H" blink "\e[91m"
-                         (php/str_repeat "♥ " l)
-                         "\e[90m"
-                         (php/str_repeat "♡ " (php/max 0 (php/- cap l)))
-                         (if (php/> armor 0)
-                           (str "\e[94;1m" (php/str_repeat "◆ " armor))
-                           "")
-                         "\e[0m")))
+    (buf-push parts
+              (str "\e[1;1H" blink "\e[91m"
+                   (php/str_repeat "♥ " l)
+                   "\e[90m"
+                   (php/str_repeat "♡ " (php/max 0 (php/- cap l)))
+                   (if (php/> armor 0)
+                     (str "\e[94;1m" (php/str_repeat "◆ " armor))
+                     "")
+                   "\e[0m")))
   parts)
 
 (defn- paint-pistol-hud
@@ -660,21 +702,21 @@
           frame     "\e[1;38;5;236m"
           grip-hi   "\e[1;38;5;130m"
           grip-lo   "\e[1;38;5;94m"]
-      (php/array_push parts
-                      (str
-                       "\e[" (php/- vh 5) ";" (php/+ cc 1) "H" muzzle "▄▄"
-                       "\e[" (php/- vh 4) ";" cc           "H" slide "▐██▌"
-                       "\e[" (php/- vh 3) ";" (php/- cc 1) "H" slide "▐████▌"
-                       "\e[" (php/- vh 2) ";" (php/- cc 2) "H" slide-dim "▐██████▌"
-                       "\e[" (php/- vh 1) ";" (php/- cc 2) "H" frame "▐█" grip-hi "▓▓▓▓" frame "█▌"
-                       "\e[" vh           ";" (php/- cc 1) "H" grip-lo "▐▓▓▓▓▌"
-                       "\e[0m"))
+      (buf-push parts
+                (str
+                 "\e[" (php/- vh 5) ";" (php/+ cc 1) "H" muzzle "▄▄"
+                 "\e[" (php/- vh 4) ";" cc           "H" slide "▐██▌"
+                 "\e[" (php/- vh 3) ";" (php/- cc 1) "H" slide "▐████▌"
+                 "\e[" (php/- vh 2) ";" (php/- cc 2) "H" slide-dim "▐██████▌"
+                 "\e[" (php/- vh 1) ";" (php/- cc 2) "H" frame "▐█" grip-hi "▓▓▓▓" frame "█▌"
+                 "\e[" vh           ";" (php/- cc 1) "H" grip-lo "▐▓▓▓▓▌"
+                 "\e[0m"))
       (when (php/> (or (get stats :fire-anim) 0.0) 0.0)
-        (php/array_push parts
-                        (str
-                         "\e[" (php/- vh 7) ";" cc "H\e[1;93m  ✦  "
-                         "\e[" (php/- vh 6) ";" cc "H\e[1;93m *★* "
-                         "\e[0m")))))
+        (buf-push parts
+                  (str
+                   "\e[" (php/- vh 7) ";" cc "H\e[1;93m  ✦  "
+                   "\e[" (php/- vh 6) ";" cc "H\e[1;93m *★* "
+                   "\e[0m")))))
   parts)
 
 (defn- compute-wall-shades
@@ -694,59 +736,59 @@
   [vw vh kick-shift cast palette blood-cols]
   (let [{:keys [dists hits sides hxs hys]}                             cast
         {:keys [stbl ctbl sky-c floor-c door-shade-now door-code-now]} palette
-        tops                                                           (php/array)
-        bots                                                           (php/array)
-        normal                                                         (php/array)
-        top-edge                                                       (php/array)
-        bot-edge                                                       (php/array)
-        top-shadow                                                     (php/array)
-        bot-shadow                                                     (php/array)]
+        tops                                                           (buf-mk)
+        bots                                                           (buf-mk)
+        normal                                                         (buf-mk)
+        top-edge                                                       (buf-mk)
+        bot-edge                                                       (buf-mk)
+        top-shadow                                                     (buf-mk)
+        bot-shadow                                                     (buf-mk)]
     (loop [col 0]
       (when (php/< col vw)
-        (let [dist      (php/aget dists col)
+        (let [dist      (buf-get dists col)
               wall-h    (php/min vh (php/intval
                                      (/ proj-dist (php/* (php/max 0.3 dist) char-aspect))))
               top       (php/+ (php/intdiv (php/- vh wall-h) 2) kick-shift)
-              blood?    (php/> (php/aget blood-cols col) 0.4)
+              blood?    (php/> (buf-get blood-cols col) 0.4)
               stbl-l    (if blood? shade-table-blood stbl)
               ctbl-l    (if blood? shade-code-table-blood ctbl)
               sky-c-l   (if blood? sky-blood-code sky-c)
               floor-c-l (if blood? floor-blood-code floor-c)]
-          (php/aset tops col top)
-          (php/aset bots col (php/+ top wall-h))
-          (if (php/=== 2 (php/aget hits col))
-            (do (php/aset normal      col door-shade-now)
-                (php/aset top-edge    col (str "\e[48;5;" door-code-now ";38;5;" sky-c-l "m▀"))
-                (php/aset bot-edge    col (str "\e[48;5;" floor-c-l ";38;5;" door-code-now "m▀"))
-                (php/aset top-shadow  col door-shade-now)
-                (php/aset bot-shadow  col door-shade-now))
+          (buf-set tops col top)
+          (buf-set bots col (php/+ top wall-h))
+          (if (php/=== 2 (buf-get hits col))
+            (do (buf-set normal      col door-shade-now)
+                (buf-set top-edge    col (str "\e[48;5;" door-code-now ";38;5;" sky-c-l "m▀"))
+                (buf-set bot-edge    col (str "\e[48;5;" floor-c-l ";38;5;" door-code-now "m▀"))
+                (buf-set top-shadow  col door-shade-now)
+                (buf-set bot-shadow  col door-shade-now))
             (let [idx (php/max 0
                                (php/min 23
                                         (php/+ (php/intval (php/* (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 23))
-                                               (if (php/=== (php/aget sides col) 0) 2 0))))]
-              (let [wcode     (php/aget ctbl-l idx)
-                    plain     (php/aget stbl-l idx)
-                    hx        (php/aget hxs col)
-                    hy        (php/aget hys col)
+                                               (if (php/=== (buf-get sides col) 0) 2 0))))]
+              (let [wcode     (buf-get ctbl-l idx)
+                    plain     (buf-get stbl-l idx)
+                    hx        (buf-get hxs col)
+                    hy        (buf-get hys col)
                     bhash     (mod (php/+ (php/* hx 73856093) (php/* hy 19349663)) 100)
                     shd-idx   (php/max 0 (php/- idx 3))
-                    shd-bg    (php/aget stbl-l shd-idx)
-                    edge-code (php/aget ctbl-l shd-idx)]
-                (php/aset normal col
-                          (if (php/< bhash 14)
-                            (let [dcode (php/aget ctbl-l (php/max 0 (php/- idx 5)))
-                                  glyph (cond (php/=== (mod bhash 6) 0) "▤"
-                                              (php/=== (mod bhash 6) 1) "▦"
-                                              (php/=== (mod bhash 6) 2) "▥"
-                                              (php/=== (mod bhash 6) 3) "┼"
-                                              (php/=== (mod bhash 6) 4) "▒"
-                                              :else                     "·")]
-                              (str "\e[48;5;" wcode ";38;5;" dcode "m" glyph))
-                            plain))
-                (php/aset top-edge   col (str "\e[48;5;" edge-code ";38;5;" sky-c-l "m▀"))
-                (php/aset bot-edge   col (str "\e[48;5;" floor-c-l ";38;5;" edge-code "m▀"))
-                (php/aset top-shadow col shd-bg)
-                (php/aset bot-shadow col shd-bg))))
+                    shd-bg    (buf-get stbl-l shd-idx)
+                    edge-code (buf-get ctbl-l shd-idx)]
+                (buf-set normal col
+                         (if (php/< bhash 14)
+                           (let [dcode (buf-get ctbl-l (php/max 0 (php/- idx 5)))
+                                 glyph (cond (php/=== (mod bhash 6) 0) "▤"
+                                             (php/=== (mod bhash 6) 1) "▦"
+                                             (php/=== (mod bhash 6) 2) "▥"
+                                             (php/=== (mod bhash 6) 3) "┼"
+                                             (php/=== (mod bhash 6) 4) "▒"
+                                             :else                     "·")]
+                             (str "\e[48;5;" wcode ";38;5;" dcode "m" glyph))
+                           plain))
+                (buf-set top-edge   col (str "\e[48;5;" edge-code ";38;5;" sky-c-l "m▀"))
+                (buf-set bot-edge   col (str "\e[48;5;" floor-c-l ";38;5;" edge-code "m▀"))
+                (buf-set top-shadow col shd-bg)
+                (buf-set bot-shadow col shd-bg))))
           (recur (php/+ col 1)))))
     {:tops tops :bots bots :normal normal
      :top-edge top-edge :bot-edge bot-edge
@@ -781,10 +823,10 @@
                    r-bot  (php/min vh (php/+ (php/intdiv (php/- vh h) 2) h))]
                (loop [c c-from]
                  (when (php/<= c c-to)
-                   (when (php/< d (php/aget dists c))
+                   (when (php/< d (buf-get dists c))
                      (loop [r r-top]
                        (when (php/< r r-bot)
-                         (php/aset blood-paint (php/+ (php/* r vw) c) bsh)
+                         (buf-set blood-paint (php/+ (php/* r vw) c) bsh)
                          (recur (php/+ r 1)))))
                    (recur (php/+ c 1))))))))
   blood-paint)
@@ -813,10 +855,10 @@
                    r-bot  (php/min vh (php/+ mid (php/intdiv h 6) 1))]
                (loop [c c-from]
                  (when (php/<= c c-to)
-                   (when (php/< d (php/aget dists c))
+                   (when (php/< d (buf-get dists c))
                      (loop [r r-top]
                        (when (php/< r r-bot)
-                         (php/aset blood-paint (php/+ (php/* r vw) c) shade-now)
+                         (buf-set blood-paint (php/+ (php/* r vw) c) shade-now)
                          (recur (php/+ r 1)))))
                    (recur (php/+ c 1))))
                ;; Centre icon overlay: single cell wins over the BG
@@ -826,10 +868,10 @@
                           (php/< col vw)
                           (php/>= mid 0)
                           (php/< mid vh)
-                          (php/< d (php/aget dists col)))
-                 (php/aset blood-paint
-                           (php/+ (php/* mid vw) col)
-                           glyph-now))))))
+                          (php/< d (buf-get dists col)))
+                 (buf-set blood-paint
+                          (php/+ (php/* mid vw) col)
+                          glyph-now))))))
   blood-paint)
 
 (defn build-blood-cols
@@ -839,18 +881,18 @@
    Exported so tests can pin the falloff behaviour."
   {:export true}
   [vw bloody? hurt-side]
-  (let [m  (php/array)
+  (let [m  (buf-mk)
         w  (php/max 1 (php/min 20 (php/intdiv vw 3)))
         sd (and bloody? hurt-side)]
     (loop [c 0]
       (when (php/< c vw)
-        (php/aset m c
-                  (cond
-                    (not sd)           0.0
-                    (php/=== sd :left) (php/max 0.0 (php/- 1.0 (php// (php/* 1.0 c) w)))
-                    :else              (php/max 0.0
-                                                (php/- 1.0
-                                                       (php// (php/* 1.0 (php/- (php/- vw 1) c)) w)))))
+        (buf-set m c
+                 (cond
+                   (not sd)           0.0
+                   (php/=== sd :left) (php/max 0.0 (php/- 1.0 (php// (php/* 1.0 c) w)))
+                   :else              (php/max 0.0
+                                               (php/- 1.0
+                                                      (php// (php/* 1.0 (php/- (php/- vw 1) c)) w)))))
         (recur (php/+ c 1))))
     m))
 
@@ -969,24 +1011,24 @@
         ;;   row in [tops, mids)   -> head
         ;;   row in [mids, lowers) -> body
         ;;   row in [lowers, bots) -> legs
-        mids                               (php/array)
-        lowers                             (php/array)
-        emask                              (php/array)
+        mids                               (buf-mk)
+        lowers                             (buf-mk)
+        emask                              (buf-mk)
         ;; Per-column enemy shade strings. Each enemy projection
         ;; computes faded variants of head/body/legs based on its
         ;; distance and writes them into these arrays for the
         ;; columns it covers.
-        eheads                             (php/array)
-        ebodys                             (php/array)
-        elegss                             (php/array)
-        blood-paint                        (php/array)
+        eheads                             (buf-mk)
+        ebodys                             (buf-mk)
+        elegss                             (buf-mk)
+        blood-paint                        (buf-mk)
         ;; Pulse the minimap door glyph on the same beat as the 3D
         ;; door shade so the exit catches the eye both in first-person
         ;; and on the overhead map.
         mini-door                          (if door-bright? minimap-door-pulse minimap-door)
         mrows                              (if (:show-map world)
                                              (minimap-rows world mini-door)
-                                             (php/array))
+                                             (buf-mk))
         visible-mh                         (php/min (php/count mrows) vh)
         ;; First 0-indexed column the minimap overdraws. When the
         ;; minimap is on, the inner row loop emits sky' for those
@@ -1035,22 +1077,22 @@
                        flegs   (if legs-code (enemy-shade-string legs-code t) elegs)]
                    (loop [c c-from]
                      (when (php/<= c c-to)
-                       (when (php/< d (php/aget dists c))
-                         (php/aset tops c e-top)
-                         (php/aset bots c e-bot)
-                         (php/aset mids c e-mid)
-                         (php/aset lowers c e-lower)
-                         (php/aset eheads c fhead)
-                         (php/aset ebodys c fbody)
-                         (php/aset elegss c flegs)
-                         (php/aset emask c true)
+                       (when (php/< d (buf-get dists c))
+                         (buf-set tops c e-top)
+                         (buf-set bots c e-bot)
+                         (buf-set mids c e-mid)
+                         (buf-set lowers c e-lower)
+                         (buf-set eheads c fhead)
+                         (buf-set ebodys c fbody)
+                         (buf-set elegss c flegs)
+                         (buf-set emask c true)
                          ;; Grounding shadow: write one dark cell into
                          ;; the blood-paint overlay at the row beneath
                          ;; the sprite. Skips if outside the viewport.
                          (when (php/< e-bot vh)
-                           (php/aset blood-paint
-                                     (php/+ (php/* e-bot vw) c)
-                                     sprite-shadow)))
+                           (buf-set blood-paint
+                                    (php/+ (php/* e-bot vw) c)
+                                    sprite-shadow)))
                        (recur (php/+ c 1)))))))))
     ;; Chain the fx + pickup painters: each one takes the current
     ;; blood-paint, mutates internally, returns the buffer. We have
@@ -1062,54 +1104,54 @@
           blood-paint (paint-pickups-into  blood-paint (or (:armors world) [])
                                            (:player world) dists vw vh
                                            armor-shade-now armor-glyph-now)
-          parts       (php/array)]
+          parts       (buf-mk)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]
                  (if (php/>= col vw)
                    (when (php/> run 0)
-                     (php/array_push parts prev)
-                     (php/array_push parts (php/str_repeat " " (php/- run 1))))
+                     (buf-push parts prev)
+                     (buf-push parts (php/str_repeat " " (php/- run 1))))
                    (let [;; Blood-band sky/floor swap: cols in the
                          ;; directional blood band use the pre-baked red
                          ;; gradients so sky + floor + walls all flush
                          ;; red on the affected side. Short-circuits to
                          ;; the normal gradients when no blood is active.
                          in-blood? (and blood-sky-gradient
-                                        (php/> (php/aget blood-cols col) 0.4))
-                         sky-row   (php/aget (if in-blood? blood-sky-gradient sky-gradient) row)
-                         flr-row   (php/aget (if in-blood? blood-floor-gradient floor-gradient) row)
+                                        (php/> (buf-get blood-cols col) 0.4))
+                         sky-row   (buf-get (if in-blood? blood-sky-gradient sky-gradient) row)
+                         flr-row   (buf-get (if in-blood? blood-floor-gradient floor-gradient) row)
                          c         (if (and (php/< row visible-mh) (php/>= col mini-col0))
                                      sky-row
-                                     (or (php/aget blood-paint (php/+ (php/* row vw) col))
+                                     (or (buf-get blood-paint (php/+ (php/* row vw) col))
                                          (cond
-                                           (php/< row (php/aget tops col))             sky-row
-                                           (php/>= row (php/aget bots col))            flr-row
-                                           (php/aget emask col)
+                                           (php/< row (buf-get tops col))             sky-row
+                                           (php/>= row (buf-get bots col))            flr-row
+                                           (buf-get emask col)
                                            (cond
-                                             (php/< row (php/aget mids col))   (php/aget eheads col)
-                                             (php/< row (php/aget lowers col)) (php/aget ebodys col)
-                                             :else                             (php/aget elegss col))
-                                           (php/=== row (php/aget tops col))
-                                           (php/aget shades-top-edge col)
-                                           (php/=== row (php/+ (php/aget tops col) 1))
-                                           (php/aget shades-top-shadow col)
-                                           (php/=== row (php/- (php/aget bots col) 1))
-                                           (php/aget shades-bot-edge col)
-                                           (php/=== row (php/- (php/aget bots col) 2))
-                                           (php/aget shades-bot-shadow col)
+                                             (php/< row (buf-get mids col))   (buf-get eheads col)
+                                             (php/< row (buf-get lowers col)) (buf-get ebodys col)
+                                             :else                            (buf-get elegss col))
+                                           (php/=== row (buf-get tops col))
+                                           (buf-get shades-top-edge col)
+                                           (php/=== row (php/+ (buf-get tops col) 1))
+                                           (buf-get shades-top-shadow col)
+                                           (php/=== row (php/- (buf-get bots col) 1))
+                                           (buf-get shades-bot-edge col)
+                                           (php/=== row (php/- (buf-get bots col) 2))
+                                           (buf-get shades-bot-shadow col)
                                            :else
-                                           (php/aget shades-normal col))))]
+                                           (buf-get shades-normal col))))]
                      (cond
                        (php/=== run 0)  (recur (php/+ col 1) c 1)
                        (php/=== c prev) (recur (php/+ col 1) prev (php/+ run 1))
                        :else            (do
-                                          (php/array_push parts prev)
-                                          (php/array_push parts (php/str_repeat " " (php/- run 1)))
+                                          (buf-push parts prev)
+                                          (buf-push parts (php/str_repeat " " (php/- run 1)))
                                           (recur (php/+ col 1) c 1))))))
-               (php/array_push parts "\e[0m\n"))
-      (php/array_push parts (hud-line world stats))
+               (buf-push parts "\e[0m\n"))
+      (buf-push parts (hud-line world stats))
       (dotimes [i visible-mh]
-               (php/array_push parts (str "\e[" (php/+ map-row i) ";" map-col "H" (php/aget mrows i))))
+               (buf-push parts (str "\e[" (php/+ map-row i) ";" map-col "H" (buf-get mrows i))))
       ;; Overlay chain: each helper returns the parts buffer because
       ;; PHP arrays pass by value across fn boundaries. Rebind every
       ;; step so the pushed escapes actually accumulate.
@@ -1124,7 +1166,7 @@
             parts (paint-hearts-hud   parts stats bloody?)
             parts (paint-pistol-hud   parts stats vw vh)]
         (when (get stats :paused)
-          (php/array_push parts (pause-menu-string vw vh (get stats :sound-on))))
+          (buf-push parts (pause-menu-string vw vh (get stats :sound-on))))
         (php/implode "" parts)))))
 
 (defn clear-screen
@@ -1137,14 +1179,14 @@
   "Full-screen white wash, one frame. Painted on impact so the player
    sees a brief jolt before the red i-frame palette swap kicks in."
   [cols rows]
-  (let [parts (php/array)
+  (let [parts (buf-mk)
         line  (str "\e[107m" (php/str_repeat " " cols))]
-    (php/array_push parts "\e[H")
+    (buf-push parts "\e[H")
     (loop [r 1]
       (when (php/<= r rows)
-        (php/array_push parts (str "\e[" r ";1H" line))
+        (buf-push parts (str "\e[" r ";1H" line))
         (recur (php/+ r 1))))
-    (php/array_push parts "\e[0m")
+    (buf-push parts "\e[0m")
     (php/implode "" parts)))
 
 (defn render!
@@ -1240,31 +1282,31 @@
    centred ─┌┐│└┘ box whose contents are `items` (interior strings
    interleaved with :sep markers)."
   [cols rows wash-bg items]
-  (let [parts (php/array)
+  (let [parts (buf-mk)
         bar   (php/str_repeat "─" end-box-width)]
-    (php/array_push parts "\e[H")
+    (buf-push parts "\e[H")
     (loop [r 1]
       (when (php/<= r rows)
-        (php/array_push parts (str "\e[" r ";1H" wash-bg
-                                   (php/str_repeat " " cols)))
+        (buf-push parts (str "\e[" r ";1H" wash-bg
+                             (php/str_repeat " " cols)))
         (recur (php/+ r 1))))
     (let [n       (count items)
           row-top (php/max 1 (php/- (php/intdiv rows 2) (php/intdiv n 2)))
           col0    (php/max 1 (php/- (php/+ (php/intdiv cols 2) 1)
                                     (php/intdiv (php/+ end-box-width 2) 2)))]
-      (php/array_push parts (str "\e[" row-top ";" col0
-                                 "H\e[40;97m┌" bar "┐\e[0m"))
-      (php/array_push parts (str "\e[" (php/+ row-top n 1) ";" col0
-                                 "H\e[40;97m└" bar "┘\e[0m"))
+      (buf-push parts (str "\e[" row-top ";" col0
+                           "H\e[40;97m┌" bar "┐\e[0m"))
+      (buf-push parts (str "\e[" (php/+ row-top n 1) ";" col0
+                           "H\e[40;97m└" bar "┘\e[0m"))
       (loop [i 0]
         (when (php/< i n)
           (let [item (get items i)
                 row  (php/+ row-top 1 i)]
             (if (= item :sep)
-              (php/array_push parts (str "\e[" row ";" col0
-                                         "H\e[40;97m├" bar "┤\e[0m"))
-              (php/array_push parts (str "\e[" row ";" col0
-                                         "H\e[40;97m│" item "\e[40;97m│\e[0m"))))
+              (buf-push parts (str "\e[" row ";" col0
+                                   "H\e[40;97m├" bar "┤\e[0m"))
+              (buf-push parts (str "\e[" row ";" col0
+                                   "H\e[40;97m│" item "\e[40;97m│\e[0m"))))
           (recur (php/+ i 1)))))
     (print (php/implode "" parts))
     (php/flush)))
@@ -1333,32 +1375,32 @@
   {:export true}
   [cols rows]
   (let [items (start-menu-rows)
-        parts (php/array)
+        parts (buf-mk)
         bar   (php/str_repeat "─" start-menu-width)
         wash  "\e[48;5;233m"]
-    (php/array_push parts "\e[H")
+    (buf-push parts "\e[H")
     (loop [r 1]
       (when (php/<= r rows)
-        (php/array_push parts (str "\e[" r ";1H" wash
-                                   (php/str_repeat " " cols)))
+        (buf-push parts (str "\e[" r ";1H" wash
+                             (php/str_repeat " " cols)))
         (recur (php/+ r 1))))
     (let [n       (count items)
           row-top (php/max 1 (php/- (php/intdiv rows 2) (php/intdiv n 2)))
           col0    (php/max 1 (php/- (php/+ (php/intdiv cols 2) 1)
                                     (php/intdiv (php/+ start-menu-width 2) 2)))]
-      (php/array_push parts (str "\e[" row-top ";" col0
-                                 "H\e[40;97m┌" bar "┐\e[0m"))
-      (php/array_push parts (str "\e[" (php/+ row-top n 1) ";" col0
-                                 "H\e[40;97m└" bar "┘\e[0m"))
+      (buf-push parts (str "\e[" row-top ";" col0
+                           "H\e[40;97m┌" bar "┐\e[0m"))
+      (buf-push parts (str "\e[" (php/+ row-top n 1) ";" col0
+                           "H\e[40;97m└" bar "┘\e[0m"))
       (loop [i 0]
         (when (php/< i n)
           (let [item (get items i)
                 row  (php/+ row-top 1 i)]
             (if (= item :sep)
-              (php/array_push parts (str "\e[" row ";" col0
-                                         "H\e[40;97m├" bar "┤\e[0m"))
-              (php/array_push parts (str "\e[" row ";" col0
-                                         "H\e[40;97m│" item "\e[40;97m│\e[0m"))))
+              (buf-push parts (str "\e[" row ";" col0
+                                   "H\e[40;97m├" bar "┤\e[0m"))
+              (buf-push parts (str "\e[" row ";" col0
+                                   "H\e[40;97m│" item "\e[40;97m│\e[0m"))))
           (recur (php/+ i 1)))))
     (print (php/implode "" parts))
     (php/flush)))

@@ -152,15 +152,50 @@ in CI.
 
 ### Avoid Phel-runtime dispatch in hot loops
 
-The render hot loop deliberately uses `php/aget` / `php/aset` /
-`php/+` / `php/<` over the polymorphic Phel equivalents (`get`,
-`assoc`, `+`, `<`). Phel's polymorphic ops walk a protocol table; in
-a per-frame inner loop that adds up to milliseconds. Stick to the
-`php/*` forms inside the inner row + col loops of
-`frame->string`.
+The render hot loop reads / writes ~7200 cells per frame at 180×40
+(plus 5 shade arrays per col). Phel persistent vectors go through a
+polymorphic protocol on every `(get v i)`; the cost is brutal.
 
-`tests/modules/core/engine-test.phel` exercises the loop with
-literal grids if you want to benchmark.
+Local microbench (180 elements, 100 trials each):
+
+| op | php-array | Phel vector | ratio |
+|---|---|---|---|
+| read  | 0.0003 s | 0.1855 s | **682× slower** |
+| write | 0.0231 s | 0.0400 s | 1.7× slower |
+
+The render row loop would drop from 60+ fps to under 2 fps on Phel
+vectors. So we keep php-array semantics for hot-loop buffers, but
+hide the call shape behind tiny macros that expand at compile time
+to the underlying `php/*` op:
+
+```phel
+;; src/modules/io/render.phel — defined once, used everywhere
+(defmacro buf-mk  []          `(php/array))
+(defmacro buf-set [b i v]     `(php/aset ~b ~i ~v))
+(defmacro buf-get [b i]       `(php/aget ~b ~i))
+(defmacro buf-push [b v]      `(php/array_push ~b ~v))
+```
+
+Call sites read at the Phel level — `(buf-set tops col top)` —
+while compiling to `\Phel\Lang\…::aset($tops, $col, $top)` with zero
+runtime overhead.
+
+Two caveats:
+
+- Macros are not first-class. You can't pass `buf-set` to `map` or
+  similar; use them only at direct call sites.
+- PHP arrays still pass by value at fn boundaries, so a helper that
+  builds a buffer must RETURN it (see `compute-wall-shades`). The
+  macros don't change that — they only fix the *call-site* DX.
+
+Outside `render.phel` (and the math-only `php/sqrt`, `php/atan2`,
+`php/intval`, etc. used everywhere for raw arithmetic), prefer
+Phel-native data: maps, vectors, keywords. Game world, player,
+enemy records, level configs, scores, and the `:moves` counter
+table are all Phel-native.
+
+`tests/modules/core/engine-test.phel` exercises the cast-frame loop
+with literal grids if you want to benchmark.
 
 ## Adding a new overlay (worked example)
 

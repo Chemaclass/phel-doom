@@ -570,14 +570,19 @@
 
 (defn- paint-crosshair
   "Centre `+` glyph. Jumps one row up + brightens while :fire-anim > 0
-   so the recoil feels like a kick."
-  [parts stats vw vh]
+   so the recoil feels like a kick.
+
+   `center-bg` is the SGR-only prefix of the cell currently under the
+   crosshair (the wall/door body shade at the centre column). Painting
+   the `+` on that BG keeps the cell's real colour visible underneath
+   instead of clobbering it with the terminal default."
+  [parts stats vw vh center-bg]
   (let [firing? (php/> (or (get stats :fire-anim) 0.0) 0.0)
         ch-row  (php/+ (php/intdiv vh 2) (if firing? 0 1))
         ch-col  (php/+ (php/intdiv vw 2) 1)
         ch-att  (if firing? "\e[97;1m" "\e[97;2m")]
     (buf-push parts
-              (str "\e[" ch-row ";" ch-col "H" ch-att "+\e[0m")))
+              (str "\e[" ch-row ";" ch-col "H" center-bg ch-att "+\e[0m")))
   parts)
 
 (defn- paint-intro-splash
@@ -1167,16 +1172,27 @@
       ;; Overlay chain: each helper returns the parts buffer because
       ;; PHP arrays pass by value across fn boundaries. Rebind every
       ;; step so the pushed escapes actually accumulate.
-      (let [parts (paint-face-overlay parts world stats vw vh dists eface)
-            parts (paint-wall-lights  parts vw vh hits hxs hys tops)
-            parts (paint-crosshair    parts stats vw vh)
-            parts (paint-intro-splash parts stats vw vh)
-            parts (paint-hit-vignette parts stats bloody? vw vh)
-            parts (paint-heat-bar     parts stats vw vh)
-            parts (paint-kill-streak  parts stats map-col map-row visible-mh)
-            parts (paint-compass      parts world vw)
-            parts (paint-hearts-hud   parts stats bloody?)
-            parts (paint-pistol-hud   parts stats vw vh)]
+      ;;
+      ;; The crosshair needs the SGR-only prefix of whatever cell sits
+      ;; at the centre column so it can paint `+` on the wall's real
+      ;; colour instead of clobbering it with the terminal default
+      ;; (which on some iTerm2 themes reads as bright white). Strip
+      ;; the trailing glyph (one mb-character) off shades-normal at
+      ;; the centre column.
+      (let [center-col  (php/intdiv vw 2)
+            center-cell (buf-get shades-normal center-col)
+            center-bg   (php/mb_substr center-cell 0
+                                       (php/max 0 (php/- (php/mb_strlen center-cell) 1)))
+            parts       (paint-face-overlay parts world stats vw vh dists eface)
+            parts       (paint-wall-lights  parts vw vh hits hxs hys tops)
+            parts       (paint-crosshair    parts stats vw vh center-bg)
+            parts       (paint-intro-splash parts stats vw vh)
+            parts       (paint-hit-vignette parts stats bloody? vw vh)
+            parts       (paint-heat-bar     parts stats vw vh)
+            parts       (paint-kill-streak  parts stats map-col map-row visible-mh)
+            parts       (paint-compass      parts world vw)
+            parts       (paint-hearts-hud   parts stats bloody?)
+            parts       (paint-pistol-hud   parts stats vw vh)]
         (when (get stats :paused)
           (buf-push parts (pause-menu-string vw vh (get stats :sound-on))))
         (php/implode "" parts)))))

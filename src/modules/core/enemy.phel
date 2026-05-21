@@ -167,6 +167,55 @@
          (map (fn [e] (tick-one e grid player-x player-y dt speed))
               enemies)))
 
+(def scare-trigger-dist
+  "World-units. When the nearest alive enemy crosses inbound under this
+   threshold the render flips to a wide-eyed face for scare-duration.
+   Set well outside aggro-distance (1.8) so the scare lands a beat
+   BEFORE the actual attack telegraph."
+  3.5)
+
+(def scare-duration
+  "Seconds the jump-scare face stays on after a fresh crossing."
+  0.25)
+
+(defn- min-alive-dist
+  "Distance from (px, py) to the nearest alive enemy. 1.0e9 when the
+   enemy list is empty / all dead — large enough to never read as
+   'close' to the scare trigger."
+  [enemies ^float px ^float py]
+  (loop [es   enemies
+         best 1.0e9]
+    (cond
+      (empty? es) best
+      :else
+      (let [e (first es)]
+        (if (:alive e)
+          (let [dx (php/- (:x e) px)
+                dy (php/- (:y e) py)
+                d  (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
+            (recur (rest es) (php/min best d)))
+          (recur (rest es) best))))))
+
+(defn tick-scare
+  "Detect the inbound crossing of an enemy past scare-trigger-dist and
+   trigger a one-shot wide-eyed face beat. :prev-min-enemy-dist
+   remembers last frame's nearest-enemy distance so the scare fires
+   only on the transition (far → near), not while a monster sits in
+   the band. :scare-secs counts down while the face is held."
+  {:export true}
+  [world ^float dt]
+  (let [p           (:player world)
+        cur         (min-alive-dist (:enemies world) (:x p) (:y p))
+        prev        (or (:prev-min-enemy-dist world) 1.0e9)
+        active      (or (:scare-secs world) 0.0)
+        active'     (php/max 0.0 (php/- active dt))
+        crossed-in? (and (php/>= prev scare-trigger-dist)
+                         (php/< cur scare-trigger-dist)
+                         (php/<= active' 0.0))]
+    (assoc world
+           :prev-min-enemy-dist cur
+           :scare-secs          (if crossed-in? scare-duration active'))))
+
 (defn spawn-enemies
   "Place `n` enemies on random open cells of `grid`, well away from the
    player's spawn so the first frame isn't an ambush."

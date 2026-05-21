@@ -524,19 +524,30 @@
 ;; mutations stay local to the helper and the overlay never shows.
 ;; (Painfully learned: missing pistol, missing hearts HUD.)
 
+(def scare-face-glyph
+  "Universal wide-eyed jump-scare face — bright red BG, blink white
+   bullseye. Painted on every visible alive enemy during the
+   scare-secs window so the moment of 'something just got close'
+   reads even on terminals without colour fidelity."
+  "\e[5;48;5;196;38;5;231;1m◉\e[0m")
+
 (defn- paint-face-overlay
   "At each visible alive enemy's centre column paint the level's
-   :enemy-face glyph at the upper-third of the sprite. Attack
-   telegraph: within aggro-distance the face swaps to :face-attack."
+   :enemy-face glyph at the upper-third of the sprite. Three modes:
+     - scare-secs active  → wide-eyed scare glyph (one-shot beat)
+     - d < aggro-distance → :face-attack telegraph
+     - else               → resting :face"
   [parts world stats vw vh dists eface]
   (when eface
-    (let [face-attack (get stats :enemy-face-attack)]
+    (let [face-attack (get stats :enemy-face-attack)
+          scare?      (php/> (or (get stats :scare-secs) 0.0) 0.0)]
       (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
              (let [col   (:col proj)
                    d     (:dist proj)
-                   glyph (if (and face-attack (php/< d aggro-distance))
-                           face-attack
-                           eface)]
+                   glyph (cond
+                           scare?                                     scare-face-glyph
+                           (and face-attack (php/< d aggro-distance)) face-attack
+                           :else                                      eface)]
                (when (and (php/>= col 0)
                           (php/< col vw)
                           (php/< d (buf-get dists col)))

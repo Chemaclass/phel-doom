@@ -1,6 +1,6 @@
 (ns phel-doom-tests.modules.core.enemy-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.modules.core.enemy :refer [new-enemy spawn-enemies shoot advance]))
+  (:require phel-doom.modules.core.enemy :refer [new-enemy spawn-enemies shoot advance tick-scare]))
 
 (def open-grid
   "Bordered 10x10 open arena, no interior walls."
@@ -102,3 +102,49 @@
   (let [es' (advance [{:x 5.0 :y 5.0 :alive false :respawn-after 0.1}]
                      open-grid 8.0 5.0 0.5 0.75)]
     (is (= true (:alive (first es'))))))
+
+;; ---------------------------------------------------------------------
+;; tick-scare: fires the wide-eyed beat ONLY on the inbound crossing
+;; past scare-trigger-dist (3.5). Tracks last frame's nearest enemy so
+;; sitting inside the band doesn't keep refiring.
+;; ---------------------------------------------------------------------
+
+(defn- scare-world
+  [px py enemies prev-d scare-secs]
+  {:player              {:x px :y py :angle 0.0}
+   :enemies             enemies
+   :prev-min-enemy-dist prev-d
+   :scare-secs          scare-secs})
+
+(deftest test-tick-scare-fires-on-inbound-crossing
+  ;; Prev frame the enemy was at 5 units (outside band). This frame
+  ;; it's 2 units (inside band) — scare should fire.
+  (let [w  (scare-world 5.0 5.0 [{:x 7.0 :y 5.0 :alive true}] 5.0 0.0)
+        w' (tick-scare w 0.05)]
+    (is (php/> (:scare-secs w') 0.0))
+    (is (< (php/abs (- (:prev-min-enemy-dist w') 2.0)) 0.0001))))
+
+(deftest test-tick-scare-no-fire-when-staying-inside-band
+  ;; Already inside band last frame — no new scare; existing timer
+  ;; (0.0) stays at 0.
+  (let [w  (scare-world 5.0 5.0 [{:x 7.0 :y 5.0 :alive true}] 1.5 0.0)
+        w' (tick-scare w 0.05)]
+    (is (= 0.0 (:scare-secs w')))))
+
+(deftest test-tick-scare-no-fire-when-staying-outside-band
+  (let [w  (scare-world 5.0 5.0 [{:x 50.0 :y 5.0 :alive true}] 45.0 0.0)
+        w' (tick-scare w 0.05)]
+    (is (= 0.0 (:scare-secs w')))))
+
+(deftest test-tick-scare-decrements-active-timer
+  ;; Already scaring — should count down by dt and not refire.
+  (let [w  (scare-world 5.0 5.0 [{:x 6.0 :y 5.0 :alive true}] 1.0 0.20)
+        w' (tick-scare w 0.05)]
+    (is (< (php/abs (- (:scare-secs w') 0.15)) 0.0001))))
+
+(deftest test-tick-scare-ignores-dead-enemies
+  ;; Only enemy is dead — min-dist falls back to its sentinel so no
+  ;; crossing can be detected.
+  (let [w  (scare-world 5.0 5.0 [{:x 6.0 :y 5.0 :alive false}] 100.0 0.0)
+        w' (tick-scare w 0.05)]
+    (is (= 0.0 (:scare-secs w')))))

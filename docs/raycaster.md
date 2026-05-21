@@ -1,18 +1,12 @@
 # Raycaster
 
-Lives in `src/modules/core/engine.phel`. Computes per-column wall
-distances by stepping rays through the grid.
+`src/modules/core/engine.phel`. Per-column wall distances via ray-stepping through the grid.
 
 ## What raycasting is
 
-For each screen column, fire a ray from the player into the world
-along an angle slightly offset from the player's facing. Walk it
-forward in small steps until it hits a non-floor cell. The distance
-travelled = how far that column's wall is from the player → wall
-height for that column.
+For each screen column, fire a ray from the player along an angle offset from facing. Walk forward in small steps until it hits a non-floor cell. Distance travelled sets that column's wall height.
 
-This is the original DOOM / Wolfenstein technique. No 3D math, just
-2D ray-marching with a perspective scale.
+Original DOOM / Wolfenstein technique. No 3D math, 2D ray-marching with a perspective scale.
 
 ## Tunables
 
@@ -22,11 +16,9 @@ This is the original DOOM / Wolfenstein technique. No 3D math, just
 (def proj-dist 70.0)   ; perspective constant; see below
 ```
 
-`max-depth` caps how far walls can be drawn — beyond this the column
-just paints sky/floor. `step` trades accuracy for ray-cost; smaller =
-sharper wall placement, more iterations per ray.
+`max-depth` caps how far walls draw; beyond paints sky/floor. `step` trades accuracy for cost: smaller = sharper, more iterations per ray.
 
-## `cast-ray-hit` — one ray
+## `cast-ray-hit`: one ray
 
 ```phel
 (defn- cast-ray-hit [pgrid px py angle]
@@ -46,22 +38,18 @@ sharper wall placement, more iterations per ray.
           (recur (php/+ dist step) (php/+ x dx) (php/+ y dy) cx))))))
 ```
 
-Returns a 5-tuple per ray:
+5-tuple per ray:
 
 | Index | Meaning |
 |---|---|
 | `dist` | Travelled distance (not yet fish-eye corrected) |
 | `hit-cell` | Cell value the ray landed on (0 = escaped to max-depth) |
 | `hx, hy` | Integer cell coords of the hit cell |
-| `side` | 0 if the ray crossed an x-axis boundary last (vertical wall face), 1 if a y-axis boundary (horizontal face) |
+| `side` | 0 if last crossing was x-axis (vertical wall face), 1 if y-axis (horizontal face) |
 
-The `side` value is the key to **Wolfenstein-style directional
-shading** — render layer darkens vertical-face columns by one shade
-step, so corners read as corners. `(hx, hy)` feeds a per-cell hash
-in the renderer that adds subtle mottling so a long corridor isn't
-one flat band.
+`side` enables Wolfenstein-style directional shading: render layer darkens vertical-face columns by one shade step, so corners read as corners. `(hx, hy)` feeds a per-cell hash in the renderer that adds subtle mottling so a long corridor isn't one flat band.
 
-## `cast-frame` — all rays at once
+## `cast-frame`: all rays at once
 
 ```phel
 (defn cast-frame [world width]
@@ -81,8 +69,7 @@ one flat band.
     {:dists dists :hits hits :hxs hxs :hys hys :sides sides}))
 ```
 
-Returns five parallel PHP arrays, one entry per screen column. The
-renderer indexes them by column.
+Five parallel PHP arrays, one entry per screen column. Renderer indexes by column.
 
 ## Two subtleties
 
@@ -92,15 +79,9 @@ renderer indexes them by column.
 offset = atan((col - center) / proj-dist)
 ```
 
-Each column has its own ray angle, computed as the arctangent of the
-column's horizontal offset from the centre divided by `proj-dist`.
-This gives a **constant wall scale** regardless of viewport width:
-making the terminal wider expands the field of view (you see more of
-the world), but a wall 5 cells away still looks the same height.
+Each column's ray angle is arctangent of column offset / `proj-dist`. Gives constant wall scale regardless of viewport width: making the terminal wider expands FOV (see more world), but a wall 5 cells away looks the same height.
 
-A naïve raycaster sweeps angles linearly across an FOV — that grows
-walls proportionally to viewport width, which feels wrong when you
-resize a terminal.
+A naïve raycaster sweeps angles linearly across an FOV. Walls then grow proportionally to viewport width, which feels wrong on resize.
 
 ### Fish-eye correction
 
@@ -108,29 +89,16 @@ resize a terminal.
 (php/* d (php/cos offset))
 ```
 
-A straight wall in front of the player will hit further-away columns
-at greater raw distances simply because rays at the edge of the FOV
-have to travel further to reach the same wall plane. Multiplying by
-`cos(offset)` projects the distance onto the player's forward axis,
-flattening the wall back to a straight line.
+A straight wall in front hits edge columns at greater raw distances because edge rays travel further to reach the same wall plane. Multiplying by `cos(offset)` projects onto the player's forward axis, flattening the wall.
 
-Without this, walls bow outward toward the screen edges (the
-"fish-eye" effect). One multiplication per column makes them flat.
+Without this, walls bow outward at the edges (fish-eye). One multiply per column.
 
 ## Per-ray cost
 
-Roughly `max-depth / step` = 12 / 0.35 ≈ 35 iterations per ray. At
-180 columns that's ~6300 iterations per frame just for the cast
-phase. Hot enough that we use direct PHP ops (`php/+`, `php/<`,
-`php/aget`) inside the loop instead of Phel's polymorphic equivalents.
+`max-depth / step` = 12 / 0.35 ≈ 35 iterations per ray. At 180 columns that's ~6300 iterations per frame for the cast phase. Hot enough that the loop uses direct PHP ops (`php/+`, `php/<`, `php/aget`).
 
-Could be ~5× faster with grid-aligned DDA (jump cell-to-cell instead
-of stepping), but the simpler step-march is fast enough at terminal
-resolutions and easier to reason about. See [performance.md](performance.md)
-for the rest of the hot-loop tricks.
+Could be ~5× faster with grid-aligned DDA (jump cell-to-cell), but step-march is fast enough at terminal resolutions and easier to reason about. See [performance.md](performance.md) for the rest.
 
 ## Why the raycaster lives in `core/`
 
-It's a pure function: `(pgrid, x, y, angle) → distance`. No state,
-no IO, deterministic. Test files in `tests/modules/core/engine-test.phel`
-exercise it with literal grids.
+Pure function: `(pgrid, x, y, angle) → distance`. No state, no IO, deterministic. `tests/modules/core/engine-test.phel` exercises with literal grids.

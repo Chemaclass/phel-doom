@@ -1,7 +1,6 @@
 # Map / grid
 
-Lives in `src/modules/core/map.phel`. Owns the grid data shape, cell
-semantics, random-map generation, and lookup helpers.
+`src/modules/core/map.phel`. Grid data shape, cell semantics, random-map generation, lookup helpers.
 
 ## Cells
 
@@ -11,22 +10,17 @@ semantics, random-map generation, and lookup helpers.
 (def cell-door    2)  ; passable trigger, blocks rays only
 ```
 
-Every grid cell is one of these ints. Constants are exported so no
-other module ever writes raw `0/1/2` literals — `(= cell-door
-(cell g x y))` reads like its purpose.
+Every cell is one of these ints. Constants exported so no module uses raw `0/1/2` literals. `(= cell-door (cell g x y))` reads as purpose.
 
 ## Lookup helpers
 
 ```phel
-(cell  grid x y)   ; returns the cell value; out-of-bounds = cell-wall
+(cell  grid x y)   ; cell value; out-of-bounds = cell-wall
 (wall? grid x y)   ; true for cell-wall only (doors are passable!)
 (door? grid x y)   ; true for cell-door
 ```
 
-`wall?` is the player-collision predicate. Doors return false here
-because walking into a door is the level-advance trigger; the
-raycaster has its own predicate that blocks rays on cell-door so
-doors remain visually solid until traversed.
+`wall?` is the player-collision predicate. Doors return false because walking into a door is the level-advance trigger. The raycaster has its own predicate that blocks rays on cell-door so doors stay visually solid until traversed.
 
 ## Random map generation
 
@@ -34,17 +28,11 @@ doors remain visually solid until traversed.
 (random-grid w h n-blocks)
 ```
 
-Steps:
+1. Bordered base: outer ring `cell-wall`, interior `cell-floor`.
+2. Loop `n-blocks` times: random interior `(x, y)`, random 1×1 or 2×2 block, paint cells `cell-wall`.
+3. Border preserved (never overwritten).
 
-1. Build a bordered base: outer ring of `cell-wall`, interior of
-   `cell-floor`.
-2. Loop `n-blocks` times: pick a random interior `(x, y)` and a
-   random 1×1 or 2×2 block size, paint those cells as `cell-wall`.
-3. Border is preserved (never overwritten).
-
-The caller (`build-world` in `core/level.phel`) picks `n-blocks`
-per level so changing room size doesn't drag obstacle density with
-it.
+`build-world` picks `n-blocks` per level so room size and obstacle density are independent.
 
 ## Door seeding
 
@@ -52,12 +40,7 @@ it.
 (seed-doors grid n)
 ```
 
-Converts `n` random interior wall cells into doors. A candidate cell
-must (a) currently be a wall AND (b) sit next to at least one floor
-cell — without that check a door can get hidden inside a 2×2 wall
-blob and the room becomes inescapable (this was a real bug that
-shipped once). Gives up after 400 attempts when the interior runs
-out of candidates.
+Converts `n` random interior wall cells into doors. Candidate must (a) currently be a wall and (b) sit next to at least one floor cell. Without the floor-neighbour check a door can hide inside a 2×2 wall blob and lock the room (real bug that shipped once). Gives up after 400 attempts.
 
 ```phel
 (defn- has-floor-neighbour? [grid x y]
@@ -73,8 +56,7 @@ out of candidates.
 (random-spawn grid)  → [x y]   floats at the centre of a random open cell
 ```
 
-Picks until it finds a `cell-floor`. The bordered grid guarantees at
-least one floor cell exists so the loop terminates.
+Picks until it finds a `cell-floor`. Bordered grid guarantees one exists; loop terminates.
 
 ## Out-of-bounds reads
 
@@ -83,6 +65,4 @@ least one floor cell exists so the loop terminates.
 (cell [[1 1 1] [1 0 1]] -1 0)   → cell-wall
 ```
 
-Treating off-map as wall means the raycaster never has to range-
-check before reading: it just keeps stepping until it sees a non-
-floor cell (or hits max-depth). Saves a branch per ray step.
+Off-map = wall means the raycaster skips range checks: keeps stepping until a non-floor cell (or max-depth). One branch saved per ray step.

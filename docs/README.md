@@ -1,7 +1,6 @@
 # phel-doom internals
 
-Detailed write-up of how the game is built. Each doc focuses on one
-subsystem and points to the actual source files / functions.
+One doc per subsystem. Each points to its source files + functions.
 
 ## Map
 
@@ -11,9 +10,9 @@ subsystem and points to the actual source files / functions.
 | Per-frame state transition | [game-loop.md](game-loop.md) |
 | World + player data model | [state.md](state.md) |
 | Grid + cell semantics | [map.md](map.md) |
-| Raycaster — how walls get distances | [raycaster.md](raycaster.md) |
+| Raycaster: how walls get distances | [raycaster.md](raycaster.md) |
 | ANSI render pipeline | [rendering.md](rendering.md) |
-| Enemies — chase AI, faces, fades, aggro | [monsters.md](monsters.md) |
+| Enemies: chase AI, faces, fades, aggro | [monsters.md](monsters.md) |
 | Hitscan + damage + respawn | [combat.md](combat.md) |
 | 5-level progression | [level-system.md](level-system.md) |
 | Terminal input | [input.md](input.md) |
@@ -24,7 +23,7 @@ subsystem and points to the actual source files / functions.
 
 ## Reading order for newcomers
 
-1. `architecture.md` — what's where + why
-2. `game-loop.md` — see the per-frame story end to end
-3. `raycaster.md` + `rendering.md` — pixels on screen
-4. Pick any subsystem from the table above as needed
+1. `architecture.md`: what's where + why
+2. `game-loop.md`: per-frame story end to end
+3. `raycaster.md` + `rendering.md`: pixels on screen
+4. Pick any subsystem as needed

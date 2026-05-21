@@ -1,8 +1,6 @@
 # Rendering
 
-Lives in `src/modules/io/render.phel`. Composes one full ANSI string
-per frame and writes it to stdout. Side-effecting (it `print`s) so
-it lives under `io/`.
+`src/modules/io/render.phel`. Composes one ANSI string per frame and writes to stdout. Side-effecting, hence `io/`.
 
 ## Entry point
 
@@ -15,8 +13,7 @@ it lives under `io/`.
   (php/flush))
 ```
 
-`render!` decides whether to draw a normal frame or the 1-frame
-all-white impact flash. The bulk of the work is in `frame->string`.
+`render!` picks normal frame vs the 1-frame all-white impact flash.
 
 ## frame->string pipeline
 
@@ -51,14 +48,9 @@ all-white impact flash. The bulk of the work is in `frame->string`.
   └── concat everything via php/implode into one string
 ```
 
-The render is **layered**: the base layer is the raycast frame
-encoded as run-length-coalesced ANSI cells; everything else is
-painted on top using absolute cursor positioning escapes.
+Base layer is the raycast frame encoded as run-length-coalesced ANSI cells. Overlays paint on top via absolute cursor positioning.
 
 ## Per-column shade composition
-
-For each non-door wall column, three steps combine into the final
-shade index:
 
 ```phel
 idx = clamp(0, 23,
@@ -67,19 +59,13 @@ idx = clamp(0, 23,
             + cell-variation-hash(hx, hy)) ; ±1 mottling
 ```
 
-The result indexes `shade-table[0..23]` — pre-baked ANSI strings for
-the 256-color grayscale palette (codes 232..255). One PHP-array
-lookup per column.
+Indexes `shade-table[0..23]`: pre-baked ANSI strings for the 256-color grayscale palette (232..255). One PHP-array lookup per column.
 
-Door columns get the solid `door-shade` (orange) in `shades-normal`
-and a half-block edge mix in `shades-top-edge`/`shades-bot-edge`.
+Door columns get solid `door-shade` (orange) in `shades-normal` and a half-block edge mix in `shades-top-edge`/`shades-bot-edge`.
 
 ## Half-block edge anti-aliasing
 
-Wall tops and bottoms used to look like a hard staircase. They now
-emit the `▀` (UPPER HALF BLOCK) character with a foreground colour
-that paints the **top half** of the cell and a background colour
-that paints the **bottom half**:
+Wall tops/bottoms emit `▀` (UPPER HALF BLOCK) with FG painting the top half and BG the bottom half:
 
 ```phel
 ;; Top of wall column: sky above, wall below in the same cell
@@ -89,87 +75,53 @@ that paints the **bottom half**:
 "\e[48;5;<floor-code>;38;5;<wall-code>m▀"
 ```
 
-Eye reads it as a sub-cell wall boundary instead of a flat stair.
-Halves vertical aliasing for free.
+Sub-cell wall boundary instead of flat stair. Halves vertical aliasing.
 
 ## Distance-shaded sky + floor
-
-Each row of the viewport gets a pre-baked sky/floor shade tied to
-its distance from the horizon line (`vh/2`):
 
 ```phel
 (build-horizon-gradient vh shade-table)
 ```
 
-Rows near the horizon are darkest (atmospheric haze); rows at the
-top edge (overhead) or bottom edge (at your feet) are brightest.
-Sky and floor share the same gradient since past a certain distance
-the eye stops distinguishing them anyway.
+Each row gets a pre-baked sky/floor shade by distance from horizon (`vh/2`). Rows near horizon darkest (atmospheric haze); overhead and feet brightest. Sky and floor share the gradient.
 
 ## Enemy sprite paint
 
-Each visible enemy projects to a centre column + half-width
-(`collect-enemy-projs`). The renderer:
+Each visible enemy projects to centre column + half-width (`collect-enemy-projs`):
 
-1. Computes a fade factor `t = (dist/max-depth)²` capped at 0.85.
-2. Builds three fade-shaded ANSI strings — `fhead`, `fbody`, `flegs`
-   — by passing the level's `:head-code` / `:body-code` / `:legs-code`
-   through `fade-256`.
-3. For the body, embeds the level's `:body-glyph` (e.g. `▒`) in a
-   darker foreground colour so each monster has a distinct material
-   pattern (scales, muscle, armor).
-4. Writes these strings into per-column arrays `eheads` / `ebodys` /
-   `elegss` for the columns the enemy covers.
-5. Records `tops` / `bots` / `mids` / `lowers` so the inner row loop
-   can pick the right zone (head/body/legs) for each row.
+1. Fade factor `t = (dist/max-depth)²` capped at 0.85.
+2. Three fade-shaded ANSI strings (`fhead`, `fbody`, `flegs`) via `fade-256` on `:head-code` / `:body-code` / `:legs-code`.
+3. Body embeds `:body-glyph` (e.g. `▒`) in a darker FG so each monster has a distinct material pattern.
+4. Writes into per-column arrays `eheads` / `ebodys` / `elegss`.
+5. Records `tops` / `bots` / `mids` / `lowers` so the inner row loop picks head/body/legs per row.
 
-A separate **aggro branch** swaps in a blink-attributed paint cell
-when the enemy is within `aggro-distance` (1.8 world units) — head
-pulses to warn the player.
+Aggro branch swaps in a blink-attributed cell within `aggro-distance` (1.8 world units).
 
 ## Face overlay (post-pass)
 
-After the main frame is composed, the renderer iterates visible
-enemies and paints a single face glyph (`:enemy-face` or
-`:enemy-face-alt` on a sin wave) at the enemy's centre column,
-upper-third row. **Occluded by walls** — the face only paints when
-the enemy's distance is less than the wall distance at that
-column. Without that check, faces would x-ray through walls.
+Iterates visible enemies after the main frame composes; paints one face glyph (`:enemy-face` or `:enemy-face-alt` on a sin wave) at the enemy's centre column, upper-third row. Occluded by walls: paints only when enemy distance < wall distance at that column.
 
 ## blood-paint overlay buffer
 
-Blood splatters from kills + heart pickups paint into a single PHP
-array `blood-paint` indexed by `row * vw + col`. The inner row loop
-reads it first (via `(or (php/aget blood-paint ...) main-cond)`) so
-overlay cells override the underlying wall/floor/enemy paint.
+Blood splatters from kills + heart pickups paint into a PHP array `blood-paint` indexed by `row * vw + col`. Inner loop reads first via `(or (php/aget blood-paint ...) main-cond)` so overlays override wall/floor/enemy paint.
 
 ## Run-length encoding
 
-Inside the per-row loop, consecutive cells with the same ANSI escape
-are coalesced into one paint + N spaces:
+Consecutive cells with the same ANSI escape coalesce into one paint + N spaces:
 
 ```
 \e[48;5;240m     (set BG once)
-"         "      (12 spaces — terminal repeats the BG)
+"         "      (12 spaces, terminal repeats the BG)
 \e[48;5;238m     (BG change)
 "     "          (5 spaces)
 ```
 
-Cuts output size by 5-10× on rows that share a wall colour. Done
-without a separate buffer: a small state machine in the inner loop
-tracks `prev` + `run` and flushes when the colour changes.
+Cuts output 5-10× on same-colour rows. In-line state machine tracks `prev` + `run`, flushes on colour change.
 
 ## Why so many overlay passes
 
-Walls/sky/floor/enemies all go into one big string via the inner
-row loop with absolute coordinates implicit in the order (top-to-
-bottom, left-to-right). HUD elements, minimap, crosshair, pause
-menu, etc. use **absolute cursor positioning escapes** (`\e[r;cH`)
-to jump anywhere on screen. That's why they can be painted in any
-order — each one knows exactly where it goes.
+Walls/sky/floor/enemies go into one string via the inner row loop, top-to-bottom left-to-right. HUD, minimap, crosshair, pause menu use absolute cursor positioning escapes (`\e[r;cH`) to jump anywhere. Painted in any order; each knows where it goes.
 
-The alternate screen buffer + cursor-home redraw means each frame
-overwrites the previous one in place — no flicker, no scroll, no
-full clear (which would flash).
+Alternate screen buffer + cursor-home redraw means each frame overwrites the previous in place. No flicker, no scroll, no full clear.
 
-See [performance.md](performance.md) for the cost optimizations.
+See [performance.md](performance.md).

@@ -1,10 +1,6 @@
 # Architecture
 
-Module layout follows the **functional core / imperative shell**
-pattern (Rich Hickey, Stuart Halloway). Pure code is grouped under
-`core/`; side-effecting adapters under `io/`; the thin composition
-layer that wires them together under `glue/`. The CLI entrypoint
-lives outside the modules tree.
+Functional core / imperative shell (Rich Hickey, Stuart Halloway). Pure code under `core/`, side-effecting adapters under `io/`, composition under `glue/`. CLI entrypoint sits outside the modules tree.
 
 ```
 src/
@@ -19,30 +15,24 @@ src/
     │   ├── combat.phel              ; fire-shot + damage-step + tunables
     │   ├── enemy.phel               ; spawn-enemies, advance, shoot, respawn timer
     │   └── level.phel               ; per-level catalog + build-world factory
-    ├── io/                          ; effects — touch the OS
+    ├── io/                          ; effects, touch the OS
     │   ├── input.phel               ; raw STDIN, alt screen buffer
     │   ├── render.phel              ; ANSI escape composition + flush
     │   ├── sound.phel               ; afplay/paplay/aplay shell-out
     │   ├── scores.phel              ; JSON in $HOME
     │   └── wad.phel                 ; .wad file format parser
-    └── glue/                        ; composition — needs both halves
-        └── controls.phel            ; key bytes → world state mutations
+    └── glue/                        ; composition, needs both halves
+        └── controls.phel            ; key bytes -> world state mutations
 ```
 
 ## Dependency rules
 
-- `core/` modules **may not** require `io/` or `glue/`. Anything in
-  here can run against in-memory data structures in isolation.
-- `io/` may require `core/`. It's how adapters speak the domain
-  language.
-- `glue/` may require both. It's the only place that mixes effects
-  with pure logic.
-- `commands/play.phel` is the top-level orchestrator. It composes
-  every layer.
+- `core/` may not require `io/` or `glue/`. Runs against in-memory data in isolation.
+- `io/` may require `core/`. Adapters speak the domain language.
+- `glue/` may require both. Only place that mixes effects with pure logic.
+- `commands/play.phel` is the top-level orchestrator. Composes every layer.
 
-Why this matters: the test suite never needs a fake terminal, a fake
-audio device, or a fake disk because every test imports from `core/`.
-The boundary is enforceable by reading the `(:require ...)` lines.
+Tests never need a fake terminal, audio device, or disk: all tests import from `core/`. Boundary is enforceable by reading `(:require ...)` lines.
 
 ## Data flow per frame
 
@@ -56,7 +46,7 @@ The boundary is enforceable by reading the `(:require ...)` lines.
                       ▼                                 │
               ┌───────────────┐                ┌────────┴────────┐
               │ glue/controls │                │ frame->string   │
-              │ key bytes →   │                │ uses cast-frame │
+              │ key bytes ->  │                │ uses cast-frame │
               │ counters      │                │ (core/engine)   │
               └───────┬───────┘                └────────▲────────┘
                       │                                 │
@@ -74,20 +64,12 @@ The boundary is enforceable by reading the `(:require ...)` lines.
               └───────────────────────────────┘
 ```
 
-The IO shell does two things: drain input from terminal stdin and
-flush a frame to stdout. Everything in between is one pure function
-call — `tick-world` — composed of pure helpers.
+IO shell does two things: drain input from stdin, flush a frame to stdout. Everything between is one pure call, `tick-world`, composed of pure helpers.
 
 ## Why this layout
 
-- **Test cost is visible from the folder name.** Anything in `core/`
-  is a unit test against a Phel map. Anything in `io/` would need a
-  fake (none currently exist; the IO shell is integration-tested by
-  running the binary).
-- **Dependency arrows have one direction.** Easy to grep, easy to
-  reason about.
-- **Refactors stay local.** Changing the wall shading touches only
-  `core/engine.phel` + `io/render.phel`; the rest of the codebase
-  doesn't move.
+- Test cost visible from folder name. `core/` = unit test against a Phel map. `io/` would need a fake (none exist; IO shell is integration-tested by running the binary).
+- Dependency arrows point one direction. Easy to grep, easy to reason about.
+- Refactors stay local. Changing wall shading touches only `core/engine.phel` + `io/render.phel`.
 
 See [game-loop.md](game-loop.md) for the per-frame walkthrough.

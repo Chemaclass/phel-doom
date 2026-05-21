@@ -1,7 +1,6 @@
 # Level system
 
-The 5-level progression catalog + the `build-world` factory. Lives
-in `src/modules/core/level.phel`.
+5-level progression catalog + `build-world` factory. `src/modules/core/level.phel`.
 
 ## Catalog
 
@@ -14,19 +13,15 @@ in `src/modules/core/level.phel`.
    {:size [52 32] :walls 75 :enemies 12 :chase 2.0 :name "cyberdemons" ...}])
 ```
 
-Per-level knobs:
-
 | Field | Meaning |
 |---|---|
-| `:size`     | `[width height]` of the grid in cells |
-| `:walls`    | Number of random wall blobs scattered inside |
-| `:enemies`  | How many monsters to spawn |
-| `:chase`    | Movement speed of the chase AI (units/sec) |
-| `:name`     | Display name, shown in HUD + intro splash |
+| `:size`     | `[width height]` of grid in cells |
+| `:walls`    | Random wall blobs scattered inside |
+| `:enemies`  | Monsters to spawn |
+| `:chase`    | Chase AI speed (units/sec) |
+| `:name`     | Display name (HUD + intro splash) |
 
-Plus enemy visual fields covered in [monsters.md](monsters.md):
-`:head-code`, `:body-code`, `:legs-code`, `:body-glyph`,
-`:body-glyph-fg`, `:face`, `:face-alt`.
+Plus enemy visual fields covered in [monsters.md](monsters.md): `:head-code`, `:body-code`, `:legs-code`, `:body-glyph`, `:body-glyph-fg`, `:face`, `:face-alt`.
 
 ## `config-for`
 
@@ -35,8 +30,7 @@ Plus enemy visual fields covered in [monsters.md](monsters.md):
   (get levels (php/max 0 (php/min (php/- num-levels 1) (php/- n 1)))))
 ```
 
-Looks up the config for level N (1-indexed). Clamps out-of-range
-inputs to the closest valid level so callers don't need to guard.
+Level N config (1-indexed). Clamps out-of-range to nearest valid.
 
 ## `build-world`
 
@@ -61,35 +55,23 @@ inputs to the closest valid level so callers don't need to guard.
 
 Sequence:
 
-1. **Random grid** with `:walls` blobs of size 1×1 or 2×2.
-2. **One door** seeded into a random interior wall that has a floor
-   neighbour (so the player can reach it).
-3. **Player spawn** at a random open cell.
-4. **Enemy spawn** of `:enemies` monsters, at least
-   `enemy-min-spawn-dist = 3.0` units away from the player.
-5. **Heart pickup** in a random open cell if `lives < max-lives`,
-   otherwise no heart.
-6. **Stamp the level metadata** onto the world (chase speed, monster
-   colours, glyphs, name, etc.) plus a 1.5s intro splash timer.
+1. Random grid with `:walls` blobs of 1×1 or 2×2.
+2. One door seeded into a random interior wall with a floor neighbour (reachable).
+3. Player spawn at a random open cell.
+4. `:enemies` monsters at least `enemy-min-spawn-dist = 3.0` from player.
+5. Heart pickup in a random open cell if `lives < max-lives`; otherwise none.
+6. Stamp level metadata (chase speed, monster colours, glyphs, name) + 1.5s intro splash timer.
 
-The result is a fully-formed world ready to feed into `game-loop`.
+Result feeds into `game-loop`.
 
 ## Why exactly one door per level
 
-Earlier iterations had multiple doors per room. Player couldn't
-tell which was the level exit. Changing to 1 door makes the goal
-unambiguous — find the door, walk through.
+Earlier iterations had multiple doors. Player couldn't tell which was the exit. One door = unambiguous goal.
 
 ## Why hearts only when lives < max-lives
 
-Two design reasons:
-
-1. Maxed-out hearts are wasted pickups; skipping the spawn keeps the
-   minimap less cluttered.
-2. The decision happens **at build-world time** with the carried-
-   lives count, so a player at full health enters every room with no
-   heart visible. Stepping into a room and immediately seeing a
-   heart on the minimap signals "you're below cap" without any text.
+1. Maxed hearts are wasted pickups; skipping keeps minimap less cluttered.
+2. Decision happens at `build-world` with the carried lives count, so a full-health player enters every room with no heart visible. Seeing a heart on the minimap signals "below cap" without text.
 
 ## Reading order through a run
 
@@ -104,14 +86,8 @@ build-world 3 5     → L3 cacodemons, no heart
 ... play ...
 ```
 
-`run-levels` in `commands/play.phel` is the loop that calls
-`build-world` for each iteration.
+`run-levels` in `commands/play.phel` calls `build-world` per iteration.
 
 ## Restart with the same seed
 
-`run-levels` captures `(php/mt_rand)` before each `build-world` call
-and `mt_srand`s it. On `R` (capital) from an end screen, that seed
-is reused — `random-grid` / `random-spawn` / `seed-doors` /
-`spawn-enemies` all pull from the same PRNG sequence, so the level
-sequence is bit-identical to the previous run. Lets the player
-replay a particular tough spawn.
+`run-levels` captures `(php/mt_rand)` before each `build-world` and `mt_srand`s it. On `R` (capital) from an end screen the seed is reused. `random-grid` / `random-spawn` / `seed-doors` / `spawn-enemies` all draw from the same PRNG, so the sequence is bit-identical. Lets the player replay a tough spawn.

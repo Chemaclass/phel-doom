@@ -1,7 +1,6 @@
 # Game loop
 
-The IO shell + the pure per-frame transition. Lives in
-`src/commands/play.phel`.
+IO shell + pure per-frame transition. `src/commands/play.phel`.
 
 ## Top-level structure
 
@@ -16,17 +15,11 @@ The IO shell + the pure per-frame transition. Lives in
   0)
 ```
 
-Three lifecycle layers, outermost first:
+Three lifecycle layers:
 
-1. **`run-play`** — installs terminal mode, plays one full run, then
-   restores. The only function with cleanup responsibility.
-2. **`run-levels`** — loops through levels carrying lives + kills +
-   time. On death/victory it consults `handle-end` which writes the
-   high-score file and shows the end screen; restart loops back to
-   level 1.
-3. **`game-loop world0`** — one level. Reads input, calls render, calls
-   `tick-world`, decides per-frame whether the level continues, the
-   player died, the player stepped on a door, or the player quit.
+1. **`run-play`**: installs terminal mode, plays one run, restores. Only function with cleanup responsibility.
+2. **`run-levels`**: loops levels carrying lives + kills + time. On death/victory calls `handle-end`, which writes the high-score file and shows the end screen. Restart loops to L1.
+3. **`game-loop world0`**: one level. Reads input, calls render, calls `tick-world`, decides per frame: continue / died / stepped on door / quit.
 
 ## game-loop
 
@@ -58,25 +51,14 @@ Three lifecycle layers, outermost first:
                                                [rows cols])))))))
 ```
 
-Reads top-to-bottom:
-
-1. **Capture terminal size**, clear the buffer if dimensions changed.
-2. **Render the current frame** — `draw-frame` calls `render!` from
-   `io/render.phel` and sleeps 1ms (yields the CPU; render time is
-   the real throttle).
-3. **Drain input** — `drain-keys` reads up to 64 bytes from stdin
-   non-blocking. Held keys deliver multiple bytes per frame.
-4. **Compute dt + edges** — `ms-since` gives the wall-clock elapsed
-   ms; `rising-edges` compares this frame's key snapshot with the
-   previous one and surfaces rising edges (one-shot actions).
-5. **Tick the world** — `tick-world` is a pure function. Same call
-   the test suite uses.
-6. **Decide what happens next**: quit (Q), die (lives ≤ 0), step on
-   a door (level advance / victory), or recur with the new world.
+1. Capture terminal size; clear buffer on resize.
+2. Render frame. `draw-frame` calls `render!` from `io/render.phel`, sleeps 1ms (yields CPU; render time is the real throttle).
+3. Drain input. `drain-keys` reads up to 64 bytes non-blocking. Held keys deliver multiple bytes per frame.
+4. Compute dt + edges. `ms-since` for elapsed wall-clock. `rising-edges` diffs key snapshots for one-shot actions.
+5. Tick world. `tick-world` is pure. Same call the tests use.
+6. Decide next: quit (Q), die (lives <= 0), step on door (advance / victory), or recur.
 
 ## tick-world
-
-The pure per-frame transition:
 
 ```phel
 (defn tick-world
@@ -93,55 +75,37 @@ The pure per-frame transition:
                 (damage-step w5 dt)))))))))
 ```
 
-Seven steps, each one a small focused function:
-
 | Step | What it does | Module |
 |---|---|---|
-| `handle-toggles` | Apply rising-edge toggle keys (pause / map / sound) | `commands/play` |
+| `handle-toggles` | Apply rising-edge toggles (pause / map / sound) | `commands/play` |
 | `refresh-from-keys` | Walk input bytes, refresh `:moves` counters | `glue/controls` |
 | `apply-physics` | Rotate then translate then decay counters | `core/physics` |
-| `pickup-hearts` | If player stands on a heart, gain a life | `commands/play` |
+| `pickup-hearts` | Standing on a heart = gain a life | `commands/play` |
 | `tick-enemies` | Step alive enemies toward player; tick respawn timers | `core/enemy` |
 | `tick-shooting` | If fire edge, resolve hitscan | `core/combat` |
 | `damage-step` | Decay timers; apply contact damage if i-frames are 0 | `core/combat` |
 
-`tick-world` does not call any IO function. Everything is data in,
-data out — which is what lets the test suite drive entire frame
-sequences without touching the terminal.
+`tick-world` calls no IO. Data in, data out. Lets the test suite drive entire frame sequences without touching the terminal.
 
 ## Frame timing
 
-- `frame-us = 1000` (1ms `usleep` per frame). The actual frame
-  duration is bounded by render time (~5ms at 180×40), not the
-  sleep. The sleep is just there to yield the CPU.
-- `ms-since` computes the elapsed wall-clock delta between frames.
-  Tagged `^float` on its time params so Phel doesn't infer `int`
-  from `* 1000` and trigger a PHP 8.4+ implicit-conversion
-  deprecation on the microtime values.
-- `dt` is the elapsed-seconds float that every physics / AI / decay
-  step uses. Same dt across all sub-steps so the simulation stays
-  consistent inside a frame.
+- `frame-us = 1000` (1ms `usleep`). Actual frame bounded by render time (~5ms at 180×40), not sleep. Sleep yields CPU.
+- `ms-since` computes wall-clock delta. Tagged `^float` on time params so Phel doesn't infer `int` from `* 1000` and trigger PHP 8.4+ implicit-conversion deprecation on microtime values.
+- `dt` is elapsed-seconds float used by every physics / AI / decay step. Same dt across sub-steps keeps simulation consistent inside a frame.
 
 ## Per-level result kinds
-
-`game-loop` returns one of:
 
 ```phel
 :quit                                ; player pressed Q
 {:game-over true ... }               ; lives reached 0
-{:victory   true ... }               ; stepped on the door of level 5
-{:next-level true :level N ... }     ; stepped on the door of level N<5
+{:victory   true ... }               ; stepped on door of L5
+{:next-level true :level N ... }     ; stepped on door of L<5
 ```
 
 `run-levels` matches on these to decide the next iteration.
 
 ## Restart with same seed
 
-`run-levels` captures `(php/mt_rand)` before each `build-world` call
-and `mt_srand`s it. On `R` (capital) from an end screen, it re-uses
-the captured seed → identical map sequence (L1, L2, ...). On `r`
-(lowercase) it picks a fresh seed → brand new maps. Lets the player
-replay a particular tough spawn.
+`run-levels` captures `(php/mt_rand)` before each `build-world` call and `mt_srand`s it. On `R` (capital) from an end screen, the captured seed is reused: identical map sequence. On `r` (lowercase) it picks a fresh seed. Lets the player replay a tough spawn.
 
-See [input.md](input.md) for how keys reach `tick-world` and
-[rendering.md](rendering.md) for what `render!` does on the way out.
+See [input.md](input.md) for how keys reach `tick-world` and [rendering.md](rendering.md) for what `render!` does on the way out.

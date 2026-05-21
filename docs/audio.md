@@ -1,19 +1,14 @@
 # Audio
 
-`src/modules/io/sound.phel`. Plays one-shot sound effects via OS
-shell-out — no FFI, no PHP audio extensions.
+`src/modules/io/sound.phel`. One-shot SFX via OS shell-out. No FFI, no PHP audio extensions.
 
 ## Why shell-out
 
-PHP has no portable in-process audio. The path of least dependency
-is to call the system's `afplay` / `paplay` / `aplay` binary
-asynchronously with a short WAV/AIFF file. Falls back to a terminal
-bell (`\a`) if no audio binary is found.
+PHP has no portable in-process audio. Lowest-dependency path: call `afplay` / `paplay` / `aplay` asynchronously with a short WAV/AIFF. Falls back to terminal bell (`\a`) when no audio binary is found.
 
 ## Detection
 
-`sound-player` runs once at load time, picking whichever binary is
-available on the host:
+`sound-player` runs once at load, picks first available binary:
 
 | OS | Binary | Sound files |
 |---|---|---|
@@ -22,9 +17,6 @@ available on the host:
 | Linux | `aplay` (ALSA) | `/usr/share/sounds/alsa/*.wav` |
 | any  | `play` (sox) | Same as above |
 | none | none | falls back to `\a` (terminal bell) |
-
-The lookup walks the candidate list in that order and picks the
-first one in `$PATH`.
 
 ## Event tags
 
@@ -37,10 +29,7 @@ Combat and other modules raise events by name, not by file:
 (play-sfx! :door)    ; level transition or heart pickup
 ```
 
-`macos-sounds` and the linux equivalents map each tag to a file on
-disk. Picking different files per tag gives players audio cues that
-read as distinct events ("Pop" for shoot, "Hero" for kill, "Sosumi"
-for hit, "Tink" for door).
+`macos-sounds` and Linux equivalents map each tag to a file. Distinct cues per tag ("Pop" shoot, "Hero" kill, "Sosumi" hit, "Tink" door).
 
 ## Async firing
 
@@ -50,27 +39,16 @@ Each call shells out non-blocking:
 afplay /System/Library/Sounds/Pop.aiff &
 ```
 
-The `&` is critical: without it, the game would block until the
-sound finishes playing. ~30ms is small but per-frame it adds up
-and makes the loop choppy.
-
-`php/exec` runs synchronously so the codebase wraps the command in
-shell `( ... & ) >/dev/null 2>&1` so PHP returns immediately and
-the audio binary runs in its own process.
+`&` is critical: without it the game blocks until the sound finishes (~30ms, choppy per frame). `php/exec` runs synchronously, so the codebase wraps with `( ... & ) >/dev/null 2>&1`. PHP returns immediately; audio binary runs in its own process.
 
 ## Gating by `:sound-on`
-
-Every call site checks the world flag before invoking:
 
 ```phel
 (when (:sound-on world) (play-sfx! :hit))
 ```
 
-The N key toggles `:sound-on`. Mute is instant; in-flight sfx
-finish on their own.
+N key toggles `:sound-on`. Mute is instant; in-flight sfx finish on their own.
 
 ## Why under `io/`
 
-Calls `exec`, talks to the OS. Pure side effect. No tests — would
-need a fake `php/exec` to verify. Currently relied on integration
-testing (run the game, hear the sounds).
+Calls `exec`, talks to OS. Pure side effect. No tests; would need a fake `php/exec`. Currently integration-tested (run the game, hear sounds).

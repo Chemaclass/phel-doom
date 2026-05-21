@@ -423,11 +423,11 @@
         themed-sky                         (and (not bloody?) (get stats :sky-code))
         themed-floor                       (and (not bloody?) (get stats :floor-code))
         sky-gradient                       (if themed-sky
-                                          (build-themed-gradient vh themed-sky)
-                                          (build-horizon-gradient vh stbl))
+                                             (build-themed-gradient vh themed-sky)
+                                             (build-horizon-gradient vh stbl))
         floor-gradient                     (if themed-floor
-                                          (build-themed-gradient vh themed-floor)
-                                          sky-gradient)
+                                             (build-themed-gradient vh themed-floor)
+                                             sky-gradient)
         ;; Per-enemy distance-fade is composed in the projection loop
         ;; below and assigned to the per-column arrays. These are the
         ;; FALLBACK shades used when no level config provides codes
@@ -445,14 +445,14 @@
         ;; beats so the monster looks animated without per-enemy state.
         face-phase                         (php/sin (php/* (php/microtime true) 3.0))
         eface                              (if (php/> face-phase 0.0)
-                                          (get stats :enemy-face)
-                                          (or (get stats :enemy-face-alt)
-                                              (get stats :enemy-face)))
+                                             (get stats :enemy-face)
+                                             (or (get stats :enemy-face-alt)
+                                                 (get stats :enemy-face)))
         body-glyph-base                    (get stats :enemy-body-glyph)
         body-glyph                         (if (php/< face-phase 0.0)
-                                          body-glyph-base
-                                          (or (get stats :enemy-body-glyph-alt)
-                                              body-glyph-base))
+                                             body-glyph-base
+                                             (or (get stats :enemy-body-glyph-alt)
+                                                 body-glyph-base))
         body-glyph-fg                      (get stats :enemy-body-glyph-fg)
         {:keys [dists hits sides hxs hys]}
         (cast-frame world vw)
@@ -460,11 +460,11 @@
         ;; the current palette so the composer can write
         ;; "\e[48;5;WALL;38;5;SKYm▀" and let ▀'s upper half show sky.
         sky-c                              (cond bloody?    sky-blood-code
-                                              themed-sky (php/strval themed-sky)
-                                              :else      sky-code)
+                                                 themed-sky (php/strval themed-sky)
+                                                 :else      sky-code)
         floor-c                            (cond bloody?      floor-blood-code
-                                              themed-floor (php/strval themed-floor)
-                                              :else        floor-code)
+                                                 themed-floor (php/strval themed-floor)
+                                                 :else        floor-code)
         ctbl                               (if bloody? shade-code-table-blood shade-code-table)
         ;; Subtle pulse on interactive pickups so the eye picks them
         ;; out of the wall colours: doors and hearts cycle between
@@ -472,11 +472,11 @@
         ;; the same regardless of fps. Frequencies differ (4 vs 6
         ;; rad/s) so the two pulses don't lock together.
         door-shade-now                     (if (php/> (php/sin (php/* (php/microtime true) 4.0)) 0.0)
-                                          "\e[48;5;130;38;5;226m▌" door-shade)
+                                             "\e[48;5;130;38;5;226m▌" door-shade)
         door-code-now                      (if (php/> (php/sin (php/* (php/microtime true) 4.0)) 0.0)
-                                          "130" door-code)
+                                             "130" door-code)
         heart-shade-now                    (if (php/> (php/sin (php/* (php/microtime true) 6.0)) 0.0)
-                                          heart-sparkle heart-shade)
+                                             heart-sparkle heart-shade)
         tops                               (php/array)
         bots                               (php/array)
         ;; Three pre-baked ANSI strings per column:
@@ -511,8 +511,8 @@
         ;; them via absolute cursor positioning anyway — saves a
         ;; chain of aget + cond per cell in the overlay region.
         mini-col0                          (if (php/> visible-mh 0)
-                                          (php/max 0 (php/- map-col 1))
-                                          vw)
+                                             (php/max 0 (php/- map-col 1))
+                                             vw)
         ;; Camera kick: while :fire-anim > 0 shift the wall vertical
         ;; position one row down so the horizon tilts up. Visually the
         ;; barrel kicks the view a little. Settles back as the timer
@@ -543,8 +543,23 @@
                                (php/min 23
                                         (php/+ (php/intval (php/* (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 23))
                                                (if (php/=== (php/aget sides col) 0) 2 0))))]
-              (let [wcode (php/aget ctbl idx)]
-                (php/aset shades-normal col (php/aget stbl idx))
+              (let [wcode (php/aget ctbl idx)
+                    ;; Architectural panel texture: ~5% of wall cells
+                    ;; (deterministic per (hx,hy) so adjacent screen
+                    ;; columns of the same wall cell read as one
+                    ;; vertical panel, not stippling). Brick glyph
+                    ;; painted in a darker shade FG on the wall BG.
+                    hx    (php/aget hxs col)
+                    hy    (php/aget hys col)
+                    bhash (mod (php/+ (php/* hx 73856093) (php/* hy 19349663)) 100)]
+                (php/aset shades-normal col
+                          (if (php/< bhash 5)
+                            (let [dcode (php/aget ctbl (php/max 0 (php/- idx 5)))
+                                  glyph (cond (php/=== (mod bhash 3) 0) "▤"
+                                              (php/=== (mod bhash 3) 1) "▦"
+                                              :else                     "▥")]
+                              (str "\e[48;5;" wcode ";38;5;" dcode "m" glyph))
+                            (php/aget stbl idx)))
               ;; Upper-half block: FG paints top half (= sky), BG paints
               ;; bottom half (= wall). Visually anti-aliases the top.
                 (php/aset shades-top-edge col

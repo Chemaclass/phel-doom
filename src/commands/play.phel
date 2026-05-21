@@ -131,19 +131,27 @@
 (defn tick-world
   "Pure one-frame state transition. `keys` is the drained input string,
    `dt` is seconds since the previous tick, `edges` is the rising-edge
-   map ({:fire :toggle-map :toggle-pause :toggle-sound}). Physics and
-   AI skip while the world is paused."
+   map ({:fire :toggle-map :toggle-pause :toggle-sound :about-face}).
+   Physics and AI skip while the world is paused. The pipeline reads
+   top-to-bottom: handle one-shots, refresh held-key counters, run
+   physics, collect pickups, advance enemies, resolve a shot, decay
+   timers + apply contact damage."
   {:export true}
   [world keys ^float dt edges]
   (let [w0 (handle-toggles world edges)]
     (if (:paused w0)
       w0
-      (let [w1 (refresh-from-keys w0 keys)]
-        (let [w2 (apply-physics w1 dt)]
-          (let [w3 (pickup-armors (pickup-hearts w2))]
-            (let [w4 (tick-enemies w3 dt)]
-              (let [w5 (tick-shooting w4 (:fire edges))]
-                (damage-step w5 dt)))))))))
+      ;; Linear pipeline. Each step takes the previous world + its
+      ;; own deps and returns a new world. Phel `->` would be nicer
+      ;; but the lint pass doesn't macro-expand it (arity-mismatch
+      ;; false positives), so stick with sequential let bindings.
+      (let [w1 (refresh-from-keys w0 keys)
+            w2 (apply-physics w1 dt)
+            w3 (pickup-hearts w2)
+            w4 (pickup-armors w3)
+            w5 (tick-enemies  w4 dt)
+            w6 (tick-shooting w5 (:fire edges))]
+        (damage-step w6 dt)))))
 
 ;; =====================================================================
 ;; § Per-frame IO + stats

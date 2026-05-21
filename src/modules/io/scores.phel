@@ -51,19 +51,28 @@
     (php/aset arr "fastest-victory-s" (:fastest-victory-s scores))
     (php/file_put_contents (scores-path) (php/json_encode arr))))
 
+(defn merge-run
+  "Pure merge: fold a finished run's stats (kills, level, survived-s,
+   victory?) into the previous bests map. Lifted out of update-scores!
+   so the rule (only victories update :fastest-victory-s, only IF
+   it's a new record or no previous victory existed) can be unit
+   tested without touching the file system."
+  {:export true}
+  [prev kills level survived-s victory?]
+  {:best-kills        (php/max (:best-kills prev) kills)
+   :best-level        (php/max (:best-level prev) level)
+   :fastest-victory-s (if (and victory?
+                               (or (php/<= (:fastest-victory-s prev) 0)
+                                   (php/< survived-s (:fastest-victory-s prev))))
+                        survived-s
+                        (:fastest-victory-s prev))})
+
 (defn update-scores!
   "Merge this run into the persisted bests and write the file back.
    Returns the resulting scores so the caller can display them on the
    end screen alongside the current run."
   {:export true}
   [kills level survived-s victory?]
-  (let [prev (load-scores)]
-    (let [next {:best-kills        (php/max (:best-kills prev) kills)
-                :best-level        (php/max (:best-level prev) level)
-                :fastest-victory-s (if (and victory?
-                                            (or (php/<= (:fastest-victory-s prev) 0)
-                                                (php/< survived-s (:fastest-victory-s prev))))
-                                     survived-s
-                                     (:fastest-victory-s prev))}]
-      (write-scores! next)
-      next)))
+  (let [next (merge-run (load-scores) kills level survived-s victory?)]
+    (write-scores! next)
+    next))

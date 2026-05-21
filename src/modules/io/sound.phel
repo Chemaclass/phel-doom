@@ -70,8 +70,19 @@
                      :sounds (resolve-sounds)
                      :probed true}))))
 
-(defn- play-file-async! [player path]
-  (php/exec (str player " " (php/escapeshellarg path) " > /dev/null 2>&1 &")))
+(defn- play-file-async!
+  "Fire-and-forget shell-out to the resolved audio player. Optional
+   `volume` in [0.0, 1.0] is wired through afplay's `-v` flag (other
+   players ignore it). Always backgrounded so the game loop never
+   blocks."
+  ([player path]            (play-file-async! player path 1.0))
+  ([player path ^float vol] (let [v   (php/max 0.0 (php/min 1.0 vol))
+                                  arg (if (php/=== player "afplay")
+                                        (str " -v " (php/number_format v 3))
+                                        "")]
+                              (php/exec (str player arg " "
+                                             (php/escapeshellarg path)
+                                             " > /dev/null 2>&1 &")))))
 
 (defn- bell! []
   (php/fwrite php/STDOUT "\a")
@@ -81,13 +92,14 @@
   "Play the sound effect tagged `event` (:shoot, :hit, :door). Falls
    through to the terminal bell when no native player + file is
    available, so the game still gives feedback on bare/headless
-   systems."
+   systems. Optional `volume` in [0.0, 1.0] honoured by afplay only
+   (other players ignore it)."
   {:export true}
-  [event]
-  (ensure-probed!)
-  (let [s @state]
-    (let [p    (:player s)
-          path (and (:sounds s) (get (:sounds s) event))]
-      (if (and p path (php/file_exists path))
-        (play-file-async! p path)
-        (bell!)))))
+  ([event]                     (play-sfx! event 1.0))
+  ([event ^float volume]       (ensure-probed!)
+                               (let [s    @state
+                                     p    (:player s)
+                                     path (and (:sounds s) (get (:sounds s) event))]
+                                 (if (and p path (php/file_exists path))
+                                   (play-file-async! p path volume)
+                                   (bell!)))))

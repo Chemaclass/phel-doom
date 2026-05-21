@@ -180,16 +180,28 @@
 (defn- on-shot-miss [world]
   (assoc world :fire-anim fire-anim-seconds))
 
-(defn- play-shot-sfx [world hit?]
+(defn- distance-volume
+  "Map a world-units distance to a 0-1 sound volume. 1.0 at the player,
+   ~0.1 floor at shot-max-range so a far kill is still audible."
+  [^float dist]
+  (php/max 0.1 (php/- 1.0 (php/min 1.0 (php// dist shot-max-range)))))
+
+(defn- play-shot-sfx [world hit? hit-pos]
   (when (:sound-on world)
-    (play-sfx! (if hit? :kill :shoot))))
+    (if hit?
+      (let [p  (:player world)
+            dx (php/- (:x hit-pos) (:x p))
+            dy (php/- (:y hit-pos) (:y p))
+            d  (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
+        (play-sfx! :kill (distance-volume d)))
+      (play-sfx! :shoot 1.0))))
 
 (defn fire-shot
   "Resolve one trigger pull end-to-end."
   {:export true}
   [world]
   (let [[enemies' hit? hit-pos idx] (resolve-shot world)]
-    (play-shot-sfx world hit?)
+    (play-shot-sfx world hit? hit-pos)
     (if hit?
       (on-shot-hit world enemies' hit-pos idx)
       (on-shot-miss world))))

@@ -878,13 +878,21 @@
   "Move cursor home and overwrite the previous frame in place. Avoids
    the full-screen clear that would otherwise flicker each frame.
    While :flash-secs > 0 the whole viewport flashes white — a 1-frame
-   impact jolt that lands before the red i-frame wash."
+   impact jolt that lands before the red i-frame wash. Screen-shake:
+   the first ~0.25s of the i-frame window offsets the cursor-home
+   anchor by ±1 col so the next frame paints one cell off, reading
+   as a snap-shake on damage."
   {:export true}
   [world stats cols rows]
-  (print "\e[H")
-  (if (php/> (or (get stats :flash-secs) 0.0) 0.0)
-    (print (white-flash-frame cols rows))
-    (print (frame->string world stats cols rows)))
+  (let [iframes (or (get stats :iframes) 0.0)
+        shake?  (php/> iframes 0.75)
+        shake-x (if shake?
+                  (php/+ 1 (mod (php/intval (php/* (php/microtime true) 50.0)) 3))
+                  1)]
+    (print (str "\e[1;" shake-x "H"))
+    (if (php/> (or (get stats :flash-secs) 0.0) 0.0)
+      (print (white-flash-frame cols rows))
+      (print (frame->string world stats cols rows))))
   (php/flush))
 
 ;; ---------------------------------------------------------------------

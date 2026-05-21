@@ -728,6 +728,29 @@
             (when (php/<= r vh)
               (php/array_push parts (str "\e[" r ";" edge-c0 "H" edge-bg "\e[0m"))
               (recur (php/+ r 1))))))
+      ;; Compass strip: tiny 4-letter cardinal row at top-centre with
+      ;; the bearing closest to the player's facing highlighted. atan2
+      ;; convention (screen-Y down): 0 = E, π/2 = S, π = W, 3π/2 = N.
+      ;; One paint per frame, absolute positioning.
+      (let [pang   (or (:angle (:player world)) 0.0)
+            norm   (php/fmod (php/+ pang (php/* 4.0 php/M_PI))
+                             (php/* 2.0 php/M_PI))
+            sector (mod (php/intval (php/+ 0.5
+                                           (php// norm (php// php/M_PI 2.0))))
+                        4)
+            labels ["E" "S" "W" "N"]
+            cells  (loop [i 0 acc ""]
+                     (if (php/>= i 4)
+                       acc
+                       (recur (php/+ i 1)
+                              (str acc
+                                   (if (php/=== i sector)
+                                     (str "\e[1;93m" (get labels i) "\e[0m")
+                                     (str "\e[2;97m" (get labels i) "\e[0m"))
+                                   (if (php/< i 3) "  " "")))))]
+        (php/array_push parts
+                        (str "\e[1;" (php/max 1 (php/- (php/intdiv vw 2) 3))
+                             "H" cells)))
       (let [l     (or (get stats :lives) 0)
             cap   (or (get stats :max-lives) 5)
             blink (if bloody? "\e[5;1m" "\e[1m")]

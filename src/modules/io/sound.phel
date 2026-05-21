@@ -89,18 +89,29 @@
   (php/fwrite php/STDOUT "\a")
   (php/fflush php/STDOUT))
 
+(defn- muted?
+  "Test gate: when the PHEL_DOOM_SILENT env var is set to \"1\",
+   play-sfx! short-circuits and returns nil without shelling out OR
+   ringing the bell. Composer's `test` script sets this so phel
+   tests can never trigger real audio. Game runtime sets it nowhere,
+   so the default behaviour is unchanged."
+  []
+  (php/=== "1" (php/getenv "PHEL_DOOM_SILENT")))
+
 (defn play-sfx!
   "Play the sound effect tagged `event` (:shoot, :hit, :door). Falls
    through to the terminal bell when no native player + file is
    available, so the game still gives feedback on bare/headless
    systems. Optional `volume` in [0.0, 1.0] honoured by afplay only
-   (other players ignore it)."
+   (other players ignore it). No-op when muted? returns true (test
+   runs)."
   {:export true}
   ([event]                     (play-sfx! event 1.0))
-  ([event ^float volume]       (ensure-probed!)
-                               (let [s    @state
-                                     p    (:player s)
-                                     path (and (:sounds s) (get (:sounds s) event))]
-                                 (if (and p path (php/file_exists path))
-                                   (play-file-async! p path volume)
-                                   (bell!)))))
+  ([event ^float volume]       (when (not (muted?))
+                                 (ensure-probed!)
+                                 (let [s    @state
+                                       p    (:player s)
+                                       path (and (:sounds s) (get (:sounds s) event))]
+                                   (if (and p path (php/file_exists path))
+                                     (play-file-async! p path volume)
+                                     (bell!))))))

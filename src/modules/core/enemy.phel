@@ -174,6 +174,12 @@
    BEFORE the actual attack telegraph."
   3.5)
 
+(def silence-trigger-dist
+  "World-units. Tighter than scare-trigger-dist — the moment an enemy
+   crosses inbound under this, the IO layer mutes all sfx for a brief
+   beat so the impending strike lands in silence."
+  1.5)
+
 (def scare-duration
   "Seconds the jump-scare face stays on after a fresh crossing. Long
    enough (>0.5s) for the player to register the change at any frame
@@ -199,24 +205,30 @@
           (recur (rest es) best))))))
 
 (defn tick-scare
-  "Detect the inbound crossing of an enemy past scare-trigger-dist and
-   trigger a one-shot wide-eyed face beat. :prev-min-enemy-dist
-   remembers last frame's nearest-enemy distance so the scare fires
-   only on the transition (far → near), not while a monster sits in
-   the band. :scare-secs counts down while the face is held."
+  "Detect inbound crossings of the nearest enemy past two thresholds:
+     - scare-trigger-dist (3.5) → one-shot wide-eyed face for
+       scare-duration. :prev-min-enemy-dist remembers last frame's
+       nearest-enemy distance so the scare fires only on the
+       transition (far → near), not while a monster sits in the band.
+     - silence-trigger-dist (1.5) → :silence-tick? one-frame flag so
+       the IO layer can mute sfx briefly before the imminent strike.
+   :scare-secs counts down while the wide-eyed face is held."
   {:export true}
   [world ^float dt]
-  (let [p           (:player world)
-        cur         (min-alive-dist (:enemies world) (:x p) (:y p))
-        prev        (or (:prev-min-enemy-dist world) 1.0e9)
-        active      (or (:scare-secs world) 0.0)
-        active'     (php/max 0.0 (php/- active dt))
-        crossed-in? (and (php/>= prev scare-trigger-dist)
-                         (php/< cur scare-trigger-dist)
-                         (php/<= active' 0.0))]
+  (let [p              (:player world)
+        cur            (min-alive-dist (:enemies world) (:x p) (:y p))
+        prev           (or (:prev-min-enemy-dist world) 1.0e9)
+        active         (or (:scare-secs world) 0.0)
+        active'        (php/max 0.0 (php/- active dt))
+        scare-cross?   (and (php/>= prev scare-trigger-dist)
+                            (php/< cur scare-trigger-dist)
+                            (php/<= active' 0.0))
+        silence-cross? (and (php/>= prev silence-trigger-dist)
+                            (php/< cur silence-trigger-dist))]
     (assoc world
            :prev-min-enemy-dist cur
-           :scare-secs          (if crossed-in? scare-duration active'))))
+           :scare-secs          (if scare-cross? scare-duration active')
+           :silence-tick?       silence-cross?)))
 
 (def rear-arc-half-width
   "Angle (radians) past facing that counts as 'behind'. 3π/4 = 135°

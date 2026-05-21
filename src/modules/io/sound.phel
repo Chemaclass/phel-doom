@@ -99,6 +99,25 @@
   []
   (php/=== "1" (php/getenv "PHEL_DOOM_SILENT")))
 
+(defn mute-for!
+  "Stamp an absolute mute-until timestamp on the sound state atom so
+   play-sfx! short-circuits for the next `seconds`. Stacks against an
+   existing mute: never shortens. No-op when PHEL_DOOM_SILENT is set
+   (tests stay deterministic)."
+  {:export true}
+  [^float seconds]
+  (when (not (muted?))
+    (let [until (php/+ (php/microtime true) seconds)
+          cur   (or (:mute-until @state) 0.0)]
+      (swap! state assoc :mute-until (php/max cur until)))))
+
+(defn- session-muted?
+  "True while the wall-clock has not yet caught up to :mute-until on
+   the state atom. Driven by mute-for! from the horror layer."
+  []
+  (let [until (or (:mute-until @state) 0.0)]
+    (php/> until (php/microtime true))))
+
 (defn play-sfx!
   "Play the sound effect tagged `event` (:shoot, :hit, :door,
    :heartbeat, :kill). Falls through to the terminal bell when no
@@ -108,7 +127,7 @@
    second when the player is low on lives."
   {:export true}
   ([event]                     (play-sfx! event 1.0))
-  ([event ^float volume]       (when (not (muted?))
+  ([event ^float volume]       (when (and (not (muted?)) (not (session-muted?)))
                                  (ensure-probed!)
                                  (let [s    @state
                                        p    (:player s)

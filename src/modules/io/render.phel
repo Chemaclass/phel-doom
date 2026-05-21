@@ -414,18 +414,18 @@
   [world stats cols rows]
   (let [{:keys [vw vh map-col map-row]}
         (layout cols rows (count (first (:grid world))))
-        bloody?                         (php/> (or (get stats :iframes) 0.0) 0.0)
-        stbl                            (if bloody? shade-table-blood shade-table)
+        bloody?                            (php/> (or (get stats :iframes) 0.0) 0.0)
+        stbl                               (if bloody? shade-table-blood shade-table)
         ;; Per-row sky + floor strings shaded by distance-to-horizon.
         ;; Themed sky/floor codes from the level config override the
         ;; grey gradient when present (and we're not in a bloody i-frame
         ;; wash). Built once per frame, cheap (~vh iterations).
-        themed-sky                      (and (not bloody?) (get stats :sky-code))
-        themed-floor                    (and (not bloody?) (get stats :floor-code))
-        sky-gradient                    (if themed-sky
+        themed-sky                         (and (not bloody?) (get stats :sky-code))
+        themed-floor                       (and (not bloody?) (get stats :floor-code))
+        sky-gradient                       (if themed-sky
                                           (build-themed-gradient vh themed-sky)
                                           (build-horizon-gradient vh stbl))
-        floor-gradient                  (if themed-floor
+        floor-gradient                     (if themed-floor
                                           (build-themed-gradient vh themed-floor)
                                           sky-gradient)
         ;; Per-enemy distance-fade is composed in the projection loop
@@ -433,91 +433,91 @@
         ;; FALLBACK shades used when no level config provides codes
         ;; (e.g. test worlds built via new-world without going through
         ;; build-world).
-        ehead                           (or (get stats :enemy-head) enemy-head)
-        ebody                           (or (get stats :enemy-body) enemy-body)
-        elegs                           (or (get stats :enemy-legs) enemy-body)
-        head-code                       (get stats :enemy-head-code)
-        body-code                       (get stats :enemy-body-code)
-        legs-code                       (get stats :enemy-legs-code)
+        ehead                              (or (get stats :enemy-head) enemy-head)
+        ebody                              (or (get stats :enemy-body) enemy-body)
+        elegs                              (or (get stats :enemy-legs) enemy-body)
+        head-code                          (get stats :enemy-head-code)
+        body-code                          (get stats :enemy-body-code)
+        legs-code                          (get stats :enemy-legs-code)
         ;; Walk-cycle body glyph: same sin-wave selector as the face,
         ;; offset by π so the body glyph swaps on the OPPOSITE beat from
         ;; the face. Eye blinks and scales/muscles shift on alternating
         ;; beats so the monster looks animated without per-enemy state.
-        face-phase                      (php/sin (php/* (php/microtime true) 3.0))
-        eface                           (if (php/> face-phase 0.0)
+        face-phase                         (php/sin (php/* (php/microtime true) 3.0))
+        eface                              (if (php/> face-phase 0.0)
                                           (get stats :enemy-face)
                                           (or (get stats :enemy-face-alt)
                                               (get stats :enemy-face)))
-        body-glyph-base                 (get stats :enemy-body-glyph)
-        body-glyph                      (if (php/< face-phase 0.0)
+        body-glyph-base                    (get stats :enemy-body-glyph)
+        body-glyph                         (if (php/< face-phase 0.0)
                                           body-glyph-base
                                           (or (get stats :enemy-body-glyph-alt)
                                               body-glyph-base))
-        body-glyph-fg                   (get stats :enemy-body-glyph-fg)
-        {:keys [dists hits sides]}
+        body-glyph-fg                      (get stats :enemy-body-glyph-fg)
+        {:keys [dists hits sides hxs hys]}
         (cast-frame world vw)
         ;; Half-block edge cells need the sky/floor colour CODE for
         ;; the current palette so the composer can write
         ;; "\e[48;5;WALL;38;5;SKYm▀" and let ▀'s upper half show sky.
-        sky-c                           (cond bloody?    sky-blood-code
+        sky-c                              (cond bloody?    sky-blood-code
                                               themed-sky (php/strval themed-sky)
                                               :else      sky-code)
-        floor-c                         (cond bloody?      floor-blood-code
+        floor-c                            (cond bloody?      floor-blood-code
                                               themed-floor (php/strval themed-floor)
                                               :else        floor-code)
-        ctbl                            (if bloody? shade-code-table-blood shade-code-table)
+        ctbl                               (if bloody? shade-code-table-blood shade-code-table)
         ;; Subtle pulse on interactive pickups so the eye picks them
         ;; out of the wall colours: doors and hearts cycle between
         ;; two shades on a sin wave. Wall clock so the rhythm stays
         ;; the same regardless of fps. Frequencies differ (4 vs 6
         ;; rad/s) so the two pulses don't lock together.
-        door-shade-now                  (if (php/> (php/sin (php/* (php/microtime true) 4.0)) 0.0)
+        door-shade-now                     (if (php/> (php/sin (php/* (php/microtime true) 4.0)) 0.0)
                                           "\e[48;5;130;38;5;226m▌" door-shade)
-        door-code-now                   (if (php/> (php/sin (php/* (php/microtime true) 4.0)) 0.0)
+        door-code-now                      (if (php/> (php/sin (php/* (php/microtime true) 4.0)) 0.0)
                                           "130" door-code)
-        heart-shade-now                 (if (php/> (php/sin (php/* (php/microtime true) 6.0)) 0.0)
+        heart-shade-now                    (if (php/> (php/sin (php/* (php/microtime true) 6.0)) 0.0)
                                           heart-sparkle heart-shade)
-        tops                            (php/array)
-        bots                            (php/array)
+        tops                               (php/array)
+        bots                               (php/array)
         ;; Three pre-baked ANSI strings per column:
         ;;   shades-normal    interior wall cell (single colour BG)
         ;;   shades-top-edge  ▀ char w/ sky above + wall below (anti-aliased top)
         ;;   shades-bot-edge  ▀ char w/ wall above + floor below (anti-aliased bottom)
         ;; Door columns get door-shade in all three.
-        shades-normal                   (php/array)
-        shades-top-edge                 (php/array)
-        shades-bot-edge                 (php/array)
+        shades-normal                      (php/array)
+        shades-top-edge                    (php/array)
+        shades-bot-edge                    (php/array)
         ;; Enemy sprite zone boundaries (head/body/legs). For each
         ;; column carrying an enemy:
         ;;   row in [tops, mids)   -> head
         ;;   row in [mids, lowers) -> body
         ;;   row in [lowers, bots) -> legs
-        mids                            (php/array)
-        lowers                          (php/array)
-        emask                           (php/array)
+        mids                               (php/array)
+        lowers                             (php/array)
+        emask                              (php/array)
         ;; Per-column enemy shade strings. Each enemy projection
         ;; computes faded variants of head/body/legs based on its
         ;; distance and writes them into these arrays for the
         ;; columns it covers.
-        eheads                          (php/array)
-        ebodys                          (php/array)
-        elegss                          (php/array)
-        blood-paint                     (php/array)
-        mrows                           (if (:show-map world) (minimap-rows world) (php/array))
-        visible-mh                      (php/min (php/count mrows) vh)
+        eheads                             (php/array)
+        ebodys                             (php/array)
+        elegss                             (php/array)
+        blood-paint                        (php/array)
+        mrows                              (if (:show-map world) (minimap-rows world) (php/array))
+        visible-mh                         (php/min (php/count mrows) vh)
         ;; First 0-indexed column the minimap overdraws. When the
         ;; minimap is on, the inner row loop emits sky' for those
         ;; cells (rows < visible-mh) since the minimap blits over
         ;; them via absolute cursor positioning anyway — saves a
         ;; chain of aget + cond per cell in the overlay region.
-        mini-col0                       (if (php/> visible-mh 0)
+        mini-col0                          (if (php/> visible-mh 0)
                                           (php/max 0 (php/- map-col 1))
                                           vw)
         ;; Camera kick: while :fire-anim > 0 shift the wall vertical
         ;; position one row down so the horizon tilts up. Visually the
         ;; barrel kicks the view a little. Settles back as the timer
         ;; decays in combat.phel. One extra add inside the col loop.
-        kick-shift                      (if (php/> (or (get stats :fire-anim) 0.0) 0.0) 1 0)]
+        kick-shift                         (if (php/> (or (get stats :fire-anim) 0.0) 0.0) 1 0)]
     (loop [col 0]
       (when (php/< col vw)
         (let [dist   (php/aget dists col)
@@ -722,6 +722,30 @@
                                          (str "\e[" face-row ";"
                                               (php/+ col 1) "H"
                                               eface)))))))))
+      ;; Wall lights: ~3% of wall cells (deterministic per (hx,hy))
+      ;; get a flickering torch glyph painted near the wall top. One
+      ;; glyph per cell (deduped via a `seen` set keyed by hx-hy) so
+      ;; adjacent screen cols of the same wall cell share one torch
+      ;; instead of strobing the whole face. Absolute positioning, so
+      ;; no cost in the inner row loop.
+      (let [seen   (php/array)
+            flick? (php/> (php/sin (php/* (php/microtime true) 7.0)) 0.0)
+            tcol   (if flick? "\e[1;38;5;220m" "\e[1;38;5;208m")]
+        (loop [col 0]
+          (when (php/< col vw)
+            (when (php/=== 1 (php/aget hits col))
+              (let [hx   (php/aget hxs col)
+                    hy   (php/aget hys col)
+                    k    (str hx "-" hy)
+                    hash (mod (php/+ (php/* hx 73856093) (php/* hy 19349663)) 100)]
+                (when (and (php/< hash 3) (php/=== (php/aget seen k) nil))
+                  (php/aset seen k true)
+                  (let [r (php/max 1 (php/+ (php/aget tops col) 1))]
+                    (when (php/<= r vh)
+                      (php/array_push parts
+                                      (str "\e[" r ";" (php/+ col 1) "H"
+                                           tcol "✦\e[0m")))))))
+            (recur (php/+ col 1)))))
       ;; Crosshair: dim white + at exact viewport centre so the player
       ;; always knows where a shot would land. Drawn AFTER walls/sprites
       ;; via absolute cursor positioning so wall colours don't bleed

@@ -660,6 +660,73 @@
                          "\e[" (php/- vh 6) ";" cc "H\e[1;93m *★* "
                          "\e[0m"))))))
 
+(defn- compute-wall-shades!
+  "Per-column wall shading. Walks each screen column and writes the
+   five precomputed cell strings (normal body, top/bot edge ▀, top/
+   bot ambient-shadow band) plus the wall top/bot pixel rows.
+
+   `cast`     map with the ray-cast outputs {:dists :hits :sides :hxs :hys}
+   `buffers`  map of mutable PHP arrays the loop fills
+              {:tops :bots :normal :top-edge :bot-edge :top-shadow :bot-shadow}
+   `palette`  precomputed colour state for this frame
+              {:stbl :ctbl :sky-c :floor-c :door-shade-now :door-code-now}
+   `blood-cols` per-col directional blood mask (from build-blood-cols)
+   `kick-shift` 0 or 1, vertical recoil shift while firing.
+
+   Hot inner loop: every binding inside the per-col let resolves to a
+   single php op + integer compare; no Phel dispatch."
+  [vw vh kick-shift cast buffers palette blood-cols]
+  (let [{:keys [dists hits sides hxs hys]}                                 cast
+        {:keys [tops bots normal top-edge bot-edge top-shadow bot-shadow]} buffers
+        {:keys [stbl ctbl sky-c floor-c door-shade-now door-code-now]}     palette]
+    (loop [col 0]
+      (when (php/< col vw)
+        (let [dist      (php/aget dists col)
+              wall-h    (php/min vh (php/intval
+                                     (/ proj-dist (php/* (php/max 0.3 dist) char-aspect))))
+              top       (php/+ (php/intdiv (php/- vh wall-h) 2) kick-shift)
+              blood?    (php/> (php/aget blood-cols col) 0.4)
+              stbl-l    (if blood? shade-table-blood stbl)
+              ctbl-l    (if blood? shade-code-table-blood ctbl)
+              sky-c-l   (if blood? sky-blood-code sky-c)
+              floor-c-l (if blood? floor-blood-code floor-c)]
+          (php/aset tops col top)
+          (php/aset bots col (php/+ top wall-h))
+          (if (php/=== 2 (php/aget hits col))
+            (do (php/aset normal      col door-shade-now)
+                (php/aset top-edge    col (str "\e[48;5;" door-code-now ";38;5;" sky-c-l "m▀"))
+                (php/aset bot-edge    col (str "\e[48;5;" floor-c-l ";38;5;" door-code-now "m▀"))
+                (php/aset top-shadow  col door-shade-now)
+                (php/aset bot-shadow  col door-shade-now))
+            (let [idx (php/max 0
+                               (php/min 23
+                                        (php/+ (php/intval (php/* (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 23))
+                                               (if (php/=== (php/aget sides col) 0) 2 0))))]
+              (let [wcode     (php/aget ctbl-l idx)
+                    plain     (php/aget stbl-l idx)
+                    hx        (php/aget hxs col)
+                    hy        (php/aget hys col)
+                    bhash     (mod (php/+ (php/* hx 73856093) (php/* hy 19349663)) 100)
+                    shd-idx   (php/max 0 (php/- idx 3))
+                    shd-bg    (php/aget stbl-l shd-idx)
+                    edge-code (php/aget ctbl-l shd-idx)]
+                (php/aset normal col
+                          (if (php/< bhash 14)
+                            (let [dcode (php/aget ctbl-l (php/max 0 (php/- idx 5)))
+                                  glyph (cond (php/=== (mod bhash 6) 0) "▤"
+                                              (php/=== (mod bhash 6) 1) "▦"
+                                              (php/=== (mod bhash 6) 2) "▥"
+                                              (php/=== (mod bhash 6) 3) "┼"
+                                              (php/=== (mod bhash 6) 4) "▒"
+                                              :else                     "·")]
+                              (str "\e[48;5;" wcode ";38;5;" dcode "m" glyph))
+                            plain))
+                (php/aset top-edge   col (str "\e[48;5;" edge-code ";38;5;" sky-c-l "m▀"))
+                (php/aset bot-edge   col (str "\e[48;5;" floor-c-l ";38;5;" edge-code "m▀"))
+                (php/aset top-shadow col shd-bg)
+                (php/aset bot-shadow col shd-bg))))
+          (recur (php/+ col 1)))))))
+
 (defn- paint-blood-fx-into!
   "Walk every blood fx in `stats`, project to screen, and write the
    ttl-tiered death-stage shade (kill-flash → slump → collapse →
@@ -893,73 +960,21 @@
         ;; barrel kicks the view a little. Settles back as the timer
         ;; decays in combat.phel. One extra add inside the col loop.
         kick-shift                         (if (php/> (or (get stats :fire-anim) 0.0) 0.0) 1 0)]
-    (loop [col 0]
-      (when (php/< col vw)
-        (let [dist      (php/aget dists col)
-              wall-h    (php/min vh (php/intval
-                                     (/ proj-dist (php/* (php/max 0.3 dist) char-aspect))))
-              top       (php/+ (php/intdiv (php/- vh wall-h) 2) kick-shift)
-              ;; Per-col directional blood: when this column sits inside
-              ;; the affected side band, swap to the red palette LOCALLY
-              ;; so red only paints near the corner the hit came from.
-              ;; Rest of the screen stays in the level's normal theme.
-              blood?    (php/> (php/aget blood-cols col) 0.4)
-              stbl-l    (if blood? shade-table-blood stbl)
-              ctbl-l    (if blood? shade-code-table-blood ctbl)
-              sky-c-l   (if blood? sky-blood-code sky-c)
-              floor-c-l (if blood? floor-blood-code floor-c)]
-          (php/aset tops col top)
-          (php/aset bots col (php/+ top wall-h))
-          (if (php/=== 2 (php/aget hits col))
-            (do (php/aset shades-normal      col door-shade-now)
-                (php/aset shades-top-edge    col (str "\e[48;5;" door-code-now ";38;5;" sky-c-l "m▀"))
-                (php/aset shades-bot-edge    col (str "\e[48;5;" floor-c-l ";38;5;" door-code-now "m▀"))
-                (php/aset shades-top-shadow  col door-shade-now)
-                (php/aset shades-bot-shadow  col door-shade-now))
-            (let [idx (php/max 0
-                               (php/min 23
-                                        (php/+ (php/intval (php/* (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 23))
-                                               (if (php/=== (php/aget sides col) 0) 2 0))))]
-              ;; Pure grayscale shade lookup: far walls fade naturally
-              ;; toward shade-table[0] = code 232 (near-black), reading
-              ;; as an unseen dark horizon without any colour tint.
-              (let [wcode     (php/aget ctbl-l idx)
-                    plain     (php/aget stbl-l idx)
-                    ;; Architectural panel texture: ~14% of wall cells
-                    ;; (deterministic per (hx,hy) so adjacent screen
-                    ;; columns of the same wall cell read as one
-                    ;; vertical panel, not stippling). Glyph chosen
-                    ;; from a 6-element palette (mortar lines, grids,
-                    ;; rivets) so walls don't all reuse one texture.
-                    hx        (php/aget hxs col)
-                    hy        (php/aget hys col)
-                    bhash     (mod (php/+ (php/* hx 73856093) (php/* hy 19349663)) 100)
-                    ;; Soft shadow shade for the rows immediately
-                    ;; inside the wall edges (top+1 and bot-2). Three
-                    ;; shade-table steps darker than the wall body so
-                    ;; the eye reads a soft ambient-occlusion band
-                    ;; instead of a hard sky/wall colour cut.
-                    shd-idx   (php/max 0 (php/- idx 3))
-                    shd-bg    (php/aget stbl-l shd-idx)
-                    edge-code (php/aget ctbl-l shd-idx)]
-                (php/aset shades-normal col
-                          (if (php/< bhash 14)
-                            (let [dcode (php/aget ctbl-l (php/max 0 (php/- idx 5)))
-                                  glyph (cond (php/=== (mod bhash 6) 0) "▤"
-                                              (php/=== (mod bhash 6) 1) "▦"
-                                              (php/=== (mod bhash 6) 2) "▥"
-                                              (php/=== (mod bhash 6) 3) "┼"
-                                              (php/=== (mod bhash 6) 4) "▒"
-                                              :else                     "·")]
-                              (str "\e[48;5;" wcode ";38;5;" dcode "m" glyph))
-                            plain))
-                (php/aset shades-top-edge col
-                          (str "\e[48;5;" edge-code ";38;5;" sky-c-l "m▀"))
-                (php/aset shades-bot-edge col
-                          (str "\e[48;5;" floor-c-l ";38;5;" edge-code "m▀"))
-                (php/aset shades-top-shadow col shd-bg)
-                (php/aset shades-bot-shadow col shd-bg))))
-          (recur (php/+ col 1)))))
+    (compute-wall-shades! vw vh kick-shift
+                          {:dists dists :hits hits :sides sides
+                           :hxs hxs    :hys hys}
+                          {:tops       tops
+                           :bots       bots
+                           :normal     shades-normal
+                           :top-edge   shades-top-edge
+                           :bot-edge   shades-bot-edge
+                           :top-shadow shades-top-shadow
+                           :bot-shadow shades-bot-shadow}
+                          {:stbl stbl :ctbl ctbl
+                           :sky-c sky-c :floor-c floor-c
+                           :door-shade-now door-shade-now
+                           :door-code-now  door-code-now}
+                          blood-cols)
     (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
            (let [col (:col proj)
                  hw  (:half-width proj)

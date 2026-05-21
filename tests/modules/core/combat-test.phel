@@ -1,7 +1,8 @@
 (ns phel-doom-tests.modules.core.combat-test
   (:require phel.test :refer [deftest is])
+  (:require phel-doom.modules.core.state :refer [new-world new-player])
   (:require phel-doom.modules.core.combat
-            :refer [closest-attacker attacker-side can-fire? apply-heat]))
+            :refer [closest-attacker attacker-side can-fire? apply-heat knockback]))
 
 ;; ---------------------------------------------------------------------
 ;; closest-attacker: selection rule.
@@ -87,3 +88,40 @@
     (is (> (:jam-secs w) 0.0))
     ;; Heat resets to 0 so the player isn't punished twice.
     (is (= 0.0 (:heat w)))))
+
+;; ---------------------------------------------------------------------
+;; knockback: shoves the player AWAY from the attacker, clamps on walls.
+;; ---------------------------------------------------------------------
+
+(def open-arena
+  (new-world [[1 1 1 1 1 1 1]
+              [1 0 0 0 0 0 1]
+              [1 0 0 0 0 0 1]
+              [1 0 0 0 0 0 1]
+              [1 0 0 0 0 0 1]
+              [1 0 0 0 0 0 1]
+              [1 1 1 1 1 1 1]]
+             (new-player 3.5 3.5 0.0)))
+
+(deftest test-knockback-nil-attacker-is-noop
+  (let [w (knockback open-arena nil)]
+    (is (= 3.5 (:x (:player w))))
+    (is (= 3.5 (:y (:player w))))))
+
+(deftest test-knockback-shoves-east-when-attacker-west
+  ;; Attacker at (1.0, 3.5); player should move further east of 3.5.
+  (let [w (knockback open-arena {:x 1.0 :y 3.5})]
+    (is (> (:x (:player w)) 3.5))
+    (is (= 3.5 (:y (:player w))))))
+
+(deftest test-knockback-shoves-north-when-attacker-south
+  ;; Screen-y down: attacker south = larger y. Knockback moves player
+  ;; smaller-y (north).
+  (let [w (knockback open-arena {:x 3.5 :y 5.0})]
+    (is (< (:y (:player w)) 3.5))))
+
+(deftest test-knockback-noop-when-attacker-shares-cell
+  ;; Zero-length vector => no shove, no division by zero.
+  (let [w (knockback open-arena {:x 3.5 :y 3.5})]
+    (is (= 3.5 (:x (:player w))))
+    (is (= 3.5 (:y (:player w))))))

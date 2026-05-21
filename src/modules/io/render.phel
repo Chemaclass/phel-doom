@@ -465,7 +465,14 @@
 ;; frame->string scannable + each overlay independently testable.
 ;; =====================================================================
 
-(defn- paint-face-overlay!
+;; All paint-* helpers below take a `parts` PHP-array, append their
+;; absolute-positioned ANSI escapes via php/array_push, and RETURN
+;; the array. PHP arrays are pass-by-value at fn boundaries, so the
+;; caller MUST rebind parts to the returned value; otherwise the
+;; mutations stay local to the helper and the overlay never shows.
+;; (Painfully learned: missing pistol, missing hearts HUD.)
+
+(defn- paint-face-overlay
   "At each visible alive enemy's centre column paint the level's
    :enemy-face glyph at the upper-third of the sprite. Attack
    telegraph: within aggro-distance the face swaps to :face-attack."
@@ -487,9 +494,10 @@
                    (when (and (php/>= face-row 1) (php/<= face-row vh))
                      (php/array_push parts
                                      (str "\e[" face-row ";"
-                                          (php/+ col 1) "H" glyph))))))))))
+                                          (php/+ col 1) "H" glyph)))))))))
+  parts)
 
-(defn- paint-wall-lights!
+(defn- paint-wall-lights
   "~3% of wall cells get a flickering torch glyph painted near the
    wall top. Deduped per (hx, hy) so adjacent screen cols of the same
    wall cell share one torch."
@@ -510,9 +518,10 @@
                   (php/array_push parts
                                   (str "\e[" r ";" (php/+ col 1) "H"
                                        tcol "✦\e[0m")))))))
-        (recur (php/+ col 1))))))
+        (recur (php/+ col 1)))))
+  parts)
 
-(defn- paint-crosshair!
+(defn- paint-crosshair
   "Centre `+` glyph. Jumps one row up + brightens while :fire-anim > 0
    so the recoil feels like a kick."
   [parts stats vw vh]
@@ -521,9 +530,10 @@
         ch-col  (php/+ (php/intdiv vw 2) 1)
         ch-att  (if firing? "\e[97;1m" "\e[97;2m")]
     (php/array_push parts
-                    (str "\e[" ch-row ";" ch-col "H" ch-att "+\e[0m"))))
+                    (str "\e[" ch-row ";" ch-col "H" ch-att "+\e[0m")))
+  parts)
 
-(defn- paint-intro-splash!
+(defn- paint-intro-splash
   "Centred banner showing 'LEVEL N · NAME' while :intro-secs > 0."
   [parts stats vw vh]
   (when (php/> (or (get stats :intro-secs) 0.0) 0.0)
@@ -539,9 +549,10 @@
                       (str "\e[" row0 ";" col0 "H\e[40;93;1m┌" bar "┐"
                            "\e[" (php/+ row0 1) ";" col0 "H\e[40;93;1m│" pad title pad "│"
                            "\e[" (php/+ row0 2) ";" col0 "H\e[40;93;1m└" bar "┘"
-                           "\e[0m")))))
+                           "\e[0m"))))
+  parts)
 
-(defn- paint-hit-vignette!
+(defn- paint-hit-vignette
   "2-col red bar down the screen edge on the side the attacker came
    from. Painted while iframes active AND :hurt-side is set."
   [parts stats bloody? vw vh]
@@ -552,9 +563,10 @@
       (loop [r 1]
         (when (php/<= r vh)
           (php/array_push parts (str "\e[" r ";" edge-c0 "H" edge-bg "\e[0m"))
-          (recur (php/+ r 1)))))))
+          (recur (php/+ r 1))))))
+  parts)
 
-(defn- paint-heat-bar!
+(defn- paint-heat-bar
   "10-cell heat bar under the pistol sprite. Replaced by blinking
    'JAMMED' when :jam-secs > 0."
   [parts stats vw vh]
@@ -577,9 +589,10 @@
                           (str "\e[" row ";" (php/- cc 5) "H"
                                colour (php/str_repeat " " filled)
                                "\e[100m" (php/str_repeat " " empty)
-                               "\e[0m")))))))
+                               "\e[0m"))))))
+  parts)
 
-(defn- paint-kill-streak!
+(defn- paint-kill-streak
   "'x<N> streak' under the minimap while the streak window is live.
    Yellow for 2-4, red for 5+."
   [parts stats map-col map-row visible-mh]
@@ -591,9 +604,10 @@
                                      (php/strlen "x99 streak")))]
         (php/array_push parts
                         (str "\e[" (php/+ map-row visible-mh) ";"
-                             col0 "H" label))))))
+                             col0 "H" label)))))
+  parts)
 
-(defn- paint-compass!
+(defn- paint-compass
   "4-letter cardinal strip at top-centre; the bearing nearest to the
    player's facing is highlighted yellow."
   [parts world vw]
@@ -614,9 +628,10 @@
                                (if (php/< i 3) "  " "")))))]
     (php/array_push parts
                     (str "\e[1;" (php/max 1 (php/- (php/intdiv vw 2) 3))
-                         "H" cells))))
+                         "H" cells)))
+  parts)
 
-(defn- paint-hearts-hud!
+(defn- paint-hearts-hud
   "Top-left lives + armor count. Blink-attribute while bloody."
   [parts stats bloody?]
   (let [l     (or (get stats :lives) 0)
@@ -631,9 +646,10 @@
                          (if (php/> armor 0)
                            (str "\e[94;1m" (php/str_repeat "◆ " armor))
                            "")
-                         "\e[0m"))))
+                         "\e[0m")))
+  parts)
 
-(defn- paint-pistol-hud!
+(defn- paint-pistol-hud
   "FPS-style pistol sprite centre-bottom + muzzle flash when firing."
   [parts stats vw vh]
   (when (php/>= vh 6)
@@ -658,7 +674,8 @@
                         (str
                          "\e[" (php/- vh 7) ";" cc "H\e[1;93m  ✦  "
                          "\e[" (php/- vh 6) ";" cc "H\e[1;93m *★* "
-                         "\e[0m"))))))
+                         "\e[0m")))))
+  parts)
 
 (defn- compute-wall-shades
   "Per-column wall shading. Builds and returns seven PHP-array buffers
@@ -1093,19 +1110,22 @@
       (php/array_push parts (hud-line world stats))
       (dotimes [i visible-mh]
                (php/array_push parts (str "\e[" (php/+ map-row i) ";" map-col "H" (php/aget mrows i))))
-      (paint-face-overlay!  parts world stats vw vh dists eface)
-      (paint-wall-lights!   parts vw vh hits hxs hys tops)
-      (paint-crosshair!     parts stats vw vh)
-      (paint-intro-splash!  parts stats vw vh)
-      (paint-hit-vignette!  parts stats bloody? vw vh)
-      (paint-heat-bar!      parts stats vw vh)
-      (paint-kill-streak!   parts stats map-col map-row visible-mh)
-      (paint-compass!       parts world vw)
-      (paint-hearts-hud!    parts stats bloody?)
-      (paint-pistol-hud!    parts stats vw vh)
-      (when (get stats :paused)
-        (php/array_push parts (pause-menu-string vw vh (get stats :sound-on))))
-      (php/implode "" parts))))
+      ;; Overlay chain: each helper returns the parts buffer because
+      ;; PHP arrays pass by value across fn boundaries. Rebind every
+      ;; step so the pushed escapes actually accumulate.
+      (let [parts (paint-face-overlay parts world stats vw vh dists eface)
+            parts (paint-wall-lights  parts vw vh hits hxs hys tops)
+            parts (paint-crosshair    parts stats vw vh)
+            parts (paint-intro-splash parts stats vw vh)
+            parts (paint-hit-vignette parts stats bloody? vw vh)
+            parts (paint-heat-bar     parts stats vw vh)
+            parts (paint-kill-streak  parts stats map-col map-row visible-mh)
+            parts (paint-compass      parts world vw)
+            parts (paint-hearts-hud   parts stats bloody?)
+            parts (paint-pistol-hud   parts stats vw vh)]
+        (when (get stats :paused)
+          (php/array_push parts (pause-menu-string vw vh (get stats :sound-on))))
+        (php/implode "" parts)))))
 
 (defn clear-screen
   "ANSI clear + cursor home."

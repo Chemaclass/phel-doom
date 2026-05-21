@@ -49,8 +49,11 @@
 (def floor-blood "\e[48;5;88m ")
 (def enemy-head "\e[48;5;196m ")
 (def enemy-body "\e[48;5;52m ")
-(def enemy-marker "\e[91;1mE\e[0m")
-(def heart-marker "\e[91;1m♥\e[0m")
+;; All minimap + HUD cells carry an explicit dark BG (`\e[40m`). Without
+;; it, the underlying terminal default BG (which can be light/transparent
+;; on some iTerm2 themes) shows through and washes the overlay out.
+(def enemy-marker "\e[40;91;1mE\e[0m")
+(def heart-marker "\e[40;91;1m♥\e[0m")
 (def door-shade
   "Door body cell drawn when a ray hit a door. Frame glyph `▌` (left
    half block) on a dark steel BG with bright orange FG, so a column
@@ -299,15 +302,15 @@
 ;; cells form a continuous solid silhouette instead of the patchy
 ;; '#' ASCII look — minimap reads as a clean overhead floor plan,
 ;; not a punch-card.
-(def minimap-wall  "\e[37;1m█\e[0m")
-(def minimap-floor "\e[90m·\e[0m")
-(def minimap-door  "\e[33;1mD\e[0m")
+(def minimap-wall  "\e[40;37;1m█\e[0m")
+(def minimap-floor "\e[40;90m·\e[0m")
+(def minimap-door  "\e[40;33;1mD\e[0m")
 
 (def minimap-door-pulse
   "Bright yellow blink-attribute D for the minimap door cell, swapped
    in with `minimap-door` on a fast sin wave so the exit catches the
    eye. Cycled in the col-loop setup."
-  "\e[5;93;1mD\e[0m")
+  "\e[40;5;93;1mD\e[0m")
 
 (defn- enemy-cells
   "Build a PHP array keyed by `row*gw+col` whose truthy entries mark
@@ -352,7 +355,7 @@
         {:keys [x y angle]} (:player world)
         pcol                (php/intval x)
         prow                (php/intval y)
-        marker              (str "\e[93;1m" (direction-char angle) "\e[0m")
+        marker              (str "\e[40;93;1m" (direction-char angle) "\e[0m")
         gh                  (php/count pgrid)
         gw                  (php/count (buf-get pgrid 0))
         emap                (enemy-cells (:enemies world) gw)
@@ -642,7 +645,7 @@
   [parts stats map-col map-row visible-mh]
   (let [streak (or (get stats :streak) 0)]
     (when (php/>= streak 2)
-      (let [colour (if (php/>= streak 5) "\e[91;1m" "\e[93;1m")
+      (let [colour (if (php/>= streak 5) "\e[40;91;1m" "\e[40;93;1m")
             label  (str colour "x" streak " streak\e[0m")
             col0   (php/max 1 (php/- (php/+ map-col (php/strlen "x99 streak"))
                                      (php/strlen "x99 streak")))]
@@ -667,28 +670,32 @@
                    (recur (php/+ i 1)
                           (str acc
                                (if (php/=== i sector)
-                                 (str "\e[1;93m" (get labels i) "\e[0m")
-                                 (str "\e[2;97m" (get labels i) "\e[0m"))
-                               (if (php/< i 3) "  " "")))))]
+                                 (str "\e[40;1;93m" (get labels i) "\e[0m")
+                                 (str "\e[40;2;97m" (get labels i) "\e[0m"))
+                               ;; Spacer cells also need the dark BG
+                               ;; so the strip reads as one solid bar.
+                               (if (php/< i 3) "\e[40m  " "")))))]
     (buf-push parts
               (str "\e[1;" (php/max 1 (php/- (php/intdiv vw 2) 3))
                    "H" cells)))
   parts)
 
 (defn- paint-hearts-hud
-  "Top-left lives + armor count. Blink-attribute while bloody."
+  "Top-left lives + armor count. Blink-attribute while bloody. Every
+   glyph carries an explicit dark BG (`\\e[40m`) so the strip stays
+   readable on terminals whose default BG is light or transparent."
   [parts stats bloody?]
   (let [l     (or (get stats :lives) 0)
         cap   (or (get stats :max-lives) 5)
         armor (or (get stats :armor) 0)
         blink (if bloody? "\e[5;1m" "\e[1m")]
     (buf-push parts
-              (str "\e[1;1H" blink "\e[91m"
+              (str "\e[1;1H\e[40m" blink "\e[91m"
                    (php/str_repeat "♥ " l)
-                   "\e[90m"
+                   "\e[40;90m"
                    (php/str_repeat "♡ " (php/max 0 (php/- cap l)))
                    (if (php/> armor 0)
-                     (str "\e[94;1m" (php/str_repeat "◆ " armor))
+                     (str "\e[40;94;1m" (php/str_repeat "◆ " armor))
                      "")
                    "\e[0m")))
   parts)

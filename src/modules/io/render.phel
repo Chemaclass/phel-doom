@@ -245,6 +245,35 @@
         (recur (php/+ r 1))))
     arr))
 
+(defn- build-wall-shade-table
+  "24-shade pre-baked BG paint cells for a level-themed wall colour.
+   idx 23 = brightest (close), idx 0 = darkest (far). Same shape as
+   shade-table so the col loop can drop-in swap. Built once per
+   frame (24 iterations of fade-256). Returns nil when base-code is
+   nil so the caller can fall back to the grey shade-table."
+  [base-code]
+  (when base-code
+    (let [t (php/array)]
+      (loop [i 0]
+        (when (php/< i 24)
+          (let [code (fade-256 base-code (php/- 1.0 (php// (php/* 1.0 i) 23.0)))]
+            (php/aset t i (str "\e[48;5;" code "m ")))
+          (recur (php/+ i 1))))
+      t)))
+
+(defn- build-wall-code-table
+  "Code-only twin of build-wall-shade-table for half-block edge
+   composition + brick-glyph FG darkening."
+  [base-code]
+  (when base-code
+    (let [t (php/array)]
+      (loop [i 0]
+        (when (php/< i 24)
+          (let [code (fade-256 base-code (php/- 1.0 (php// (php/* 1.0 i) 23.0)))]
+            (php/aset t i (php/strval code)))
+          (recur (php/+ i 1))))
+      t)))
+
 ;; Per-column shading lives inline in frame->string's hot loop:
 ;; base distance index, +1 for vertical wall faces (side-shading),
 ;; ±1 per-cell hash, then resolve TWO shade strings per column
@@ -478,20 +507,20 @@
   (let [{:keys [vw vh map-col map-row]}
         (layout cols rows (count (first (:grid world))))
         bloody?                            (php/> (or (get stats :iframes) 0.0) 0.0)
-        ;; Walls + sky/floor stay in the level theme even on hit. The
-        ;; old global red wash made every part of the screen flush
-        ;; red, so the player couldn't tell WHERE the hit came from.
-        ;; Now red is painted only on the column band closest to the
-        ;; attacker (see blood-cols below).
-        stbl                               shade-table
-        themed-sky                         (get stats :sky-code)
-        themed-floor                       (get stats :floor-code)
-        sky-gradient                       (if themed-sky
-                                             (build-themed-gradient vh themed-sky false)
-                                             (build-horizon-gradient vh stbl))
-        floor-gradient                     (if themed-floor
-                                             (build-themed-gradient vh themed-floor true)
-                                             sky-gradient)
+        ;; Sky + floor are ALWAYS grey: the horizon haze gradient reads
+        ;; as atmosphere regardless of level theme. Per-level theming
+        ;; goes into the WALLS via build-wall-shade-table below, so
+        ;; each level reads as a distinct colour without the sky/floor
+        ;; fighting the wall colour for attention.
+        wall-code                          (get stats :wall-code)
+        themed-walls                       (build-wall-shade-table wall-code)
+        themed-wall-codes                  (build-wall-code-table wall-code)
+        stbl                               (or themed-walls shade-table)
+        sky-gradient                       (build-horizon-gradient vh shade-table)
+        ;; Floor uses the striped grey variant so adjacent rows alternate
+        ;; brightness slightly, reading as tile-floor banding instead
+        ;; of one flat plane.
+        floor-gradient                     (build-themed-gradient vh 239 true)
         ;; Pre-baked red gradients used when a column sits inside the
         ;; blood band: sky + floor go red for those cols so the band
         ;; reads as a coherent red corner, not red walls floating in a
@@ -555,9 +584,9 @@
         ;; Half-block edge cells need the sky/floor colour CODE for
         ;; the current palette so the composer can write
         ;; "\e[48;5;WALL;38;5;SKYm▀" and let ▀'s upper half show sky.
-        sky-c                              (if themed-sky (php/strval themed-sky) sky-code)
-        floor-c                            (if themed-floor (php/strval themed-floor) floor-code)
-        ctbl                               shade-code-table
+        sky-c                              sky-code
+        floor-c                            floor-code
+        ctbl                               (or themed-wall-codes shade-code-table)
         ;; Subtle pulse on interactive pickups so the eye picks them
         ;; out of the wall colours: doors and hearts cycle between
         ;; two shades on a sin wave. Wall clock so the rhythm stays
@@ -573,14 +602,21 @@
                                              armor-sparkle armor-shade)
         tops                               (php/array)
         bots                               (php/array)
-        ;; Three pre-baked ANSI strings per column:
-        ;;   shades-normal    interior wall cell (single colour BG)
-        ;;   shades-top-edge  ▀ char w/ sky above + wall below (anti-aliased top)
-        ;;   shades-bot-edge  ▀ char w/ wall above + floor below (anti-aliased bottom)
+        ;; Five pre-baked ANSI strings per column:
+        ;;   shades-normal     interior wall cell (single colour BG)
+        ;;   shades-top-edge   ▀ char w/ sky above + wall below (anti-aliased top)
+        ;;   shades-bot-edge   ▀ char w/ wall above + floor below (anti-aliased bottom)
+        ;;   shades-top-shadow solid darker BG for the row right under
+        ;;                     the top edge — soft ambient shadow so the
+        ;;                     ceiling doesn't cut to wall hard.
+        ;;   shades-bot-shadow same trick at the wall base for the row
+        ;;                     just above the floor contact.
         ;; Door columns get door-shade in all three.
         shades-normal                      (php/array)
         shades-top-edge                    (php/array)
         shades-bot-edge                    (php/array)
+        shades-top-shadow                  (php/array)
+        shades-bot-shadow                  (php/array)
         ;; Enemy sprite zone boundaries (head/body/legs). For each
         ;; column carrying an enemy:
         ;;   row in [tops, mids)   -> head
@@ -638,43 +674,51 @@
           (php/aset tops col top)
           (php/aset bots col (php/+ top wall-h))
           (if (php/=== 2 (php/aget hits col))
-            (do (php/aset shades-normal   col door-shade-now)
-                (php/aset shades-top-edge col (str "\e[48;5;" door-code-now ";38;5;" sky-c-l "m▀"))
-                (php/aset shades-bot-edge col (str "\e[48;5;" floor-c-l ";38;5;" door-code-now "m▀")))
+            (do (php/aset shades-normal      col door-shade-now)
+                (php/aset shades-top-edge    col (str "\e[48;5;" door-code-now ";38;5;" sky-c-l "m▀"))
+                (php/aset shades-bot-edge    col (str "\e[48;5;" floor-c-l ";38;5;" door-code-now "m▀"))
+                (php/aset shades-top-shadow  col door-shade-now)
+                (php/aset shades-bot-shadow  col door-shade-now))
             (let [idx (php/max 0
                                (php/min 23
                                         (php/+ (php/intval (php/* (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 23))
                                                (if (php/=== (php/aget sides col) 0) 2 0))))]
               ;; Distance fog disabled inside the blood band (red wins)
-              ;; and on themed-sky levels (theme wins).
-              (let [foggy?   (and (not blood?)
-                                  (not themed-sky)
-                                  (php/<= idx fog-cutoff-idx))
-                    wcode    (if foggy?
-                               (php/aget shade-code-table-fog idx)
-                               (php/aget ctbl-l idx))
-                    plain    (if foggy?
-                               (php/aget shade-table-fog idx)
-                               (php/aget stbl-l idx))
+              ;; and on themed-wall levels (theme wins).
+              (let [foggy?    (and (not blood?)
+                                   (not themed-walls)
+                                   (php/<= idx fog-cutoff-idx))
+                    wcode     (if foggy?
+                                (php/aget shade-code-table-fog idx)
+                                (php/aget ctbl-l idx))
+                    plain     (if foggy?
+                                (php/aget shade-table-fog idx)
+                                (php/aget stbl-l idx))
                     ;; Architectural panel texture: ~14% of wall cells
                     ;; (deterministic per (hx,hy) so adjacent screen
                     ;; columns of the same wall cell read as one
                     ;; vertical panel, not stippling). Glyph chosen
                     ;; from a 6-element palette (mortar lines, grids,
                     ;; rivets) so walls don't all reuse one texture.
-                    hx       (php/aget hxs col)
-                    hy       (php/aget hys col)
-                    bhash    (mod (php/+ (php/* hx 73856093) (php/* hy 19349663)) 100)
-                    ;; Wall-top cap highlight: top edge paints one
-                    ;; shade brighter so the wall reads as lit from
-                    ;; above (rim light). Bottom edge takes one shade
-                    ;; darker for floor shadow contact.
-                    cap-code (if foggy?
-                               (php/aget shade-code-table-fog (php/min fog-cutoff-idx (php/+ idx 1)))
-                               (php/aget ctbl-l (php/min 23 (php/+ idx 1))))
-                    shd-code (if foggy?
-                               (php/aget shade-code-table-fog (php/max 0 (php/- idx 2)))
-                               (php/aget ctbl-l (php/max 0 (php/- idx 2))))]
+                    hx        (php/aget hxs col)
+                    hy        (php/aget hys col)
+                    bhash     (mod (php/+ (php/* hx 73856093) (php/* hy 19349663)) 100)
+                    ;; Soft shadow shade for the rows immediately
+                    ;; inside the wall edges (top+1 and bot-2). One
+                    ;; shade-table step darker than the wall body so
+                    ;; the eye reads a soft ambient-occlusion band
+                    ;; instead of a hard sky/wall colour cut.
+                    shd-idx   (php/max 0 (php/- idx 3))
+                    shd-bg    (if foggy?
+                                (php/aget shade-table-fog shd-idx)
+                                (php/aget stbl-l shd-idx))
+                    ;; Edge half-block (▀): top cell uses dark-wall on
+                    ;; BG so the eye reads "fading into ceiling" (the
+                    ;; FG = sky paints the upper half). Bottom cell
+                    ;; same in reverse.
+                    edge-code (if foggy?
+                                (php/aget shade-code-table-fog shd-idx)
+                                (php/aget ctbl-l shd-idx))]
                 (php/aset shades-normal col
                           (if (php/< bhash 14)
                             (let [dcode (php/aget ctbl-l (php/max 0 (php/- idx 5)))
@@ -687,9 +731,11 @@
                               (str "\e[48;5;" wcode ";38;5;" dcode "m" glyph))
                             plain))
                 (php/aset shades-top-edge col
-                          (str "\e[48;5;" cap-code ";38;5;" sky-c-l "m▀"))
+                          (str "\e[48;5;" edge-code ";38;5;" sky-c-l "m▀"))
                 (php/aset shades-bot-edge col
-                          (str "\e[48;5;" floor-c-l ";38;5;" shd-code "m▀")))))
+                          (str "\e[48;5;" floor-c-l ";38;5;" edge-code "m▀"))
+                (php/aset shades-top-shadow col shd-bg)
+                (php/aset shades-bot-shadow col shd-bg))))
           (recur (php/+ col 1)))))
     (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
            (let [col (:col proj)
@@ -840,8 +886,12 @@
                                              :else                             (php/aget elegss col))
                                            (php/=== row (php/aget tops col))
                                            (php/aget shades-top-edge col)
+                                           (php/=== row (php/+ (php/aget tops col) 1))
+                                           (php/aget shades-top-shadow col)
                                            (php/=== row (php/- (php/aget bots col) 1))
                                            (php/aget shades-bot-edge col)
+                                           (php/=== row (php/- (php/aget bots col) 2))
+                                           (php/aget shades-bot-shadow col)
                                            :else
                                            (php/aget shades-normal col))))]
                      (cond

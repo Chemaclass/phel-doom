@@ -1,6 +1,6 @@
 # phel-doom
 
-![phel-doom in action](docs/screenshot.png)
+[![phel-doom gameplay (YouTube)](https://img.youtube.com/vi/0s-sXxpcoIA/maxresdefault.jpg)](https://www.youtube.com/watch?v=0s-sXxpcoIA)
 
 DOOM-lite raycaster in your terminal. Written in
 [Phel](https://phel-lang.org/), a Lisp that compiles to PHP.

@@ -261,6 +261,12 @@
 (def minimap-floor "\e[90m·\e[0m")
 (def minimap-door  "\e[33;1mD\e[0m")
 
+(def minimap-door-pulse
+  "Bright yellow blink-attribute D for the minimap door cell, swapped
+   in with `minimap-door` on a fast sin wave so the exit catches the
+   eye. Cycled in the col-loop setup."
+  "\e[5;93;1mD\e[0m")
+
 (defn- enemy-cells
   "Build a PHP array keyed by `row*gw+col` whose truthy entries mark
    cells currently occupied by an alive enemy. One pass over the
@@ -297,8 +303,9 @@
    per grid row. Reads the grid via :pgrid (PHP-native nested array)
    and builds each row with php/array_push + implode to avoid Phel
    collection dispatch in a hot per-frame call. Alive enemies are
-   marked with a red E."
-  [world]
+   marked with a red E. `door-glyph` lets the caller swap in a
+   pulsing variant on a sin wave."
+  [world door-glyph]
   (let [pgrid               (:pgrid world)
         {:keys [x y angle]} (:player world)
         pcol                (php/intval x)
@@ -319,7 +326,7 @@
                               (cond
                                 (and (php/=== row prow) (php/=== col pcol)) marker
                                 (php/=== 1 (php/aget grow col))             minimap-wall
-                                (php/=== 2 (php/aget grow col))             minimap-door
+                                (php/=== 2 (php/aget grow col))             door-glyph
                                 (php/aget emap (php/+ (php/* row gw) col))  enemy-marker
                                 (php/aget hmap (php/+ (php/* row gw) col))  heart-marker
                                 :else                                       minimap-floor))
@@ -540,7 +547,15 @@
         ebodys                             (php/array)
         elegss                             (php/array)
         blood-paint                        (php/array)
-        mrows                              (if (:show-map world) (minimap-rows world) (php/array))
+        ;; Pulse the minimap door glyph on the same beat as the 3D
+        ;; door shade so the exit catches the eye both in first-person
+        ;; and on the overhead map.
+        mini-door                          (if (php/> (php/sin (php/* (php/microtime true) 4.0)) 0.0)
+                                             minimap-door-pulse
+                                             minimap-door)
+        mrows                              (if (:show-map world)
+                                             (minimap-rows world mini-door)
+                                             (php/array))
         visible-mh                         (php/min (php/count mrows) vh)
         ;; First 0-indexed column the minimap overdraws. When the
         ;; minimap is on, the inner row loop emits sky' for those

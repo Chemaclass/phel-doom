@@ -660,6 +660,98 @@
                          "\e[" (php/- vh 6) ";" cc "H\e[1;93m *★* "
                          "\e[0m"))))))
 
+(defn- paint-blood-fx-into!
+  "Walk every blood fx in `stats`, project to screen, and write the
+   ttl-tiered death-stage shade (kill-flash → slump → collapse →
+   blood-mid → blood-dim) into the `blood-paint` overlay buffer for
+   the rows the sprite covers. Skips cells occluded by walls."
+  [blood-paint stats world dists vw vh]
+  (doseq [fx (or (get stats :fx) [])]
+         (let [proj (project-enemy fx (:player world) vw)]
+           (when proj
+             (let [col    (:col proj)
+                   hw     (:half-width proj)
+                   d      (:dist proj)
+                   bsh    (let [ttl (or (:ttl fx) 0.0)]
+                            (cond (php/> ttl 0.65) kill-flash
+                                  (php/> ttl 0.5)  death-slump
+                                  (php/> ttl 0.35) death-collapse
+                                  (php/> ttl 0.15) blood-mid
+                                  :else            blood-dim))
+                   c-from (php/max 0 (php/- col hw))
+                   c-to   (php/min (php/- vw 1) (php/+ col hw))
+                   h      (php/min vh (php/intval (php// proj-dist
+                                                         (php/* (php/max 0.5 d) char-aspect))))
+                   r-top  (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv (php/* h 2) 3))
+                   r-bot  (php/min vh (php/+ (php/intdiv (php/- vh h) 2) h))]
+               (loop [c c-from]
+                 (when (php/<= c c-to)
+                   (when (php/< d (php/aget dists c))
+                     (loop [r r-top]
+                       (when (php/< r r-bot)
+                         (php/aset blood-paint (php/+ (php/* r vw) c) bsh)
+                         (recur (php/+ r 1)))))
+                   (recur (php/+ c 1)))))))))
+
+(defn- paint-pickups-into!
+  "Project each pickup (heart / armor) to screen and write its
+   coloured BG glow into `blood-paint`, then drop the icon glyph at
+   the centre cell. Same routine for both pickup types; only the
+   shade + glyph differ."
+  [blood-paint pickups player dists vw vh shade-now glyph-now]
+  (doseq [item pickups]
+         (let [proj (project-enemy item player vw)]
+           (when proj
+             (let [col    (:col proj)
+                   hw     (php/max 1 (php/intdiv (:half-width proj) 2))
+                   d      (:dist proj)
+                   c-from (php/max 0 (php/- col hw))
+                   c-to   (php/min (php/- vw 1) (php/+ col hw))
+                   h      (php/min vh (php/intval (php// proj-dist
+                                                         (php/* (php/max 0.5 d) char-aspect))))
+                   mid    (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 2))
+                   r-top  (php/max 0 (php/- mid (php/intdiv h 6)))
+                   r-bot  (php/min vh (php/+ mid (php/intdiv h 6) 1))]
+               (loop [c c-from]
+                 (when (php/<= c c-to)
+                   (when (php/< d (php/aget dists c))
+                     (loop [r r-top]
+                       (when (php/< r r-bot)
+                         (php/aset blood-paint (php/+ (php/* r vw) c) shade-now)
+                         (recur (php/+ r 1)))))
+                   (recur (php/+ c 1))))
+               ;; Centre icon overlay: single cell wins over the BG
+               ;; fill because the inner row loop reads blood-paint
+               ;; first.
+               (when (and (php/>= col 0)
+                          (php/< col vw)
+                          (php/>= mid 0)
+                          (php/< mid vh)
+                          (php/< d (php/aget dists col)))
+                 (php/aset blood-paint
+                           (php/+ (php/* mid vw) col)
+                           glyph-now)))))))
+
+(defn- build-blood-cols
+  "Directional blood mask: per-column intensity in [0, 1]. Non-zero
+   only when iframes active AND a hurt-side is set. Fades from 1.0
+   at the screen edge that took the hit toward 0 at the centre."
+  [vw bloody? hurt-side]
+  (let [m  (php/array)
+        w  (php/max 1 (php/min 20 (php/intdiv vw 3)))
+        sd (and bloody? hurt-side)]
+    (loop [c 0]
+      (when (php/< c vw)
+        (php/aset m c
+                  (cond
+                    (not sd)           0.0
+                    (php/=== sd :left) (php/max 0.0 (php/- 1.0 (php// (php/* 1.0 c) w)))
+                    :else              (php/max 0.0
+                                                (php/- 1.0
+                                                       (php// (php/* 1.0 (php/- (php/- vw 1) c)) w)))))
+        (recur (php/+ c 1))))
+    m))
+
 (defn frame->string
   "Render the world sized to cols x rows. Walls project at a constant
    scale (proj-dist from engine) with a 2:1 character-aspect correction,
@@ -694,24 +786,7 @@
         ;; the centre. Drives the per-col red-shade swap inside the
         ;; col-setup loop below. One vw-sized PHP array built per
         ;; frame; lookup is O(1) inside the loop.
-        blood-cols                         (let [m  (php/array)
-                                                 w  (php/max 1 (php/min 20 (php/intdiv vw 3)))
-                                                 sd (and bloody? (get stats :hurt-side))]
-                                             (loop [c 0]
-                                               (when (php/< c vw)
-                                                 (php/aset m c
-                                                           (cond
-                                                             (not sd)           0.0
-                                                             (php/=== sd :left)
-                                                             (php/max 0.0
-                                                                      (php/- 1.0 (php// (php/* 1.0 c) w)))
-                                                             :else
-                                                             (php/max 0.0
-                                                                      (php/- 1.0
-                                                                             (php// (php/* 1.0 (php/- (php/- vw 1) c))
-                                                                                    w)))))
-                                                 (recur (php/+ c 1))))
-                                             m)
+        blood-cols                         (build-blood-cols vw bloody? (get stats :hurt-side))
         ;; Per-enemy distance-fade is composed in the projection loop
         ;; below and assigned to the per-column arrays. These are the
         ;; FALLBACK shades used when no level config provides codes
@@ -939,81 +1014,11 @@
                                      (php/+ (php/* e-bot vw) c)
                                      sprite-shadow)))
                        (recur (php/+ c 1)))))))))
-    (doseq [fx (or (get stats :fx) [])]
-           (let [proj (project-enemy fx (:player world) vw)]
-             (when proj
-               (let [col (:col proj)
-                     hw  (:half-width proj)
-                     d   (:dist proj)
-                     ;; Death stages over the fx lifetime (0.7s):
-                     ;;   0.65-0.70  white kill-flash (pain frame)
-                     ;;   0.50-0.65  ▼ slump in bright red
-                     ;;   0.35-0.50  ▒ collapse in darker red
-                     ;;   0.15-0.35  wide red blood splat
-                     ;;   0-0.15     dim residual stain
-                     ;; Single cond branch chain — same cost as the
-                     ;; old 3-tier check.
-                     bsh (let [ttl (or (:ttl fx) 0.0)]
-                           (cond (php/> ttl 0.65) kill-flash
-                                 (php/> ttl 0.5)  death-slump
-                                 (php/> ttl 0.35) death-collapse
-                                 (php/> ttl 0.15) blood-mid
-                                 :else            blood-dim))]
-                 (let [c-from (php/max 0 (php/- col hw))
-                       c-to   (php/min (php/- vw 1) (php/+ col hw))
-                       h      (php/min vh (php/intval (php// proj-dist
-                                                             (php/* (php/max 0.5 d) char-aspect))))]
-                   (let [r-top (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv (php/* h 2) 3))
-                         r-bot (php/min vh (php/+ (php/intdiv (php/- vh h) 2) h))]
-                     (loop [c c-from]
-                       (when (php/<= c c-to)
-                         (when (php/< d (php/aget dists c))
-                           (loop [r r-top]
-                             (when (php/< r r-bot)
-                               (php/aset blood-paint (php/+ (php/* r vw) c) bsh)
-                               (recur (php/+ r 1)))))
-                         (recur (php/+ c 1))))))))))
-    ;; Pickup paint: hearts (pink-red) + armors (steel-blue). Fills the
-    ;; projected sprite rectangle with `shade-now` as a coloured glow,
-    ;; then overlays `glyph-now` at the centre cell so up-close the
-    ;; pickup reads as a proper icon (♥ / ◆) and from far it stays a
-    ;; clear coloured spot.
-    (let [paint-pickup
-          (fn [pickups shade-now glyph-now]
-            (doseq [item pickups]
-                   (let [proj (project-enemy item (:player world) vw)]
-                     (when proj
-                       (let [col (:col proj)
-                             hw  (php/max 1 (php/intdiv (:half-width proj) 2))
-                             d   (:dist proj)]
-                         (let [c-from (php/max 0 (php/- col hw))
-                               c-to   (php/min (php/- vw 1) (php/+ col hw))
-                               h      (php/min vh (php/intval (php// proj-dist
-                                                                     (php/* (php/max 0.5 d) char-aspect))))]
-                           (let [mid   (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 2))
-                                 r-top (php/max 0 (php/- mid (php/intdiv h 6)))
-                                 r-bot (php/min vh (php/+ mid (php/intdiv h 6) 1))]
-                             (loop [c c-from]
-                               (when (php/<= c c-to)
-                                 (when (php/< d (php/aget dists c))
-                                   (loop [r r-top]
-                                     (when (php/< r r-bot)
-                                       (php/aset blood-paint (php/+ (php/* r vw) c) shade-now)
-                                       (recur (php/+ r 1)))))
-                                 (recur (php/+ c 1))))
-                             ;; Centre icon overlay: single cell wins
-                             ;; over the BG fill because the row loop
-                             ;; reads blood-paint last.
-                             (when (and (php/>= col 0)
-                                        (php/< col vw)
-                                        (php/>= mid 0)
-                                        (php/< mid vh)
-                                        (php/< d (php/aget dists col)))
-                               (php/aset blood-paint
-                                         (php/+ (php/* mid vw) col)
-                                         glyph-now)))))))))]
-      (paint-pickup (or (:hearts world) []) heart-shade-now heart-glyph-now)
-      (paint-pickup (or (:armors world) []) armor-shade-now armor-glyph-now))
+    (paint-blood-fx-into! blood-paint stats world dists vw vh)
+    (paint-pickups-into!  blood-paint (or (:hearts world) [])
+                          (:player world) dists vw vh heart-shade-now heart-glyph-now)
+    (paint-pickups-into!  blood-paint (or (:armors world) [])
+                          (:player world) dists vw vh armor-shade-now armor-glyph-now)
     (let [parts (php/array)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]

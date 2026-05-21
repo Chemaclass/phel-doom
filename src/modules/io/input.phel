@@ -5,22 +5,25 @@
    without waiting for Enter. Switch to the alternate screen buffer and
    hide the cursor to avoid flicker during the render loop.
 
-   NOTE: kitty-keyboard-protocol opt-in (`CSI >Nu`) was tried and
-   reverted — flag 2 (report event types) makes some terminals emit
-   arrow keys as `\\e[1;1:1D` instead of plain `\\e[D`, which the
-   arrow normalisation in controls.phel doesn't recognise → turning
-   silently dies. Stick with legacy raw bytes for now."
+   Kitty keyboard protocol opt-in: `CSI > 3 u` pushes flags
+   `disambiguate (1) | report-event-types (2)`. Supporting terminals
+   (kitty, WezTerm, Ghostty, recent iTerm2/Alacritty) then send real
+   press / repeat / release events for keys, which controls.phel
+   parses to clear movement slots instantly on release. Non-supporting
+   terminals ignore the opt-in and we fall back to the legacy byte
+   stream + hold-frames bridge."
   {:export true}
   []
   (php/exec "stty -icanon -echo min 0 time 0")
   (php/stream_set_blocking php/STDIN false)
-  (print "\e[?1049h\e[?25l\e[?7l\e[2J\e[H"))
+  (print "\e[?1049h\e[?25l\e[?7l\e[2J\e[H\e[>3u"))
 
 (defn restore!
-  "Restore cooked terminal mode and leave the alternate screen buffer."
+  "Pop any kitty keyboard flags this session pushed, restore cooked
+   terminal mode and leave the alternate screen buffer."
   {:export true}
   []
-  (print "\e[?25h\e[?7h\e[?1049l")
+  (print "\e[<u\e[?25h\e[?7h\e[?1049l")
   (php/exec "stty sane"))
 
 (defn read-key

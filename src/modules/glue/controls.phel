@@ -150,17 +150,57 @@
                             (php/intval evraw))]
                 (recur (php/+ i 1) (handle-kitty-event w code event))))))))))
 
+(def arrow-letter->slot
+  "Kitty-enhanced arrow CSI sequences (`\\e[1;<mods>(:<event>)?<letter>`)
+   keep the legacy letter suffix instead of becoming CSI-u tokens.
+   Letter codes: A=up B=down C=right D=left."
+  {"A" :fwd
+   "B" :back
+   "D" :turn-left
+   "C" :turn-right})
+
+(defn- apply-kitty-arrow-events
+  "Strip kitty-enhanced arrow sequences from `keys` and fold them
+   into `world`. Pattern: ESC [ 1 [;mods[:event]] <A|B|C|D>. Event 3
+   = release (clear slot); anything else = press/repeat (refresh hold).
+   Plain legacy arrows (\\e[A etc.) are untouched here and handled
+   downstream by normalise-arrows. Returns [world leftover]."
+  [world keys]
+  (let [matches (php/array)
+        re      "/\\x1b\\[1(?:;\\d+(?::(\\d+))?)?([ABCD])/"]
+    (php/preg_match_all re keys matches)
+    (let [events  (php/aget matches 1)
+          letters (php/aget matches 2)
+          n       (php/count letters)]
+      (loop [i 0 w world]
+        (if (php/>= i n)
+          [w (php/preg_replace re "" keys)]
+          (let [letter (php/aget letters i)
+                evraw  (php/aget events i)
+                event  (if (or (php/=== evraw nil) (php/=== evraw ""))
+                         1
+                         (php/intval evraw))
+                slot   (get arrow-letter->slot letter)]
+            (recur (php/+ i 1)
+                   (if (nil? slot)
+                     w
+                     (cond
+                       (php/=== event 3) (clear-slot w slot)
+                       :else             (press-slot w slot))))))))))
+
 (defn refresh-from-keys
-  "Fold every input byte into `world`. First consumes any kitty CSI-u
-   events (press / repeat refresh counters, release clears them) and
-   strips them from the string. Anything left runs through the legacy
-   single-byte path so terminals without kitty support still play."
+  "Fold every input byte into `world`. Three-stage parse: kitty CSI-u
+   events (WASD with press/repeat/release) → kitty enhanced arrows
+   (\\e[1;m:eD with same events) → legacy normalise + single-byte
+   refresh. Terminals supporting any subset of kitty fall through
+   gracefully to the legacy path."
   {:export true}
   [world keys]
-  (let [[w1 leftover] (apply-kitty-events world keys)]
-    (let [normalised (normalise-arrows leftover)
+  (let [[w1 leftover1] (apply-kitty-events world keys)
+        [w2 leftover2] (apply-kitty-arrow-events w1 leftover1)]
+    (let [normalised (normalise-arrows leftover2)
           n          (php/strlen normalised)]
-      (loop [i 0 w w1]
+      (loop [i 0 w w2]
         (if (php/>= i n)
           w
           (recur (php/+ i 1)

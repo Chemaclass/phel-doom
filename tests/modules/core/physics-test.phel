@@ -1,7 +1,7 @@
 (ns phel-doom-tests.modules.core.physics-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.modules.core.state   :refer [new-world new-player])
-  (:require phel-doom.modules.core.physics :refer [try-move apply-physics tick-heartbeat]))
+  (:require phel-doom.modules.core.physics :refer [try-move apply-physics tick-heartbeat tick-flicker]))
 
 ;; Tiny 3x3 grid: walls around the perimeter, open centre.
 (def open-world
@@ -118,6 +118,41 @@
     (is (= true (:heartbeat-tick? w1)))
     (is (< (:heartbeat-phase w1) 1.0))
     (is (>= (:heartbeat-phase w1) 0.0))))
+
+;; ---------------------------------------------------------------------
+;; tick-flicker: cooldown counts down then triggers a brief active
+;; window. While active, the active-secs counter is what counts down
+;; — cooldown is held until the flicker ends.
+;; ---------------------------------------------------------------------
+
+(deftest test-tick-flicker-decrements-cooldown-when-idle
+  (let [w  (assoc empty-world :lives 5 :flicker-cooldown 10.0 :flicker-active-secs 0.0)
+        w' (tick-flicker w 0.5)]
+    (is (= 9.5 (:flicker-cooldown w')))
+    (is (= 0.0 (:flicker-active-secs w')))))
+
+(deftest test-tick-flicker-fires-when-cooldown-hits-zero
+  (let [w  (assoc empty-world :lives 5 :flicker-cooldown 0.0 :flicker-active-secs 0.0)
+        w' (tick-flicker w 0.1)]
+    (is (php/> (:flicker-active-secs w') 0.0))
+    ;; New cooldown sampled into the lives>=5 band (20..30s).
+    (is (php/>= (:flicker-cooldown w') 20.0))
+    (is (php/<= (:flicker-cooldown w') 30.0))))
+
+(deftest test-tick-flicker-decrements-active-secs-while-active
+  (let [w  (assoc empty-world :lives 5 :flicker-cooldown 12.0 :flicker-active-secs 0.15)
+        w' (tick-flicker w 0.05)]
+    (is (< (php/abs (- (:flicker-active-secs w') 0.10)) 0.0001))
+    ;; Cooldown is frozen while active so the next gap restarts cleanly.
+    (is (= 12.0 (:flicker-cooldown w')))))
+
+(deftest test-tick-flicker-low-life-resamples-into-faster-band
+  ;; When the flicker fires at 1 life, the new cooldown should be in
+  ;; the haunted-band (6..12), shorter than the calm 20..30 band.
+  (let [w  (assoc empty-world :lives 1 :flicker-cooldown 0.0 :flicker-active-secs 0.0)
+        w' (tick-flicker w 0.1)]
+    (is (php/>= (:flicker-cooldown w') 6.0))
+    (is (php/<= (:flicker-cooldown w') 12.0))))
 
 (deftest test-tick-heartbeat-faster-at-1-life-than-2
   ;; Same dt, same start phase — 1-life run should be further along

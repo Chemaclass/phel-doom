@@ -103,6 +103,41 @@
     (php/<= lives 2) 0.85
     :else            nil))
 
+(defn- flicker-cooldown-bounds
+  "Seconds between flickers, narrower (and faster) at low life so the
+   place feels actively haunted when you're nearly dead. Returns
+   [min max]."
+  [lives]
+  (cond
+    (php/<= lives 2) [6.0 12.0]
+    (php/<= lives 4) [12.0 20.0]
+    :else            [20.0 30.0]))
+
+(defn- random-in [^float lo ^float hi]
+  (php/+ lo (php/* (php/- hi lo) (php// (php/mt_rand) (php/mt_getrandmax)))))
+
+(defn tick-flicker
+  "Drive the periodic 'lights flicker' beat. :flicker-active-secs counts
+   down while the dim overlay is on; once it hits zero, :flicker-cooldown
+   counts down until the next flicker fires. Cooldown band narrows as
+   lives drop so the place feels haunted near death.
+
+   The render layer reads :flicker-active-secs from stats to decide
+   whether to paint the scanline darken overlay this frame."
+  {:export true}
+  [world ^float dt]
+  (let [active (or (:flicker-active-secs world) 0.0)]
+    (if (php/> active 0.0)
+      (assoc world :flicker-active-secs (php/max 0.0 (php/- active dt)))
+      (let [cd  (or (:flicker-cooldown world) 0.0)
+            cd' (php/max 0.0 (php/- cd dt))]
+        (if (php/> cd' 0.0)
+          (assoc world :flicker-cooldown cd' :flicker-active-secs 0.0)
+          (let [[lo hi] (flicker-cooldown-bounds (:lives world))]
+            (assoc world
+                   :flicker-cooldown    (random-in lo hi)
+                   :flicker-active-secs (random-in 0.08 0.18))))))))
+
 (defn tick-heartbeat
   "Advance the heartbeat phase by `dt`. Phase loops 0→1 over one beat.
    `:heartbeat-tick?` flips true on the frame the phase wraps so the

@@ -609,6 +609,24 @@
                      "\e[0m"))))
   parts)
 
+(defn- paint-flicker
+  "Lights-flickering overlay: paint full-width dark scanlines on every
+   other row while :flicker-active-secs is positive. The eye reads the
+   half-mesh as a strobing dim, but the unpainted rows keep the colours
+   underneath so the picture isn't blacked out. Skips the bottom 6
+   rows so the pistol + HUD stays readable through the flicker."
+  [parts stats vw vh]
+  (when (php/> (or (get stats :flicker-active-secs) 0.0) 0.0)
+    (let [line   (php/str_repeat " " vw)
+          dark   "\e[48;5;232m"
+          bottom (php/max 1 (php/- vh 6))]
+      (loop [r 1]
+        (when (php/<= r bottom)
+          (when (php/=== (mod r 2) 1)
+            (buf-push parts (str "\e[" r ";1H" dark line "\e[0m")))
+          (recur (php/+ r 1))))))
+  parts)
+
 (defn- heartbeat-bg
   "Map heartbeat phase to a red BG ansi for the edge bar. Phase 0 is
    the strongest thump, fading by ~0.35. Returns nil when the pulse
@@ -1263,6 +1281,7 @@
             parts       (paint-wall-lights  parts vw vh hits hxs hys tops)
             parts       (paint-crosshair    parts stats vw vh center-bg)
             parts       (paint-intro-splash parts stats vw vh)
+            parts       (paint-flicker parts stats vw vh)
             parts       (paint-heartbeat-vignette parts stats vw vh)
             parts       (paint-hit-vignette parts stats bloody? vw vh)
             parts       (paint-heat-bar     parts stats vw vh)

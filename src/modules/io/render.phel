@@ -660,25 +660,30 @@
                          "\e[" (php/- vh 6) ";" cc "H\e[1;93m *★* "
                          "\e[0m"))))))
 
-(defn- compute-wall-shades!
-  "Per-column wall shading. Walks each screen column and writes the
-   five precomputed cell strings (normal body, top/bot edge ▀, top/
-   bot ambient-shadow band) plus the wall top/bot pixel rows.
+(defn- compute-wall-shades
+  "Per-column wall shading. Builds and returns seven PHP-array buffers
+   filled with: wall top + bottom screen rows, plus precomputed cell
+   strings for the wall body, the top/bot half-block edges, and the
+   top/bot ambient-shadow band.
 
-   `cast`     map with the ray-cast outputs {:dists :hits :sides :hxs :hys}
-   `buffers`  map of mutable PHP arrays the loop fills
-              {:tops :bots :normal :top-edge :bot-edge :top-shadow :bot-shadow}
-   `palette`  precomputed colour state for this frame
-              {:stbl :ctbl :sky-c :floor-c :door-shade-now :door-code-now}
+   PHP arrays are pass-by-value in fn args, so the buffers are CREATED
+   inside this fn and returned in a map; the caller destructures to
+   keep the same names it used previously.
+
+   `cast`       ray-cast outputs {:dists :hits :sides :hxs :hys}
+   `palette`    {:stbl :ctbl :sky-c :floor-c :door-shade-now :door-code-now}
    `blood-cols` per-col directional blood mask (from build-blood-cols)
-   `kick-shift` 0 or 1, vertical recoil shift while firing.
-
-   Hot inner loop: every binding inside the per-col let resolves to a
-   single php op + integer compare; no Phel dispatch."
-  [vw vh kick-shift cast buffers palette blood-cols]
-  (let [{:keys [dists hits sides hxs hys]}                                 cast
-        {:keys [tops bots normal top-edge bot-edge top-shadow bot-shadow]} buffers
-        {:keys [stbl ctbl sky-c floor-c door-shade-now door-code-now]}     palette]
+   `kick-shift` 0 or 1, vertical recoil shift while firing."
+  [vw vh kick-shift cast palette blood-cols]
+  (let [{:keys [dists hits sides hxs hys]}                             cast
+        {:keys [stbl ctbl sky-c floor-c door-shade-now door-code-now]} palette
+        tops                                                           (php/array)
+        bots                                                           (php/array)
+        normal                                                         (php/array)
+        top-edge                                                       (php/array)
+        bot-edge                                                       (php/array)
+        top-shadow                                                     (php/array)
+        bot-shadow                                                     (php/array)]
     (loop [col 0]
       (when (php/< col vw)
         (let [dist      (php/aget dists col)
@@ -725,13 +730,19 @@
                 (php/aset bot-edge   col (str "\e[48;5;" floor-c-l ";38;5;" edge-code "m▀"))
                 (php/aset top-shadow col shd-bg)
                 (php/aset bot-shadow col shd-bg))))
-          (recur (php/+ col 1)))))))
+          (recur (php/+ col 1)))))
+    {:tops tops :bots bots :normal normal
+     :top-edge top-edge :bot-edge bot-edge
+     :top-shadow top-shadow :bot-shadow bot-shadow}))
 
-(defn- paint-blood-fx-into!
+(defn- paint-blood-fx-into
   "Walk every blood fx in `stats`, project to screen, and write the
    ttl-tiered death-stage shade (kill-flash → slump → collapse →
    blood-mid → blood-dim) into the `blood-paint` overlay buffer for
-   the rows the sprite covers. Skips cells occluded by walls."
+   the rows the sprite covers. Skips cells occluded by walls.
+
+   Returns the mutated buffer — PHP arrays pass by value, so the
+   caller must rebind to see the writes."
   [blood-paint stats world dists vw vh]
   (doseq [fx (or (get stats :fx) [])]
          (let [proj (project-enemy fx (:player world) vw)]
@@ -758,13 +769,17 @@
                        (when (php/< r r-bot)
                          (php/aset blood-paint (php/+ (php/* r vw) c) bsh)
                          (recur (php/+ r 1)))))
-                   (recur (php/+ c 1)))))))))
+                   (recur (php/+ c 1))))))))
+  blood-paint)
 
-(defn- paint-pickups-into!
+(defn- paint-pickups-into
   "Project each pickup (heart / armor) to screen and write its
    coloured BG glow into `blood-paint`, then drop the icon glyph at
    the centre cell. Same routine for both pickup types; only the
-   shade + glyph differ."
+   shade + glyph differ.
+
+   Returns the mutated buffer — PHP arrays pass by value, so the
+   caller must rebind to see the writes."
   [blood-paint pickups player dists vw vh shade-now glyph-now]
   (doseq [item pickups]
          (let [proj (project-enemy item player vw)]
@@ -797,7 +812,8 @@
                           (php/< d (php/aget dists col)))
                  (php/aset blood-paint
                            (php/+ (php/* mid vw) col)
-                           glyph-now)))))))
+                           glyph-now))))))
+  blood-paint)
 
 (defn build-blood-cols
   "Directional blood mask: per-column intensity in [0, 1]. Non-zero
@@ -906,23 +922,31 @@
         armor-bright?                      (pulse 5.0)
         armor-shade-now                    (if armor-bright? armor-shade-bright armor-shade)
         armor-glyph-now                    (if armor-bright? armor-glyph-bright armor-glyph)
-        tops                               (php/array)
-        bots                               (php/array)
-        ;; Five pre-baked ANSI strings per column:
-        ;;   shades-normal     interior wall cell (single colour BG)
-        ;;   shades-top-edge   ▀ char w/ sky above + wall below (anti-aliased top)
-        ;;   shades-bot-edge   ▀ char w/ wall above + floor below (anti-aliased bottom)
-        ;;   shades-top-shadow solid darker BG for the row right under
-        ;;                     the top edge — soft ambient shadow so the
-        ;;                     ceiling doesn't cut to wall hard.
-        ;;   shades-bot-shadow same trick at the wall base for the row
-        ;;                     just above the floor contact.
-        ;; Door columns get door-shade in all three.
-        shades-normal                      (php/array)
-        shades-top-edge                    (php/array)
-        shades-bot-edge                    (php/array)
-        shades-top-shadow                  (php/array)
-        shades-bot-shadow                  (php/array)
+        ;; Camera kick: while :fire-anim > 0 shift the wall vertical
+        ;; position one row down so the horizon tilts up. Settles back
+        ;; as the timer decays in combat.phel.
+        kick-shift                         (if (php/> (or (get stats :fire-anim) 0.0) 0.0) 1 0)
+        ;; Per-column wall geometry + shade arrays. compute-wall-shades
+        ;; CREATES them fresh and returns them (PHP arrays are passed
+        ;; by value so a mutating helper can't mutate the caller's
+        ;; buffers — we let the helper own the allocation + return).
+        ;; Phel destructure reads `:keyword local-name`, so the order
+        ;; is opposite to Clojure's `{local :keyword}`.
+        {:tops              tops
+         :bots              bots
+         :normal            shades-normal
+         :top-edge          shades-top-edge
+         :bot-edge          shades-bot-edge
+         :top-shadow        shades-top-shadow
+         :bot-shadow        shades-bot-shadow}
+        (compute-wall-shades vw vh kick-shift
+                             {:dists dists :hits hits :sides sides
+                              :hxs hxs    :hys hys}
+                             {:stbl stbl :ctbl ctbl
+                              :sky-c sky-c :floor-c floor-c
+                              :door-shade-now door-shade-now
+                              :door-code-now  door-code-now}
+                             blood-cols)
         ;; Enemy sprite zone boundaries (head/body/legs). For each
         ;; column carrying an enemy:
         ;;   row in [tops, mids)   -> head
@@ -954,27 +978,7 @@
         ;; chain of aget + cond per cell in the overlay region.
         mini-col0                          (if (php/> visible-mh 0)
                                              (php/max 0 (php/- map-col 1))
-                                             vw)
-        ;; Camera kick: while :fire-anim > 0 shift the wall vertical
-        ;; position one row down so the horizon tilts up. Visually the
-        ;; barrel kicks the view a little. Settles back as the timer
-        ;; decays in combat.phel. One extra add inside the col loop.
-        kick-shift                         (if (php/> (or (get stats :fire-anim) 0.0) 0.0) 1 0)]
-    (compute-wall-shades! vw vh kick-shift
-                          {:dists dists :hits hits :sides sides
-                           :hxs hxs    :hys hys}
-                          {:tops       tops
-                           :bots       bots
-                           :normal     shades-normal
-                           :top-edge   shades-top-edge
-                           :bot-edge   shades-bot-edge
-                           :top-shadow shades-top-shadow
-                           :bot-shadow shades-bot-shadow}
-                          {:stbl stbl :ctbl ctbl
-                           :sky-c sky-c :floor-c floor-c
-                           :door-shade-now door-shade-now
-                           :door-code-now  door-code-now}
-                          blood-cols)
+                                             vw)]
     (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
            (let [col (:col proj)
                  hw  (:half-width proj)
@@ -1031,12 +1035,17 @@
                                      (php/+ (php/* e-bot vw) c)
                                      sprite-shadow)))
                        (recur (php/+ c 1)))))))))
-    (paint-blood-fx-into! blood-paint stats world dists vw vh)
-    (paint-pickups-into!  blood-paint (or (:hearts world) [])
-                          (:player world) dists vw vh heart-shade-now heart-glyph-now)
-    (paint-pickups-into!  blood-paint (or (:armors world) [])
-                          (:player world) dists vw vh armor-shade-now armor-glyph-now)
-    (let [parts (php/array)]
+    ;; Chain the fx + pickup painters: each one takes the current
+    ;; blood-paint, mutates internally, returns the buffer. We have
+    ;; to rebind every call because PHP arrays pass by value.
+    (let [blood-paint (paint-blood-fx-into blood-paint stats world dists vw vh)
+          blood-paint (paint-pickups-into  blood-paint (or (:hearts world) [])
+                                           (:player world) dists vw vh
+                                           heart-shade-now heart-glyph-now)
+          blood-paint (paint-pickups-into  blood-paint (or (:armors world) [])
+                                           (:player world) dists vw vh
+                                           armor-shade-now armor-glyph-now)
+          parts       (php/array)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]
                  (if (php/>= col vw)

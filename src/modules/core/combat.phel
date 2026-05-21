@@ -86,6 +86,27 @@
                           (:x (:player world))
                           (:y (:player world)))))
 
+(defn- closest-attacker-side
+  "Bearing of the nearest alive enemy relative to player facing. Returns
+   `:left` or `:right` (or nil if none). One pass over enemies; called
+   once per damage event, not per frame."
+  [enemies ^float px ^float py ^float pangle]
+  (loop [es enemies best-d 1.0e9 side nil]
+    (cond
+      (php/=== es nil) side
+      :else
+      (let [e (first es)]
+        (if (and e (:alive e))
+          (let [dx (php/- (:x e) px)
+                dy (php/- (:y e) py)
+                d2 (php/+ (php/* dx dx) (php/* dy dy))]
+            (if (php/< d2 best-d)
+              (let [rel (php/- (php/atan2 dy dx) pangle)]
+                (recur (next es) d2
+                       (if (php/> (php/sin rel) 0.0) :right :left)))
+              (recur (next es) best-d side)))
+          (recur (next es) best-d side))))))
+
 (def flash-seconds
   "How long the all-white impact flash holds before the red i-frame
    wash takes over. About one frame at 60fps — long enough that the
@@ -94,9 +115,12 @@
 
 (defn- take-damage [world]
   (when (:sound-on world) (play-sfx! :hit))
-  (assoc (update world :lives (fn [l] (php/max 0 (php/- l 1))))
-         :iframes    iframe-seconds
-         :flash-secs flash-seconds))
+  (let [p (:player world)]
+    (assoc (update world :lives (fn [l] (php/max 0 (php/- l 1))))
+           :iframes    iframe-seconds
+           :flash-secs flash-seconds
+           :hurt-side  (closest-attacker-side (:enemies world)
+                                              (:x p) (:y p) (:angle p)))))
 
 (defn damage-step
   "Per-frame: decay every timer, then apply a touch hit if i-frames

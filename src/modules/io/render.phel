@@ -48,6 +48,16 @@
    a yellow `✦` star drawn on top so the pickup glints across the
    room. Cycled with heart-shade on a sin wave in the col-loop setup."
   "\e[48;5;213;38;5;226m✦")
+
+(def armor-shade
+  "Bright blue BG painted into the per-cell overlay for armor pickups
+   so they read as a distinct cool counterpart to the pink hearts."
+  "\e[48;5;33m ")
+
+(def armor-sparkle
+  "Off-beat glint frame for the armor pulse: brighter blue BG with a
+   white shield-like glyph."
+  "\e[48;5;39;38;5;231;1m◆")
 (def char-aspect 2.0)
 (def hud-rows 1)
 
@@ -524,6 +534,8 @@
                                              "130" door-code)
         heart-shade-now                    (if (php/> (php/sin (php/* (php/microtime true) 6.0)) 0.0)
                                              heart-sparkle heart-shade)
+        armor-shade-now                    (if (php/> (php/sin (php/* (php/microtime true) 5.0)) 0.0)
+                                             armor-sparkle armor-shade)
         tops                               (php/array)
         bots                               (php/array)
         ;; Three pre-baked ANSI strings per column:
@@ -725,31 +737,36 @@
                                (php/aset blood-paint (php/+ (php/* r vw) c) bsh)
                                (recur (php/+ r 1)))))
                          (recur (php/+ c 1))))))))))
-    ;; Heart pickups: paint a compact bright-pink sprite at the upper
-    ;; mid of the projected column so they float visibly above the
-    ;; floor without obscuring the wall behind them entirely.
-    (doseq [heart (or (:hearts world) [])]
-           (let [proj (project-enemy heart (:player world) vw)]
-             (when proj
-               (let [col (:col proj)
-                     hw  (php/max 1 (php/intdiv (:half-width proj) 2))
-                     d   (:dist proj)]
-                 (let [c-from (php/max 0 (php/- col hw))
-                       c-to   (php/min (php/- vw 1) (php/+ col hw))
-                       h      (php/min vh (php/intval (php// proj-dist
-                                                             (php/* (php/max 0.5 d) char-aspect))))]
-                   (let [r-top (let [mid (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 2))]
-                                 (php/max 0 (php/- mid (php/intdiv h 6))))
-                         r-bot (let [mid (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 2))]
-                                 (php/min vh (php/+ mid (php/intdiv h 6) 1)))]
-                     (loop [c c-from]
-                       (when (php/<= c c-to)
-                         (when (php/< d (php/aget dists c))
-                           (loop [r r-top]
-                             (when (php/< r r-bot)
-                               (php/aset blood-paint (php/+ (php/* r vw) c) heart-shade-now)
-                               (recur (php/+ r 1)))))
-                         (recur (php/+ c 1))))))))))
+    ;; Pickup paint: hearts (pink) + armors (blue). Same projection
+    ;; routine — compact sprite at upper-mid of the projected column
+    ;; so it floats visibly above the floor without obscuring the
+    ;; wall behind it.
+    (let [paint-pickup
+          (fn [pickups shade-now]
+            (doseq [item pickups]
+                   (let [proj (project-enemy item (:player world) vw)]
+                     (when proj
+                       (let [col (:col proj)
+                             hw  (php/max 1 (php/intdiv (:half-width proj) 2))
+                             d   (:dist proj)]
+                         (let [c-from (php/max 0 (php/- col hw))
+                               c-to   (php/min (php/- vw 1) (php/+ col hw))
+                               h      (php/min vh (php/intval (php// proj-dist
+                                                                     (php/* (php/max 0.5 d) char-aspect))))]
+                           (let [r-top (let [mid (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 2))]
+                                         (php/max 0 (php/- mid (php/intdiv h 6))))
+                                 r-bot (let [mid (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 2))]
+                                         (php/min vh (php/+ mid (php/intdiv h 6) 1)))]
+                             (loop [c c-from]
+                               (when (php/<= c c-to)
+                                 (when (php/< d (php/aget dists c))
+                                   (loop [r r-top]
+                                     (when (php/< r r-bot)
+                                       (php/aset blood-paint (php/+ (php/* r vw) c) shade-now)
+                                       (recur (php/+ r 1)))))
+                                 (recur (php/+ c 1)))))))))))]
+      (paint-pickup (or (:hearts world) []) heart-shade-now)
+      (paint-pickup (or (:armors world) []) armor-shade-now))
     (let [parts (php/array)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]
@@ -952,12 +969,16 @@
                              "H" cells)))
       (let [l     (or (get stats :lives) 0)
             cap   (or (get stats :max-lives) 5)
+            armor (or (get stats :armor) 0)
             blink (if bloody? "\e[5;1m" "\e[1m")]
         (php/array_push parts
                         (str "\e[1;1H" blink "\e[91m"
                              (php/str_repeat "♥ " l)
                              "\e[90m"
                              (php/str_repeat "♡ " (php/max 0 (php/- cap l)))
+                             (if (php/> armor 0)
+                               (str "\e[94;1m" (php/str_repeat "◆ " armor))
+                               "")
                              "\e[0m")))
       ;; Pistol HUD: DOOM-style first-person view. The player is
       ;; looking down the slide with the barrel pointing away into

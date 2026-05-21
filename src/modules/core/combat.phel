@@ -151,8 +151,15 @@
 
 (defn- take-damage [world]
   (when (:sound-on world) (play-sfx! :hit))
-  (let [p (:player world)]
-    (assoc (update world :lives (fn [l] (php/max 0 (php/- l 1))))
+  (let [p       (:player world)
+        armor   (or (:armor world) 0)
+        ;; Armor absorbs the hit: drop the unit instead of a life. Still
+        ;; trigger i-frames + the visual flash so the player sees the
+        ;; armor consumed.
+        damaged (if (php/> armor 0)
+                  (assoc world :armor (php/- armor 1))
+                  (update world :lives (fn [l] (php/max 0 (php/- l 1)))))]
+    (assoc damaged
            :iframes    iframe-seconds
            :flash-secs flash-seconds
            :hurt-side  (closest-attacker-side (:enemies world)

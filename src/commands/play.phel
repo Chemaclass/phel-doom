@@ -93,6 +93,27 @@
         (when (:sound-on world) (play-sfx! :door))
         (gain-life healed)))))
 
+(defn- armors-not-at [armors px py]
+  (apply vector
+         (filter (fn [a]
+                   (not (and (php/=== (php/intval (:x a)) px)
+                             (php/=== (php/intval (:y a)) py))))
+                 (or armors []))))
+
+(defn- pickup-armors
+  "Step-on triggers an armor pickup: bumps :armor by 1 (stacks). The
+   next contact-damage hit consumes one armor unit instead of a life
+   (see combat/take-damage)."
+  [world]
+  (let [kept (armors-not-at (:armors world)
+                            (php/intval (:x (:player world)))
+                            (php/intval (:y (:player world))))]
+    (if (= (count kept) (count (or (:armors world) [])))
+      world
+      (let [shielded (assoc world :armors kept)]
+        (when (:sound-on world) (play-sfx! :door))
+        (update shielded :armor (fn [a] (php/+ (or a 0) 1)))))))
+
 (defn- on-door?
   "True when the player's current cell is a door (auto-advances level)."
   [world]
@@ -111,7 +132,7 @@
       w0
       (let [w1 (refresh-from-keys w0 keys)]
         (let [w2 (apply-physics w1 dt)]
-          (let [w3 (pickup-hearts w2)]
+          (let [w3 (pickup-armors (pickup-hearts w2))]
             (let [w4 (tick-enemies w3 dt)]
               (let [w5 (tick-shooting w4 (:fire edges))]
                 (damage-step w5 dt)))))))))
@@ -123,27 +144,36 @@
 (defn- frame-stats
   "Snapshot of `world` + per-frame timing the render layer needs."
   [world fps frame-ms]
-  {:fps        fps
-   :frame-ms   frame-ms
-   :kills      (:kills world)
-   :lives      (:lives world)
-   :max-lives  max-lives
-   :iframes    (:iframes world)
-   :fire-anim  (:fire-anim world)
-   :intro-secs (:intro-secs world)
-   :flash-secs (:flash-secs world)
-   :fx         (:fx world)
-   :paused     (:paused world)
-   :sound-on   (:sound-on world)
-   :level      (:level world)
-   :level-name (:level-name world)
-   :enemy-head-code     (:enemy-head-code world)
-   :enemy-body-code     (:enemy-body-code world)
-   :enemy-legs-code     (:enemy-legs-code world)
-   :enemy-body-glyph    (:enemy-body-glyph world)
-   :enemy-body-glyph-fg (:enemy-body-glyph-fg world)
-   :enemy-face          (:enemy-face world)
-   :enemy-face-alt      (:enemy-face-alt world)})
+  {:fps         fps
+   :frame-ms    frame-ms
+   :kills       (:kills world)
+   :lives       (:lives world)
+   :armor       (:armor world)
+   :max-lives   max-lives
+   :iframes     (:iframes world)
+   :fire-anim   (:fire-anim world)
+   :intro-secs  (:intro-secs world)
+   :flash-secs  (:flash-secs world)
+   :fx          (:fx world)
+   :paused      (:paused world)
+   :sound-on    (:sound-on world)
+   :level       (:level world)
+   :level-name  (:level-name world)
+   :hurt-side   (:hurt-side world)
+   :streak      (:streak world)
+   :heat        (:heat world)
+   :jam-secs    (:jam-secs world)
+   :sky-code    (:sky-code world)
+   :floor-code  (:floor-code world)
+   :enemy-head-code      (:enemy-head-code world)
+   :enemy-body-code      (:enemy-body-code world)
+   :enemy-legs-code      (:enemy-legs-code world)
+   :enemy-body-glyph     (:enemy-body-glyph world)
+   :enemy-body-glyph-alt (:enemy-body-glyph-alt world)
+   :enemy-body-glyph-fg  (:enemy-body-glyph-fg world)
+   :enemy-face           (:enemy-face world)
+   :enemy-face-alt       (:enemy-face-alt world)
+   :enemy-face-attack    (:enemy-face-attack world)})
 
 (defn- ms-since
   "Whole-millisecond delta between two microtime samples. Args tagged

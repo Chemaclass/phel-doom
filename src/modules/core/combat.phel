@@ -40,6 +40,11 @@
    seconds."
   0.45)
 
+(def streak-window-seconds
+  "Time after a kill during which the next kill chains the streak.
+   Counter resets to 1 if the player waits longer without a kill."
+  4.0)
+
 ;; =====================================================================
 ;; § Damage step (timer decay + touch collision)
 ;; =====================================================================
@@ -69,16 +74,21 @@
                       (or fx [])))))
 
 (defn- decay-timers [world ^float dt]
-  (let [iframes    (php/max 0.0 (php/- (:iframes world) dt))
-        fire-anim  (php/max 0.0 (php/- (or (:fire-anim world) 0.0) dt))
-        intro-secs (php/max 0.0 (php/- (or (:intro-secs world) 0.0) dt))
-        flash-secs (php/max 0.0 (php/- (or (:flash-secs world) 0.0) dt))]
+  (let [iframes      (php/max 0.0 (php/- (:iframes world) dt))
+        fire-anim    (php/max 0.0 (php/- (or (:fire-anim world) 0.0) dt))
+        intro-secs   (php/max 0.0 (php/- (or (:intro-secs world) 0.0) dt))
+        flash-secs   (php/max 0.0 (php/- (or (:flash-secs world) 0.0) dt))
+        streak-secs' (php/max 0.0 (php/- (or (:streak-secs world) 0.0) dt))]
     (assoc world
-           :iframes    iframes
-           :fire-anim  fire-anim
-           :intro-secs intro-secs
-           :flash-secs flash-secs
-           :fx         (decay-fx (:fx world) dt))))
+           :iframes     iframes
+           :fire-anim   fire-anim
+           :intro-secs  intro-secs
+           :flash-secs  flash-secs
+           :streak-secs streak-secs'
+           ;; Window expired: streak counter goes back to 0 so the HUD
+           ;; stops showing it.
+           :streak      (if (php/<= streak-secs' 0.0) 0 (or (:streak world) 0))
+           :fx          (decay-fx (:fx world) dt))))
 
 (defn- vulnerable? [world]
   (and (php/<= (:iframes world) 0.0)
@@ -153,13 +163,17 @@
 (defn- on-shot-hit
   "World update on a successful hit: take the new enemies vector
    (with the killed slot flipped to :alive false + a respawn timer
-   set by enemy/shoot), bump kills, light the muzzle flash, and push
-   a blood splatter at the hit position. The dead enemy revives
-   automatically inside the per-frame advance step once its
-   :respawn-after timer expires (3-6s later)."
+   set by enemy/shoot), bump kills, chain the streak counter, light
+   the muzzle flash, and push a blood splatter at the hit position.
+   Streak chains while :streak-secs is still ticking from the previous
+   kill; otherwise it restarts at 1."
   [world enemies-after hit-pos _idx]
-  (let [scored (update (assoc world :enemies enemies-after)
-                       :kills (fn [k] (php/+ k 1)))]
+  (let [chain?  (php/> (or (:streak-secs world) 0.0) 0.0)
+        streak' (if chain? (php/+ (or (:streak world) 0) 1) 1)
+        scored  (assoc (update (assoc world :enemies enemies-after)
+                               :kills (fn [k] (php/+ k 1)))
+                       :streak       streak'
+                       :streak-secs  streak-window-seconds)]
     (push-blood-fx (assoc scored :fire-anim fire-anim-seconds) hit-pos)))
 
 (defn- on-shot-miss [world]

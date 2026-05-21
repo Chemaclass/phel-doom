@@ -94,6 +94,43 @@
         (recur (php/+ i 1))))
     t))
 
+(def fog-cutoff-idx
+  "Below this shade idx (far walls), swap the grey shade for a
+   cool-blue fog code so distant geometry hazes out instead of fading
+   to flat dark grey."
+  8)
+
+(def shade-table-fog
+  "Cool-blue fog codes from the 6×6×6 cube. Indexed 0..fog-cutoff-idx
+   only; used in place of the grey shade-table entries for distant
+   wall columns so the far end of a corridor reads as atmospheric
+   haze. One PHP-array lookup per affected column, identical to the
+   normal shade path."
+  (let [t (php/array)]
+    (loop [i 0]
+      (when (php/<= i fog-cutoff-idx)
+        ;; Cube formula: 16 + 36r + 6g + b, r=g≤b for cool tint.
+        (let [bri  (php// i (php/* 1.0 fog-cutoff-idx))
+              g    (php/intval (php/round (php/* bri 2.0)))
+              b    (php/min 5 (php/+ g 1))
+              code (php/+ 16 (php/* 36 g) (php/* 6 g) b)]
+          (php/aset t i (str "\e[48;5;" code "m ")))
+        (recur (php/+ i 1))))
+    t))
+
+(def shade-code-table-fog
+  "Code-only twin of shade-table-fog for edge-cell composition."
+  (let [t (php/array)]
+    (loop [i 0]
+      (when (php/<= i fog-cutoff-idx)
+        (let [bri  (php// i (php/* 1.0 fog-cutoff-idx))
+              g    (php/intval (php/round (php/* bri 2.0)))
+              b    (php/min 5 (php/+ g 1))
+              code (php/+ 16 (php/* 36 g) (php/* 6 g) b)]
+          (php/aset t i (php/strval code)))
+        (recur (php/+ i 1))))
+    t))
+
 (defn- fade-256
   "Darken a 256-color code by factor `t` in [0.0, 1.0]. Handles the
    6×6×6 cube (16-231) by scaling each RGB component, and the 24-step
@@ -543,15 +580,27 @@
                                (php/min 23
                                         (php/+ (php/intval (php/* (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 23))
                                                (if (php/=== (php/aget sides col) 0) 2 0))))]
-              (let [wcode (php/aget ctbl idx)
+              ;; Distance fog: far walls (idx <= fog-cutoff-idx) render
+              ;; via the cool-blue fog table instead of the grey shade
+              ;; table. Themed sky/floor levels keep the grey gradient
+              ;; (so the fog doesn't fight the theme); bloody i-frames
+              ;; likewise override. One branch per col.
+              (let [foggy? (and (not bloody?)
+                                (not themed-sky)
+                                (php/<= idx fog-cutoff-idx))
+                    wcode  (if foggy?
+                             (php/aget shade-code-table-fog idx)
+                             (php/aget ctbl idx))
+                    plain  (if foggy?
+                             (php/aget shade-table-fog idx)
+                             (php/aget stbl idx))
                     ;; Architectural panel texture: ~5% of wall cells
                     ;; (deterministic per (hx,hy) so adjacent screen
                     ;; columns of the same wall cell read as one
-                    ;; vertical panel, not stippling). Brick glyph
-                    ;; painted in a darker shade FG on the wall BG.
-                    hx    (php/aget hxs col)
-                    hy    (php/aget hys col)
-                    bhash (mod (php/+ (php/* hx 73856093) (php/* hy 19349663)) 100)]
+                    ;; vertical panel, not stippling).
+                    hx     (php/aget hxs col)
+                    hy     (php/aget hys col)
+                    bhash  (mod (php/+ (php/* hx 73856093) (php/* hy 19349663)) 100)]
                 (php/aset shades-normal col
                           (if (php/< bhash 5)
                             (let [dcode (php/aget ctbl (php/max 0 (php/- idx 5)))
@@ -559,7 +608,7 @@
                                               (php/=== (mod bhash 3) 1) "▦"
                                               :else                     "▥")]
                               (str "\e[48;5;" wcode ";38;5;" dcode "m" glyph))
-                            (php/aget stbl idx)))
+                            plain))
               ;; Upper-half block: FG paints top half (= sky), BG paints
               ;; bottom half (= wall). Visually anti-aliases the top.
                 (php/aset shades-top-edge col

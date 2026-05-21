@@ -167,68 +167,6 @@
          (map (fn [e] (tick-one e grid player-x player-y dt speed))
               enemies)))
 
-(def whisper-min-dist
-  "Lower edge of the proximity band that triggers ambient whispers.
-   Closer than this and the regular contact sfx take over."
-  5.0)
-(def whisper-max-dist
-  "Upper edge of the proximity band. Past this, enemies are too far
-   to hear at all."
-  25.0)
-(def whisper-cooldown-min
-  "Minimum seconds between whispers when something's in range. Same
-   floor + variable spread keeps the rhythm uneven so the player
-   never gets a metronome of growls."
-  4.0)
-(def whisper-cooldown-max
-  "Upper bound — see whisper-cooldown-min."
-  8.0)
-
-(defn- enemy-in-band?
-  "True when an alive enemy sits in the [whisper-min-dist,
-   whisper-max-dist] band around (px, py). One pass over enemies; bails
-   on the first match."
-  [enemies ^float px ^float py]
-  (let [min-d2 (php/* whisper-min-dist whisper-min-dist)
-        max-d2 (php/* whisper-max-dist whisper-max-dist)]
-    (loop [es enemies]
-      (cond
-        (empty? es) false
-        :else
-        (let [e (first es)]
-          (if (:alive e)
-            (let [dx (php/- (:x e) px)
-                  dy (php/- (:y e) py)
-                  d2 (php/+ (php/* dx dx) (php/* dy dy))]
-              (if (and (php/>= d2 min-d2) (php/<= d2 max-d2))
-                true
-                (recur (rest es))))
-            (recur (rest es))))))))
-
-(defn tick-ambient
-  "Drive the ambient whisper cadence: decrement :whisper-cooldown by
-   dt; when it hits 0 AND at least one alive enemy sits in the
-   proximity band, flip :whisper-tick? true for one frame and reset
-   the cooldown to a random whisper-cooldown-min..max. With no enemy
-   in range, idle on a short 1s re-check so the loop responds fast
-   when something walks into earshot."
-  {:export true}
-  [world ^float dt]
-  (let [cd  (or (:whisper-cooldown world) 0.0)
-        cd' (php/max 0.0 (php/- cd dt))]
-    (if (php/> cd' 0.0)
-      (assoc world :whisper-cooldown cd' :whisper-tick? false)
-      (let [player (:player world)
-            px     (:x player)
-            py     (:y player)]
-        (if (enemy-in-band? (:enemies world) px py)
-          (assoc world
-                 :whisper-cooldown (php/+ whisper-cooldown-min
-                                          (php/* (php/- whisper-cooldown-max whisper-cooldown-min)
-                                                 (php// (php/mt_rand) (php/mt_getrandmax))))
-                 :whisper-tick? true)
-          (assoc world :whisper-cooldown 1.0 :whisper-tick? false))))))
-
 (defn spawn-enemies
   "Place `n` enemies on random open cells of `grid`, well away from the
    player's spawn so the first frame isn't an ambush."

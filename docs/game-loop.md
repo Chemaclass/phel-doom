@@ -7,19 +7,23 @@ IO shell + pure per-frame transition. `src/commands/play.phel`.
 ```phel
 (defn- run-play [ctx]
   (init-input!)                    ; switch to alt screen + raw mode
-  (run-levels)                     ; play through L1..L5 with restart
-  (restore!)                       ; restore terminal
-  (clear-screen)
-  (cli/success ctx "Thanks for playing.")
-  (print-credits)
-  0)
+  (if (php/=== (show-start-menu!) :quit)
+    (do (restore!) (clear-screen) 0)
+    (do (clear-screen)
+        (run-levels)               ; play through L1..L5 with restart
+        (restore!)                 ; restore terminal
+        (clear-screen)
+        (cli/success ctx "Thanks for playing.")
+        (print-credits)
+        0)))
 ```
 
-Three lifecycle layers:
+Four lifecycle layers:
 
-1. **`run-play`**: installs terminal mode, plays one run, restores. Only function with cleanup responsibility.
-2. **`run-levels`**: loops levels carrying lives + kills + time. On death/victory calls `handle-end`, which writes the high-score file and shows the end screen. Restart loops to L1.
-3. **`game-loop world0`**: one level. Reads input, calls render, calls `tick-world`, decides per frame: continue / died / stepped on door / quit.
+1. **`run-play`**: installs terminal mode, shows the start menu, plays one run, restores. Only function with cleanup responsibility.
+2. **`show-start-menu!`**: polls for any keypress while drawing `render-start-menu` each frame (so terminal resizes redraw cleanly). `q` aborts before the run begins.
+3. **`run-levels`**: loops levels carrying lives + kills + time. On death/victory calls `handle-end`, which writes the high-score file and shows the end screen. `r`/`R` restarts on the level you died on; victory restarts at L1.
+4. **`game-loop world0`**: one level. Reads input, calls render, calls `tick-world`, decides per frame: continue / died / stepped on door / quit.
 
 ## game-loop
 

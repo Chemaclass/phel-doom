@@ -13,6 +13,7 @@
   (:require phel-doom.modules.core.level    :refer [build-world num-levels])
   (:require phel-doom.modules.io.scores   :refer [update-scores!])
   (:require phel-doom.modules.io.render   :refer [render! clear-screen
+                                                  render-start-menu
                                                   render-death-screen render-victory-screen])
   (:require phel-doom.modules.io.input    :refer [init-input! restore! drain-keys]))
 
@@ -386,14 +387,34 @@
   (println "  written in \e[1mPhel Lang\e[0m  https://phel-lang.org/")
   (println))
 
+(defn- show-start-menu!
+  "Block until the user presses any key on the start screen. Re-draws
+   each frame so terminal resizes don't leave a stale half-painted box."
+  []
+  (loop [dims [0 0]]
+    (let [[rows cols] (term-size)]
+      (redraw-if-resized dims rows cols)
+      (render-start-menu cols rows)
+      (php/usleep 16000)
+      (let [keys (drain-keys)]
+        (if (php/=== keys "")
+          (recur [rows cols])
+          (when (str/contains? keys "q")
+            :quit))))))
+
 (defn- run-play [ctx]
   (init-input!)
-  (run-levels)
-  (restore!)
-  (clear-screen)
-  (cli/success ctx "Thanks for playing.")
-  (print-credits)
-  0)
+  (if (php/=== (show-start-menu!) :quit)
+    (do (restore!)
+        (clear-screen)
+        0)
+    (do (clear-screen)
+        (run-levels)
+        (restore!)
+        (clear-screen)
+        (cli/success ctx "Thanks for playing.")
+        (print-credits)
+        0)))
 
 (def play-command
   {:name "play"

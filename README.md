@@ -46,7 +46,7 @@ make play
 | `p`            | Pause                        |
 | `q`            | Quit                         |
 
-Walk into a door to advance. Walk over a heart to refill a life.
+Walk into a door to advance. Walk over a heart to refill a life. The first thing you see is a start menu listing the controls + how-to-play; press any key to dive in (`q` exits without playing).
 
 ### Best input feel
 

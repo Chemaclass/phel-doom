@@ -172,6 +172,23 @@
         (recur (php/+ r 1))))
     arr))
 
+(defn- build-themed-gradient
+  "Per-row PHP array of pre-baked BG paint cells for a level-themed
+   sky or floor. Brightest = base-code at the screen edge, fades
+   toward black at the horizon via fade-256. One pass over vh rows
+   per frame; vh is small (~30-40) so the cost is negligible."
+  [^int vh ^int base-code]
+  (let [arr     (php/array)
+        horizon (php/intdiv vh 2)
+        max-d   (php/max 1 horizon)]
+    (loop [r 0]
+      (when (php/< r vh)
+        (let [t    (php// (php/abs (php/- r horizon)) max-d)
+              code (fade-256 base-code (php/- 1.0 t))]
+          (php/aset arr r (str "\e[48;5;" code "m ")))
+        (recur (php/+ r 1))))
+    arr))
+
 ;; Per-column shading lives inline in frame->string's hot loop:
 ;; base distance index, +1 for vertical wall faces (side-shading),
 ;; ±1 per-cell hash, then resolve TWO shade strings per column
@@ -400,11 +417,17 @@
         bloody?                         (php/> (or (get stats :iframes) 0.0) 0.0)
         stbl                            (if bloody? shade-table-blood shade-table)
         ;; Per-row sky + floor strings shaded by distance-to-horizon.
-        ;; Same gradient for both — atmospheric haze blends ceiling
-        ;; and floor at infinity. Built once per frame (vh might
-        ;; change on terminal resize).
-        sky-gradient                    (build-horizon-gradient vh stbl)
-        floor-gradient                  sky-gradient
+        ;; Themed sky/floor codes from the level config override the
+        ;; grey gradient when present (and we're not in a bloody i-frame
+        ;; wash). Built once per frame, cheap (~vh iterations).
+        themed-sky                      (and (not bloody?) (get stats :sky-code))
+        themed-floor                    (and (not bloody?) (get stats :floor-code))
+        sky-gradient                    (if themed-sky
+                                          (build-themed-gradient vh themed-sky)
+                                          (build-horizon-gradient vh stbl))
+        floor-gradient                  (if themed-floor
+                                          (build-themed-gradient vh themed-floor)
+                                          sky-gradient)
         ;; Per-enemy distance-fade is composed in the projection loop
         ;; below and assigned to the per-column arrays. These are the
         ;; FALLBACK shades used when no level config provides codes
@@ -432,8 +455,12 @@
         ;; Half-block edge cells need the sky/floor colour CODE for
         ;; the current palette so the composer can write
         ;; "\e[48;5;WALL;38;5;SKYm▀" and let ▀'s upper half show sky.
-        sky-c                           (if bloody? sky-blood-code sky-code)
-        floor-c                         (if bloody? floor-blood-code floor-code)
+        sky-c                           (cond bloody?    sky-blood-code
+                                              themed-sky (php/strval themed-sky)
+                                              :else      sky-code)
+        floor-c                         (cond bloody?      floor-blood-code
+                                              themed-floor (php/strval themed-floor)
+                                              :else        floor-code)
         ctbl                            (if bloody? shade-code-table-blood shade-code-table)
         ;; Subtle pulse on interactive pickups so the eye picks them
         ;; out of the wall colours: doors and hearts cycle between

@@ -621,6 +621,28 @@
                      "\e[0m"))))
   parts)
 
+(defn- paint-blood-drops
+  "Ambient ceiling-drip overlay: paint a short trail of fading red
+   glyphs at every active drop position. Columns are normalised
+   (0..1) in state — multiplied by vw here. A 3-row tail fades from
+   bright red into dark so each drop reads as falling rather than
+   teleporting frame to frame."
+  [parts stats vw vh]
+  (doseq [d (or (get stats :blood-drops) [])]
+         (let [col (php/+ 1 (php/intval (php/* (:col d) (php/max 1 (php/- vw 2)))))
+               row (php/intval (:row d))]
+           (when (and (php/>= col 1) (php/<= col vw))
+             (loop [k 0]
+               (when (php/< k 3)
+                 (let [r    (php/- row k)
+                       code (cond (php/=== k 0) 196
+                                  (php/=== k 1) 124
+                                  :else         52)]
+                   (when (and (php/>= r 1) (php/<= r vh))
+                     (buf-push parts (str "\e[" r ";" col "H\e[38;5;" code ";1m▌\e[0m"))))
+                 (recur (php/+ k 1)))))))
+  parts)
+
 (defn- paint-rear-warning
   "Tiny blinking '‹ behind ›' label below the compass when at least
    one alive enemy is in the rear arc + within audible range. Dim
@@ -1322,6 +1344,7 @@
             parts       (paint-wall-lights  parts vw vh hits hxs hys tops)
             parts       (paint-crosshair    parts stats vw vh center-bg)
             parts       (paint-intro-splash parts stats vw vh)
+            parts       (paint-blood-drops parts stats vw vh)
             parts       (paint-flicker parts stats vw vh)
             parts       (paint-heartbeat-vignette parts stats vw vh)
             parts       (paint-hit-vignette parts stats bloody? vw vh)

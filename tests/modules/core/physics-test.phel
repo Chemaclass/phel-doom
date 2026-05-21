@@ -1,7 +1,7 @@
 (ns phel-doom-tests.modules.core.physics-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.modules.core.state   :refer [new-world new-player])
-  (:require phel-doom.modules.core.physics :refer [try-move apply-physics tick-heartbeat tick-flicker]))
+  (:require phel-doom.modules.core.physics :refer [try-move apply-physics tick-heartbeat tick-flicker tick-blood-drops]))
 
 ;; Tiny 3x3 grid: walls around the perimeter, open centre.
 (def open-world
@@ -191,3 +191,36 @@
   (let [w-low (tick-heartbeat (assoc empty-world :lives 1 :heartbeat-phase 0.0) 0.1)
         w-mid (tick-heartbeat (assoc empty-world :lives 2 :heartbeat-phase 0.0) 0.1)]
     (is (> (:heartbeat-phase w-low) (:heartbeat-phase w-mid)))))
+
+;; ---------------------------------------------------------------------
+;; tick-blood-drops: each existing drop falls + ages; expired ones get
+;; pruned. Spawn is randomised so we test the deterministic parts.
+;; ---------------------------------------------------------------------
+
+(deftest test-tick-blood-drops-advances-row-and-ages
+  (let [w  (assoc empty-world :blood-drops [{:col 0.3 :row 5.0 :ttl 1.0}])
+        w' (tick-blood-drops w 0.1)
+        d  (first (:blood-drops w'))]
+    ;; Same col, row increased, ttl decreased.
+    (is (= 0.3 (:col d)))
+    (is (> (:row d) 5.0))
+    (is (< (:ttl d) 1.0))))
+
+(deftest test-tick-blood-drops-drops-expired
+  ;; ttl below dt -> drop should be pruned this frame.
+  (let [w  (assoc empty-world :blood-drops [{:col 0.3 :row 5.0 :ttl 0.05}])
+        w' (tick-blood-drops w 0.1)]
+    ;; The original drop is gone. Spawn is probabilistic so there
+    ;; might be a fresh one, but it'll have row 1.0 — never the old
+    ;; row 5.0.
+    (is (every? (fn [d] (not (= 5.0 (:row d))))
+                (:blood-drops w')))))
+
+(deftest test-tick-blood-drops-keeps-cols-normalised
+  ;; Cols stay 0..1 across ticks; render layer maps to vw.
+  (let [w  (assoc empty-world :blood-drops
+                  [{:col 0.0 :row 2.0 :ttl 1.0}
+                   {:col 0.99 :row 2.0 :ttl 1.0}])
+        w' (tick-blood-drops w 0.1)]
+    (is (every? (fn [d] (and (php/>= (:col d) 0.0) (php/<= (:col d) 1.0)))
+                (:blood-drops w')))))

@@ -110,6 +110,53 @@
                                       (lateral-delta moves dt))]
         (decay-move-counters walked)))))
 
+(def blood-drop-spawn-rate
+  "Expected new drops per second (Bernoulli per-frame using dt)."
+  0.35)
+
+(def blood-drop-fall-speed
+  "Rows the drop falls per second."
+  18.0)
+
+(def blood-drop-ttl
+  "Seconds a drop lives before it fades out."
+  2.0)
+
+(defn- advance-blood-drops
+  "Walk every active drop one frame forward (row += speed*dt, ttl -=
+   dt) and drop the ones whose ttl ran out. Returns a fresh vector."
+  [drops ^float dt]
+  (apply vector
+         (filter (fn [d] (php/> (:ttl d) 0.0))
+                 (map (fn [d]
+                        {:col (:col d)
+                         :row (php/+ (:row d) (php/* blood-drop-fall-speed dt))
+                         :ttl (php/- (:ttl d) dt)})
+                      (or drops [])))))
+
+(defn- maybe-spawn-drop
+  "With probability spawn-rate*dt, append a fresh drop at row 1 with a
+   uniformly-random normalised column in [0, 1). Otherwise unchanged."
+  [drops ^float dt]
+  (if (php/< (php// (php/mt_rand) (php/mt_getrandmax))
+             (php/* blood-drop-spawn-rate dt))
+    (conj drops
+          {:col (php// (php/mt_rand) (php/mt_getrandmax))
+           :row 1.0
+           :ttl blood-drop-ttl})
+    drops))
+
+(defn tick-blood-drops
+  "Ambient ceiling-drip effect: advance existing drops and roll a
+   per-frame chance to spawn a new one. Columns are stored normalised
+   (0..1) so the render layer can scale to whatever vw is this frame."
+  {:export true}
+  [world ^float dt]
+  (let [drops    (or (:blood-drops world) [])
+        advanced (advance-blood-drops drops dt)
+        spawned  (maybe-spawn-drop advanced dt)]
+    (assoc world :blood-drops spawned)))
+
 (defn- heartbeat-interval
   "Seconds between thumps. Faster when closer to death. Returns nil
    when no heartbeat should play (full lives or dead)."

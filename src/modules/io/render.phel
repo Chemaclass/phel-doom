@@ -621,6 +621,25 @@
                      "\e[0m"))))
   parts)
 
+(defn- paint-door-face
+  "Disembodied red eye blinks at the upper third of every visible
+   door column during the door-face active window. Re-uses the
+   hits/tops/bots buffers from compute-wall-shades so we don't have
+   to re-cast rays."
+  [parts stats vw vh hits tops bots]
+  (when (php/> (or (get stats :door-face-active-secs) 0.0) 0.0)
+    (let [glyph "\e[5;48;5;232;38;5;196;1mʘ\e[0m"]
+      (loop [col 0]
+        (when (php/< col vw)
+          (when (php/=== 2 (buf-get hits col))
+            (let [t (buf-get tops col)
+                  b (buf-get bots col)
+                  r (php/+ t (php/intdiv (php/max 1 (php/- b t)) 3))]
+              (when (and (php/>= r 1) (php/<= r vh))
+                (buf-push parts (str "\e[" r ";" (php/+ col 1) "H" glyph)))))
+          (recur (php/+ col 1))))))
+  parts)
+
 (defn- paint-blood-drops
   "Ambient ceiling-drip overlay: paint a short trail of fading red
    glyphs at every active drop position. Columns are normalised
@@ -1342,6 +1361,7 @@
                                        (php/max 0 (php/- (php/mb_strlen center-cell) 1)))
             parts       (paint-face-overlay parts world stats vw vh dists eface)
             parts       (paint-wall-lights  parts vw vh hits hxs hys tops)
+            parts       (paint-door-face    parts stats vw vh hits tops bots)
             parts       (paint-crosshair    parts stats vw vh center-bg)
             parts       (paint-intro-splash parts stats vw vh)
             parts       (paint-blood-drops parts stats vw vh)

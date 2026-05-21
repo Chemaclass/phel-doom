@@ -1,7 +1,7 @@
 (ns phel-doom-tests.modules.core.physics-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.modules.core.state   :refer [new-world new-player])
-  (:require phel-doom.modules.core.physics :refer [try-move apply-physics tick-heartbeat tick-flicker tick-blood-drops]))
+  (:require phel-doom.modules.core.physics :refer [try-move apply-physics tick-heartbeat tick-flicker tick-blood-drops tick-door-face]))
 
 ;; Tiny 3x3 grid: walls around the perimeter, open centre.
 (def open-world
@@ -193,3 +193,28 @@
         w' (tick-blood-drops w 0.1)]
     (is (every? (fn [d] (and (php/>= (:col d) 0.0) (php/<= (:col d) 1.0)))
                 (:blood-drops w')))))
+
+;; ---------------------------------------------------------------------
+;; tick-door-face: cooldown counts down; once it hits zero a fresh
+;; active window opens and the cooldown resamples for the next gap.
+;; ---------------------------------------------------------------------
+
+(deftest test-tick-door-face-decrements-cooldown-when-idle
+  (let [w  (assoc empty-world :door-face-cooldown 10.0 :door-face-active-secs 0.0)
+        w' (tick-door-face w 0.5)]
+    (is (= 9.5 (:door-face-cooldown w')))
+    (is (= 0.0 (:door-face-active-secs w')))))
+
+(deftest test-tick-door-face-fires-when-cooldown-hits-zero
+  (let [w  (assoc empty-world :door-face-cooldown 0.0 :door-face-active-secs 0.0)
+        w' (tick-door-face w 0.1)]
+    (is (php/> (:door-face-active-secs w') 0.0))
+    (is (php/>= (:door-face-cooldown w') 8.0))
+    (is (php/<= (:door-face-cooldown w') 18.0))))
+
+(deftest test-tick-door-face-decrements-active-while-on
+  (let [w  (assoc empty-world :door-face-cooldown 10.0 :door-face-active-secs 0.5)
+        w' (tick-door-face w 0.1)]
+    (is (< (php/abs (- (:door-face-active-secs w') 0.4)) 0.0001))
+    ;; Cooldown frozen while active.
+    (is (= 10.0 (:door-face-cooldown w')))))

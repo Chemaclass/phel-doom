@@ -449,6 +449,217 @@
    :map-col (php/max 1 (+ (- cols mw) 1))
    :map-row 1})
 
+(defn- pulse
+  "Wall-clock sin-wave beat at `freq` rad/s. Returns true for half
+   the cycle, false for the other half. Used to throb pickups, door
+   glyph, torch lights, etc. without per-element state tracking."
+  [^float freq]
+  (php/> (php/sin (php/* (php/microtime true) freq)) 0.0))
+
+;; =====================================================================
+;; § Overlay paint helpers
+;;
+;; Each fn appends one logical UI overlay to the parts vector via
+;; absolute cursor positioning. Frame->string composes the base raycast
+;; frame then calls these in order. Keeping them as defn-s makes
+;; frame->string scannable + each overlay independently testable.
+;; =====================================================================
+
+(defn- paint-face-overlay!
+  "At each visible alive enemy's centre column paint the level's
+   :enemy-face glyph at the upper-third of the sprite. Attack
+   telegraph: within aggro-distance the face swaps to :face-attack."
+  [parts world stats vw vh dists eface]
+  (when eface
+    (let [face-attack (get stats :enemy-face-attack)]
+      (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
+             (let [col   (:col proj)
+                   d     (:dist proj)
+                   glyph (if (and face-attack (php/< d aggro-distance))
+                           face-attack
+                           eface)]
+               (when (and (php/>= col 0)
+                          (php/< col vw)
+                          (php/< d (php/aget dists col)))
+                 (let [h        (php/min vh (php/intval (php// proj-dist
+                                                               (php/* (php/max 0.5 d) char-aspect))))
+                       face-row (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 6))]
+                   (when (and (php/>= face-row 1) (php/<= face-row vh))
+                     (php/array_push parts
+                                     (str "\e[" face-row ";"
+                                          (php/+ col 1) "H" glyph))))))))))
+
+(defn- paint-wall-lights!
+  "~3% of wall cells get a flickering torch glyph painted near the
+   wall top. Deduped per (hx, hy) so adjacent screen cols of the same
+   wall cell share one torch."
+  [parts vw vh hits hxs hys tops]
+  (let [seen (php/array)
+        tcol (if (pulse 7.0) "\e[1;38;5;220m" "\e[1;38;5;208m")]
+    (loop [col 0]
+      (when (php/< col vw)
+        (when (php/=== 1 (php/aget hits col))
+          (let [hx   (php/aget hxs col)
+                hy   (php/aget hys col)
+                k    (str hx "-" hy)
+                hash (mod (php/+ (php/* hx 73856093) (php/* hy 19349663)) 100)]
+            (when (and (php/< hash 3) (php/=== (php/aget seen k) nil))
+              (php/aset seen k true)
+              (let [r (php/max 1 (php/+ (php/aget tops col) 1))]
+                (when (php/<= r vh)
+                  (php/array_push parts
+                                  (str "\e[" r ";" (php/+ col 1) "H"
+                                       tcol "✦\e[0m")))))))
+        (recur (php/+ col 1))))))
+
+(defn- paint-crosshair!
+  "Centre `+` glyph. Jumps one row up + brightens while :fire-anim > 0
+   so the recoil feels like a kick."
+  [parts stats vw vh]
+  (let [firing? (php/> (or (get stats :fire-anim) 0.0) 0.0)
+        ch-row  (php/+ (php/intdiv vh 2) (if firing? 0 1))
+        ch-col  (php/+ (php/intdiv vw 2) 1)
+        ch-att  (if firing? "\e[97;1m" "\e[97;2m")]
+    (php/array_push parts
+                    (str "\e[" ch-row ";" ch-col "H" ch-att "+\e[0m"))))
+
+(defn- paint-intro-splash!
+  "Centred banner showing 'LEVEL N · NAME' while :intro-secs > 0."
+  [parts stats vw vh]
+  (when (php/> (or (get stats :intro-secs) 0.0) 0.0)
+    (let [title (str "LEVEL " (or (get stats :level) 1)
+                     " · " (php/strtoupper (or (get stats :level-name) "")))
+          bw    (php/+ (php/mb_strlen title) 8)
+          bar   (php/str_repeat "─" bw)
+          pad   (php/str_repeat " " 4)
+          row0  (php/max 1 (php/- (php/intdiv vh 2) 2))
+          col0  (php/max 1 (php/- (php/+ (php/intdiv vw 2) 1)
+                                  (php/intdiv (php/+ bw 2) 2)))]
+      (php/array_push parts
+                      (str "\e[" row0 ";" col0 "H\e[40;93;1m┌" bar "┐"
+                           "\e[" (php/+ row0 1) ";" col0 "H\e[40;93;1m│" pad title pad "│"
+                           "\e[" (php/+ row0 2) ";" col0 "H\e[40;93;1m└" bar "┘"
+                           "\e[0m")))))
+
+(defn- paint-hit-vignette!
+  "2-col red bar down the screen edge on the side the attacker came
+   from. Painted while iframes active AND :hurt-side is set."
+  [parts stats bloody? vw vh]
+  (when (and bloody? (get stats :hurt-side))
+    (let [side    (get stats :hurt-side)
+          edge-bg "\e[48;5;160m  "
+          edge-c0 (if (php/=== side :left) 1 (php/max 1 (php/- vw 1)))]
+      (loop [r 1]
+        (when (php/<= r vh)
+          (php/array_push parts (str "\e[" r ";" edge-c0 "H" edge-bg "\e[0m"))
+          (recur (php/+ r 1)))))))
+
+(defn- paint-heat-bar!
+  "10-cell heat bar under the pistol sprite. Replaced by blinking
+   'JAMMED' when :jam-secs > 0."
+  [parts stats vw vh]
+  (let [heat (or (get stats :heat) 0.0)
+        jam  (or (get stats :jam-secs) 0.0)
+        cc   (php/+ (php/intdiv vw 2) 1)
+        row  (php/- vh 6)]
+    (when (or (php/> heat 0.0) (php/> jam 0.0))
+      (cond
+        (php/> jam 0.0)
+        (php/array_push parts
+                        (str "\e[" row ";" (php/- cc 3) "H\e[5;91;1mJAMMED\e[0m"))
+        :else
+        (let [filled (php/intval (php/* heat 10.0))
+              empty  (php/- 10 filled)
+              colour (cond (php/>= heat 0.85) "\e[41m"
+                           (php/>= heat 0.6)  "\e[43m"
+                           :else              "\e[42m")]
+          (php/array_push parts
+                          (str "\e[" row ";" (php/- cc 5) "H"
+                               colour (php/str_repeat " " filled)
+                               "\e[100m" (php/str_repeat " " empty)
+                               "\e[0m")))))))
+
+(defn- paint-kill-streak!
+  "'x<N> streak' under the minimap while the streak window is live.
+   Yellow for 2-4, red for 5+."
+  [parts stats map-col map-row visible-mh]
+  (let [streak (or (get stats :streak) 0)]
+    (when (php/>= streak 2)
+      (let [colour (if (php/>= streak 5) "\e[91;1m" "\e[93;1m")
+            label  (str colour "x" streak " streak\e[0m")
+            col0   (php/max 1 (php/- (php/+ map-col (php/strlen "x99 streak"))
+                                     (php/strlen "x99 streak")))]
+        (php/array_push parts
+                        (str "\e[" (php/+ map-row visible-mh) ";"
+                             col0 "H" label))))))
+
+(defn- paint-compass!
+  "4-letter cardinal strip at top-centre; the bearing nearest to the
+   player's facing is highlighted yellow."
+  [parts world vw]
+  (let [pang   (or (:angle (:player world)) 0.0)
+        norm   (php/fmod (php/+ pang (php/* 4.0 php/M_PI))
+                         (php/* 2.0 php/M_PI))
+        sector (mod (php/intval (php/+ 0.5 (php// norm (php// php/M_PI 2.0))))
+                    4)
+        labels ["E" "S" "W" "N"]
+        cells  (loop [i 0 acc ""]
+                 (if (php/>= i 4)
+                   acc
+                   (recur (php/+ i 1)
+                          (str acc
+                               (if (php/=== i sector)
+                                 (str "\e[1;93m" (get labels i) "\e[0m")
+                                 (str "\e[2;97m" (get labels i) "\e[0m"))
+                               (if (php/< i 3) "  " "")))))]
+    (php/array_push parts
+                    (str "\e[1;" (php/max 1 (php/- (php/intdiv vw 2) 3))
+                         "H" cells))))
+
+(defn- paint-hearts-hud!
+  "Top-left lives + armor count. Blink-attribute while bloody."
+  [parts stats bloody?]
+  (let [l     (or (get stats :lives) 0)
+        cap   (or (get stats :max-lives) 5)
+        armor (or (get stats :armor) 0)
+        blink (if bloody? "\e[5;1m" "\e[1m")]
+    (php/array_push parts
+                    (str "\e[1;1H" blink "\e[91m"
+                         (php/str_repeat "♥ " l)
+                         "\e[90m"
+                         (php/str_repeat "♡ " (php/max 0 (php/- cap l)))
+                         (if (php/> armor 0)
+                           (str "\e[94;1m" (php/str_repeat "◆ " armor))
+                           "")
+                         "\e[0m"))))
+
+(defn- paint-pistol-hud!
+  "FPS-style pistol sprite centre-bottom + muzzle flash when firing."
+  [parts stats vw vh]
+  (when (php/>= vh 6)
+    (let [cc        (php/+ (php/intdiv vw 2) 1)
+          muzzle    "\e[1;38;5;252m"
+          slide     "\e[1;38;5;245m"
+          slide-dim "\e[1;38;5;240m"
+          frame     "\e[1;38;5;236m"
+          grip-hi   "\e[1;38;5;130m"
+          grip-lo   "\e[1;38;5;94m"]
+      (php/array_push parts
+                      (str
+                       "\e[" (php/- vh 5) ";" (php/+ cc 1) "H" muzzle "▄▄"
+                       "\e[" (php/- vh 4) ";" cc           "H" slide "▐██▌"
+                       "\e[" (php/- vh 3) ";" (php/- cc 1) "H" slide "▐████▌"
+                       "\e[" (php/- vh 2) ";" (php/- cc 2) "H" slide-dim "▐██████▌"
+                       "\e[" (php/- vh 1) ";" (php/- cc 2) "H" frame "▐█" grip-hi "▓▓▓▓" frame "█▌"
+                       "\e[" vh           ";" (php/- cc 1) "H" grip-lo "▐▓▓▓▓▌"
+                       "\e[0m"))
+      (when (php/> (or (get stats :fire-anim) 0.0) 0.0)
+        (php/array_push parts
+                        (str
+                         "\e[" (php/- vh 7) ";" cc "H\e[1;93m  ✦  "
+                         "\e[" (php/- vh 6) ";" cc "H\e[1;93m *★* "
+                         "\e[0m"))))))
+
 (defn frame->string
   "Render the world sized to cols x rows. Walls project at a constant
    scale (proj-dist from engine) with a 2:1 character-aspect correction,
@@ -540,16 +751,15 @@
         ;; two shades on a sin wave. Wall clock so the rhythm stays
         ;; the same regardless of fps. Frequencies differ (4 vs 6
         ;; rad/s) so the two pulses don't lock together.
-        door-shade-now                     (if (php/> (php/sin (php/* (php/microtime true) 4.0)) 0.0)
-                                             "\e[48;5;130;38;5;226m▌" door-shade)
-        door-code-now                      (if (php/> (php/sin (php/* (php/microtime true) 4.0)) 0.0)
-                                             "130" door-code)
+        door-bright?                       (pulse 4.0)
+        door-shade-now                     (if door-bright? "\e[48;5;130;38;5;226m▌" door-shade)
+        door-code-now                      (if door-bright? "130" door-code)
         ;; Pickup pulse: systole/diastole BG + matching centre glyph
         ;; both swap on the same beat so the icon throbs in tempo.
-        heart-bright?                      (php/> (php/sin (php/* (php/microtime true) 6.0)) 0.0)
+        heart-bright?                      (pulse 6.0)
         heart-shade-now                    (if heart-bright? heart-shade-bright heart-shade)
         heart-glyph-now                    (if heart-bright? heart-glyph-bright heart-glyph)
-        armor-bright?                      (php/> (php/sin (php/* (php/microtime true) 5.0)) 0.0)
+        armor-bright?                      (pulse 5.0)
         armor-shade-now                    (if armor-bright? armor-shade-bright armor-shade)
         armor-glyph-now                    (if armor-bright? armor-glyph-bright armor-glyph)
         tops                               (php/array)
@@ -588,9 +798,7 @@
         ;; Pulse the minimap door glyph on the same beat as the 3D
         ;; door shade so the exit catches the eye both in first-person
         ;; and on the overhead map.
-        mini-door                          (if (php/> (php/sin (php/* (php/microtime true) 4.0)) 0.0)
-                                             minimap-door-pulse
-                                             minimap-door)
+        mini-door                          (if door-bright? minimap-door-pulse minimap-door)
         mrows                              (if (:show-map world)
                                              (minimap-rows world mini-door)
                                              (php/array))
@@ -854,221 +1062,16 @@
       (php/array_push parts (hud-line world stats))
       (dotimes [i visible-mh]
                (php/array_push parts (str "\e[" (php/+ map-row i) ";" map-col "H" (php/aget mrows i))))
-      ;; Monster face overlay: at each visible enemy's centre column,
-      ;; paint the level's :enemy-face glyph at the upper third of the
-      ;; sprite (the head zone). One glyph per enemy → recognisable
-      ;; silhouette + face per type without smearing the same char
-      ;; across the whole head width.
-      ;;
-      ;; Occlusion: only emit the glyph when the enemy at this column
-      ;; is closer than the wall at that column. Same check the main
-      ;; sprite paint uses; without it the face would x-ray through
-      ;; walls and reveal enemies anywhere in the room.
-      (when eface
-        (let [face-attack (get stats :enemy-face-attack)]
-          (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
-                 (let [col   (:col proj)
-                       d     (:dist proj)
-                       ;; Attack telegraph: when an enemy is inside
-                       ;; aggro-distance the face swaps to the level's
-                       ;; :face-attack glyph (blink-attributed). Gives
-                       ;; the player a beat of warning before contact
-                       ;; damage lands.
-                       glyph (if (and face-attack (php/< d aggro-distance))
-                               face-attack
-                               eface)]
-                   (when (and (php/>= col 0)
-                              (php/< col vw)
-                              (php/< d (php/aget dists col)))
-                     (let [h (php/min vh (php/intval (php// proj-dist
-                                                            (php/* (php/max 0.5 d) char-aspect))))]
-                       (let [face-row (php/+ (php/intdiv (php/- vh h) 2)
-                                             (php/intdiv h 6))]
-                         (when (and (php/>= face-row 1) (php/<= face-row vh))
-                           (php/array_push parts
-                                           (str "\e[" face-row ";"
-                                                (php/+ col 1) "H"
-                                                glyph))))))))))
-      ;; Wall lights: ~3% of wall cells (deterministic per (hx,hy))
-      ;; get a flickering torch glyph painted near the wall top. One
-      ;; glyph per cell (deduped via a `seen` set keyed by hx-hy) so
-      ;; adjacent screen cols of the same wall cell share one torch
-      ;; instead of strobing the whole face. Absolute positioning, so
-      ;; no cost in the inner row loop.
-      (let [seen   (php/array)
-            flick? (php/> (php/sin (php/* (php/microtime true) 7.0)) 0.0)
-            tcol   (if flick? "\e[1;38;5;220m" "\e[1;38;5;208m")]
-        (loop [col 0]
-          (when (php/< col vw)
-            (when (php/=== 1 (php/aget hits col))
-              (let [hx   (php/aget hxs col)
-                    hy   (php/aget hys col)
-                    k    (str hx "-" hy)
-                    hash (mod (php/+ (php/* hx 73856093) (php/* hy 19349663)) 100)]
-                (when (and (php/< hash 3) (php/=== (php/aget seen k) nil))
-                  (php/aset seen k true)
-                  (let [r (php/max 1 (php/+ (php/aget tops col) 1))]
-                    (when (php/<= r vh)
-                      (php/array_push parts
-                                      (str "\e[" r ";" (php/+ col 1) "H"
-                                           tcol "✦\e[0m")))))))
-            (recur (php/+ col 1)))))
-      ;; Crosshair: dim white + at exact viewport centre so the player
-      ;; always knows where a shot would land. Drawn AFTER walls/sprites
-      ;; via absolute cursor positioning so wall colours don't bleed
-      ;; into the glyph cell. Recoil: while :fire-anim > 0 the glyph
-      ;; jumps one row up and brightens — settles back as the timer
-      ;; decays in combat.phel.
-      (let [firing? (php/> (or (get stats :fire-anim) 0.0) 0.0)
-            ch-row  (php/+ (php/intdiv vh 2) (if firing? 0 1))
-            ch-col  (php/+ (php/intdiv vw 2) 1)
-            ch-att  (if firing? "\e[97;1m" "\e[97;2m")]
-        (php/array_push parts
-                        (str "\e[" ch-row ";" ch-col "H" ch-att "+\e[0m")))
-      ;; Level intro splash: while :intro-secs > 0 (set fresh on every
-      ;; build-world), overlay a centred banner with the level number
-      ;; + monster name.
-      (when (php/> (or (get stats :intro-secs) 0.0) 0.0)
-        (let [title (str "LEVEL " (or (get stats :level) 1)
-                         " · " (php/strtoupper (or (get stats :level-name) "")))]
-          (let [bw  (php/+ (php/mb_strlen title) 8)
-                bar (php/str_repeat "─" bw)
-                pad (php/str_repeat " " 4)]
-            (let [row0 (php/max 1 (php/- (php/intdiv vh 2) 2))
-                  col0 (php/max 1 (php/- (php/+ (php/intdiv vw 2) 1)
-                                         (php/intdiv (php/+ bw 2) 2)))]
-              (php/array_push parts
-                              (str "\e[" row0 ";" col0 "H\e[40;93;1m┌" bar "┐"
-                                   "\e[" (php/+ row0 1) ";" col0 "H\e[40;93;1m│" pad title pad "│"
-                                   "\e[" (php/+ row0 2) ";" col0 "H\e[40;93;1m└" bar "┘"
-                                   "\e[0m"))))))
-      ;; Directional hit vignette: while i-frames > 0, paint a 2-col
-      ;; red bar down the screen edge on the side the attacker came
-      ;; from. Tells the player WHERE the hit landed (the red wash
-      ;; alone only says THAT it landed). Absolute positioning, so no
-      ;; cost in the per-cell row loop.
-      (when (and bloody? (get stats :hurt-side))
-        (let [side    (get stats :hurt-side)
-              edge-bg "\e[48;5;160m  "
-              edge-c0 (if (php/=== side :left) 1 (php/max 1 (php/- vw 1)))]
-          (loop [r 1]
-            (when (php/<= r vh)
-              (php/array_push parts (str "\e[" r ";" edge-c0 "H" edge-bg "\e[0m"))
-              (recur (php/+ r 1))))))
-      ;; Pistol heat bar + JAMMED indicator. Painted under the pistol
-      ;; sprite centre so the player reads it without looking away from
-      ;; the crosshair. Bar is 10 cells wide, fills proportional to
-      ;; :heat in [0, 1]; jam state replaces the bar with red 'JAMMED'.
-      (let [heat (or (get stats :heat) 0.0)
-            jam  (or (get stats :jam-secs) 0.0)
-            cc   (php/+ (php/intdiv vw 2) 1)
-            row  (php/- vh 6)]
-        (when (or (php/> heat 0.0) (php/> jam 0.0))
-          (cond
-            (php/> jam 0.0)
-            (php/array_push parts
-                            (str "\e[" row ";" (php/- cc 3) "H\e[5;91;1mJAMMED\e[0m"))
-            :else
-            (let [filled (php/intval (php/* heat 10.0))
-                  empty  (php/- 10 filled)
-                  colour (cond (php/>= heat 0.85) "\e[41m"
-                               (php/>= heat 0.6)  "\e[43m"
-                               :else              "\e[42m")]
-              (php/array_push parts
-                              (str "\e[" row ";" (php/- cc 5) "H"
-                                   colour (php/str_repeat " " filled)
-                                   "\e[100m" (php/str_repeat " " empty)
-                                   "\e[0m"))))))
-      ;; Kill-streak counter: shown top-right under the minimap while
-      ;; the streak window is active. Bright yellow for 2+, bolder
-      ;; (red) for 5+. Streak resets to 0 when the timer expires in
-      ;; combat/decay-timers, so this whole block is skipped between
-      ;; kill chains.
-      (let [streak (or (get stats :streak) 0)]
-        (when (php/>= streak 2)
-          (let [colour (if (php/>= streak 5) "\e[91;1m" "\e[93;1m")
-                label  (str colour "x" streak " streak\e[0m")
-                col0   (php/max 1 (php/- (php/+ map-col (php/strlen "x99 streak"))
-                                         (php/strlen "x99 streak")))]
-            (php/array_push parts
-                            (str "\e[" (php/+ map-row visible-mh) ";"
-                                 col0 "H" label)))))
-      ;; Compass strip: tiny 4-letter cardinal row at top-centre with
-      ;; the bearing closest to the player's facing highlighted. atan2
-      ;; convention (screen-Y down): 0 = E, π/2 = S, π = W, 3π/2 = N.
-      ;; One paint per frame, absolute positioning.
-      (let [pang   (or (:angle (:player world)) 0.0)
-            norm   (php/fmod (php/+ pang (php/* 4.0 php/M_PI))
-                             (php/* 2.0 php/M_PI))
-            sector (mod (php/intval (php/+ 0.5
-                                           (php// norm (php// php/M_PI 2.0))))
-                        4)
-            labels ["E" "S" "W" "N"]
-            cells  (loop [i 0 acc ""]
-                     (if (php/>= i 4)
-                       acc
-                       (recur (php/+ i 1)
-                              (str acc
-                                   (if (php/=== i sector)
-                                     (str "\e[1;93m" (get labels i) "\e[0m")
-                                     (str "\e[2;97m" (get labels i) "\e[0m"))
-                                   (if (php/< i 3) "  " "")))))]
-        (php/array_push parts
-                        (str "\e[1;" (php/max 1 (php/- (php/intdiv vw 2) 3))
-                             "H" cells)))
-      (let [l     (or (get stats :lives) 0)
-            cap   (or (get stats :max-lives) 5)
-            armor (or (get stats :armor) 0)
-            blink (if bloody? "\e[5;1m" "\e[1m")]
-        (php/array_push parts
-                        (str "\e[1;1H" blink "\e[91m"
-                             (php/str_repeat "♥ " l)
-                             "\e[90m"
-                             (php/str_repeat "♡ " (php/max 0 (php/- cap l)))
-                             (if (php/> armor 0)
-                               (str "\e[94;1m" (php/str_repeat "◆ " armor))
-                               "")
-                             "\e[0m")))
-      ;; Pistol HUD: DOOM-style first-person view. The player is
-      ;; looking down the slide with the barrel pointing away into
-      ;; the scene, so the sprite tapers — wide at the bottom (grip /
-      ;; hand near the camera), narrow at the top (muzzle far away,
-      ;; foreshortened). Foreground-only paint (no BG escapes) so
-      ;; cells around the silhouette still show the world behind,
-      ;; making the gun read as 'held in front of you' instead of a
-      ;; rectangular sprite plopped over the viewport.
-      (when (php/>= vh 6)
-        (let [cc        (php/+ (php/intdiv vw 2) 1)
-              muzzle    "\e[1;38;5;252m"
-              slide     "\e[1;38;5;245m"
-              slide-dim "\e[1;38;5;240m"
-              frame     "\e[1;38;5;236m"
-              grip-hi   "\e[1;38;5;130m"
-              grip-lo   "\e[1;38;5;94m"]
-          (php/array_push parts
-                          (str
-                           ;; row vh-5 : muzzle tip (far + small)
-                           "\e[" (php/- vh 5) ";" (php/+ cc 1) "H" muzzle "▄▄"
-                           ;; row vh-4 : barrel
-                           "\e[" (php/- vh 4) ";" cc           "H" slide "▐██▌"
-                           ;; row vh-3 : slide front (front sight + ejection port)
-                           "\e[" (php/- vh 3) ";" (php/- cc 1) "H" slide "▐████▌"
-                           ;; row vh-2 : slide body — widest from POV, suggests
-                           ;; foreshortening toward the camera
-                           "\e[" (php/- vh 2) ";" (php/- cc 2) "H" slide-dim "▐██████▌"
-                           ;; row vh-1 : frame wraps around the hand-grip
-                           "\e[" (php/- vh 1) ";" (php/- cc 2) "H" frame "▐█" grip-hi "▓▓▓▓" frame "█▌"
-                           ;; row vh   : grip bottom (closest to camera)
-                           "\e[" vh ";" (php/- cc 1) "H" grip-lo "▐▓▓▓▓▌"
-                           "\e[0m"))
-          (when (php/> (or (get stats :fire-anim) 0.0) 0.0)
-            (php/array_push parts
-                            (str
-                             ;; muzzle flash blooms at the FAR tip of the
-                             ;; barrel — that's where the bullet leaves.
-                             "\e[" (php/- vh 7) ";" cc "H\e[1;93m  ✦  "
-                             "\e[" (php/- vh 6) ";" cc "H\e[1;93m *★* "
-                             "\e[0m")))))
+      (paint-face-overlay!  parts world stats vw vh dists eface)
+      (paint-wall-lights!   parts vw vh hits hxs hys tops)
+      (paint-crosshair!     parts stats vw vh)
+      (paint-intro-splash!  parts stats vw vh)
+      (paint-hit-vignette!  parts stats bloody? vw vh)
+      (paint-heat-bar!      parts stats vw vh)
+      (paint-kill-streak!   parts stats map-col map-row visible-mh)
+      (paint-compass!       parts world vw)
+      (paint-hearts-hud!    parts stats bloody?)
+      (paint-pistol-hud!    parts stats vw vh)
       (when (get stats :paused)
         (php/array_push parts (pause-menu-string vw vh (get stats :sound-on))))
       (php/implode "" parts))))

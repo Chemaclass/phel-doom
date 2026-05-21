@@ -1,0 +1,66 @@
+(ns phel-doom-tests.modules.glue.controls-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.modules.glue.controls
+            :refer [key-states rising-edges initial-key-snapshot]))
+
+;; ---------------------------------------------------------------------
+;; key-states: snapshot of which one-shot keys appear in the byte
+;; stream this frame.
+;; ---------------------------------------------------------------------
+
+(deftest test-key-states-empty-input
+  (let [s (key-states "")]
+    (is (= false (:sp s)))
+    (is (= false (:m  s)))
+    (is (= false (:p  s)))
+    (is (= false (:n  s)))
+    (is (= false (:e  s)))))
+
+(deftest test-key-states-detects-space
+  (is (= true (:sp (key-states " ")))))
+
+(deftest test-key-states-detects-multiple
+  (let [s (key-states "mp")]
+    (is (= true (:m s)))
+    (is (= true (:p s)))
+    (is (= false (:sp s)))))
+
+(deftest test-key-states-detects-about-face
+  (is (= true (:e (key-states "e")))))
+
+;; ---------------------------------------------------------------------
+;; rising-edges: a key counts as "just pressed" only when it was off
+;; the previous frame and is on this frame.
+;; ---------------------------------------------------------------------
+
+(deftest test-rising-edges-fresh-press-fires
+  (let [edges (rising-edges {:sp true :m false :p false :n false :e false}
+                            {:sp false :m false :p false :n false :e false})]
+    (is (= true (:fire edges)))
+    (is (= false (:toggle-map edges)))))
+
+(deftest test-rising-edges-held-key-does-not-refire
+  ;; Space pressed both frames — that's "still held", not a new press.
+  (let [edges (rising-edges {:sp true :m false :p false :n false :e false}
+                            {:sp true :m false :p false :n false :e false})]
+    (is (= false (:fire edges)))))
+
+(deftest test-rising-edges-release-does-not-fire
+  ;; Was on, now off → nothing to do.
+  (let [edges (rising-edges {:sp false :m false :p false :n false :e false}
+                            {:sp true  :m false :p false :n false :e false})]
+    (is (= false (:fire edges)))))
+
+(deftest test-rising-edges-about-face-edge
+  (let [edges (rising-edges {:sp false :m false :p false :n false :e true}
+                            {:sp false :m false :p false :n false :e false})]
+    (is (= true (:about-face edges)))))
+
+(deftest test-initial-key-snapshot-has-every-tracked-key
+  ;; Snapshot must cover every key rising-edges peeks at, else the
+  ;; first frame after launch could spuriously fire.
+  (is (= false (:sp initial-key-snapshot)))
+  (is (= false (:m  initial-key-snapshot)))
+  (is (= false (:p  initial-key-snapshot)))
+  (is (= false (:n  initial-key-snapshot)))
+  (is (= false (:e  initial-key-snapshot))))

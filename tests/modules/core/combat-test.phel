@@ -1,0 +1,89 @@
+(ns phel-doom-tests.modules.core.combat-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.modules.core.combat
+            :refer [closest-attacker attacker-side can-fire? apply-heat]))
+
+;; ---------------------------------------------------------------------
+;; closest-attacker: selection rule.
+;; Behavioural pins — describes what the fn returns, not how it walks
+;; the enemies vector.
+;; ---------------------------------------------------------------------
+
+(deftest test-closest-attacker-empty
+  (is (= nil (closest-attacker [] 0.0 0.0))))
+
+(deftest test-closest-attacker-skips-dead
+  (let [att (closest-attacker [{:x 1.0 :y 0.0 :alive false}
+                               {:x 5.0 :y 0.0 :alive true}]
+                              0.0 0.0)]
+    (is (= 5.0 (:x att)))))
+
+(deftest test-closest-attacker-picks-nearest-alive
+  (let [att (closest-attacker [{:x 10.0 :y 0.0 :alive true}
+                               {:x 3.0  :y 0.0 :alive true}
+                               {:x 7.0  :y 0.0 :alive true}]
+                              0.0 0.0)]
+    (is (= 3.0 (:x att)))))
+
+(deftest test-closest-attacker-all-dead-returns-nil
+  (is (= nil (closest-attacker [{:x 1.0 :y 0.0 :alive false}
+                                {:x 2.0 :y 0.0 :alive false}]
+                               0.0 0.0))))
+
+;; ---------------------------------------------------------------------
+;; attacker-side: bearing relative to player facing.
+;; ---------------------------------------------------------------------
+
+(deftest test-attacker-side-nil-attacker
+  (is (= nil (attacker-side nil 0.0 0.0 0.0))))
+
+(deftest test-attacker-side-enemy-on-right
+  ;; Player at origin facing +x (angle 0). Enemy at (1, 1) is to the
+  ;; right under atan2 screen-Y-down convention.
+  (is (= :right (attacker-side {:x 1.0 :y 1.0} 0.0 0.0 0.0))))
+
+(deftest test-attacker-side-enemy-on-left
+  ;; Same player. Enemy at (1, -1) is to the left.
+  (is (= :left (attacker-side {:x 1.0 :y -1.0} 0.0 0.0 0.0))))
+
+(deftest test-attacker-side-respects-player-facing
+  ;; Same enemy at (1, 1). Rotate player to face π/2 (south) — enemy
+  ;; that was on the right now reads as on the left.
+  (is (= :left (attacker-side {:x 1.0 :y 1.0} 0.0 0.0 (php/* 0.5 php/M_PI)))))
+
+;; ---------------------------------------------------------------------
+;; can-fire?: gate around cooldown + jam.
+;; ---------------------------------------------------------------------
+
+(deftest test-can-fire-fresh-world
+  ;; Cold world (no cooldown, no jam) is firable.
+  (is (= true (can-fire? {:fire-cooldown 0.0 :jam-secs 0.0}))))
+
+(deftest test-can-fire-during-cooldown
+  (is (= false (can-fire? {:fire-cooldown 0.05 :jam-secs 0.0}))))
+
+(deftest test-can-fire-during-jam
+  (is (= false (can-fire? {:fire-cooldown 0.0 :jam-secs 0.3}))))
+
+(deftest test-can-fire-treats-missing-fields-as-ready
+  (is (= true (can-fire? {}))))
+
+;; ---------------------------------------------------------------------
+;; apply-heat: one shot's worth of state change.
+;; ---------------------------------------------------------------------
+
+(deftest test-apply-heat-bumps-and-cools-cooldown
+  (let [w (apply-heat {:heat 0.0 :jam-secs 0.0})]
+    ;; Some non-zero cooldown is armed.
+    (is (> (:fire-cooldown w) 0.0))
+    ;; Heat increased.
+    (is (> (:heat w) 0.0))
+    ;; Not yet jammed.
+    (is (= 0.0 (:jam-secs w)))))
+
+(deftest test-apply-heat-overheats-into-jam
+  ;; Push heat near 1.0 then fire once more; should trigger jam.
+  (let [w (apply-heat {:heat 0.99 :jam-secs 0.0})]
+    (is (> (:jam-secs w) 0.0))
+    ;; Heat resets to 0 so the player isn't punished twice.
+    (is (= 0.0 (:heat w)))))

@@ -27,10 +27,12 @@
 (def sky-blood-code   "52")
 (def floor-blood-code "88")
 (def door-code        "172")
-(def kill-flash   "\e[48;5;231;38;5;226;1m✦")
-(def blood-bright "\e[48;5;160m ")
-(def blood-mid    "\e[48;5;88m ")
-(def blood-dim    "\e[48;5;52m ")
+(def kill-flash    "\e[48;5;231;38;5;226;1m✦")
+(def death-slump   "\e[48;5;124;38;5;232;1m▼")
+(def death-collapse "\e[48;5;88;38;5;52m▒")
+(def blood-bright  "\e[48;5;160m ")
+(def blood-mid     "\e[48;5;88m ")
+(def blood-dim     "\e[48;5;52m ")
 (def sprite-shadow
   "Darkest-grey BG painted into the row immediately under an enemy's
    feet so the sprite reads as grounded instead of floating in mid-air."
@@ -695,14 +697,18 @@
                (let [col (:col proj)
                      hw  (:half-width proj)
                      d   (:dist proj)
-                     ;; Kill-flash: very first slice of the fx life
-                     ;; (ttl > 0.4 = first ~50ms) paints a bright
-                     ;; white burst with a yellow ✦ glyph, then the
-                     ;; usual red blood gradient takes over. Visual
-                     ;; pain frame at the moment of impact.
+                     ;; Death stages over the fx lifetime (0.7s):
+                     ;;   0.65-0.70  white kill-flash (pain frame)
+                     ;;   0.50-0.65  ▼ slump in bright red
+                     ;;   0.35-0.50  ▒ collapse in darker red
+                     ;;   0.15-0.35  wide red blood splat
+                     ;;   0-0.15     dim residual stain
+                     ;; Single cond branch chain — same cost as the
+                     ;; old 3-tier check.
                      bsh (let [ttl (or (:ttl fx) 0.0)]
-                           (cond (php/> ttl 0.4)  kill-flash
-                                 (php/> ttl 0.3)  blood-bright
+                           (cond (php/> ttl 0.65) kill-flash
+                                 (php/> ttl 0.5)  death-slump
+                                 (php/> ttl 0.35) death-collapse
                                  (php/> ttl 0.15) blood-mid
                                  :else            blood-dim))]
                  (let [c-from (php/max 0 (php/- col hw))

@@ -1,6 +1,6 @@
 (ns phel-doom-tests.modules.core.enemy-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.modules.core.enemy :refer [new-enemy spawn-enemies shoot advance]))
+  (:require phel-doom.modules.core.enemy :refer [new-enemy spawn-enemies shoot advance tick-ambient]))
 
 (def open-grid
   "Bordered 10x10 open arena, no interior walls."
@@ -102,3 +102,51 @@
   (let [es' (advance [{:x 5.0 :y 5.0 :alive false :respawn-after 0.1}]
                      open-grid 8.0 5.0 0.5 0.75)]
     (is (= true (:alive (first es'))))))
+
+;; ---------------------------------------------------------------------
+;; tick-ambient: the dread whisper cadence. Pure contract: cooldown
+;; counts down each frame; on hitting zero it either fires (enemy in
+;; the proximity band) or idles short (no enemy in range).
+;; ---------------------------------------------------------------------
+
+(defn- world-with
+  "Tiny world wrapper for ambient tests so the test cases stay focused
+   on the inputs that actually matter (player pos, enemies, cooldown)."
+  [px py enemies cooldown]
+  {:player           {:x px :y py :angle 0.0}
+   :enemies          enemies
+   :whisper-cooldown cooldown
+   :whisper-tick?    false})
+
+(deftest test-tick-ambient-decrements-cooldown
+  (let [w  (world-with 5.0 5.0 [{:x 10.0 :y 5.0 :alive true}] 3.0)
+        w' (tick-ambient w 0.5)]
+    (is (= 2.5 (:whisper-cooldown w')))
+    (is (= false (:whisper-tick? w')))))
+
+(deftest test-tick-ambient-idle-when-no-enemy-in-band
+  ;; Cooldown hits zero but enemy is too close (inside min-dist),
+  ;; so the whisper should not fire; cooldown idles on a short
+  ;; re-check.
+  (let [w  (world-with 5.0 5.0 [{:x 5.5 :y 5.0 :alive true}] 0.0)
+        w' (tick-ambient w 0.1)]
+    (is (= false (:whisper-tick? w')))
+    (is (php/> (:whisper-cooldown w') 0.0))))
+
+(deftest test-tick-ambient-idle-when-enemy-too-far
+  (let [w  (world-with 5.0 5.0 [{:x 50.0 :y 5.0 :alive true}] 0.0)
+        w' (tick-ambient w 0.1)]
+    (is (= false (:whisper-tick? w')))))
+
+(deftest test-tick-ambient-idle-when-only-dead-enemies-in-band
+  (let [w  (world-with 5.0 5.0 [{:x 15.0 :y 5.0 :alive false}] 0.0)
+        w' (tick-ambient w 0.1)]
+    (is (= false (:whisper-tick? w')))))
+
+(deftest test-tick-ambient-fires-when-enemy-in-band-and-cooldown-zero
+  (let [w  (world-with 5.0 5.0 [{:x 15.0 :y 5.0 :alive true}] 0.0)
+        w' (tick-ambient w 0.1)]
+    (is (= true (:whisper-tick? w')))
+    ;; New cooldown should be inside the documented 4-8s spread.
+    (is (php/>= (:whisper-cooldown w') 4.0))
+    (is (php/<= (:whisper-cooldown w') 8.0))))

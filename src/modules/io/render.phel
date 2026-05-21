@@ -995,15 +995,26 @@
                    (recur (php/+ c 1))))))))
   blood-paint)
 
+(defn- pickup-visible-at?
+  "True when a pickup at depth `d` would be visible at screen column
+   `c` — i.e. no closer wall (dists) and no closer enemy (edists)
+   blocks the line of sight."
+  [^float d c dists edists]
+  (let [wd (buf-get dists c)
+        ed (buf-get edists c)]
+    (and (php/< d wd)
+         (or (php/=== ed nil) (php/< d ed)))))
+
 (defn- paint-pickups-into
   "Project each pickup (heart / armor) to screen and write its
    coloured BG glow into `blood-paint`, then drop the icon glyph at
    the centre cell. Same routine for both pickup types; only the
-   shade + glyph differ.
+   shade + glyph differ. Per-column visibility check honours both
+   walls AND enemies — pickups behind either don't draw.
 
    Returns the mutated buffer — PHP arrays pass by value, so the
    caller must rebind to see the writes."
-  [blood-paint pickups player dists vw vh shade-now glyph-now]
+  [blood-paint pickups player dists edists vw vh shade-now glyph-now]
   (doseq [item pickups]
          (let [proj (project-enemy item player vw)]
            (when proj
@@ -1019,7 +1030,7 @@
                    r-bot  (php/min vh (php/+ mid (php/intdiv h 6) 1))]
                (loop [c c-from]
                  (when (php/<= c c-to)
-                   (when (php/< d (buf-get dists c))
+                   (when (pickup-visible-at? d c dists edists)
                      (loop [r r-top]
                        (when (php/< r r-bot)
                          (buf-set blood-paint (php/+ (php/* r vw) c) shade-now)
@@ -1032,7 +1043,7 @@
                           (php/< col vw)
                           (php/>= mid 0)
                           (php/< mid vh)
-                          (php/< d (buf-get dists col)))
+                          (pickup-visible-at? d col dists edists))
                  (buf-set blood-paint
                           (php/+ (php/* mid vw) col)
                           glyph-now))))))
@@ -1196,6 +1207,11 @@
         eheads                             (buf-mk)
         ebodys                             (buf-mk)
         elegss                             (buf-mk)
+        ;; Per-column nearest-enemy distance. Set when the enemy paints
+        ;; a column (only if the enemy is in front of the wall there).
+        ;; Pickups read it to occlude themselves behind enemies the same
+        ;; way `dists` occludes them behind walls.
+        edists                             (buf-mk)
         blood-paint                        (buf-mk)
         ;; Pulse the minimap door glyph on the same beat as the 3D
         ;; door shade so the exit catches the eye both in first-person
@@ -1261,6 +1277,12 @@
                          (buf-set ebodys c fbody)
                          (buf-set elegss c flegs)
                          (buf-set emask c true)
+                         ;; Track nearest enemy distance for this col so
+                         ;; pickups behind it occlude properly. Multiple
+                         ;; enemies on the same col → keep the closest.
+                         (let [prev (buf-get edists c)]
+                           (when (or (php/=== prev nil) (php/< d prev))
+                             (buf-set edists c d)))
                          ;; Grounding shadow: write one dark cell into
                          ;; the blood-paint overlay at the row beneath
                          ;; the sprite. Skips if outside the viewport.
@@ -1274,10 +1296,10 @@
     ;; to rebind every call because PHP arrays pass by value.
     (let [blood-paint (paint-blood-fx-into blood-paint stats world dists vw vh)
           blood-paint (paint-pickups-into  blood-paint (or (:hearts world) [])
-                                           (:player world) dists vw vh
+                                           (:player world) dists edists vw vh
                                            heart-shade-now heart-glyph-now)
           blood-paint (paint-pickups-into  blood-paint (or (:armors world) [])
-                                           (:player world) dists vw vh
+                                           (:player world) dists edists vw vh
                                            armor-shade-now armor-glyph-now)
           parts       (buf-mk)]
       (dotimes [row vh]

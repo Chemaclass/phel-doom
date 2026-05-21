@@ -434,10 +434,12 @@
   28)
 
 (defn- pause-pad
-  "Pad `text` to `width` with trailing spaces. Used to make every menu
-   row the same width so the right border lines up."
+  "Pad `text` to `width` with trailing spaces. Re-applies the pause
+   menu's dark BG before padding so trailing spaces don't fall on
+   default terminal BG after an internal `\\e[0m` reset (the right
+   `│` border otherwise reads as detached from the item)."
   [text width]
-  (str text (php/str_repeat " " (php/max 0 (php/- width (php/strlen text))))))
+  (str text "\e[40;97m" (php/str_repeat " " (php/max 0 (php/- width (php/strlen text))))))
 
 (defn- pause-menu-string
   "Build the pause overlay as a single ANSI string with absolute cursor
@@ -775,14 +777,17 @@
                     shd-bg    (buf-get stbl-l shd-idx)
                     edge-code (buf-get ctbl-l shd-idx)]
                 (buf-set normal col
-                         (if (php/< bhash 14)
+                         ;; Architectural brick texture: ~4% of wall
+                         ;; cells (was 14%; dropped the `·` dot variant
+                         ;; that read as bright noise rather than
+                         ;; mortar). Three glyphs left (▤▦▥) keep
+                         ;; mortar variety without speckling every
+                         ;; corridor.
+                         (if (php/< bhash 4)
                            (let [dcode (buf-get ctbl-l (php/max 0 (php/- idx 5)))
-                                 glyph (cond (php/=== (mod bhash 6) 0) "▤"
-                                             (php/=== (mod bhash 6) 1) "▦"
-                                             (php/=== (mod bhash 6) 2) "▥"
-                                             (php/=== (mod bhash 6) 3) "┼"
-                                             (php/=== (mod bhash 6) 4) "▒"
-                                             :else                     "·")]
+                                 glyph (cond (php/=== (mod bhash 3) 0) "▤"
+                                             (php/=== (mod bhash 3) 1) "▦"
+                                             :else                     "▥")]
                              (str "\e[48;5;" wcode ";38;5;" dcode "m" glyph))
                            plain))
                 (buf-set top-edge   col (str "\e[48;5;" edge-code ";38;5;" sky-c-l "m▀"))
@@ -1327,11 +1332,18 @@
 
 (defn- pad-visible
   "Right-pad `text` with spaces so its visible width (ignoring ANSI
-   escapes, counting wide chars correctly) hits `width`."
+   escapes, counting wide chars correctly) hits `width`.
+
+   Items typically end with an internal `\\e[0m` that resets every SGR
+   attribute, including the menu's dark BG. Re-apply `\\e[40;97m`
+   before the padding so trailing spaces stay on the menu's dark
+   wash; otherwise the gap between the item and the right `│` shows
+   through as default terminal BG."
   [text width]
   (let [stripped (php/preg_replace "/\\x1b\\[[0-9;]*[a-zA-Z]/" "" text)
-        visible  (php/mb_strwidth stripped)]
-    (str text (php/str_repeat " " (php/max 0 (php/- width visible))))))
+        visible  (php/mb_strwidth stripped)
+        pad      (php/str_repeat " " (php/max 0 (php/- width visible)))]
+    (str text "\e[40;97m" pad)))
 
 (defn- start-menu-rows
   "Interior strings for the start-menu box. `:sep` markers between

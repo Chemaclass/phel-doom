@@ -20,10 +20,41 @@ One doc per subsystem. Each points to its source files + functions.
 | High-scores persistence | [scores.md](scores.md) |
 | DOOM .wad parser | [wad-parser.md](wad-parser.md) |
 | Hot-loop optimizations | [performance.md](performance.md) |
+| Contributing + Phel gotchas | [contributing.md](contributing.md) |
 
 ## Reading order for newcomers
 
 1. `architecture.md`: what's where + why
 2. `game-loop.md`: per-frame story end to end
 3. `raycaster.md` + `rendering.md`: pixels on screen
-4. Pick any subsystem as needed
+4. `contributing.md`: dev workflow, test conventions, Phel quirks
+5. Pick any subsystem as needed
+
+## Quick orientation
+
+```
+src/main.phel                          ; CLI entrypoint
+src/commands/play.phel                 ; tick-world + run-levels lifecycle
+src/modules/core/                      ; pure logic, no IO
+  state.phel       world data model
+  map.phel         grid + random arena gen
+  engine.phel      raycaster (cast-frame, cast-ray)
+  physics.phel     player movement + counter decay
+  combat.phel      hitscan + damage + heat/jam + knockback
+  enemy.phel       chase AI + shoot resolution + respawn
+  level.phel       5-level config catalog + build-world
+src/modules/io/                        ; side effects only
+  input.phel       stty raw mode + kitty protocol opt-in
+  render.phel      frame->string + paint-* overlays + ANSI
+  sound.phel       afplay/paplay/aplay shell-out
+  scores.phel      $HOME/.phel-doom-scores.json
+  wad.phel         WAD lump-directory parser
+src/modules/glue/                      ; wires core + io
+  controls.phel    bytes -> :moves counters + rising-edges
+tests/                                 ; mirrors src/
+```
+
+Hot-loop boundary: anything under `core/` is pure data-in / data-out
+and runs the same way in tests as in production. `io/` is where
+side effects live; mock-free testability ends there. `glue/` reads
+from both but stays effect-free (it's a pure byte → world transform).

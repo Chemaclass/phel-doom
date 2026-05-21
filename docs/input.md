@@ -95,6 +95,8 @@ When the terminal supports the [kitty keyboard protocol](https://sw.kovidgoyal.n
 Best-tier terminals (instant release): kitty, WezTerm, Ghostty, Alacritty ≥ 0.13, iTerm2 ≥ 3.5.
 Legacy fallback (hold-frames bridge): macOS Terminal.app, GNOME Terminal, xterm.
 
+Inside tmux: add `set -g extended-keys on` and `setw -g xterm-keys on` to pass kitty events through.
+
 ## About-face (dedicated `e` key)
 
 `e` snaps the player 180°. Rises through `rising-edges` like the other one-shots (`:about-face`), handled in `handle-toggles` alongside pause/map/sound:

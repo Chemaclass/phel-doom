@@ -6,6 +6,7 @@ One doc per subsystem. Each points to its source files + functions.
 
 | Topic | File |
 |---|---|
+| Feature catalogue (what the game does) | [features.md](features.md) |
 | Module layout + dependency rules | [architecture.md](architecture.md) |
 | Per-frame state transition | [game-loop.md](game-loop.md) |
 | World + player data model | [state.md](state.md) |

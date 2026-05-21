@@ -799,21 +799,30 @@
       ;; sprite paint uses; without it the face would x-ray through
       ;; walls and reveal enemies anywhere in the room.
       (when eface
-        (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
-               (let [col (:col proj)
-                     d   (:dist proj)]
-                 (when (and (php/>= col 0)
-                            (php/< col vw)
-                            (php/< d (php/aget dists col)))
-                   (let [h (php/min vh (php/intval (php// proj-dist
-                                                          (php/* (php/max 0.5 d) char-aspect))))]
-                     (let [face-row (php/+ (php/intdiv (php/- vh h) 2)
-                                           (php/intdiv h 6))]
-                       (when (and (php/>= face-row 1) (php/<= face-row vh))
-                         (php/array_push parts
-                                         (str "\e[" face-row ";"
-                                              (php/+ col 1) "H"
-                                              eface)))))))))
+        (let [face-attack (get stats :enemy-face-attack)]
+          (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
+                 (let [col   (:col proj)
+                       d     (:dist proj)
+                       ;; Attack telegraph: when an enemy is inside
+                       ;; aggro-distance the face swaps to the level's
+                       ;; :face-attack glyph (blink-attributed). Gives
+                       ;; the player a beat of warning before contact
+                       ;; damage lands.
+                       glyph (if (and face-attack (php/< d aggro-distance))
+                               face-attack
+                               eface)]
+                   (when (and (php/>= col 0)
+                              (php/< col vw)
+                              (php/< d (php/aget dists col)))
+                     (let [h (php/min vh (php/intval (php// proj-dist
+                                                            (php/* (php/max 0.5 d) char-aspect))))]
+                       (let [face-row (php/+ (php/intdiv (php/- vh h) 2)
+                                             (php/intdiv h 6))]
+                         (when (and (php/>= face-row 1) (php/<= face-row vh))
+                           (php/array_push parts
+                                           (str "\e[" face-row ";"
+                                                (php/+ col 1) "H"
+                                                glyph))))))))))
       ;; Wall lights: ~3% of wall cells (deterministic per (hx,hy))
       ;; get a flickering torch glyph painted near the wall top. One
       ;; glyph per cell (deduped via a `seen` set keyed by hx-hy) so

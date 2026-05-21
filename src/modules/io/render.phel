@@ -107,43 +107,6 @@
         (recur (php/+ i 1))))
     t))
 
-(def fog-cutoff-idx
-  "Below this shade idx (far walls), swap the grey shade for a
-   cool-blue fog code so distant geometry hazes out instead of fading
-   to flat dark grey."
-  8)
-
-(def shade-table-fog
-  "Cool-blue fog codes from the 6×6×6 cube. Indexed 0..fog-cutoff-idx
-   only; used in place of the grey shade-table entries for distant
-   wall columns so the far end of a corridor reads as atmospheric
-   haze. One PHP-array lookup per affected column, identical to the
-   normal shade path."
-  (let [t (php/array)]
-    (loop [i 0]
-      (when (php/<= i fog-cutoff-idx)
-        ;; Cube formula: 16 + 36r + 6g + b, r=g≤b for cool tint.
-        (let [bri  (php// i (php/* 1.0 fog-cutoff-idx))
-              g    (php/intval (php/round (php/* bri 2.0)))
-              b    (php/min 5 (php/+ g 1))
-              code (php/+ 16 (php/* 36 g) (php/* 6 g) b)]
-          (php/aset t i (str "\e[48;5;" code "m ")))
-        (recur (php/+ i 1))))
-    t))
-
-(def shade-code-table-fog
-  "Code-only twin of shade-table-fog for edge-cell composition."
-  (let [t (php/array)]
-    (loop [i 0]
-      (when (php/<= i fog-cutoff-idx)
-        (let [bri  (php// i (php/* 1.0 fog-cutoff-idx))
-              g    (php/intval (php/round (php/* bri 2.0)))
-              b    (php/min 5 (php/+ g 1))
-              code (php/+ 16 (php/* 36 g) (php/* 6 g) b)]
-          (php/aset t i (php/strval code)))
-        (recur (php/+ i 1))))
-    t))
-
 (defn- fade-256
   "Darken a 256-color code by factor `t` in [0.0, 1.0]. Handles the
    6×6×6 cube (16-231) by scaling each RGB component, and the 24-step
@@ -244,35 +207,6 @@
           (php/aset arr r (str "\e[48;5;" code "m ")))
         (recur (php/+ r 1))))
     arr))
-
-(defn- build-wall-shade-table
-  "24-shade pre-baked BG paint cells for a level-themed wall colour.
-   idx 23 = brightest (close), idx 0 = darkest (far). Same shape as
-   shade-table so the col loop can drop-in swap. Built once per
-   frame (24 iterations of fade-256). Returns nil when base-code is
-   nil so the caller can fall back to the grey shade-table."
-  [base-code]
-  (when base-code
-    (let [t (php/array)]
-      (loop [i 0]
-        (when (php/< i 24)
-          (let [code (fade-256 base-code (php/- 1.0 (php// (php/* 1.0 i) 23.0)))]
-            (php/aset t i (str "\e[48;5;" code "m ")))
-          (recur (php/+ i 1))))
-      t)))
-
-(defn- build-wall-code-table
-  "Code-only twin of build-wall-shade-table for half-block edge
-   composition + brick-glyph FG darkening."
-  [base-code]
-  (when base-code
-    (let [t (php/array)]
-      (loop [i 0]
-        (when (php/< i 24)
-          (let [code (fade-256 base-code (php/- 1.0 (php// (php/* 1.0 i) 23.0)))]
-            (php/aset t i (php/strval code)))
-          (recur (php/+ i 1))))
-      t)))
 
 ;; Per-column shading lives inline in frame->string's hot loop:
 ;; base distance index, +1 for vertical wall faces (side-shading),
@@ -507,19 +441,15 @@
   (let [{:keys [vw vh map-col map-row]}
         (layout cols rows (count (first (:grid world))))
         bloody?                            (php/> (or (get stats :iframes) 0.0) 0.0)
-        ;; Sky + floor are ALWAYS grey: the horizon haze gradient reads
-        ;; as atmosphere regardless of level theme. Per-level theming
-        ;; goes into the WALLS via build-wall-shade-table below, so
-        ;; each level reads as a distinct colour without the sky/floor
-        ;; fighting the wall colour for attention.
-        wall-code                          (get stats :wall-code)
-        themed-walls                       (build-wall-shade-table wall-code)
-        themed-wall-codes                  (build-wall-code-table wall-code)
-        stbl                               (or themed-walls shade-table)
+        ;; Walls + sky + floor are ALL pure grayscale: enemy colours
+        ;; pop against neutral stonework, and far walls fade toward
+        ;; near-black (shade-table[0] = code 232) like an unseen
+        ;; horizon. No per-level wall tinting; level distinction comes
+        ;; from enemy sprites + intro splash + audio.
+        stbl                               shade-table
         sky-gradient                       (build-horizon-gradient vh shade-table)
-        ;; Floor uses the striped grey variant so adjacent rows alternate
-        ;; brightness slightly, reading as tile-floor banding instead
-        ;; of one flat plane.
+        ;; Floor: same grey gradient with subtle tile banding (odd
+        ;; rows one fade step darker).
         floor-gradient                     (build-themed-gradient vh 239 true)
         ;; Pre-baked red gradients used when a column sits inside the
         ;; blood band: sky + floor go red for those cols so the band
@@ -586,7 +516,7 @@
         ;; "\e[48;5;WALL;38;5;SKYm▀" and let ▀'s upper half show sky.
         sky-c                              sky-code
         floor-c                            floor-code
-        ctbl                               (or themed-wall-codes shade-code-table)
+        ctbl                               shade-code-table
         ;; Subtle pulse on interactive pickups so the eye picks them
         ;; out of the wall colours: doors and hearts cycle between
         ;; two shades on a sin wave. Wall clock so the rhythm stays
@@ -683,17 +613,11 @@
                                (php/min 23
                                         (php/+ (php/intval (php/* (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 23))
                                                (if (php/=== (php/aget sides col) 0) 2 0))))]
-              ;; Distance fog disabled inside the blood band (red wins)
-              ;; and on themed-wall levels (theme wins).
-              (let [foggy?    (and (not blood?)
-                                   (not themed-walls)
-                                   (php/<= idx fog-cutoff-idx))
-                    wcode     (if foggy?
-                                (php/aget shade-code-table-fog idx)
-                                (php/aget ctbl-l idx))
-                    plain     (if foggy?
-                                (php/aget shade-table-fog idx)
-                                (php/aget stbl-l idx))
+              ;; Pure grayscale shade lookup: far walls fade naturally
+              ;; toward shade-table[0] = code 232 (near-black), reading
+              ;; as an unseen dark horizon without any colour tint.
+              (let [wcode     (php/aget ctbl-l idx)
+                    plain     (php/aget stbl-l idx)
                     ;; Architectural panel texture: ~14% of wall cells
                     ;; (deterministic per (hx,hy) so adjacent screen
                     ;; columns of the same wall cell read as one
@@ -704,21 +628,13 @@
                     hy        (php/aget hys col)
                     bhash     (mod (php/+ (php/* hx 73856093) (php/* hy 19349663)) 100)
                     ;; Soft shadow shade for the rows immediately
-                    ;; inside the wall edges (top+1 and bot-2). One
-                    ;; shade-table step darker than the wall body so
+                    ;; inside the wall edges (top+1 and bot-2). Three
+                    ;; shade-table steps darker than the wall body so
                     ;; the eye reads a soft ambient-occlusion band
                     ;; instead of a hard sky/wall colour cut.
                     shd-idx   (php/max 0 (php/- idx 3))
-                    shd-bg    (if foggy?
-                                (php/aget shade-table-fog shd-idx)
-                                (php/aget stbl-l shd-idx))
-                    ;; Edge half-block (▀): top cell uses dark-wall on
-                    ;; BG so the eye reads "fading into ceiling" (the
-                    ;; FG = sky paints the upper half). Bottom cell
-                    ;; same in reverse.
-                    edge-code (if foggy?
-                                (php/aget shade-code-table-fog shd-idx)
-                                (php/aget ctbl-l shd-idx))]
+                    shd-bg    (php/aget stbl-l shd-idx)
+                    edge-code (php/aget ctbl-l shd-idx)]
                 (php/aset shades-normal col
                           (if (php/< bhash 14)
                             (let [dcode (php/aget ctbl-l (php/max 0 (php/- idx 5)))

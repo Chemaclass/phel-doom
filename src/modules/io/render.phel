@@ -706,30 +706,42 @@
   parts)
 
 (defn- paint-pistol-hud
-  "FPS-style pistol sprite centre-bottom + muzzle flash when firing."
-  [parts stats vw vh]
+  "FPS-style pistol sprite centre-bottom + muzzle flash when firing.
+
+   Each row's BG is taken from `floor-gradient` (trim trailing glyph
+   to leave the SGR prefix) so the half-block glyphs (▐ ▌ ▄) have
+   their transparent halves fall on the floor colour instead of the
+   terminal default (which on some iTerm2 themes is light/white and
+   draws a halo around the silhouette)."
+  [parts stats vw vh floor-gradient]
   (when (php/>= vh 6)
     (let [cc        (php/+ (php/intdiv vw 2) 1)
+          row-bg    (fn [r]
+                      (let [cell (buf-get floor-gradient r)]
+                        (php/mb_substr cell 0
+                                       (php/max 0 (php/- (php/mb_strlen cell) 1)))))
           muzzle    "\e[1;38;5;252m"
           slide     "\e[1;38;5;245m"
           slide-dim "\e[1;38;5;240m"
           frame     "\e[1;38;5;236m"
           grip-hi   "\e[1;38;5;130m"
           grip-lo   "\e[1;38;5;94m"]
+      ;; Gradient indices are 0-based for vh rows; cursor positions
+      ;; are 1-based. Map cursor row → gradient idx by subtracting 1.
       (buf-push parts
                 (str
-                 "\e[" (php/- vh 5) ";" (php/+ cc 1) "H" muzzle "▄▄"
-                 "\e[" (php/- vh 4) ";" cc           "H" slide "▐██▌"
-                 "\e[" (php/- vh 3) ";" (php/- cc 1) "H" slide "▐████▌"
-                 "\e[" (php/- vh 2) ";" (php/- cc 2) "H" slide-dim "▐██████▌"
-                 "\e[" (php/- vh 1) ";" (php/- cc 2) "H" frame "▐█" grip-hi "▓▓▓▓" frame "█▌"
-                 "\e[" vh           ";" (php/- cc 1) "H" grip-lo "▐▓▓▓▓▌"
+                 "\e[" (php/- vh 5) ";" (php/+ cc 1) "H" (row-bg (php/- vh 6)) muzzle "▄▄"
+                 "\e[" (php/- vh 4) ";" cc           "H" (row-bg (php/- vh 5)) slide "▐██▌"
+                 "\e[" (php/- vh 3) ";" (php/- cc 1) "H" (row-bg (php/- vh 4)) slide "▐████▌"
+                 "\e[" (php/- vh 2) ";" (php/- cc 2) "H" (row-bg (php/- vh 3)) slide-dim "▐██████▌"
+                 "\e[" (php/- vh 1) ";" (php/- cc 2) "H" (row-bg (php/- vh 2)) frame "▐█" grip-hi "▓▓▓▓" frame "█▌"
+                 "\e[" vh           ";" (php/- cc 1) "H" (row-bg (php/- vh 1)) grip-lo "▐▓▓▓▓▌"
                  "\e[0m"))
       (when (php/> (or (get stats :fire-anim) 0.0) 0.0)
         (buf-push parts
                   (str
-                   "\e[" (php/- vh 7) ";" cc "H\e[1;93m  ✦  "
-                   "\e[" (php/- vh 6) ";" cc "H\e[1;93m *★* "
+                   "\e[" (php/- vh 7) ";" cc "H" (row-bg (php/- vh 8)) "\e[1;93m  ✦  "
+                   "\e[" (php/- vh 6) ";" cc "H" (row-bg (php/- vh 7)) "\e[1;93m *★* "
                    "\e[0m")))))
   parts)
 
@@ -1192,7 +1204,7 @@
             parts       (paint-kill-streak  parts stats map-col map-row visible-mh)
             parts       (paint-compass      parts world vw)
             parts       (paint-hearts-hud   parts stats bloody?)
-            parts       (paint-pistol-hud   parts stats vw vh)]
+            parts       (paint-pistol-hud   parts stats vw vh floor-gradient)]
         (when (get stats :paused)
           (buf-push parts (pause-menu-string vw vh (get stats :sound-on))))
         (php/implode "" parts)))))

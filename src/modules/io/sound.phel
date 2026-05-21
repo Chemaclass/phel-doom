@@ -27,10 +27,11 @@
   "macOS ships these .aiff files in every install. Map game events to
    short, distinctive ones. One kill sound for all monsters: makes
    the death beat read the same across the run."
-  {:shoot "/System/Library/Sounds/Pop.aiff"
-   :kill  "/System/Library/Sounds/Hero.aiff"
-   :hit   "/System/Library/Sounds/Sosumi.aiff"
-   :door  "/System/Library/Sounds/Tink.aiff"})
+  {:shoot     "/System/Library/Sounds/Pop.aiff"
+   :kill      "/System/Library/Sounds/Hero.aiff"
+   :hit       "/System/Library/Sounds/Sosumi.aiff"
+   :door      "/System/Library/Sounds/Tink.aiff"
+   :heartbeat "/System/Library/Sounds/Bottle.aiff"})
 
 (def state
   "Memoised session state: the resolved player binary and per-event
@@ -99,12 +100,12 @@
   (php/=== "1" (php/getenv "PHEL_DOOM_SILENT")))
 
 (defn play-sfx!
-  "Play the sound effect tagged `event` (:shoot, :hit, :door). Falls
-   through to the terminal bell when no native player + file is
-   available, so the game still gives feedback on bare/headless
-   systems. Optional `volume` in [0.0, 1.0] honoured by afplay only
-   (other players ignore it). No-op when muted? returns true (test
-   runs)."
+  "Play the sound effect tagged `event` (:shoot, :hit, :door,
+   :heartbeat, :kill). Falls through to the terminal bell when no
+   native player + file is available, so the game still gives
+   feedback on bare/headless systems. Heartbeat skips the bell
+   fallback so silent terminals don't get spammed by the bell once a
+   second when the player is low on lives."
   {:export true}
   ([event]                     (play-sfx! event 1.0))
   ([event ^float volume]       (when (not (muted?))
@@ -112,6 +113,12 @@
                                  (let [s    @state
                                        p    (:player s)
                                        path (and (:sounds s) (get (:sounds s) event))]
-                                   (if (and p path (php/file_exists path))
+                                   (cond
+                                     (and p path (php/file_exists path))
                                      (play-file-async! p path volume)
+
+                                     (php/=== event :heartbeat)
+                                     nil
+
+                                     :else
                                      (bell!))))))

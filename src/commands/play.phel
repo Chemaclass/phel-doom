@@ -6,7 +6,7 @@
   (:require phel-doom.modules.core.map      :refer [door?])
   (:require phel-doom.modules.glue.controls :refer [refresh-from-keys key-states rising-edges
                                                     initial-key-snapshot])
-  (:require phel-doom.modules.core.physics  :refer [apply-physics])
+  (:require phel-doom.modules.core.physics  :refer [apply-physics tick-heartbeat])
   (:require phel-doom.modules.core.combat   :refer [damage-step tick-shooting])
   (:require phel-doom.modules.core.enemy    :refer [advance])
   (:require phel-doom.modules.io.sound    :refer [play-sfx!])
@@ -150,8 +150,9 @@
             w3 (pickup-hearts w2)
             w4 (pickup-armors w3)
             w5 (tick-enemies  w4 dt)
-            w6 (tick-shooting w5 (:fire edges))]
-        (damage-step w6 dt)))))
+            w6 (tick-shooting w5 (:fire edges))
+            w7 (damage-step   w6 dt)]
+        (tick-heartbeat w7 dt)))))
 
 ;; =====================================================================
 ;; § Per-frame IO + stats
@@ -179,6 +180,7 @@
    :streak      (:streak world)
    :heat        (:heat world)
    :jam-secs    (:jam-secs world)
+   :heartbeat-phase (:heartbeat-phase world)
    :enemy-head-code      (:enemy-head-code world)
    :enemy-body-code      (:enemy-body-code world)
    :enemy-legs-code      (:enemy-legs-code world)
@@ -266,6 +268,8 @@
               now-keys (key-states keys)
               world'   (tick-world world keys (php// ms 1000.0)
                                    (rising-edges now-keys prev-keys))]
+          (when (and (:heartbeat-tick? world') (:sound-on world'))
+            (play-sfx! :heartbeat 0.35))
           (cond
             (str/contains? keys "q")   :quit
             (php/<= (:lives world') 0) (result-game-over world' t-start now)

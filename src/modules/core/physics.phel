@@ -92,3 +92,30 @@
                                       (longitudinal-delta moves dt)
                                       (lateral-delta moves dt))]
         (decay-move-counters walked)))))
+
+(defn- heartbeat-interval
+  "Seconds between thumps. Faster when closer to death. Returns nil
+   when no heartbeat should play (full lives or dead)."
+  [lives]
+  (cond
+    (php/<= lives 0) nil
+    (php/<= lives 1) 0.55
+    (php/<= lives 2) 0.85
+    :else            nil))
+
+(defn tick-heartbeat
+  "Advance the heartbeat phase by `dt`. Phase loops 0→1 over one beat.
+   `:heartbeat-tick?` flips true on the frame the phase wraps so the
+   IO layer can fire the thump sfx exactly once per cycle. Idle (no
+   heartbeat) keeps phase at 0 and the flag at false."
+  {:export true}
+  [world ^float dt]
+  (let [interval (heartbeat-interval (:lives world))]
+    (if (nil? interval)
+      (assoc world :heartbeat-phase 0.0 :heartbeat-tick? false)
+      (let [phase (php/+ (or (:heartbeat-phase world) 0.0)
+                         (php// dt interval))
+            wrap? (php/>= phase 1.0)]
+        (assoc world
+               :heartbeat-phase (if wrap? (php/fmod phase 1.0) phase)
+               :heartbeat-tick? wrap?)))))

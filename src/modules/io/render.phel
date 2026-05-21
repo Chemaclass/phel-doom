@@ -609,6 +609,38 @@
                      "\e[0m"))))
   parts)
 
+(defn- heartbeat-bg
+  "Map heartbeat phase to a red BG ansi for the edge bar. Phase 0 is
+   the strongest thump, fading by ~0.35. Returns nil when the pulse
+   isn't visible this frame so the caller can skip painting."
+  [^float phase ^int lives]
+  (cond
+    (php/>= lives 3)   nil
+    (php/<= lives 0)   nil
+    (php/< phase 0.10) "\e[48;5;160m"
+    (php/< phase 0.22) "\e[48;5;124m"
+    (php/< phase 0.32) "\e[48;5;52m"
+    :else              nil))
+
+(defn- paint-heartbeat-vignette
+  "Pulsing red bar down both screen edges, intensity driven by the
+   heartbeat phase. Active only at 1-2 lives, off otherwise. Painted
+   AFTER the hit-vignette so a fresh hit still dominates."
+  [parts stats vw vh]
+  (let [lives (or (get stats :lives) 0)
+        phase (or (get stats :heartbeat-phase) 0.0)
+        bg    (heartbeat-bg phase lives)]
+    (when bg
+      (let [left-c0  1
+            right-c0 (php/max 1 (php/- vw 1))
+            cell     (str bg "  ")]
+        (loop [r 1]
+          (when (php/<= r vh)
+            (buf-push parts (str "\e[" r ";" left-c0  "H" cell))
+            (buf-push parts (str "\e[" r ";" right-c0 "H" cell "\e[0m"))
+            (recur (php/+ r 1)))))))
+  parts)
+
 (defn- paint-hit-vignette
   "2-col red bar down the screen edge on the side the attacker came
    from. Painted while iframes active AND :hurt-side is set."
@@ -1227,6 +1259,7 @@
             parts       (paint-wall-lights  parts vw vh hits hxs hys tops)
             parts       (paint-crosshair    parts stats vw vh center-bg)
             parts       (paint-intro-splash parts stats vw vh)
+            parts       (paint-heartbeat-vignette parts stats vw vh)
             parts       (paint-hit-vignette parts stats bloody? vw vh)
             parts       (paint-heat-bar     parts stats vw vh)
             parts       (paint-kill-streak  parts stats map-col map-row visible-mh)

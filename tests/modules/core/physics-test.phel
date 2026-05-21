@@ -1,7 +1,7 @@
 (ns phel-doom-tests.modules.core.physics-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.modules.core.state   :refer [new-world new-player])
-  (:require phel-doom.modules.core.physics :refer [try-move apply-physics]))
+  (:require phel-doom.modules.core.physics :refer [try-move apply-physics tick-heartbeat]))
 
 ;; Tiny 3x3 grid: walls around the perimeter, open centre.
 (def open-world
@@ -85,3 +85,43 @@
         w1 (apply-physics w0 1.0)]
     (is (= 1.5 (:x (:player w1))))
     (is (= 2 (:fwd (:moves w1))))))
+
+;; ---------------------------------------------------------------------
+;; tick-heartbeat: phase loops only when low on lives; the wrap flag
+;; fires exactly on the frame the phase rolls past 1.0.
+;; ---------------------------------------------------------------------
+
+(deftest test-tick-heartbeat-silent-at-full-lives
+  (let [w0 (assoc empty-world :lives 5 :heartbeat-phase 0.0)
+        w1 (tick-heartbeat w0 0.5)]
+    (is (= 0.0 (:heartbeat-phase w1)))
+    (is (= false (:heartbeat-tick? w1)))))
+
+(deftest test-tick-heartbeat-silent-when-dead
+  (let [w0 (assoc empty-world :lives 0 :heartbeat-phase 0.4)
+        w1 (tick-heartbeat w0 0.5)]
+    (is (= 0.0 (:heartbeat-phase w1)))
+    (is (= false (:heartbeat-tick? w1)))))
+
+(deftest test-tick-heartbeat-advances-phase-at-2-lives
+  (let [w0 (assoc empty-world :lives 2 :heartbeat-phase 0.0)
+        w1 (tick-heartbeat w0 0.1)]
+    (is (> (:heartbeat-phase w1) 0.0))
+    (is (< (:heartbeat-phase w1) 1.0))
+    (is (= false (:heartbeat-tick? w1)))))
+
+(deftest test-tick-heartbeat-wraps-and-flips-tick-flag
+  ;; Big-enough dt to push phase across 1.0 in one frame, so we can
+  ;; assert the wrap behaviour without depending on the exact interval.
+  (let [w0 (assoc empty-world :lives 1 :heartbeat-phase 0.0)
+        w1 (tick-heartbeat w0 5.0)]
+    (is (= true (:heartbeat-tick? w1)))
+    (is (< (:heartbeat-phase w1) 1.0))
+    (is (>= (:heartbeat-phase w1) 0.0))))
+
+(deftest test-tick-heartbeat-faster-at-1-life-than-2
+  ;; Same dt, same start phase — 1-life run should be further along
+  ;; (shorter interval = faster phase accumulation).
+  (let [w-low (tick-heartbeat (assoc empty-world :lives 1 :heartbeat-phase 0.0) 0.1)
+        w-mid (tick-heartbeat (assoc empty-world :lives 2 :heartbeat-phase 0.0) 0.1)]
+    (is (> (:heartbeat-phase w-low) (:heartbeat-phase w-mid)))))

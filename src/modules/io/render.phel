@@ -1412,43 +1412,60 @@
   "Interior strings for the start-menu box. `:sep` markers between
    sections become `├─┤` divider rows in render-start-menu.
 
-   Internal SGR resets use `\\e[40;97m` (menu wash) instead of `\\e[0m`
-   so text painted AFTER a colour change (e.g. the description that
-   follows a yellow `w s ↑ ↓` key chip) stays on the dark BG and
-   doesn't render as a light block on the menu."
-  []
-  (let [w     start-menu-width
-        blank (pad-visible "" w)]
-    [blank
-     (pad-visible "      \e[1;93m✦  P H E L - D O O M  ✦\e[40;97m" w)
-     blank
-     (pad-visible "         a DOOM-lite raycaster" w)
-     (pad-visible "            written in \e[1mPhel\e[40;97m" w)
-     blank
-     (pad-visible "       \e[2;97m// crafted by \e[1;93mChemaclass & Opus\e[40;97m" w)
-     blank
-     :sep blank
-     (pad-visible "  \e[1mCONTROLS\e[40;97m" w)
-     blank
-     (pad-visible "    \e[93mw s ↑ ↓\e[40;97m   move forward / back" w)
-     (pad-visible "    \e[93ma d    \e[40;97m   strafe left / right" w)
-     (pad-visible "    \e[93m← →    \e[40;97m   turn left / right" w)
-     (pad-visible "    \e[93me      \e[40;97m   about-face (snap 180°)" w)
-     (pad-visible "    \e[93mspace  \e[40;97m   fire" w)
-     (pad-visible "    \e[93mm  n   \e[40;97m   toggle minimap / sound" w)
-     (pad-visible "    \e[93mp  q   \e[40;97m   pause / quit" w)
-     blank
-     :sep blank
-     (pad-visible "  \e[1mHOW TO PLAY\e[40;97m" w)
-     blank
-     (pad-visible "    Shoot enemies. Walk into a door to" w)
-     (pad-visible "    advance. Walk over a heart to refill" w)
-     (pad-visible "    a life. Pick up armor to absorb a hit." w)
-     (pad-visible "    Survive 5 levels." w)
-     blank
-     :sep blank
-     (pad-visible "      \e[2;97mpress any key to start\e[40;97m" w)
-     blank]))
+   Adaptive to terminal height (`rows`):
+     >= 32  full menu (title + credit + controls + how-to-play + footer)
+     >= 24  drop the how-to-play section
+     < 24   ultra-compact (title + footer only; controls listed
+             behind a 'press ? for help' hint elsewhere).
+
+   The total row count always fits inside `rows - 4` cells (box top
+   border + bottom border + one cushion above + one below)."
+  [rows]
+  (let [w        start-menu-width
+        blank    (pad-visible "" w)
+        title    [blank
+                  (pad-visible "      \e[1;93m✦  P H E L - D O O M  ✦\e[40;97m" w)
+                  blank
+                  (pad-visible "         a DOOM-lite raycaster" w)
+                  (pad-visible "            written in \e[1mPhel\e[40;97m" w)]
+        credit   [blank
+                  (pad-visible "       \e[2;97m// crafted by \e[1;93mChemaclass & Opus\e[40;97m" w)
+                  blank]
+        controls [:sep blank
+                  (pad-visible "  \e[1mCONTROLS\e[40;97m" w)
+                  blank
+                  (pad-visible "    \e[93mw s ↑ ↓\e[40;97m   move forward / back" w)
+                  (pad-visible "    \e[93ma d    \e[40;97m   strafe left / right" w)
+                  (pad-visible "    \e[93m← →    \e[40;97m   turn left / right" w)
+                  (pad-visible "    \e[93me      \e[40;97m   about-face (snap 180°)" w)
+                  (pad-visible "    \e[93mspace  \e[40;97m   fire" w)
+                  (pad-visible "    \e[93mm  n   \e[40;97m   toggle minimap / sound" w)
+                  (pad-visible "    \e[93mp  q   \e[40;97m   pause / quit" w)
+                  blank]
+        howto    [:sep blank
+                  (pad-visible "  \e[1mHOW TO PLAY\e[40;97m" w)
+                  blank
+                  (pad-visible "    Shoot enemies. Walk into a door to" w)
+                  (pad-visible "    advance. Walk over a heart to refill" w)
+                  (pad-visible "    a life. Pick up armor to absorb a hit." w)
+                  (pad-visible "    Survive 5 levels." w)
+                  blank]
+        footer   [:sep blank
+                  (pad-visible "      \e[2;97mpress any key to start\e[40;97m" w)
+                  blank]]
+    (apply vector
+           (cond
+             ;; Full menu: title + credit + controls + how-to-play + footer.
+             (php/>= rows 32) (concat title credit controls howto footer)
+             ;; Medium: drop the how-to-play section.
+             (php/>= rows 24) (concat title credit controls footer)
+             ;; Tight: title + footer only, with a hint that resizing
+             ;; reveals the full menu.
+             :else            (concat title
+                                      [blank
+                                       (pad-visible "       \e[2;97mresize terminal for full menu\e[40;97m" w)
+                                       blank]
+                                      footer)))))
 
 (defn render-start-menu
   "Full-screen wash + centred bordered box listing controls and a
@@ -1456,7 +1473,7 @@
    borders align pixel-perfect with the rest of the UI."
   {:export true}
   [cols rows]
-  (let [items (start-menu-rows)
+  (let [items (start-menu-rows rows)
         parts (buf-mk)
         bar   (php/str_repeat "─" start-menu-width)
         wash  "\e[48;5;233m"]

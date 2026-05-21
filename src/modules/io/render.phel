@@ -846,8 +846,10 @@
    `cast`       ray-cast outputs {:dists :hits :sides :hxs :hys}
    `palette`    {:stbl :ctbl :sky-c :floor-c :door-shade-now :door-code-now}
    `blood-cols` per-col directional blood mask (from build-blood-cols)
-   `kick-shift` 0 or 1, vertical recoil shift while firing."
-  [vw vh kick-shift cast palette blood-cols]
+   `kick-shift` 0 or 1, vertical recoil shift while firing.
+   `haze-shift` int 0-23: how many shade-table steps to pull walls
+                toward black. Doors are kept bright as a nav cue."
+  [vw vh kick-shift haze-shift cast palette blood-cols]
   (let [{:keys [dists hits sides hxs hys]}                             cast
         {:keys [stbl ctbl sky-c floor-c door-shade-now door-code-now]} palette
         tops                                                           (buf-mk)
@@ -876,10 +878,14 @@
                 (buf-set bot-edge    col (str "\e[48;5;" floor-c-l ";38;5;" door-code-now "m▀"))
                 (buf-set top-shadow  col door-shade-now)
                 (buf-set bot-shadow  col door-shade-now))
-            (let [idx (php/max 0
-                               (php/min 23
-                                        (php/+ (php/intval (php/* (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 23))
-                                               (if (php/=== (buf-get sides col) 0) 2 0))))]
+            (let [idx-raw (php/max 0
+                                   (php/min 23
+                                            (php/+ (php/intval (php/* (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 23))
+                                                   (if (php/=== (buf-get sides col) 0) 2 0))))
+                  ;; Haze pulls every wall cell toward index 0 (black)
+                  ;; by `haze-shift` steps. 0 = full visibility; values
+                  ;; come from frame->string based on player lives.
+                  idx     (php/max 0 (php/- idx-raw haze-shift))]
               (let [wcode     (buf-get ctbl-l idx)
                     plain     (buf-get stbl-l idx)
                     hx        (buf-get hxs col)
@@ -1102,6 +1108,17 @@
         ;; position one row down so the horizon tilts up. Settles back
         ;; as the timer decays in combat.phel.
         kick-shift                         (if (php/> (or (get stats :fire-anim) 0.0) 0.0) 1 0)
+        ;; Atmospheric haze pulls walls toward black as lives drop, so
+        ;; the world reads as 'consumed by darkness' the closer the
+        ;; player is to dying. Sky / floor untouched; doors keep their
+        ;; full-brightness pulse so the exit stays findable.
+        haze-shift                         (let [l (or (get stats :lives) 0)]
+                                             (cond
+                                               (php/<= l 0) 0
+                                               (php/<= l 1) 6
+                                               (php/<= l 2) 3
+                                               (php/<= l 3) 1
+                                               :else        0))
         ;; Per-column wall geometry + shade arrays. compute-wall-shades
         ;; CREATES them fresh and returns them (PHP arrays are passed
         ;; by value so a mutating helper can't mutate the caller's
@@ -1115,7 +1132,7 @@
          :bot-edge          shades-bot-edge
          :top-shadow        shades-top-shadow
          :bot-shadow        shades-bot-shadow}
-        (compute-wall-shades vw vh kick-shift
+        (compute-wall-shades vw vh kick-shift haze-shift
                              {:dists dists :hits hits :sides sides
                               :hxs hxs    :hys hys}
                              {:stbl stbl :ctbl ctbl

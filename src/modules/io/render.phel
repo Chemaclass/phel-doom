@@ -38,26 +38,44 @@
    feet so the sprite reads as grounded instead of floating in mid-air."
   "\e[48;5;232m ")
 
+;; Pickup sprites paint a coloured BG rectangle over the projected
+;; column range, then overlay a single ICON glyph at the centre cell
+;; so the pickup reads as a proper symbol up close and a coloured
+;; glow from across the room. BG + glyph cycle on a sin wave.
+
 (def heart-shade
-  "Bright pink-red painted into the per-cell overlay so a heart
-   pickup pops out against the grey walls + red enemies."
+  "Heartbeat 'systole' frame: dim dark-red BG."
+  "\e[48;5;52m ")
+
+(def heart-shade-bright
+  "Heartbeat 'diastole' frame: brighter pink-red BG that throbs in
+   tempo with the heart-glyph swap below."
   "\e[48;5;205m ")
 
-(def heart-sparkle
-  "Off-beat sparkle frame for the heart pulse: brighter pink BG with
-   a yellow `✦` star drawn on top so the pickup glints across the
-   room. Cycled with heart-shade on a sin wave in the col-loop setup."
-  "\e[48;5;213;38;5;226m✦")
+(def heart-glyph
+  "Filled ♥ in bright white on the dim red BG. Single centre cell."
+  "\e[48;5;52;38;5;231;1m♥")
+
+(def heart-glyph-bright
+  "Pulse frame: ♥ in saturated red on the bright pink BG so glyph +
+   BG throb together."
+  "\e[48;5;205;38;5;196;1m♥")
 
 (def armor-shade
-  "Bright blue BG painted into the per-cell overlay for armor pickups
-   so they read as a distinct cool counterpart to the pink hearts."
+  "Armor 'idle' BG: deep steel blue."
+  "\e[48;5;17m ")
+
+(def armor-shade-bright
+  "Armor 'pulse' BG: brighter electric blue."
   "\e[48;5;33m ")
 
-(def armor-sparkle
-  "Off-beat glint frame for the armor pulse: brighter blue BG with a
-   white shield-like glyph."
-  "\e[48;5;39;38;5;231;1m◆")
+(def armor-glyph
+  "White ◆ on the deep-blue BG. Reads as a shield boss."
+  "\e[48;5;17;38;5;231;1m◆")
+
+(def armor-glyph-bright
+  "Yellow ◆ on the bright-blue BG for the pulse frame."
+  "\e[48;5;33;38;5;226;1m◆")
 (def char-aspect 2.0)
 (def hud-rows 1)
 
@@ -526,10 +544,14 @@
                                              "\e[48;5;130;38;5;226m▌" door-shade)
         door-code-now                      (if (php/> (php/sin (php/* (php/microtime true) 4.0)) 0.0)
                                              "130" door-code)
-        heart-shade-now                    (if (php/> (php/sin (php/* (php/microtime true) 6.0)) 0.0)
-                                             heart-sparkle heart-shade)
-        armor-shade-now                    (if (php/> (php/sin (php/* (php/microtime true) 5.0)) 0.0)
-                                             armor-sparkle armor-shade)
+        ;; Pickup pulse: systole/diastole BG + matching centre glyph
+        ;; both swap on the same beat so the icon throbs in tempo.
+        heart-bright?                      (php/> (php/sin (php/* (php/microtime true) 6.0)) 0.0)
+        heart-shade-now                    (if heart-bright? heart-shade-bright heart-shade)
+        heart-glyph-now                    (if heart-bright? heart-glyph-bright heart-glyph)
+        armor-bright?                      (php/> (php/sin (php/* (php/microtime true) 5.0)) 0.0)
+        armor-shade-now                    (if armor-bright? armor-shade-bright armor-shade)
+        armor-glyph-now                    (if armor-bright? armor-glyph-bright armor-glyph)
         tops                               (php/array)
         bots                               (php/array)
         ;; Five pre-baked ANSI strings per column:
@@ -743,12 +765,13 @@
                                (php/aset blood-paint (php/+ (php/* r vw) c) bsh)
                                (recur (php/+ r 1)))))
                          (recur (php/+ c 1))))))))))
-    ;; Pickup paint: hearts (pink) + armors (blue). Same projection
-    ;; routine — compact sprite at upper-mid of the projected column
-    ;; so it floats visibly above the floor without obscuring the
-    ;; wall behind it.
+    ;; Pickup paint: hearts (pink-red) + armors (steel-blue). Fills the
+    ;; projected sprite rectangle with `shade-now` as a coloured glow,
+    ;; then overlays `glyph-now` at the centre cell so up-close the
+    ;; pickup reads as a proper icon (♥ / ◆) and from far it stays a
+    ;; clear coloured spot.
     (let [paint-pickup
-          (fn [pickups shade-now]
+          (fn [pickups shade-now glyph-now]
             (doseq [item pickups]
                    (let [proj (project-enemy item (:player world) vw)]
                      (when proj
@@ -759,10 +782,9 @@
                                c-to   (php/min (php/- vw 1) (php/+ col hw))
                                h      (php/min vh (php/intval (php// proj-dist
                                                                      (php/* (php/max 0.5 d) char-aspect))))]
-                           (let [r-top (let [mid (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 2))]
-                                         (php/max 0 (php/- mid (php/intdiv h 6))))
-                                 r-bot (let [mid (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 2))]
-                                         (php/min vh (php/+ mid (php/intdiv h 6) 1)))]
+                           (let [mid   (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 2))
+                                 r-top (php/max 0 (php/- mid (php/intdiv h 6)))
+                                 r-bot (php/min vh (php/+ mid (php/intdiv h 6) 1))]
                              (loop [c c-from]
                                (when (php/<= c c-to)
                                  (when (php/< d (php/aget dists c))
@@ -770,9 +792,20 @@
                                      (when (php/< r r-bot)
                                        (php/aset blood-paint (php/+ (php/* r vw) c) shade-now)
                                        (recur (php/+ r 1)))))
-                                 (recur (php/+ c 1)))))))))))]
-      (paint-pickup (or (:hearts world) []) heart-shade-now)
-      (paint-pickup (or (:armors world) []) armor-shade-now))
+                                 (recur (php/+ c 1))))
+                             ;; Centre icon overlay: single cell wins
+                             ;; over the BG fill because the row loop
+                             ;; reads blood-paint last.
+                             (when (and (php/>= col 0)
+                                        (php/< col vw)
+                                        (php/>= mid 0)
+                                        (php/< mid vh)
+                                        (php/< d (php/aget dists col)))
+                               (php/aset blood-paint
+                                         (php/+ (php/* mid vw) col)
+                                         glyph-now)))))))))]
+      (paint-pickup (or (:hearts world) []) heart-shade-now heart-glyph-now)
+      (paint-pickup (or (:armors world) []) armor-shade-now armor-glyph-now))
     (let [parts (php/array)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]

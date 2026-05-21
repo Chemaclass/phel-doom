@@ -146,6 +146,37 @@
     ;; Cooldown is frozen while active so the next gap restarts cleanly.
     (is (= 12.0 (:flicker-cooldown w')))))
 
+;; ---------------------------------------------------------------------
+;; Inverted controls after a hit: :invert-secs > 0 means the :moves
+;; map is read with each opposing pair swapped, so :fwd takes the
+;; player backward etc. Counter decay still runs (apply-physics decays
+;; the underlying map, not the swapped view).
+;; ---------------------------------------------------------------------
+
+(deftest test-apply-physics-inverted-fwd-walks-backward
+  ;; Stamp :fwd while inverted. Player faces east; inverted :fwd
+  ;; should pull them west (x decreases).
+  (let [w0 (assoc empty-world :invert-secs 0.5)
+        w1 (apply-physics (assoc-in w0 [:moves :fwd] 5) 0.1)]
+    (is (< (:x (:player w1)) 1.5))))
+
+(deftest test-apply-physics-inverted-back-walks-forward
+  (let [w0 (assoc empty-world :invert-secs 0.5)
+        w1 (apply-physics (assoc-in w0 [:moves :back] 5) 0.1)]
+    (is (> (:x (:player w1)) 1.5))))
+
+(deftest test-apply-physics-inverted-turn-right-rotates-left
+  (let [w0 (assoc empty-world :invert-secs 0.5)
+        w1 (apply-physics (assoc-in w0 [:moves :turn-right] 3) 0.1)]
+    ;; Inverted turn-right should rotate counter-clockwise (negative).
+    (is (< (:angle (:player w1)) 0.0))))
+
+(deftest test-apply-physics-invert-off-is-noop-for-fwd
+  ;; Same input, no invert — must walk forward, not backward.
+  (let [w0 (assoc empty-world :invert-secs 0.0)
+        w1 (apply-physics (assoc-in w0 [:moves :fwd] 5) 0.1)]
+    (is (> (:x (:player w1)) 1.5))))
+
 (deftest test-tick-flicker-low-life-resamples-into-faster-band
   ;; When the flicker fires at 1 life, the new cooldown should be in
   ;; the haunted-band (6..12), shorter than the calm 20..30 band.

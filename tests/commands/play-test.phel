@@ -61,3 +61,20 @@
   (let [w' (tick-world (new-world open-grid (new-player 5.0 5.0 0.0))
                        "" 0.016 (assoc no-edges :toggle-map true))]
     (is (= false (:show-map w')))))
+
+(deftest test-tick-world-advances-game-time-when-running
+  ;; Pause-aware clock advances by dt on a live frame so render's
+  ;; pulses (door blink, behind warning, etc.) tick forward.
+  (let [w0 (new-world open-grid (new-player 5.0 5.0 0.0))
+        w1 (tick-world w0 "" 0.25 no-edges)]
+    (is (= 0.25 (:game-time w1)))))
+
+(deftest test-tick-world-freezes-game-time-when-paused
+  ;; Issue #7: pause must freeze every time-driven animation. The
+  ;; render layer reads :game-time, so a paused tick must leave it
+  ;; untouched no matter how large dt is.
+  (let [w0 (assoc (new-world open-grid (new-player 5.0 5.0 0.0))
+                  :paused true
+                  :game-time 1.5)
+        w1 (tick-world w0 "" 10.0 no-edges)]
+    (is (= 1.5 (:game-time w1)))))

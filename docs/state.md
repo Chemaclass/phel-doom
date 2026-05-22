@@ -24,6 +24,7 @@ Pure data shapes that every other module operates on. `src/modules/core/state.ph
  :intro-secs <float seconds>  ; level intro splash countdown
  :flash-secs <float seconds>  ; 1-frame white impact flash
  :fx         <vector of blood splatters>
+ :game-time  <float seconds>  ; pause-aware clock for render pulses
  :moves      {:fwd :back :strafe-left :strafe-right :turn-left :turn-right}}
 ```
 
@@ -98,6 +99,10 @@ Float-seconds countdowns on the world, decayed by `decay-timers` in `core/combat
 | `:intro-secs` | `build-world` (1.5s) | "LEVEL N · NAME" splash overlay |
 
 `:fx` is a vector of blood splatters with their own `:ttl` ticked by `decay-fx`.
+
+### `:game-time` — the pause-aware clock
+
+`advance-game-time` adds `dt` to `:game-time` on every non-paused frame; on a paused frame `tick-world` returns early so the value is left untouched. Render samples this clock for every blink/pulse (door, behind warning, jam, pickup throb, enemy face/body cycle, screen-shake) so pressing `p` freezes every visual animation that was driven by the wall clock before. Resume picks up exactly where the freeze caught it.
 
 ## Why the world is a flat map, not a record
 

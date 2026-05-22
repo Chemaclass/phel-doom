@@ -103,8 +103,26 @@ Phel emits `float $t_then, float $t_now`. No implicit cast, no deprecation, no l
 
 ## What's NOT optimised (yet)
 
-- **Differential rendering**. Every frame painted in full. Could diff against previous and emit only changed cells. Huge win on static scenes, meaningful complexity cost.
 - **Sprite occlusion via z-buffer**. We re-test wall distance per cell when painting an enemy. A per-column min-z buffer would early-exit. Marginal at 5ms total budget.
+
+## Evaluated and shelved
+
+### Differential rendering (issue #3 — closed without merge)
+
+Per-row diff against the previous frame, emitting only changed rows. Same `default-grid`, two-frame diff, bytes-emitted measured (lower = better):
+
+| Scenario | Viewport | Full repaint | Row-diff | Δ |
+|---|---|---|---|---|
+| Paused (dt = 0) | 180×40 | 15693 B | 0 B | **-100 %** |
+| Still player, world ticks (HUD + pulses only) | 180×40 | 15693 B | 6121 B | **-61 %** |
+| Moving forward | 180×40 | 15583 B | 15864 B | **+2 %** |
+| Turning | 180×40 | 15616 B | 15897 B | **+2 %** |
+
+The static-scene wins are real but rare — once the player moves OR turns, every row's wall column changes and the diff cost (cursor-positioning overhead + the per-row string compare) makes it net *more* expensive than a single cursor-home full repaint. With the existing run-length encoding already keeping frames under ~16 KB at 180×40 and the cast+render budget under 5 ms, the saved bytes don't move the needle in the case that actually matters (active gameplay).
+
+Add to that: invalidation logic for resize, scene reset, alt-screen re-entry, pause-menu overlay, minimap toggle, transient effects — every one of those would need a forced full-repaint flag, and getting any of them wrong leaves stale cells on screen.
+
+Verdict: **complexity cost > realistic win**. Issue closed without merging.
 
 ## Measured numbers
 

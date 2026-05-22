@@ -112,3 +112,15 @@ Phel emits `float $t_then, float $t_now`. No implicit cast, no deprecation, no l
 | 180×40 | ~5 ms |
 
 Game-loop overhead (`stty size`, `microtime`, `usleep`) adds ~2ms. Effective frame rate caps around 165 fps at 180×40.
+
+### Reading these live: the F3 debug overlay
+
+Press **F3** in-game to toggle a per-frame perf row that paints above the standard HUD footer. It surfaces (last-frame snapshot):
+
+- `frame` — total frame time in ms (same source as the existing fps counter).
+- `cast` / `render` — split of the frame budget between `cast-frame` and everything else `render!` does. Should add up to `frame` within timing jitter.
+- `bytes` — `strlen` of the emitted ANSI frame string. Tracks the hypothesis behind the differential-rendering investigation (issue #3).
+- `rle` — average bytes per `\e[` SGR prefix in the frame, a proxy for how effectively run-length encoding is collapsing same-colour runs (higher = better).
+- `mem` — current / peak PHP memory (`memory_get_usage(true)`).
+
+The overlay is **off by default and pays zero per-frame cost when off** — the instrumentation is fully gated behind the `:debug?` flag on the world, so production runs never call `microtime`, `strlen`, `substr_count`, or `memory_get_usage`. This is the canonical way to validate any future cast/render optimisation (issues #2, #3, #4): toggle F3, read the numbers before and after.

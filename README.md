@@ -35,6 +35,7 @@ make play
 | `m`            | Toggle minimap               |
 | `n`            | Toggle sound                 |
 | `p`            | Pause                        |
+| `F3`           | Toggle perf debug overlay    |
 | `q`            | Quit                         |
 
 Walk into a door to advance. Walk over a heart to refill a life.

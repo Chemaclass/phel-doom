@@ -97,21 +97,28 @@ Hot-path numeric args get explicit `^float`:
 
 Phel emits `float $t_then, float $t_now`. No implicit cast, no deprecation, no log spam.
 
+## DDA raycaster
+
+`cast-ray` and `cast-ray-hit` march from grid line to grid line via a Wolfenstein-style **DDA**: precompute step direction + per-axis `delta = |1/dir|`, advance whichever side-distance is smaller, check the cell. ~5-8 iterations per ray instead of the old fixed-step march's ~35, and the side bit + hit-cell coords fall out for free (so the brick-texture hash + corner shading get correct inputs without a second pass). Issue #2.
+
 ## What's NOT optimised (yet)
 
-- **DDA raycaster**. Current step-march does ~35 iterations per ray. Grid-aligned DDA would do ~5-8. ~5× faster cast phase. Larger refactor.
 - **Differential rendering**. Every frame painted in full. Could diff against previous and emit only changed cells. Huge win on static scenes, meaningful complexity cost.
 - **Sprite occlusion via z-buffer**. We re-test wall distance per cell when painting an enemy. A per-column min-z buffer would early-exit. Marginal at 5ms total budget.
 
 ## Measured numbers
 
-| Viewport | frame->string time |
-|---|---|
-| 80×24 | ~2 ms |
-| 120×30 | ~3 ms |
-| 180×40 | ~5 ms |
+`cast-frame` only, 2000-iteration mean from `default-grid` at the player spawn — bench harness lives in [`/perf-bench`](../.claude/skills/perf-bench/SKILL.md):
 
-Game-loop overhead (`stty size`, `microtime`, `usleep`) adds ~2ms. Effective frame rate caps around 165 fps at 180×40.
+| Viewport | step-march (pre-#2) | DDA (post-#2) | Δ |
+|---|---|---|---|
+| 80×24 | 0.81 ms | 0.65 ms | -19 % |
+| 120×30 | 1.26 ms | 0.99 ms | -22 % |
+| 180×40 | 2.04 ms | 1.55 ms | -24 % |
+
+Cast time scales roughly linearly with column count; DDA's win grows with viewport width because each ray's traversal cost drops while the per-ray trig (cos/sin/atan) stays fixed.
+
+Whole-frame timing (cast + composition + ANSI emit) lands well under the 5 ms target at every viewport. Live perf numbers — including the cast/render split, bytes emitted, and PHP memory — are available in-game by pressing **F3** (issue #9). Game-loop overhead (`stty size`, `microtime`, `usleep`) adds ~2 ms; effective frame rate caps around 165 fps at 180×40.
 
 ### Reading these live: the F3 debug overlay
 
@@ -123,4 +130,4 @@ Press **F3** in-game to toggle a per-frame perf row that paints above the standa
 - `rle` — average bytes per `\e[` SGR prefix in the frame, a proxy for how effectively run-length encoding is collapsing same-colour runs (higher = better).
 - `mem` — current / peak PHP memory (`memory_get_usage(true)`).
 
-The overlay is **off by default and pays zero per-frame cost when off** — the instrumentation is fully gated behind the `:debug?` flag on the world, so production runs never call `microtime`, `strlen`, `substr_count`, or `memory_get_usage`. This is the canonical way to validate any future cast/render optimisation (issues #2, #3, #4): toggle F3, read the numbers before and after.
+The overlay is **off by default and pays zero per-frame cost when off** — the instrumentation is fully gated behind the `:debug?` flag on the world, so production runs never call `microtime`, `strlen`, `substr_count`, or `memory_get_usage`. This is the canonical way to validate any future cast/render optimisation (issues #3, #4): toggle F3, read the numbers before and after.

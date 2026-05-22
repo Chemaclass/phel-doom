@@ -9,6 +9,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-22
+
 ### Added
 
 - F3 toggles a per-frame perf overlay (frame-ms, cast-ms, render-ms, bytes emitted, avg RLE run-length, PHP memory). Off by default and fully gated, so the off path pays zero overhead. The canonical way to validate future cast/render optimisations. Closes #9.
@@ -51,5 +53,6 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `cast + render` under 5 ms per frame at 120×30.
 - Flat PHP arrays on hot paths; `:tag` types for OPcache JIT tracing.
 
-[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Chemaclass/phel-doom/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Chemaclass/phel-doom/releases/tag/v0.1.0

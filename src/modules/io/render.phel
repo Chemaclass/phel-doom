@@ -220,11 +220,16 @@
   1.8)
 
 (defn- enemy-aggro-head-string
-  "Head zone paint cell with a blink attribute and no distance fade —
-   used when the enemy is within aggro-distance, so the player sees
-   the head pulsing the moment a monster is within striking range."
-  [^int code]
-  (str "\e[5;48;5;" code "m "))
+  "Head zone paint cell used when the enemy is within aggro-distance.
+   Alternates between full-brightness head colour and a half-faded
+   version on a code-driven pulse so the head reads as throbbing —
+   freezes on pause along with every other game-time animation
+   (issue #7). Terminal SGR 5 (blink) is intentionally avoided so
+   pause is observable in this layer too."
+  [^int code ^boolean bright?]
+  (if bright?
+    (str "\e[48;5;" code "m ")
+    (str "\e[48;5;" (fade-256 code 0.6) "m ")))
 
 (defn- build-horizon-gradient
   "Per-row PHP array of pre-baked shade strings for the given viewport
@@ -307,10 +312,11 @@
 (def minimap-door  "\e[40;33;1mD\e[0m")
 
 (def minimap-door-pulse
-  "Bright yellow blink-attribute D for the minimap door cell, swapped
-   in with `minimap-door` on a fast sin wave so the exit catches the
-   eye. Cycled in the col-loop setup."
-  "\e[40;5;93;1mD\e[0m")
+  "Bright magenta D for the minimap door cell, swapped in with
+   `minimap-door` on a fast sin wave so the exit catches the eye.
+   Cycled in the col-loop setup. Code-driven only — terminal SGR
+   blink (5) is intentionally dropped so the swap freezes on pause."
+  "\e[40;93;1mD\e[0m")
 
 (defn- enemy-cells
   "Build a PHP array keyed by `row*gw+col` whose truthy entries mark
@@ -506,11 +512,13 @@
    :map-row 1})
 
 (defn- pulse
-  "Wall-clock sin-wave beat at `freq` rad/s. Returns true for half
-   the cycle, false for the other half. Used to throb pickups, door
-   glyph, torch lights, etc. without per-element state tracking."
-  [^float freq]
-  (php/> (php/sin (php/* (php/microtime true) freq)) 0.0))
+  "Pause-aware sin-wave beat at `freq` rad/s, sampled at game-time `t`
+   (seconds). Returns true for half the cycle, false for the other
+   half. Caller passes the world's :game-time so the beat freezes
+   whenever the game does — used to throb pickups, door glyph, torch
+   lights, behind-warning, etc. without per-element state tracking."
+  [^float t ^float freq]
+  (php/> (php/sin (php/* t freq)) 0.0))
 
 ;; =====================================================================
 ;; § Overlay paint helpers
@@ -569,9 +577,9 @@
   "~3% of wall cells get a flickering torch glyph painted near the
    wall top. Deduped per (hx, hy) so adjacent screen cols of the same
    wall cell share one torch."
-  [parts vw vh hits hxs hys tops]
+  [parts ^float t vw vh hits hxs hys tops]
   (let [seen (buf-mk)
-        tcol (if (pulse 7.0) "\e[1;38;5;220m" "\e[1;38;5;208m")]
+        tcol (if (pulse t 7.0) "\e[1;38;5;220m" "\e[1;38;5;208m")]
     (loop [col 0]
       (when (php/< col vw)
         (when (php/=== 1 (buf-get hits col))
@@ -670,10 +678,12 @@
   "Tiny blinking '‹ behind ›' label below the compass when at least
    one alive enemy is in the rear arc + within audible range. Dim
    red on the dark HUD strip so it reads as 'something off' without
-   stealing focus from the 3D view."
-  [parts stats vw]
-  (when (get stats :rear-warning?)
-    (let [label "\e[40;5;38;5;160;1m‹ behind ›\e[0m"
+   stealing focus from the 3D view. Blink is code-driven off
+   game-time so it freezes on pause — terminal SGR 5 would keep
+   ticking against the wall clock."
+  [parts ^float t stats vw]
+  (when (and (get stats :rear-warning?) (pulse t 3.0))
+    (let [label "\e[40;38;5;160;1m‹ behind ›\e[0m"
           col   (php/max 1 (php/- (php/intdiv vw 2) 5))]
       (buf-push parts (str "\e[2;" col "H" label))))
   parts)
@@ -744,8 +754,9 @@
 
 (defn- paint-heat-bar
   "10-cell heat bar under the pistol sprite. Replaced by blinking
-   'JAMMED' when :jam-secs > 0."
-  [parts stats vw vh]
+   'JAMMED' when :jam-secs > 0. Blink is code-driven off game-time
+   so the warning freezes when the game is paused."
+  [parts ^float t stats vw vh]
   (let [heat (or (get stats :heat) 0.0)
         jam  (or (get stats :jam-secs) 0.0)
         cc   (php/+ (php/intdiv vw 2) 1)
@@ -753,8 +764,9 @@
     (when (or (php/> heat 0.0) (php/> jam 0.0))
       (cond
         (php/> jam 0.0)
-        (buf-push parts
-                  (str "\e[" row ";" (php/- cc 3) "H\e[5;91;1mJAMMED\e[0m"))
+        (let [sgr (if (pulse t 6.0) "\e[91;1m" "\e[2;91m")]
+          (buf-push parts
+                    (str "\e[" row ";" (php/- cc 3) "H" sgr "JAMMED\e[0m")))
         :else
         (let [filled (php/intval (php/* heat 10.0))
               empty  (php/- 10 filled)
@@ -810,14 +822,18 @@
   parts)
 
 (defn- paint-hearts-hud
-  "Top-left lives + armor count. Blink-attribute while bloody. Every
-   glyph carries an explicit dark BG (`\\e[40m`) so the strip stays
-   readable on terminals whose default BG is light or transparent."
-  [parts stats bloody?]
+  "Top-left lives + armor count. Hearts pulse while bloody — code-
+   driven off game-time so the blink freezes on pause (issue #7).
+   Every glyph carries an explicit dark BG (`\\e[40m`) so the strip
+   stays readable on terminals whose default BG is light or
+   transparent."
+  [parts ^float t stats bloody?]
   (let [l     (or (get stats :lives) 0)
         cap   (or (get stats :max-lives) 5)
         armor (or (get stats :armor) 0)
-        blink (if bloody? "\e[5;1m" "\e[1m")]
+        blink (cond (and bloody? (pulse t 8.0)) "\e[1m"
+                    bloody?                     "\e[2m"
+                    :else                       "\e[1m")]
     (buf-push parts
               (str "\e[1;1H\e[40m" blink "\e[91m"
                    (php/str_repeat "♥ " l)
@@ -1121,11 +1137,15 @@
         head-code                          (get stats :enemy-head-code)
         body-code                          (get stats :enemy-body-code)
         legs-code                          (get stats :enemy-legs-code)
+        ;; Pause-aware clock: render samples its blinks/pulses from
+        ;; this instead of wall time so every time-driven animation
+        ;; freezes the moment the game is paused (issue #7).
+        t                                  (or (get stats :game-time) 0.0)
         ;; Walk-cycle body glyph: same sin-wave selector as the face,
         ;; offset by π so the body glyph swaps on the OPPOSITE beat from
         ;; the face. Eye blinks and scales/muscles shift on alternating
         ;; beats so the monster looks animated without per-enemy state.
-        face-phase                         (php/sin (php/* (php/microtime true) 3.0))
+        face-phase                         (php/sin (php/* t 3.0))
         eface                              (if (php/> face-phase 0.0)
                                              (get stats :enemy-face)
                                              (or (get stats :enemy-face-alt)
@@ -1149,15 +1169,18 @@
         ;; two shades on a sin wave. Wall clock so the rhythm stays
         ;; the same regardless of fps. Frequencies differ (4 vs 6
         ;; rad/s) so the two pulses don't lock together.
-        door-bright?                       (pulse 4.0)
+        door-bright?                       (pulse t 4.0)
         door-shade-now                     (if door-bright? "\e[48;5;130;38;5;226m▌" door-shade)
         door-code-now                      (if door-bright? "130" door-code)
         ;; Pickup pulse: systole/diastole BG + matching centre glyph
         ;; both swap on the same beat so the icon throbs in tempo.
-        heart-bright?                      (pulse 6.0)
+        heart-bright?                      (pulse t 6.0)
         heart-shade-now                    (if heart-bright? heart-shade-bright heart-shade)
         heart-glyph-now                    (if heart-bright? heart-glyph-bright heart-glyph)
-        armor-bright?                      (pulse 5.0)
+        armor-bright?                      (pulse t 5.0)
+        ;; Aggro head pulse: same code-driven swap so a monster in
+        ;; striking range throbs without relying on terminal blink.
+        aggro-bright?                      (pulse t 5.0)
         armor-shade-now                    (if armor-bright? armor-shade-bright armor-shade)
         armor-glyph-now                    (if armor-bright? armor-glyph-bright armor-glyph)
         ;; Camera kick: while :fire-anim > 0 shift the wall vertical
@@ -1257,7 +1280,7 @@
                        ;; and assigned to every column it covers.
                        fhead   (cond
                                  (and head-code (php/< d aggro-distance))
-                                 (enemy-aggro-head-string head-code)
+                                 (enemy-aggro-head-string head-code aggro-bright?)
                                  head-code
                                  (enemy-shade-string head-code t)
                                  :else
@@ -1386,7 +1409,7 @@
             center-bg   (php/mb_substr center-cell 0
                                        (php/max 0 (php/- (php/mb_strlen center-cell) 1)))
             parts       (paint-face-overlay parts world stats vw vh dists eface)
-            parts       (paint-wall-lights  parts vw vh hits hxs hys tops)
+            parts       (paint-wall-lights  parts t vw vh hits hxs hys tops)
             parts       (paint-door-face    parts stats vw vh hits tops bots)
             parts       (paint-crosshair    parts stats vw vh center-bg)
             parts       (paint-intro-splash parts stats vw vh)
@@ -1394,11 +1417,11 @@
             parts       (paint-flicker parts stats vw vh)
             parts       (paint-heartbeat-vignette parts stats vw vh)
             parts       (paint-hit-vignette parts stats bloody? vw vh)
-            parts       (paint-heat-bar     parts stats vw vh)
+            parts       (paint-heat-bar     parts t stats vw vh)
             parts       (paint-kill-streak  parts stats map-col map-row visible-mh)
             parts       (paint-compass      parts world vw)
-            parts       (paint-rear-warning parts stats vw)
-            parts       (paint-hearts-hud   parts stats bloody?)
+            parts       (paint-rear-warning parts t stats vw)
+            parts       (paint-hearts-hud   parts t stats bloody?)
             parts       (paint-pistol-hud   parts stats vw vh floor-gradient)]
         (when (get stats :paused)
           (buf-push parts (pause-menu-string vw vh (get stats :sound-on))))
@@ -1436,8 +1459,9 @@
   [world stats cols rows]
   (let [iframes (or (get stats :iframes) 0.0)
         shake?  (php/> iframes 0.75)
+        t       (or (get stats :game-time) 0.0)
         shake-x (if shake?
-                  (php/+ 1 (mod (php/intval (php/* (php/microtime true) 50.0)) 3))
+                  (php/+ 1 (mod (php/intval (php/* t 50.0)) 3))
                   1)]
     (print (str "\e[1;" shake-x "H"))
     (if (php/> (or (get stats :flash-secs) 0.0) 0.0)

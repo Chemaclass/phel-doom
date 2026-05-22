@@ -1,7 +1,8 @@
 (ns phel-doom-tests.modules.core.engine-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.modules.core.map    :refer [default-grid])
-  (:require phel-doom.modules.core.engine :refer [cast-ray max-depth]))
+  (:require phel-doom.modules.core.state  :refer [new-world new-player])
+  (:require phel-doom.modules.core.engine :refer [cast-ray cast-frame max-depth]))
 
 (def pgrid (to-php-array (map to-php-array default-grid)))
 
@@ -19,3 +20,59 @@
   ;; from (1.5, 1.5) facing north (-y), wall at y=1 → distance ~0.5
   (let [d (cast-ray pgrid 1.5 1.5 (- 0 (/ php/M_PI 2.0)))]
     (is (< d 1.0))))
+
+;; ---------------------------------------------------------------------
+;; DDA correctness (issue #2): pin the hit details cast-frame surfaces
+;; to render so the texture / side-shading pipeline keeps working.
+;; A 5×5 chamber: player at the centre, walls all around at x=0/4 and
+;; y=0/4. Distance to each wall = 1.5 cells from (2.5, 2.5).
+;; ---------------------------------------------------------------------
+
+(def chamber-grid
+  [[1 1 1 1 1]
+   [1 0 0 0 1]
+   [1 0 0 0 1]
+   [1 0 0 0 1]
+   [1 1 1 1 1]])
+
+(defn- one-ray-frame [world angle]
+  ;; A single-column cast-frame so we can read column 0 directly.
+  (let [w' (assoc world :player (new-player 2.5 2.5 angle))
+        c  (cast-frame w' 1)]
+    {:dist (php/aget (:dists c) 0)
+     :hit  (php/aget (:hits c)  0)
+     :side (php/aget (:sides c) 0)
+     :hx   (php/aget (:hxs c)   0)
+     :hy   (php/aget (:hys c)   0)}))
+
+(deftest test-cast-frame-east-ray-hits-x-axis-wall
+  ;; Centre-column ray pointing east: hits the wall at x=4 first, so
+  ;; the last boundary crossed is an x-line. side = 0 (vertical face).
+  (let [w (new-world chamber-grid (new-player 2.5 2.5 0.0))
+        r (one-ray-frame w 0.0)]
+    (is (= 1 (:hit r)))
+    (is (= 0 (:side r)))
+    (is (= 4 (:hx r)))
+    (is (< (php/abs (php/- (:dist r) 1.5)) 0.01))))
+
+(deftest test-cast-frame-south-ray-hits-y-axis-wall
+  ;; Pointing south (+y): last boundary is a y-line. side = 1
+  ;; (horizontal face). hy = 4.
+  (let [w (new-world chamber-grid (new-player 2.5 2.5 0.0))
+        r (one-ray-frame w (/ php/M_PI 2.0))]
+    (is (= 1 (:hit r)))
+    (is (= 1 (:side r)))
+    (is (= 4 (:hy r)))
+    (is (< (php/abs (php/- (:dist r) 1.5)) 0.01))))
+
+(deftest test-cast-frame-arrays-are-parallel
+  ;; Render destructures `{:keys [dists hits sides hxs hys]}` from
+  ;; cast-frame and walks them by column index. Pin that they all
+  ;; have the same length so a column-major loop stays safe.
+  (let [w (new-world chamber-grid (new-player 2.5 2.5 0.0))
+        c (cast-frame w 8)]
+    (is (= 8 (php/count (:dists c))))
+    (is (= 8 (php/count (:hits c))))
+    (is (= 8 (php/count (:sides c))))
+    (is (= 8 (php/count (:hxs c))))
+    (is (= 8 (php/count (:hys c))))))

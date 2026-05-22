@@ -1,10 +1,10 @@
 # Raycaster
 
-`src/modules/core/engine.phel`. Per-column wall distances via ray-stepping through the grid.
+`src/modules/core/engine.phel`. Per-column wall distances via a grid-aligned DDA traversal.
 
 ## What raycasting is
 
-For each screen column, fire a ray from the player along an angle offset from facing. Walk forward in small steps until it hits a non-floor cell. Distance travelled sets that column's wall height.
+For each screen column, fire a ray from the player along an angle offset from facing. Walk forward through the grid until it hits a non-floor cell. Distance travelled sets that column's wall height.
 
 Original DOOM / Wolfenstein technique. No 3D math, 2D ray-marching with a perspective scale.
 
@@ -12,61 +12,69 @@ Original DOOM / Wolfenstein technique. No 3D math, 2D ray-marching with a perspe
 
 ```phel
 (def max-depth 12.0)   ; rays stop after this many world units
-(def step      0.35)   ; how far each ray step advances
 (def proj-dist 70.0)   ; perspective constant; see below
 ```
 
-`max-depth` caps how far walls draw; beyond paints sky/floor. `step` trades accuracy for cost: smaller = sharper, more iterations per ray.
+`max-depth` caps how far walls draw; beyond paints sky/floor.
+
+## DDA: grid-aligned traversal
+
+Each ray steps from one grid-line crossing to the next instead of marching a fixed `step` distance. Two per-axis side-distances track "how far until the ray crosses the next x-line / y-line"; the loop advances whichever is smaller, lands inside the next cell, and updates that axis's side-distance by `delta = |1/dir|`. ~5-8 iterations per ray on `default-grid` instead of ~35 with a 0.35-unit step-march (see [performance.md](performance.md), issue #2).
+
+Key state per ray:
+
+```phel
+(let [dirx   (php/cos angle)
+      diry   (php/sin angle)
+      cx0    (php/intval (php/floor px))
+      cy0    (php/intval (php/floor py))
+      stepx  (if (php/< dirx 0.0) -1 1)
+      stepy  (if (php/< diry 0.0) -1 1)
+      deltax (if (php/=== dirx 0.0) dda-inf (php/abs (php// 1.0 dirx)))
+      deltay (if (php/=== diry 0.0) dda-inf (php/abs (php// 1.0 diry)))
+      ;; Distance from (px,py) to the next x-grid line and y-grid line.
+      sidex0 (if (php/< dirx 0.0)
+               (php/* (php/- px cx0) deltax)
+               (php/* (php/- (php/+ cx0 1.0) px) deltax))
+      sidey0 (if (php/< diry 0.0)
+               (php/* (php/- py cy0) deltay)
+               (php/* (php/- (php/+ cy0 1.0) py) deltay))]
+  ...)
+```
+
+`dda-inf` is a finite sentinel (1e9) used when one axis of `dir` is exactly zero — keeps the comparisons clean without dragging in PHP's `INF`.
 
 ## `cast-ray-hit`: one ray
 
-```phel
-(defn- cast-ray-hit [pgrid px py angle]
-  (let [dx (php/* (php/cos angle) step)
-        dy (php/* (php/sin angle) step)]
-    (loop [dist 0.0 x px y py
-           prev-cx (php/intval px)]
-      (let [cx  (php/intval x)
-            cy  (php/intval y)
-            hit (cell-at pgrid cx cy)]
-        (cond
-          (php/>= dist max-depth) [max-depth 0 cx cy 0]
-          (php/!== 0 hit)
-          (let [side (if (php/!== cx prev-cx) 0 1)]
-            [dist hit cx cy side])
-          :else
-          (recur (php/+ dist step) (php/+ x dx) (php/+ y dy) cx))))))
-```
+Returns the 5-tuple `[dist hit-cell side hx hy]`:
 
-5-tuple per ray:
-
-| Index | Meaning |
+| Field | Meaning |
 |---|---|
 | `dist` | Travelled distance (not yet fish-eye corrected) |
-| `hit-cell` | Cell value the ray landed on (0 = escaped to max-depth) |
+| `hit-cell` | Cell value the ray landed on (0 if escaped to max-depth) |
+| `side` | 0 if the last crossing was an x-line (vertical wall face), 1 if a y-line (horizontal face) |
 | `hx, hy` | Integer cell coords of the hit cell |
-| `side` | 0 if last crossing was x-axis (vertical wall face), 1 if y-axis (horizontal face) |
 
-`side` enables Wolfenstein-style directional shading: render layer darkens vertical-face columns by one shade step, so corners read as corners. `(hx, hy)` feeds a per-cell hash in the renderer that adds subtle mottling so a long corridor isn't one flat band.
+`side` enables Wolfenstein-style directional shading: render darkens vertical-face columns by one shade step, so corners read as corners. `(hx, hy)` feeds a per-cell hash in the renderer that adds subtle brick mottling so a long corridor isn't one flat band.
 
 ## `cast-frame`: all rays at once
 
 ```phel
 (defn cast-frame [world width]
   (let [...
-        dists (php/array) hits (php/array) hxs (php/array)
-        hys (php/array) sides (php/array)]
+        dists (php/array) hits (php/array) sides (php/array)
+        hxs   (php/array) hys  (php/array)]
     (loop [col 0]
       (when (php/< col width)
         (let [offset (php/atan (/ (php/- col center) proj-dist))]
-          (let [[d h hx hy side] (cast-ray-hit pgrid x y (php/+ angle offset))]
+          (let [[d h side hx hy] (cast-ray-hit pgrid x y (php/+ angle offset))]
             (php/aset dists col (php/* d (php/cos offset)))   ; fish-eye correct
             (php/aset hits  col h)
+            (php/aset sides col side)
             (php/aset hxs   col hx)
-            (php/aset hys   col hy)
-            (php/aset sides col side))
+            (php/aset hys   col hy))
           (recur (php/+ col 1)))))
-    {:dists dists :hits hits :hxs hxs :hys hys :sides sides}))
+    {:dists dists :hits hits :sides sides :hxs hxs :hys hys}))
 ```
 
 Five parallel PHP arrays, one entry per screen column. Renderer indexes by column.
@@ -95,10 +103,8 @@ Without this, walls bow outward at the edges (fish-eye). One multiply per column
 
 ## Per-ray cost
 
-`max-depth / step` = 12 / 0.35 ≈ 35 iterations per ray. At 180 columns that's ~6300 iterations per frame for the cast phase. Hot enough that the loop uses direct PHP ops (`php/+`, `php/<`, `php/aget`).
-
-Could be ~5× faster with grid-aligned DDA (jump cell-to-cell), but step-march is fast enough at terminal resolutions and easier to reason about. See [performance.md](performance.md) for the rest.
+DDA averages ~5-8 cell crossings before hitting a wall on `default-grid` — down from ~35 fixed steps. At 180 columns the cast phase clocks ~1.55 ms (was ~2.04 ms before DDA, ~24% faster). Hot enough that the loop still uses direct PHP ops (`php/+`, `php/<`, `php/aget`) and the cell lookup goes through `:pgrid` (a PHP-native nested array) instead of Phel persistent vectors.
 
 ## Why the raycaster lives in `core/`
 
-Pure function: `(pgrid, x, y, angle) → distance`. No state, no IO, deterministic. `tests/modules/core/engine-test.phel` exercises with literal grids.
+Pure function: `(pgrid, x, y, angle) → distance`. No state, no IO, deterministic. `tests/modules/core/engine-test.phel` exercises with literal grids — distance accuracy, side bit, hit-cell coords, parallel-array lengths.

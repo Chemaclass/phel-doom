@@ -9,6 +9,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-05-22
+
 ### Added
 
 - 256-color ANSI raycaster, runs in any modern terminal.
@@ -26,4 +28,5 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `cast + render` under 5 ms per frame at 120×30.
 - Flat PHP arrays on hot paths; `:tag` types for OPcache JIT tracing.
 
-[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/HEAD...HEAD
+[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Chemaclass/phel-doom/releases/tag/v0.1.0

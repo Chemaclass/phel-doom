@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.modules.core.state :refer [new-world new-player])
   (:require phel-doom.modules.core.combat
-            :refer [closest-attacker attacker-side can-fire? apply-heat knockback]))
+            :refer [closest-attacker attacker-side can-fire? apply-heat knockback mag-size reload]))
 
 ;; ---------------------------------------------------------------------
 ;; closest-attacker: selection rule.
@@ -57,17 +57,30 @@
 ;; ---------------------------------------------------------------------
 
 (deftest test-can-fire-fresh-world
-  ;; Cold world (no cooldown, no jam) is firable.
-  (is (= true (can-fire? {:fire-cooldown 0.0 :jam-secs 0.0}))))
+  ;; Cold world (no cooldown, no jam, mag full) is firable.
+  (is (= true (can-fire? {:fire-cooldown 0.0 :jam-secs 0.0 :mag 10}))))
 
 (deftest test-can-fire-during-cooldown
-  (is (= false (can-fire? {:fire-cooldown 0.05 :jam-secs 0.0}))))
+  (is (= false (can-fire? {:fire-cooldown 0.05 :jam-secs 0.0 :mag 10}))))
 
 (deftest test-can-fire-during-jam
-  (is (= false (can-fire? {:fire-cooldown 0.0 :jam-secs 0.3}))))
+  (is (= false (can-fire? {:fire-cooldown 0.0 :jam-secs 0.3 :mag 10}))))
 
-(deftest test-can-fire-treats-missing-fields-as-ready
-  (is (= true (can-fire? {}))))
+(deftest test-can-fire-blocks-on-empty-mag
+  ;; Issue #5: trigger drops silently while the mag is empty until the
+  ;; player presses R to reload.
+  (is (= false (can-fire? {:fire-cooldown 0.0 :jam-secs 0.0 :mag 0}))))
+
+(deftest test-can-fire-blocks-during-reload-cooldown
+  ;; Brief lockout right after R so trigger-mashing on R doesn't bypass
+  ;; the empty-mag block on the same frame.
+  (is (= false (can-fire? {:fire-cooldown 0.0 :jam-secs 0.0 :mag 10 :reload-cooldown 0.1}))))
+
+(deftest test-can-fire-treats-missing-mag-as-empty
+  ;; A world without `:mag` is a fresh / external test world that
+  ;; hasn't gone through `new-world` — safer to refuse the shot than
+  ;; to invent ammo.
+  (is (= false (can-fire? {:fire-cooldown 0.0 :jam-secs 0.0}))))
 
 ;; ---------------------------------------------------------------------
 ;; apply-heat: one shot's worth of state change.
@@ -88,6 +101,30 @@
     (is (> (:jam-secs w) 0.0))
     ;; Heat resets to 0 so the player isn't punished twice.
     (is (= 0.0 (:heat w)))))
+
+(deftest test-apply-heat-burns-one-round
+  ;; Each fired shot drops the mag count by one (issue #5 phase 1).
+  (let [w (apply-heat {:heat 0.0 :jam-secs 0.0 :mag 10})]
+    (is (= 9 (:mag w))))
+  ;; Empty mag clamps at zero — apply-heat won't go negative even
+  ;; if can-fire? somehow let a shot through.
+  (let [w (apply-heat {:heat 0.0 :jam-secs 0.0 :mag 0})]
+    (is (= 0 (:mag w)))))
+
+;; ---------------------------------------------------------------------
+;; reload: tops the mag back up, arms a brief cooldown.
+;; ---------------------------------------------------------------------
+
+(deftest test-reload-fills-the-mag
+  (let [w (reload {:mag 3})]
+    (is (= mag-size (:mag w)))
+    (is (> (:reload-cooldown w) 0.0))))
+
+(deftest test-reload-during-cooldown-is-noop
+  ;; Holding R should not reset the lockout each frame.
+  (let [w (reload {:mag 7 :reload-cooldown 0.3})]
+    (is (= 7 (:mag w)))
+    (is (= 0.3 (:reload-cooldown w)))))
 
 ;; ---------------------------------------------------------------------
 ;; knockback: shoves the player AWAY from the attacker, clamps on walls.

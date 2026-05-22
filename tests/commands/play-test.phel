@@ -86,3 +86,28 @@
   (let [w  (new-world open-grid (new-player 5.0 5.0 0.0))
         w' (tick-world w "" 0.016 (assoc no-edges :toggle-debug true))]
     (is (= true (:debug? w')))))
+
+(deftest test-tick-world-reload-edge-refills-mag
+  ;; Issue #5: R rising edge tops the mag back up to mag-size.
+  (let [w0 (assoc (new-world open-grid (new-player 5.0 5.0 0.0)) :mag 2)
+        w1 (tick-world w0 "" 0.016 (assoc no-edges :reload true))]
+    (is (= 10 (:mag w1)))
+    (is (> (:reload-cooldown w1) 0.0))))
+
+(deftest test-tick-world-fire-decrements-mag
+  ;; A successful shot subtracts one round from the mag.
+  (let [w' (tick-world
+            (with-enemies (new-world open-grid (new-player 2.0 5.0 0.0))
+                          [(new-enemy 5.0 5.0)])
+            "" 0.016 (assoc no-edges :fire true))]
+    (is (= 9 (:mag w')))))
+
+(deftest test-tick-world-fire-blocked-on-empty-mag
+  ;; Trigger pull on an empty mag does nothing — neither kill nor mag
+  ;; change. Player has to press R first.
+  (let [w0 (assoc (with-enemies (new-world open-grid (new-player 2.0 5.0 0.0))
+                                [(new-enemy 5.0 5.0)])
+                  :mag 0)
+        w' (tick-world w0 "" 0.016 (assoc no-edges :fire true))]
+    (is (= 0 (:kills w')))
+    (is (= 0 (:mag w')))))

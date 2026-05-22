@@ -32,6 +32,7 @@ make play
 | `←` / `→`      | Turn left / right            |
 | `e`            | About-face (snap 180°)       |
 | `space`        | Fire                         |
+| `r`            | Reload (10-round mag)        |
 | `m`            | Toggle minimap               |
 | `n`            | Toggle sound                 |
 | `p`            | Pause                        |

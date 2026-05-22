@@ -122,7 +122,39 @@
   "Yellow ◆ on the bright-blue BG for the pulse frame."
   "\e[48;5;33;38;5;226;1m◆")
 (def char-aspect 2.0)
-(def hud-rows 1)
+(def base-hud-rows 1)
+
+(defn- hud-rows-for
+  "Number of HUD rows to reserve at the bottom of the viewport. The
+   debug overlay (F3) adds a second row above the standard footer; off
+   by default so the 3D viewport keeps its full vertical real estate."
+  [stats]
+  (if (get stats :debug?) 2 base-hud-rows))
+
+(def perf-snapshot
+  "Side-channel for the F3 perf overlay. `render!` writes the latest
+   cast-ms / render-ms / bytes / avg-rle / PHP-mem snapshot into this
+   atom every frame the overlay is on; `frame-stats` reads it on the
+   following frame so the debug row paints last-frame numbers. nil
+   while the overlay is off — gates the paint-debug-row helper out."
+  (atom nil))
+
+(defn read-perf-snapshot
+  "Public accessor for the latest perf snapshot written by render!.
+   Called by play.frame-stats so the debug HUD has data to paint on
+   the next frame. Returns nil while the overlay has never been on."
+  {:export true}
+  []
+  @perf-snapshot)
+
+(defn- record-cast-ms!
+  "Helper used by `frame->string` when :debug? is on. Stashes the
+   measured cast-phase time so `render!` can subtract it from total
+   frame time to get the render-phase slice. Skips the swap when the
+   atom is unset so the off path stays branch-free."
+  [^float ms]
+  (swap! perf-snapshot
+         (fn [snap] (if (nil? snap) {:cast-ms ms} (assoc snap :cast-ms ms)))))
 
 (def shade-table
   "Pre-baked ANSI strings for the 24 grayscale palette entries (codes
@@ -386,6 +418,44 @@
         (recur (php/+ row 1))))
     rows))
 
+(defn- fmt-ms
+  "Render an ms reading to one decimal so the debug row stays compact
+   even when timings stretch past 10ms. Falls back to `--` when the
+   metric is not available yet (e.g. first frame)."
+  [v]
+  (if (nil? v) "--" (php/number_format v 1)))
+
+(defn- fmt-bytes
+  "Human-readable byte count: under 10k stays plain, otherwise `k`/`M`
+   suffix with one decimal so the row fits in a single line."
+  [n]
+  (cond (nil? n)          "--"
+        (php/< n 10000)   (str n)
+        (php/< n 1000000) (str (php/number_format (php// n 1000.0) 1) "k")
+        :else             (str (php/number_format (php// n 1000000.0) 2) "M")))
+
+(defn- hud-debug-line
+  "Single-line perf overlay. Reads the snapshot `frame-stats` already
+   pulled from the side-channel atom — no instrumentation work runs
+   here, so the row repaints cheaply once the cost has been paid by
+   the previous frame's render!. Off when :debug? is false."
+  [stats]
+  (let [snap         (or (get stats :perf-stats) {})
+        frame-ms     (or (get stats :frame-ms) 0)
+        cast-ms      (get snap :cast-ms)
+        render-ms    (get snap :render-ms)
+        bytes        (get snap :bytes)
+        avg-rle      (get snap :avg-rle)
+        php-mem      (get snap :php-mem)
+        php-mem-peak (get snap :php-mem-peak)]
+    (str "\e[0m\e[1;36m[DEBUG]\e[0m"
+         "  \e[1mframe\e[0m " frame-ms "ms"
+         "  \e[1mcast\e[0m "  (fmt-ms cast-ms) "ms"
+         "  \e[1mrender\e[0m " (fmt-ms render-ms) "ms"
+         "  \e[1mbytes\e[0m " (fmt-bytes bytes)
+         "  \e[1mrle\e[0m "  (if (nil? avg-rle) "--" (php/number_format avg-rle 1))
+         "  \e[1mmem\e[0m "  (fmt-bytes php-mem) "/" (fmt-bytes php-mem-peak))))
+
 (defn- hud-line [world stats]
   (let [{:keys [x y angle]} (:player world)]
     (str "\e[0m\e[1mpos\e[0m ("
@@ -504,10 +574,12 @@
 
 (defn- layout
   "Viewport fills the whole terminal. The minimap is an overlay in the
-   top-right corner that the M key shows or hides."
-  [cols rows mw]
+   top-right corner that the M key shows or hides. The HUD row count
+   grows by one when the F3 debug overlay is on so the perf row can
+   sit above the standard footer without clipping the 3D view."
+  [cols rows mw stats]
   {:vw      cols
-   :vh      (- rows hud-rows)
+   :vh      (- rows (hud-rows-for stats))
    :map-col (php/max 1 (+ (- cols mw) 1))
    :map-row 1})
 
@@ -1099,7 +1171,7 @@
   {:export true}
   [world stats cols rows]
   (let [{:keys [vw vh map-col map-row]}
-        (layout cols rows (count (first (:grid world))))
+        (layout cols rows (count (first (:grid world))) stats)
         bloody?                            (php/> (or (get stats :iframes) 0.0) 0.0)
         ;; Walls + sky + floor are ALL pure grayscale: enemy colours
         ;; pop against neutral stonework, and far walls fade toward
@@ -1156,8 +1228,17 @@
                                              (or (get stats :enemy-body-glyph-alt)
                                                  body-glyph-base))
         body-glyph-fg                      (get stats :enemy-body-glyph-fg)
+        ;; Cast phase. When the F3 overlay is on, sample microtime
+        ;; around the call so render! can split cast-ms from total
+        ;; frame-ms. The branch is the only debug-gated cost in the
+        ;; off path — a single `(get stats :debug?)` check per frame.
+        debug?                             (get stats :debug?)
+        t-cast-start                       (if debug? (php/microtime true) 0.0)
         {:keys [dists hits sides hxs hys]}
         (cast-frame world vw)
+        _                                  (when debug?
+                                             (record-cast-ms!
+                                              (php/* (php/- (php/microtime true) t-cast-start) 1000.0)))
         ;; Half-block edge cells need the sky/floor colour CODE for
         ;; the current palette so the composer can write
         ;; "\e[48;5;WALL;38;5;SKYm▀" and let ▀'s upper half show sky.
@@ -1373,6 +1454,9 @@
                                           (buf-push parts (php/str_repeat " " (php/- run 1)))
                                           (recur (php/+ col 1) c 1))))))
                (buf-push parts "\e[0m\n"))
+      (when (get stats :debug?)
+        (buf-push parts (hud-debug-line stats))
+        (buf-push parts "\n"))
       (buf-push parts (hud-line world stats))
       (dotimes [i visible-mh]
                (buf-push parts (str "\e[" (php/+ map-row i) ";" map-col "H" (buf-get mrows i))))
@@ -1447,6 +1531,28 @@
     (buf-push parts "\e[0m")
     (php/implode "" parts)))
 
+(defn- update-perf-snapshot!
+  "Compute the perf snapshot from the just-emitted `frame-str` and the
+   `total-ms` it took, then merge it into `perf-snapshot` (cast-ms was
+   already stashed by frame->string). Render-ms is whatever's left
+   after subtracting cast — the same accounting the manual sanity
+   check in issue #9 uses (`cast + render ≈ frame`)."
+  [^string frame-str ^float total-ms]
+  (let [bytes     (php/strlen frame-str)
+        sgr-count (php/max 1 (php/substr_count frame-str "\e["))
+        avg-rle   (php// bytes sgr-count)
+        cast-ms   (or (get @perf-snapshot :cast-ms) 0.0)
+        render-ms (php/max 0.0 (php/- total-ms cast-ms))]
+    (swap! perf-snapshot
+           (fn [snap]
+             (assoc (or snap {})
+                    :cast-ms      cast-ms
+                    :render-ms    render-ms
+                    :bytes        bytes
+                    :avg-rle      avg-rle
+                    :php-mem      (php/memory_get_usage true)
+                    :php-mem-peak (php/memory_get_peak_usage true))))))
+
 (defn render!
   "Move cursor home and overwrite the previous frame in place. Avoids
    the full-screen clear that would otherwise flicker each frame.
@@ -1454,19 +1560,29 @@
    impact jolt that lands before the red i-frame wash. Screen-shake:
    the first ~0.25s of the i-frame window offsets the cursor-home
    anchor by ±1 col so the next frame paints one cell off, reading
-   as a snap-shake on damage."
+   as a snap-shake on damage. When :debug? is set, also samples
+   microtime around `frame->string` and updates `perf-snapshot` so the
+   next frame's HUD can paint the F3 overlay; the work is gated so
+   the off path pays nothing beyond a single key read."
   {:export true}
   [world stats cols rows]
   (let [iframes (or (get stats :iframes) 0.0)
         shake?  (php/> iframes 0.75)
         t       (or (get stats :game-time) 0.0)
+        debug?  (get stats :debug?)
         shake-x (if shake?
                   (php/+ 1 (mod (php/intval (php/* t 50.0)) 3))
                   1)]
     (print (str "\e[1;" shake-x "H"))
     (if (php/> (or (get stats :flash-secs) 0.0) 0.0)
       (print (white-flash-frame cols rows))
-      (print (frame->string world stats cols rows))))
+      (if debug?
+        (let [t-start  (php/microtime true)
+              frame    (frame->string world stats cols rows)
+              total-ms (php/* (php/- (php/microtime true) t-start) 1000.0)]
+          (print frame)
+          (update-perf-snapshot! frame total-ms))
+        (print (frame->string world stats cols rows)))))
   (php/flush))
 
 ;; ---------------------------------------------------------------------

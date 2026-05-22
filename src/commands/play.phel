@@ -2,7 +2,7 @@
   (:require phel.cli :as cli)
   (:require phel.string :as str)
   (:require phel-doom.modules.core.state    :refer [advance-game-time gain-life max-lives
-                                                    toggle-map toggle-pause toggle-sound])
+                                                    toggle-debug toggle-map toggle-pause toggle-sound])
   (:require phel-doom.modules.core.map      :refer [door?])
   (:require phel-doom.modules.glue.controls :refer [refresh-from-keys key-states rising-edges
                                                     initial-key-snapshot])
@@ -13,6 +13,7 @@
   (:require phel-doom.modules.core.level    :refer [build-world num-levels])
   (:require phel-doom.modules.io.scores   :refer [update-scores!])
   (:require phel-doom.modules.io.render   :refer [render! clear-screen
+                                                  read-perf-snapshot
                                                   render-start-menu
                                                   render-death-screen render-victory-screen])
   (:require phel-doom.modules.io.input    :refer [init-input! restore! drain-keys]))
@@ -65,13 +66,15 @@
   (update-in world [:player :angle] (fn [a] (php/+ a php/M_PI))))
 
 (defn- handle-toggles
-  "Apply rising-edge toggle keys (pause / minimap / sound / about-face)
-   for this frame."
+  "Apply rising-edge toggle keys (pause / minimap / sound / debug /
+   about-face) for this frame. Debug edge stays outside the paused
+   short-circuit so F3 still flips the overlay while paused."
   [world edges]
   (let [after-pause (if (:toggle-pause edges) (toggle-pause world) world)
         after-map   (if (:toggle-map edges) (toggle-map after-pause) after-pause)
-        after-sound (if (:toggle-sound edges) (toggle-sound after-map) after-map)]
-    (if (:about-face edges) (about-face after-sound) after-sound)))
+        after-sound (if (:toggle-sound edges) (toggle-sound after-map) after-map)
+        after-debug (if (:toggle-debug edges) (toggle-debug after-sound) after-sound)]
+    (if (:about-face edges) (about-face after-debug) after-debug)))
 
 (defn- tick-enemies
   "Step every alive enemy one dt-scaled frame toward the player, using
@@ -191,6 +194,8 @@
    :blood-drops (:blood-drops world)
    :door-face-active-secs (:door-face-active-secs world)
    :game-time   (or (:game-time world) 0.0)
+   :debug?      (:debug? world)
+   :perf-stats  (when (:debug? world) (read-perf-snapshot))
    :rear-warning? (rear-attacker? (:enemies world)
                                   (:x (:player world))
                                   (:y (:player world))

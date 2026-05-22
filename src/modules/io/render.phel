@@ -258,7 +258,7 @@
    freezes on pause along with every other game-time animation
    (issue #7). Terminal SGR 5 (blink) is intentionally avoided so
    pause is observable in this layer too."
-  [^int code ^boolean bright?]
+  [^int code ^bool bright?]
   (if bright?
     (str "\e[48;5;" code "m ")
     (str "\e[48;5;" (fade-256 code 0.6) "m ")))
@@ -456,6 +456,17 @@
          "  \e[1mrle\e[0m "  (if (nil? avg-rle) "--" (php/number_format avg-rle 1))
          "  \e[1mmem\e[0m "  (fmt-bytes php-mem) "/" (fmt-bytes php-mem-peak))))
 
+(defn- ammo-cell
+  "Single-call ammo readout for the HUD: `ammo  N/10`. Goes amber once
+   the mag drops to 3 or fewer and red on empty so the player gets a
+   peripheral 'reload now' cue without having to look at the number."
+  [stats]
+  (let [mag    (or (get stats :mag) 0)
+        colour (cond (php/<= mag 0) "\e[1;91m"
+                     (php/<= mag 3) "\e[1;93m"
+                     :else          "\e[1m")]
+    (str "\e[1mammo\e[0m " colour mag "\e[0m/10")))
+
 (defn- hud-line [world stats]
   (let [{:keys [x y angle]} (:player world)]
     (str "\e[0m\e[1mpos\e[0m ("
@@ -466,8 +477,9 @@
          "°"
          "  \e[1mL" (or (get stats :level) 1) "\e[0m " (or (get stats :level-name) "")
          "  \e[1mkills\e[0m " (or (get stats :kills) 0)
+         "  " (ammo-cell stats)
          "  \e[1mfps\e[0m " (or (get stats :fps) 0)
-         "  \e[2m[wasd ←→ space fire  e turn  m map  n sound  p pause  q quit]\e[0m")))
+         "  \e[2m[wasd ←→ space fire  r reload  e turn  m map  n sound  p pause  q quit]\e[0m")))
 
 (defn project-enemy
   "Project one enemy into screen space relative to the player. Returns
@@ -1746,6 +1758,7 @@
                   (pad-visible "    \e[93m← →    \e[40;97m   turn left / right" w)
                   (pad-visible "    \e[93me      \e[40;97m   about-face (snap 180°)" w)
                   (pad-visible "    \e[93mspace  \e[40;97m   fire" w)
+                  (pad-visible "    \e[93mr      \e[40;97m   reload" w)
                   (pad-visible "    \e[93mm  n   \e[40;97m   toggle minimap / sound" w)
                   (pad-visible "    \e[93mp  q   \e[40;97m   pause / quit" w)
                   blank]

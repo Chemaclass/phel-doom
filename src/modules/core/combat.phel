@@ -52,6 +52,18 @@
    every frame (~8 shots/sec cap)."
   0.12)
 
+(def mag-size
+  "Magazine capacity. Issue #5 phase 1: a fresh mag holds this many
+   shots, then the player must press R to reload. Phase 2 will add a
+   finite reserve count; phase 1 treats reloads as free."
+  10)
+
+(def reload-cooldown-seconds
+  "Brief lockout after a reload so the player can't trigger-mash R to
+   bypass the empty-mag block when timing a shot. Short enough that
+   reload-mid-combat still feels snappy."
+  0.4)
+
 (def heat-per-shot
   "Heat added on each shot. Heat decays continuously; when it crosses
    1.0 the pistol jams. 0.30 = ~4 shots cold-mashed before jam, ~6
@@ -108,17 +120,19 @@
         flash-secs   (php/max 0.0 (php/- (or (:flash-secs world) 0.0) dt))
         streak-secs' (php/max 0.0 (php/- (or (:streak-secs world) 0.0) dt))
         cooldown'    (php/max 0.0 (php/- (or (:fire-cooldown world) 0.0) dt))
+        reload-cd'   (php/max 0.0 (php/- (or (:reload-cooldown world) 0.0) dt))
         heat'        (php/max 0.0 (php/- (or (:heat world) 0.0) (php/* heat-cool-rate dt)))
         jam-secs'    (php/max 0.0 (php/- (or (:jam-secs world) 0.0) dt))]
     (assoc world
-           :iframes       iframes
-           :fire-anim     fire-anim
-           :intro-secs    intro-secs
-           :flash-secs    flash-secs
-           :streak-secs   streak-secs'
-           :fire-cooldown cooldown'
-           :heat          heat'
-           :jam-secs      jam-secs'
+           :iframes         iframes
+           :fire-anim       fire-anim
+           :intro-secs      intro-secs
+           :flash-secs      flash-secs
+           :streak-secs     streak-secs'
+           :fire-cooldown   cooldown'
+           :reload-cooldown reload-cd'
+           :heat            heat'
+           :jam-secs        jam-secs'
            ;; Window expired: streak counter goes back to 0 so the HUD
            ;; stops showing it.
            :streak        (if (php/<= streak-secs' 0.0) 0 (or (:streak world) 0))
@@ -268,24 +282,45 @@
       (play-sfx! :shoot 1.0))))
 
 (defn can-fire?
-  "True when the pistol is ready: cooldown elapsed AND not jammed."
+  "True when the pistol is ready: cooldown elapsed, not jammed, and
+   the magazine still has rounds. Empty mags drop the trigger pull
+   silently — the player has to press R to reload first."
   {:export true}
   [world]
   (and (php/<= (or (:fire-cooldown world) 0.0) 0.0)
-       (php/<= (or (:jam-secs world) 0.0) 0.0)))
+       (php/<= (or (:jam-secs world) 0.0) 0.0)
+       (php/<= (or (:reload-cooldown world) 0.0) 0.0)
+       (php/> (or (:mag world) 0) 0)))
 
 (defn apply-heat
-  "After a shot lands, bump heat + arm the cooldown. If heat crosses
-   1.0 the pistol overheats and jams for jam-seconds (heat resets so
-   the player isn't punished twice)."
+  "After a shot lands, bump heat + arm the cooldown, and burn one
+   round from the magazine. If heat crosses 1.0 the pistol overheats
+   and jams for jam-seconds (heat resets so the player isn't
+   punished twice)."
   {:export true}
   [world]
   (let [heat' (php/+ (or (:heat world) 0.0) heat-per-shot)
-        jam?  (php/>= heat' 1.0)]
+        jam?  (php/>= heat' 1.0)
+        mag'  (php/max 0 (php/- (or (:mag world) mag-size) 1))]
     (assoc world
            :fire-cooldown fire-cooldown-seconds
            :heat          (if jam? 0.0 heat')
-           :jam-secs      (if jam? jam-seconds (or (:jam-secs world) 0.0)))))
+           :jam-secs      (if jam? jam-seconds (or (:jam-secs world) 0.0))
+           :mag           mag')))
+
+(defn reload
+  "Top the magazine back up to `mag-size` and arm a short reload
+   cooldown so trigger-mashing can't fire on the same frame as
+   pressing R. Phase 1 (issue #5): reloads are free — phase 2 will
+   draw from a finite reserve. No-op while a reload is already in
+   progress so spamming R doesn't reset the lockout."
+  {:export true}
+  [world]
+  (if (php/> (or (:reload-cooldown world) 0.0) 0.0)
+    world
+    (assoc world
+           :mag             mag-size
+           :reload-cooldown reload-cooldown-seconds)))
 
 (defn fire-shot
   "Resolve one trigger pull end-to-end."

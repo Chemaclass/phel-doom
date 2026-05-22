@@ -12,7 +12,24 @@ Hitscan + damage timing + i-frames. `src/modules/core/combat.phel`. Only side ef
 (def fire-anim-seconds 0.09)  ; muzzle flash visibility
 (def fx-ttl-seconds    0.45)  ; blood splatter lifetime
 (def flash-seconds     0.05)  ; 1-frame all-white impact jolt
+(def mag-size          10)    ; rounds per magazine; reload at R
+(def reload-cooldown-seconds 0.4) ; brief lockout after a reload
 ```
+
+## Magazine + reload
+
+`can-fire?` requires `:fire-cooldown <= 0`, `:jam-secs <= 0`, `:reload-cooldown <= 0`, AND `:mag > 0`. Trigger pulls on an empty mag drop silently — the player must press **R** to reload.
+
+```phel
+(defn reload [world]
+  (if (php/> (or (:reload-cooldown world) 0.0) 0.0)
+    world
+    (assoc world :mag mag-size :reload-cooldown reload-cooldown-seconds)))
+```
+
+`apply-heat` decrements `:mag` by one on every shot, clamped at zero. `decay-timers` ticks `:reload-cooldown` down each frame so the next trigger pull can fire as soon as the brief lockout expires.
+
+Phase 1 ships with infinite reloads (R always tops the mag). Phase 2 (out of scope here) will draw from a finite reserve fed by ammo pickups on the map.
 
 ## Shooting
 

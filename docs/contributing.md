@@ -191,33 +191,32 @@ Two caveats:
 Outside `render.phel` (and the math-only `php/sqrt`, `php/atan2`,
 `php/intval`, etc. used everywhere for raw arithmetic), prefer
 Phel-native data: maps, vectors, keywords. Game world, player,
-enemy records, level configs, scores, and the `:moves` counter
+enemy maps, level configs, scores, and the `:moves` counter
 table are all Phel-native.
 
 `tests/modules/core/engine-test.phel` exercises the cast-frame loop
 with literal grids if you want to benchmark.
 
-### Use `php/+` (not `+`) inside hot loops
+### Choose raw `php/*` ops deliberately in hot loops
 
 Phel's `phel.core/+`, `-`, `*`, `<`, `>=`, `=`, ... wrap the PHP
 operators with a `NumericOperations` dispatch for `BigInt` / `Ratio`
 polymorphism. Each call: two `numeric-object?` checks, a branch, a
-method invocation. Per-cell or per-ray that adds up.
+method invocation. Per-cell or per-ray that adds up when the
+compiler cannot prove the call is primitive.
 
-The compiler's `ParamTypeInferrer` only observes `php/*` operators
-today, so `(php/+ a 1)` infers `^int a` and the analyser tags the
-PHP signature; `(+ a 1)` doesn't. Until phel-lang/phel-lang#2078 +
-#2079 land (auto-inference from phel.core wrappers + native emit
-on typed args), the rule is:
+Latest Phel `main` can now auto-tag float params used with
+`phel.core` arithmetic / ordering wrappers and native-emit two-arg
+`+`, `-`, `*`, `<`, `<=`, `>`, `>=`, and `=` when both operands are
+statically primitive. Int-literal uses can stay ambiguous to preserve
+`BigInt` / `Ratio` semantics, and unspecialised calls still take the
+runtime path. This project keeps raw `php/*` ops where the hot loop
+needs that fast path explicitly:
 
 - **Hot loops (cast-ray, compute-wall-shades, per-cell paint)**:
   `php/+`, `php/<`, `php/===`, etc. Direct ops, no dispatch.
 - **Everything else** (frame-stats, setup, glue): `+`, `<`, `=`.
   Reads idiomatically; the dispatch overhead is invisible.
-
-When the two phel-lang PRs land, this rule flips: idiomatic ops
-will inline to native PHP on tagged params. Until then, this is
-the perf-fast path.
 
 ## Adding a new overlay (worked example)
 

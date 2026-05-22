@@ -8,7 +8,7 @@ src/
 ├── commands/play.phel               ; outer orchestration (game-loop, run-levels)
 └── modules/
     ├── core/                        ; pure, deterministic, no IO
-    │   ├── state.phel               ; world + player records, gain-life, max-lives
+    │   ├── state.phel               ; world + player maps, gain-life, max-lives
     │   ├── map.phel                 ; grid generators, cell constants, wall? / door?
     │   ├── engine.phel              ; raycaster (cast-ray, cast-frame)
     │   ├── physics.phel             ; player rotation + translation + counter decay

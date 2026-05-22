@@ -4,7 +4,10 @@
 
 ## Direct PHP ops in the hot loop
 
-Phel's `+`, `<`, `aget` are polymorphic; they dispatch through the Phel runtime. Fine for app code, heavy per-cell.
+Unspecialised Phel `+`, `<`, and collection reads dispatch through the Phel
+runtime. Fine for app code, heavy per-cell. Latest Phel `main` can native-emit
+some typed primitive `phel.core` arithmetic and comparisons, but these hot loops
+keep the raw PHP path explicit.
 
 Renderer + raycaster use `php/+`, `php/<`, `php/aget`. Compile to `$a + $b`, `$a < $b`, `$arr[$k]` directly. No dispatch, no method call. ~5× speedup on the hot loop.
 

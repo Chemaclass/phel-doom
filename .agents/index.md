@@ -26,12 +26,6 @@ Rules + CLI: [`RULES.md`](RULES.md).
 | Editor / nREPL | — | `docs/lsp-guide.md`, `docs/nrepl-guide.md` |
 | Hot-reload | — | `docs/watch-guide.md` |
 | Syntax reference | [`quick-syntax.md`](quick-syntax.md) | `docs/quickstart.md`, `docs/reader-shortcuts.md` |
-| Idioms | — | `docs/patterns.md`, `docs/examples/` |
+| Idioms | — | `docs/patterns.md` |
 | Call Phel from PHP | — | `docs/framework-integration.md` |
 | Data structures | — | `docs/data-structures-guide.md`, `docs/lazy-sequences.md`, `docs/transducers.md` |
-
-## Examples
-
-- `examples/todo-app/` — HTTP CRUD on `phel\router`, atom store, tests
-- `examples/http-json-api/` — three JSON endpoints
-- `examples/cli-wordcount/` — stdin + argv, PHP shim binary

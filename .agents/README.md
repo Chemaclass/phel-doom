@@ -25,11 +25,9 @@ Targets: [`skills/INSTALL.md`](skills/INSTALL.md).
 | [`index.md`](index.md) | Intent → task recipe. |
 | [`tasks/`](tasks/) | One recipe per workflow (`typed-defn`, `http-app`, `cli-tool`, ...). |
 | [`skills/`](skills/) | Per-platform adapters. |
-| [`examples/`](examples/) | Runnable projects (`todo-app`, `http-json-api`, `cli-wordcount`). |
 | [`VERSION`](VERSION) | phel-lang release this doc targets. |
 
 ## Sync
 
 - Hand-written docs (`tasks/`, `skills/`, `RULES.md`, `index.md`): update when public surface changes.
-- `examples/` validated by `composer test-agents`; tests must stay green.
 - Ground truth: `docs/` + `src/phel/`. This tree only routes.

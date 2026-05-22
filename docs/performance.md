@@ -101,11 +101,29 @@ Phel emits `float $t_then, float $t_now`. No implicit cast, no deprecation, no l
 
 `cast-ray` and `cast-ray-hit` march from grid line to grid line via a Wolfenstein-style **DDA**: precompute step direction + per-axis `delta = |1/dir|`, advance whichever side-distance is smaller, check the cell. ~5-8 iterations per ray instead of the old fixed-step march's ~35, and the side bit + hit-cell coords fall out for free (so the brick-texture hash + corner shading get correct inputs without a second pass). Issue #2.
 
-## What's NOT optimised (yet)
-
-- **Sprite occlusion via z-buffer**. We re-test wall distance per cell when painting an enemy. A per-column min-z buffer would early-exit. Marginal at 5ms total budget.
-
 ## Evaluated and shelved
+
+### Sprite occlusion z-buffer (issue #4 — closed without merge)
+
+The proposal: introduce a per-column min-z so the enemy paint loop can early-exit on cells already taken by a closer sprite, instead of the current back-to-front overwrite + per-cell wall-distance check.
+
+`frame->string` mean over 1500 iterations on `build-world 1 5` with enemies clustered directly in front of the player so they overlap on screen:
+
+| Enemies on screen | 80×24 | 120×30 | 180×40 |
+|---|---|---|---|
+| 0 | 12.9 ms | 23.1 ms | 44.5 ms |
+| 1 | 13.1 ms | 23.4 ms | 45.1 ms |
+| 3 | 13.1 ms | 23.0 ms | 44.4 ms |
+| 8 | 13.3 ms | 23.3 ms | 44.5 ms |
+| 15 | 13.7 ms | 23.9 ms | 44.8 ms |
+
+(Absolute numbers are higher than the headline "<5 ms" because the bench measures the full `frame->string` on the larger level-1 map without the runtime's frame-budget sleep — relative deltas are what matters here.)
+
+Going from no enemies to 15 overlapping enemies adds **~0.8 ms at 80×24, ~0.8 ms at 120×30, ~0.3 ms at 180×40** — and that *includes* the projection trig and the per-column writes the z-buffer would not eliminate. A best-case z-buffer fast path would shave a small fraction of that already-tiny slice.
+
+Also: today's code already does most of what a z-buffer would do. `:dists` is consulted per cell to skip cells occluded by walls, `:edists` is consulted by the pickup paint to skip cells occluded by enemies, and `collect-enemy-projs` sorts enemies back-to-front so closer sprites overwrite further ones via the normal paint path. The "wasted writes" the z-buffer would avoid are bounded to dense overlap scenes, which already cost ~1 ms total.
+
+Verdict: **win is sub-millisecond, complexity adds another implicit invariant (paint order must match z-buffer fill order) plus extra state. Not justified.** Issue closed without merging.
 
 ### Differential rendering (issue #3 — closed without merge)
 

@@ -99,12 +99,15 @@ Float-seconds countdowns on the world, decayed by `decay-timers` in `core/combat
 
 `:fx` is a vector of blood splatters with their own `:ttl` ticked by `decay-fx`.
 
-## Why the world is a flat map, not records
+## Why the world is a flat map, not a record
 
-Phel has no built-in record type with the ergonomics of Clojure's `defrecord`. Plain maps win on:
+Phel has `defrecord`, backed by its map-like `defstruct`. This world still stays
+a plain map because it is a broad state aggregate assembled in stages:
 
 - one-liner construction
 - assoc / update without ceremony
 - direct serialization for tests (`(is (= expected (tick-world ...)))`)
 
-Cost: no compile-time validation that a key exists. Mitigated by documenting the keyset here and centralising key reads in `frame-stats` (so a typo is loud).
+Cost: call sites do not get `defstruct`'s fixed key shape. Mitigated by
+documenting the keyset here and centralising key reads in `frame-stats` (so a
+typo is loud).

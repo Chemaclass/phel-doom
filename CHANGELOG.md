@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Fixed
+
+- Pause menu credits row: right border now renders white like the other rows (was gray because the dim attribute leaked through the SGR reset). Closes #8.
+
 ## [0.1.0] - 2026-05-22
 
 ### Added

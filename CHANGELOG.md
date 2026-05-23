@@ -16,7 +16,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Top-row pulsing `! LOW AMMO N !` warning when total firepower drops to 3/2/1. Stacks above the `‹ behind ›` rear-warning.
 - Pressing fire on an empty mag plays a deny click and shows a centred `CLICK · press R to reload` prompt (flips to `OUT OF AMMO` when the reserve is dry).
 - Per-level enemy HP (L1 imp=1, L2 demon=2, L3 caco=3, L4 baron=4, L5 cyberdemon=5). Wounded sprites shade darker; a yellow HP digit floats above the head for 1.2s after each hit. Distinct `:wound` sfx so the player tells "I hit them" apart from "they hit me".
-- Reload now plays a 1.5s drop / refill / raise animation with its own sfx. Trigger locked out for the whole window.
+- Reload now plays a 1.2s drop / refill / raise animation with its own sfx. Trigger locked out for the whole window.
 
 ## [0.2.0] - 2026-05-22
 

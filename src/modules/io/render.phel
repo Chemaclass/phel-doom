@@ -818,6 +818,31 @@
       (buf-push parts (str "\e[2;" col "H" label))))
   parts)
 
+(defn- paint-low-ammo
+  "Top-row pulsing 'LOW AMMO N' label when total firepower
+   (mag + reserve) drops to 3 or fewer rounds — i.e. the player is
+   3/2/1 shots away from being defenceless. Right-anchored on row 1
+   so it sits next to the centre compass without overdrawing it,
+   one row ABOVE paint-rear-warning's row-2 strip.
+
+   Row 1 layout the player sees:
+     [hearts/armor at col 1]  ... [compass at vw/2 ± 5]  ... [LOW AMMO right]
+
+   Amber at 3, bright red at 1. Suppressed at 0 because the ammo
+   HUD cell already flashes red when both mag and reserve hit zero."
+  [parts ^float t stats vw]
+  (let [total (php/+ (or (get stats :mag) 0)
+                     (or (get stats :ammo-reserve) 0))]
+    (when (and (php/> total 0) (php/<= total 3) (pulse t 4.0))
+      (let [colour (cond (php/<= total 1) "38;5;196"
+                         :else            "38;5;214")
+            label  (str "\e[40;" colour ";1m! LOW AMMO " total " !\e[0m")
+            ;; 14 visible chars in the label; right-anchor with a
+            ;; 1-cell breathing margin so it can't bleed past vw.
+            col    (php/max 1 (php/- vw 15))]
+        (buf-push parts (str "\e[1;" col "H" label))))
+    parts))
+
 (defn- paint-flicker
   "Lights-flickering overlay: paint full-width dark scanlines on every
    other row while :flicker-active-secs is positive. The eye reads the
@@ -1579,11 +1604,12 @@
             p11         (paint-kill-streak        p10 stats map-col map-row visible-mh)
             p12         (paint-compass            p11 world vw)
             p13         (paint-rear-warning       p12 t stats vw)
-            p14         (paint-hearts-hud         p13 t stats bloody?)
-            p15         (paint-pistol-hud         p14 stats vw vh floor-gradient)]
+            p14         (paint-low-ammo           p13 t stats vw)
+            p15         (paint-hearts-hud         p14 t stats bloody?)
+            p16         (paint-pistol-hud         p15 stats vw vh floor-gradient)]
         (when (get stats :paused)
-          (buf-push p15 (pause-menu-string vw vh (get stats :sound-on))))
-        (php/implode "" p15)))))
+          (buf-push p16 (pause-menu-string vw vh (get stats :sound-on))))
+        (php/implode "" p16)))))
 
 (defn clear-screen
   "ANSI clear + cursor home."

@@ -13,6 +13,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 - Finite ammo reserve (phase 2 of issue #5). Fresh runs start with `:ammo-reserve 30` (three mags) and cap at `max-reserve 50`. Reload draws `min(mag-size - mag, reserve)` rounds; reload is a no-op when the reserve is empty so spamming R stays harmless. HUD ammo cell now reads `ammo N/10 [R]` with both segments coloured (amber under one-mag's worth, red on empty).
 - Ammo-box pickups. Every level spawns two `▣` boxes at random open cells; stepping on one adds `ammo-per-box 10` to the reserve (capped at `max-reserve`). Boxes pulse warm-brown → yellow in the 3D view at 7 rad/s (distinct from heart/armor pulses) and show as a yellow `A` on the minimap.
+- Top-of-screen `! LOW AMMO N !` warning that pulses when total firepower (mag + reserve) drops to 3 or fewer rounds. Amber at 3, bright red at 1; suppressed at 0 because the HUD ammo cell already flashes red on full empty. Sits on screen row 1 so it stacks above the existing `‹ behind ›` rear-warning on row 2.
 
 ## [0.2.0] - 2026-05-22
 

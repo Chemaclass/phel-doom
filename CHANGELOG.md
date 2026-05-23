@@ -20,6 +20,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Pause menu now lists every key binding (move, turn, fire, reload, about-face, map, sound, debug, resume, quit) instead of just sound / resume / quit.
 - HUD rearrange. `L1 imps · kills · ammo` strip moved to a right-anchored row 2 at the top of the play area; the cramped bottom strip is gone. Pos / angle / fps moved into the F3 debug overlay. Bottom row now a single dim tagline pointing players at the pause + debug toggles.
 - Minimap auto-scales on narrow terminals: never claims more than ~1/3 of the screen width. Bigger grids (cyberdemons 52×32) compress to every-Nth-cell sampling so the 3D view always gets at least two-thirds of the columns. Walls take priority when a sampled block is mixed so corridors don't visually vanish.
+- Ammo-box count now scales with expected combat load (`ceil(enemies × max-lives / 8)`, floor 2). L1 still gets 2 boxes; L5 cyberdemons jump from 2 → 8 so the player has enough refills to clear the floor. `L1 imps · kills · ammo` strip moved from the top-right (which collided with the minimap) to the top-left, stacked directly under the hearts/armor row.
 
 ## [0.2.0] - 2026-05-22
 

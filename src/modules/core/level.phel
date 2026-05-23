@@ -110,21 +110,42 @@
       [{:x ax :y ay}])
     []))
 
+(defn- ammo-box-count
+  "Per-level ammo-box budget. Scales with the expected shot count
+   (`enemies * max-lives`) so bigger maps with tougher monsters get
+   more refill points — at L5 the player faces ~60 HP across the
+   level and needs steady restocks; at L1 two boxes already cover
+   the 4 imps with reserve to spare. Floor of 2 so every level has
+   at least one fallback. Divisor 8 was tuned to give roughly
+   1.3 mags of ammo per expected kill."
+  [cfg]
+  (let [enemies   (or (:enemies cfg) 0)
+        max-lives (or (:enemy-lives cfg) 1)]
+    (php/max 2 (php/intval (php/ceil (php// (php/* enemies max-lives) 8))))))
+
 (defn- spawn-ammo-boxes
-  "Every level seeds two ammo boxes at random open cells. Ammo reserve
-   is finite (see combat/max-reserve) so a steady refill keeps the
-   player firing as monster counts ramp. Loops up to a few times so
-   the second box doesn't accidentally land on the first (random-spawn
-   is unconditioned across calls, and a collision would silently halve
-   the reward — both boxes consumed by a single step)."
-  [grid]
-  (let [[ax ay] (random-spawn grid)]
-    (loop [attempt 0]
-      (let [[bx by] (random-spawn grid)]
-        (cond
-          (or (php/!== ax bx) (php/!== ay by)) [{:x ax :y ay} {:x bx :y by}]
-          (php/>= attempt 4)                   [{:x ax :y ay}]
-          :else                                (recur (php/+ attempt 1)))))))
+  "Seed `n` ammo boxes at random open cells, retrying when
+   `random-spawn` collides with one already placed (otherwise
+   stepping on the shared cell silently consumes multiple boxes
+   for a single reward). Bails after a few extra tries so a tight
+   map can't infinite-loop; the player just gets the boxes that
+   did fit."
+  [grid n]
+  (loop [acc [] attempts 0]
+    (cond
+      (php/>= (count acc) n)       acc
+      (php/> attempts (php/* n 6)) acc
+      :else
+      (let [[bx by] (random-spawn grid)
+            dup?    (loop [xs acc]
+                      (cond
+                        (php/=== xs nil) false
+                        (let [b (first xs)]
+                          (and (php/=== (:x b) bx) (php/=== (:y b) by))) true
+                        :else (recur (next xs))))]
+        (if dup?
+          (recur acc (php/+ attempts 1))
+          (recur (conj acc {:x bx :y by}) (php/+ attempts 1)))))))
 
 (defn build-world
   "Construct a brand-new world for `level-num` carrying `lives` over
@@ -149,7 +170,7 @@
                    :lives       lives
                    :hearts      (maybe-spawn-heart grid lives px py)
                    :armors      (maybe-spawn-armor grid)
-                   :ammo-boxes  (spawn-ammo-boxes grid)
+                   :ammo-boxes  (spawn-ammo-boxes grid (ammo-box-count cfg))
                    :chase-speed (:chase cfg)
                    :enemy-head-code     (:head-code cfg)
                    :enemy-body-code     (:body-code cfg)

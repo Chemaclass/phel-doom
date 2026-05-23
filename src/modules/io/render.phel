@@ -1008,6 +1008,34 @@
                    "H" cells)))
   parts)
 
+(defn- paint-enemy-hp-flashes
+  "Float the remaining HP digit above an enemy's head for the brief
+   `:hit-flash-secs` window after each non-killing hit. Skips dead
+   enemies and 1-HP enemies (where any hit is a kill anyway, so the
+   number would always be 0 the moment it appeared). Bright yellow
+   on a dark BG so the digit reads against any sprite zone behind
+   it."
+  [parts world vw vh]
+  (let [player (:player world)]
+    (doseq [e (:enemies world)]
+           (when (and e
+                      (:alive e)
+                      (php/> (or (:lives e) 0) 0)
+                      (php/> (or (:max-lives e) 1) 1)
+                      (php/> (or (:hit-flash-secs e) 0.0) 0.0))
+             (let [proj (project-enemy e player vw)]
+               (when proj
+                 (let [col (:col proj)
+                       d   (:dist proj)
+                       h   (php/min vh (php/intval (php// proj-dist
+                                                          (php/* (php/max 0.5 d) char-aspect))))
+                       row (php/max 1 (php/- (php/intdiv (php/- vh h) 2) 1))]
+                   (when (and (php/>= col 1) (php/<= col vw))
+                     (buf-push parts
+                               (str "\e[" row ";" col "H\e[40;38;5;226;1m"
+                                    (:lives e) "\e[0m")))))))))
+  parts)
+
 (defn- paint-hearts-hud
   "Top-left lives + armor count. Hearts pulse while bloody — code-
    driven off game-time so the blink freezes on pause (issue #7).
@@ -1694,10 +1722,11 @@
             p14         (paint-low-ammo           p13 t stats vw)
             p15         (paint-hearts-hud         p14 t stats bloody?)
             p16         (paint-pistol-hud         p15 stats vw vh floor-gradient)
-            p17         (paint-empty-click        p16 stats vw vh)]
+            p17         (paint-empty-click        p16 stats vw vh)
+            p18         (paint-enemy-hp-flashes   p17 world vw vh)]
         (when (get stats :paused)
-          (buf-push p17 (pause-menu-string vw vh (get stats :sound-on))))
-        (php/implode "" p17)))))
+          (buf-push p18 (pause-menu-string vw vh (get stats :sound-on))))
+        (php/implode "" p18)))))
 
 (defn clear-screen
   "ANSI clear + cursor home."

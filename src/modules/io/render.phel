@@ -54,6 +54,7 @@
 ;; on some iTerm2 themes) shows through and washes the overlay out.
 (def enemy-marker "\e[40;91;1mE\e[0m")
 (def heart-marker "\e[40;91;1m♥\e[0m")
+(def ammo-marker  "\e[40;93;1mA\e[0m")
 (def door-shade
   "Door body cell drawn when a ray hit a door. Frame glyph `▌` (left
    half block) on a dark steel BG with bright orange FG, so a column
@@ -121,6 +122,26 @@
 (def armor-glyph-bright
   "Yellow ◆ on the bright-blue BG for the pulse frame."
   "\e[48;5;33;38;5;226;1m◆")
+
+(def ammo-shade
+  "Ammo-box idle BG: warm brown so it reads as a wooden crate from a
+   distance, distinct from the cooler armor blue and warmer heart red."
+  "\e[48;5;94m ")
+
+(def ammo-shade-bright
+  "Ammo-box pulse BG: saturated yellow so it grabs the eye when the
+   player is low on rounds."
+  "\e[48;5;220m ")
+
+(def ammo-glyph
+  "White ▣ on the brown BG: stylised round-pack with a centre dot."
+  "\e[48;5;94;38;5;231;1m▣")
+
+(def ammo-glyph-bright
+  "Black ▣ on the yellow pulse BG so the icon flips contrast in tempo
+   with the shade swap."
+  "\e[48;5;220;38;5;52;1m▣")
+
 (def char-aspect 2.0)
 (def base-hud-rows 1)
 
@@ -381,6 +402,21 @@
         (recur (next hs))))
     acc))
 
+(defn- ammo-cells
+  "Build a PHP array keyed by `row*gw+col` whose truthy entries mark
+   cells currently holding an ammo-box pickup."
+  [boxes gw]
+  (let [acc (buf-mk)]
+    (loop [bs boxes]
+      (when (php/!== bs nil)
+        (let [b (first bs)]
+          (when b
+            (buf-set acc
+                     (php/+ (php/* (php/intval (:y b)) gw) (php/intval (:x b)))
+                     true)))
+        (recur (next bs))))
+    acc))
+
 (defn- minimap-rows
   "Render the world's grid into a PHP array of ANSI-coded strings, one
    per grid row. Reads the grid via :pgrid (PHP-native nested array)
@@ -398,6 +434,7 @@
         gw                  (php/count (buf-get pgrid 0))
         emap                (enemy-cells (:enemies world) gw)
         hmap                (heart-cells (:hearts world) gw)
+        amap                (ammo-cells  (:ammo-boxes world) gw)
         rows                (buf-mk)]
     (loop [row 0]
       (when (php/< row gh)
@@ -412,6 +449,7 @@
                           (php/=== 2 (buf-get grow col))              door-glyph
                           (buf-get emap (php/+ (php/* row gw) col))   enemy-marker
                           (buf-get hmap (php/+ (php/* row gw) col))   heart-marker
+                          (buf-get amap (php/+ (php/* row gw) col))   ammo-marker
                           :else                                       minimap-floor))
               (recur (php/+ col 1))))
           (buf-set rows row (php/implode "" parts)))
@@ -1284,6 +1322,12 @@
         aggro-bright?                      (pulse t 5.0)
         armor-shade-now                    (if armor-bright? armor-shade-bright armor-shade)
         armor-glyph-now                    (if armor-bright? armor-glyph-bright armor-glyph)
+        ;; Ammo-box pulse: warm-brown crate to yellow flare at 7 rad/s
+        ;; — slower than hearts so the two pickup types read distinct
+        ;; even when both are in frame.
+        ammo-bright?                       (pulse t 7.0)
+        ammo-shade-now                     (if ammo-bright? ammo-shade-bright ammo-shade)
+        ammo-glyph-now                     (if ammo-bright? ammo-glyph-bright ammo-glyph)
         ;; Camera kick: while :fire-anim > 0 shift the wall vertical
         ;; position one row down so the horizon tilts up. Settles back
         ;; as the timer decays in combat.phel.
@@ -1431,6 +1475,9 @@
           bp-armors (paint-pickups-into  bp-hearts (or (:armors world) [])
                                          (:player world) dists edists vw vh
                                          armor-shade-now armor-glyph-now)
+          bp-ammos  (paint-pickups-into  bp-armors (or (:ammo-boxes world) [])
+                                         (:player world) dists edists vw vh
+                                         ammo-shade-now ammo-glyph-now)
           parts     (buf-mk)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]
@@ -1449,7 +1496,7 @@
                          flr-row   (buf-get (if in-blood? blood-floor-gradient floor-gradient) row)
                          c         (if (and (php/< row visible-mh) (php/>= col mini-col0))
                                      sky-row
-                                     (or (buf-get bp-armors (php/+ (php/* row vw) col))
+                                     (or (buf-get bp-ammos (php/+ (php/* row vw) col))
                                          (cond
                                            (php/< row (buf-get tops col))             sky-row
                                            (php/>= row (buf-get bots col))            flr-row
@@ -1498,7 +1545,7 @@
             c-row       (php/+ (php/intdiv vh 2) (if firing? -1 0))
             top-col     (buf-get tops c-col)
             bot-col     (buf-get bots c-col)
-            center-cell (or (buf-get bp-armors (php/+ (php/* c-row vw) c-col))
+            center-cell (or (buf-get bp-ammos (php/+ (php/* c-row vw) c-col))
                             (cond
                               (php/< c-row top-col)             (buf-get sky-gradient c-row)
                               (php/>= c-row bot-col)            (buf-get floor-gradient c-row)

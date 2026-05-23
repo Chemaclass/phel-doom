@@ -11,13 +11,12 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Finite ammo reserve (phase 2 of issue #5). Fresh runs start with `:ammo-reserve 30` (three mags) and cap at `max-reserve 50`. Reload draws `min(mag-size - mag, reserve)` rounds; reload is a no-op when the reserve is empty so spamming R stays harmless. HUD ammo cell now reads `ammo N/10 [R]` with both segments coloured (amber under one-mag's worth, red on empty).
-- Ammo-box pickups. Every level spawns two `▣` boxes at random open cells; stepping on one adds `ammo-per-box 10` to the reserve (capped at `max-reserve`). Boxes pulse warm-brown → yellow in the 3D view at 7 rad/s (distinct from heart/armor pulses) and show as a yellow `A` on the minimap.
-- Top-of-screen `! LOW AMMO N !` warning that pulses when total firepower (mag + reserve) drops to 3 or fewer rounds. Amber at 3, bright red at 1; suppressed at 0 because the HUD ammo cell already flashes red on full empty. Sits on screen row 1 so it stacks above the existing `‹ behind ›` rear-warning on row 2.
-- Per-level enemy HP. Imps still die in one shot (L1 = 1 HP), but each later tier adds one (L2 demons = 2, L3 cacodemons = 3, L4 barons = 4, L5 cyberdemons = 5). Wounded enemies stay `:alive true` with reduced `:lives`; render shades the body zone darker as HP drops so they read as "bloodied" without extra glyphs. `:kills` and `:streak` only advance on the final shot that drops the enemy. Respawn carries `:max-lives` so a revived baron is still a baron. New `:wound` sfx (Glass.aiff) plays on a shot that hits but doesn't kill, distinct from the `:hit` (Sosumi.aiff) the player hears when THEY take damage.
-- Reload animation. The pistol drops off-screen on a sine curve, refills, and rises back into view over a 1.5s window (was a silent 0.4s lockout). Trigger stays disabled the whole time so the player commits to the reload. New `:reload` sfx (Funk.aiff) plays only when a reload actually fires (`combat/reloading?` gates the sound so mashing R against a full mag or empty reserve stays silent).
-- Dry-fire feedback. A trigger pull on an empty mag now plays a `:click` sfx (Basso.aiff) and surfaces a centred `CLICK · press R to reload` prompt above the pistol for 0.8s — flips to `OUT OF AMMO` when the reserve is also dry. Other gates (cooldown / jam / reload-in-progress) stay silent so they don't double up with existing visual cues.
-- Floating HP digit above each enemy head for 1.2s after every non-killing hit. Bright yellow on a dark BG so it reads against any sprite zone. 1-HP enemies skip the digit (any hit is a kill anyway). `:wound` sfx swapped from Glass.aiff to Pop.aiff at vol 0.4 — softer, in the same family as `:shoot`, so the audio cue stops competing with the now-primary visual signal.
+- Finite ammo reserve (closes #5). Start with 30 spare rounds, cap 50. HUD now reads `ammo N/10 [R]`; reserve goes amber under one mag, red on empty.
+- Ammo-box pickups: two per level, `+10` rounds each. Pulse brown→yellow in 3D, yellow `A` on minimap.
+- Top-row pulsing `! LOW AMMO N !` warning when total firepower drops to 3/2/1. Stacks above the `‹ behind ›` rear-warning.
+- Pressing fire on an empty mag plays a deny click and shows a centred `CLICK · press R to reload` prompt (flips to `OUT OF AMMO` when the reserve is dry).
+- Per-level enemy HP (L1 imp=1, L2 demon=2, L3 caco=3, L4 baron=4, L5 cyberdemon=5). Wounded sprites shade darker; a yellow HP digit floats above the head for 1.2s after each hit. Distinct `:wound` sfx so the player tells "I hit them" apart from "they hit me".
+- Reload now plays a 1.5s drop / refill / raise animation with its own sfx. Trigger locked out for the whole window.
 
 ## [0.2.0] - 2026-05-22
 

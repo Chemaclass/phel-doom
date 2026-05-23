@@ -256,19 +256,24 @@
                   {:x (:x hit-pos) :y (:y hit-pos) :ttl fx-ttl-seconds}))))
 
 (defn- on-shot-hit
-  "World update on a successful hit: take the new enemies vector
-   (with the killed slot flipped to :alive false + a respawn timer
-   set by enemy/shoot), bump kills, chain the streak counter, light
-   the muzzle flash, and push a blood splatter at the hit position.
-   Streak chains while :streak-secs is still ticking from the previous
-   kill; otherwise it restarts at 1."
-  [world enemies-after hit-pos _idx]
-  (let [chain?  (php/> (or (:streak-secs world) 0.0) 0.0)
+  "World update on a successful hit. enemy/shoot has already decremented
+   `:lives` and (when the pool emptied) flipped `:alive false` and
+   stamped a respawn timer; on-shot-hit only has to decide whether this
+   was a wound or a kill, and update the score / streak / blood-fx
+   accordingly. A blood splatter fires on every hit so the player sees
+   the wound, but `:kills` and `:streak` only advance on the final
+   shot that drops the enemy. Streak chains while `:streak-secs` is
+   still ticking from the previous kill; otherwise it restarts at 1."
+  [world enemies-after hit-pos idx]
+  (let [killed? (false? (:alive (get enemies-after idx)))
+        chain?  (php/> (or (:streak-secs world) 0.0) 0.0)
         streak' (if chain? (php/+ (or (:streak world) 0) 1) 1)
-        scored  (assoc (update (assoc world :enemies enemies-after)
-                               :kills (fn [k] (php/+ k 1)))
-                       :streak       streak'
-                       :streak-secs  streak-window-seconds)]
+        scored  (if killed?
+                  (assoc (update (assoc world :enemies enemies-after)
+                                 :kills (fn [k] (php/+ k 1)))
+                         :streak      streak'
+                         :streak-secs streak-window-seconds)
+                  (assoc world :enemies enemies-after))]
     (push-blood-fx (assoc scored :fire-anim fire-anim-seconds) hit-pos)))
 
 (defn- on-shot-miss [world]
@@ -280,15 +285,19 @@
   [^float dist]
   (php/max 0.1 (php/- 1.0 (php/min 1.0 (php// dist shot-max-range)))))
 
-(defn- play-shot-sfx [world hit? hit-pos]
+(defn- play-shot-sfx [world hit? killed? hit-pos]
   (when (:sound-on world)
-    (if hit?
-      (let [p  (:player world)
-            dx (php/- (:x hit-pos) (:x p))
-            dy (php/- (:y hit-pos) (:y p))
-            d  (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
-        (play-sfx! :kill (distance-volume d)))
-      (play-sfx! :shoot 1.0))))
+    (cond
+      killed? (let [p  (:player world)
+                    dx (php/- (:x hit-pos) (:x p))
+                    dy (php/- (:y hit-pos) (:y p))
+                    d  (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
+                (play-sfx! :kill (distance-volume d)))
+      ;; Wounded but alive: distinct `:wound` event so the player can
+      ;; tell a shot landed without mistaking it for the `:hit` sound
+      ;; that `take-damage` uses when the PLAYER is the one struck.
+      hit?    (play-sfx! :wound 0.7)
+      :else   (play-sfx! :shoot 1.0))))
 
 (defn can-fire?
   "True when the pistol is ready: cooldown elapsed, not jammed, and
@@ -347,8 +356,10 @@
   "Resolve one trigger pull end-to-end."
   {:export true}
   [world]
-  (let [[enemies' hit? hit-pos idx] (resolve-shot world)]
-    (play-shot-sfx world hit? hit-pos)
+  (let [[enemies' hit? hit-pos idx] (resolve-shot world)
+        killed?                     (and hit?
+                                         (false? (:alive (get enemies' idx))))]
+    (play-shot-sfx world hit? killed? hit-pos)
     (apply-heat (if hit?
                   (on-shot-hit world enemies' hit-pos idx)
                   (on-shot-miss world)))))

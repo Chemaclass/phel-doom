@@ -115,15 +115,40 @@
 ;; reload: tops the mag back up, arms a brief cooldown.
 ;; ---------------------------------------------------------------------
 
-(deftest test-reload-fills-the-mag
-  (let [w (reload {:mag 3})]
+(deftest test-reload-fills-the-mag-from-reserve
+  ;; Mag 3 of 10, reserve 20 → mag refills to 10, reserve drops by 7.
+  (let [w (reload {:mag 3 :ammo-reserve 20})]
     (is (= mag-size (:mag w)))
+    (is (= 13 (:ammo-reserve w)))
     (is (> (:reload-cooldown w) 0.0))))
+
+(deftest test-reload-partial-when-reserve-shorter-than-needed
+  ;; Mag 2 of 10 (8 needed), reserve only 5 → mag becomes 7, reserve 0.
+  (let [w (reload {:mag 2 :ammo-reserve 5})]
+    (is (= 7 (:mag w)))
+    (is (= 0 (:ammo-reserve w)))
+    (is (> (:reload-cooldown w) 0.0))))
+
+(deftest test-reload-empty-reserve-is-noop
+  ;; No reserve left → mag stays, no cooldown armed (so player can keep
+  ;; pressing R harmlessly).
+  (let [w (reload {:mag 2 :ammo-reserve 0})]
+    (is (= 2 (:mag w)))
+    (is (= 0 (:ammo-reserve w)))
+    (is (= 0.0 (or (:reload-cooldown w) 0.0)))))
+
+(deftest test-reload-full-mag-is-noop
+  ;; Mag already full → don't waste reserve, don't arm cooldown.
+  (let [w (reload {:mag mag-size :ammo-reserve 20})]
+    (is (= mag-size (:mag w)))
+    (is (= 20 (:ammo-reserve w)))
+    (is (= 0.0 (or (:reload-cooldown w) 0.0)))))
 
 (deftest test-reload-during-cooldown-is-noop
   ;; Holding R should not reset the lockout each frame.
-  (let [w (reload {:mag 7 :reload-cooldown 0.3})]
+  (let [w (reload {:mag 7 :ammo-reserve 20 :reload-cooldown 0.3})]
     (is (= 7 (:mag w)))
+    (is (= 20 (:ammo-reserve w)))
     (is (= 0.3 (:reload-cooldown w)))))
 
 ;; ---------------------------------------------------------------------

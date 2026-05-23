@@ -25,6 +25,8 @@ Pure data shapes that every other module operates on. `src/modules/core/state.ph
  :flash-secs <float seconds>  ; 1-frame white impact flash
  :fx         <vector of blood splatters>
  :game-time  <float seconds>  ; pause-aware clock for render pulses
+ :mag           <int 0..mag-size>     ; rounds in the loaded magazine
+ :ammo-reserve  <int 0..max-reserve>  ; spare ammo pool; drained on reload
  :moves      {:fwd :back :strafe-left :strafe-right :turn-left :turn-right}}
 ```
 

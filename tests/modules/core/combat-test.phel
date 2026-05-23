@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.modules.core.state :refer [new-world new-player])
   (:require phel-doom.modules.core.combat
-            :refer [closest-attacker attacker-side can-fire? apply-heat knockback mag-size reload reloading?]))
+            :refer [closest-attacker attacker-side can-fire? apply-heat empty-click-seconds knockback mag-size reload reloading? tick-shooting]))
 
 ;; ---------------------------------------------------------------------
 ;; closest-attacker: selection rule.
@@ -163,6 +163,49 @@
 
 (deftest test-reloading-false-when-reserve-empty
   (is (= false (reloading? {:mag 3 :ammo-reserve 0 :reload-cooldown 0.0}))))
+
+;; ---------------------------------------------------------------------
+;; tick-shooting: empty-mag trigger pull arms the dry-fire timer.
+;; ---------------------------------------------------------------------
+
+(deftest test-tick-shooting-empty-mag-arms-click-timer
+  ;; Trigger pulled with mag=0 + no cooldown -> :empty-click-secs set
+  ;; so render can show the 'press R to reload' prompt this frame.
+  (let [w (tick-shooting {:mag 0 :fire-cooldown 0.0 :jam-secs 0.0
+                          :reload-cooldown 0.0 :ammo-reserve 20
+                          :sound-on false}
+                         true)]
+    (is (= empty-click-seconds (:empty-click-secs w)))))
+
+(deftest test-tick-shooting-empty-mag-skip-when-fire-cooldown-active
+  ;; Other gates take priority — don't double up the click on a
+  ;; cooldown frame.
+  (let [w (tick-shooting {:mag 0 :fire-cooldown 0.05 :jam-secs 0.0
+                          :reload-cooldown 0.0 :sound-on false}
+                         true)]
+    (is (= 0.0 (or (:empty-click-secs w) 0.0)))))
+
+(deftest test-tick-shooting-no-fire-no-click
+  (let [w (tick-shooting {:mag 0 :fire-cooldown 0.0 :jam-secs 0.0
+                          :reload-cooldown 0.0 :sound-on false}
+                         false)]
+    (is (= 0.0 (or (:empty-click-secs w) 0.0)))))
+
+(deftest test-tick-shooting-empty-mag-skip-when-jammed
+  ;; Jam already has its own visual cue (paint-door-face / fire-anim).
+  ;; Suppress the click so we don't double up.
+  (let [w (tick-shooting {:mag 0 :fire-cooldown 0.0 :jam-secs 0.5
+                          :reload-cooldown 0.0 :sound-on false}
+                         true)]
+    (is (= 0.0 (or (:empty-click-secs w) 0.0)))))
+
+(deftest test-tick-shooting-empty-mag-skip-during-reload
+  ;; Player can SEE the reload animation already. A click on top
+  ;; would just be noise; suppress.
+  (let [w (tick-shooting {:mag 0 :fire-cooldown 0.0 :jam-secs 0.0
+                          :reload-cooldown 0.3 :sound-on false}
+                         true)]
+    (is (= 0.0 (or (:empty-click-secs w) 0.0)))))
 
 ;; ---------------------------------------------------------------------
 ;; knockback: shoves the player AWAY from the attacker, clamps on walls.

@@ -852,6 +852,29 @@
         (buf-push parts (str "\e[1;" col "H" label))))
     parts))
 
+(defn- paint-empty-click
+  "Trigger pulled on an empty mag: blink a centred prompt above the
+   pistol for `empty-click-seconds` so the player sees WHY the shot
+   didn't fire. Wording flips based on whether reserve has rounds
+   left — `R to reload` is actionable; `OUT OF AMMO` is the
+   acknowledgement when both pools are dry. Label is centred from
+   its measured visible length so the two variants line up even when
+   their lengths differ."
+  [parts stats vw vh]
+  (let [secs (or (get stats :empty-click-secs) 0.0)]
+    (when (and (php/> secs 0.0) (php/>= vh 8))
+      (let [reserve (or (get stats :ammo-reserve) 0)
+            text    (if (php/> reserve 0)
+                      " -- CLICK -- press R to reload "
+                      " -- CLICK --   OUT OF AMMO   ")
+            sgr     (if (php/> reserve 0) "\e[40;38;5;226;1m" "\e[40;38;5;196;1m")
+            label   (str sgr text "\e[0m")
+            col     (php/max 1 (php/- (php/intdiv vw 2)
+                                      (php/intdiv (php/strlen text) 2)))
+            row     (php/max 3 (php/- vh 7))]
+        (buf-push parts (str "\e[" row ";" col "H" label))))
+    parts))
+
 (defn- paint-flicker
   "Lights-flickering overlay: paint full-width dark scanlines on every
    other row while :flicker-active-secs is positive. The eye reads the
@@ -1670,10 +1693,11 @@
             p13         (paint-rear-warning       p12 t stats vw)
             p14         (paint-low-ammo           p13 t stats vw)
             p15         (paint-hearts-hud         p14 t stats bloody?)
-            p16         (paint-pistol-hud         p15 stats vw vh floor-gradient)]
+            p16         (paint-pistol-hud         p15 stats vw vh floor-gradient)
+            p17         (paint-empty-click        p16 stats vw vh)]
         (when (get stats :paused)
-          (buf-push p16 (pause-menu-string vw vh (get stats :sound-on))))
-        (php/implode "" p16)))))
+          (buf-push p17 (pause-menu-string vw vh (get stats :sound-on))))
+        (php/implode "" p17)))))
 
 (defn clear-screen
   "ANSI clear + cursor home."

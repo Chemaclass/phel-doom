@@ -77,14 +77,14 @@
    `volume` in [0.0, 1.0] is wired through afplay's `-v` flag (other
    players ignore it). Always backgrounded so the game loop never
    blocks."
-  ([player path]            (play-file-async! player path 1.0))
-  ([player path ^float vol] (let [v   (php/max 0.0 (php/min 1.0 vol))
-                                  arg (if (php/=== player "afplay")
-                                        (str " -v " (php/number_format v 3))
-                                        "")]
-                              (php/exec (str player arg " "
-                                             (php/escapeshellarg path)
-                                             " > /dev/null 2>&1 &")))))
+  ([player path]                (play-file-async! player path 1.0))
+  ([bin audio-path ^float vol] (let [v   (php/max 0.0 (php/min 1.0 vol))
+                                     arg (if (php/=== bin "afplay")
+                                           (str " -v " (php/number_format v 3))
+                                           "")]
+                                 (php/exec (str bin arg " "
+                                                (php/escapeshellarg audio-path)
+                                                " > /dev/null 2>&1 &")))))
 
 (defn- bell! []
   (php/fwrite php/STDOUT "\a")
@@ -126,18 +126,18 @@
    fallback so silent terminals don't get spammed by the bell once a
    second when the player is low on lives."
   {:export true}
-  ([event]                     (play-sfx! event 1.0))
-  ([event ^float volume]       (when (and (not (muted?)) (not (session-muted?)))
-                                 (ensure-probed!)
-                                 (let [s    @state
-                                       p    (:player s)
-                                       path (and (:sounds s) (get (:sounds s) event))]
-                                   (cond
-                                     (and p path (php/file_exists path))
-                                     (play-file-async! p path volume)
+  ([event]                  (play-sfx! event 1.0))
+  ([evt ^float volume]      (when (and (not (muted?)) (not (session-muted?)))
+                              (ensure-probed!)
+                              (let [s    @state
+                                    p    (:player s)
+                                    path (and (:sounds s) (get (:sounds s) evt))]
+                                (cond
+                                  (and p path (php/file_exists path))
+                                  (play-file-async! p path volume)
 
-                                     (php/=== event :heartbeat)
-                                     nil
+                                  (php/=== evt :heartbeat)
+                                  nil
 
-                                     :else
-                                     (bell!))))))
+                                  :else
+                                  (bell!))))))

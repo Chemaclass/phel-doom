@@ -1353,17 +1353,17 @@
            (let [col (:col proj)
                  hw  (:half-width proj)
                  d   (:dist proj)]
-             (let [c-from (php/max 0 (php/- col hw))
-                   c-to   (php/min (php/- vw 1) (php/+ col hw))
-                   h      (php/min vh (php/intval (php// proj-dist
-                                                         (php/* (php/max 0.5 d) char-aspect))))
+             (let [c-from    (php/max 0 (php/- col hw))
+                   c-to      (php/min (php/- vw 1) (php/+ col hw))
+                   h         (php/min vh (php/intval (php// proj-dist
+                                                            (php/* (php/max 0.5 d) char-aspect))))
                    ;; Distance-fade factor: 0 at the player's feet,
                    ;; ~0.85 at max-depth. Squared so things stay
                    ;; saturated up close and only really dim once
                    ;; they're past mid-range.
-                   t      (php/min 0.85
-                                   (php/* (php// d max-depth)
-                                          (php// d max-depth)))]
+                   dist-fade (php/min 0.85
+                                      (php/* (php// d max-depth)
+                                             (php// d max-depth)))]
                (let [e-top (php/intdiv (php/- vh h) 2)]
                  (let [e-bot   (php/+ e-top h)
                        e-mid   (php/+ e-top (php/intdiv h 3))
@@ -1375,17 +1375,17 @@
                                  (and head-code (php/< d aggro-distance))
                                  (enemy-aggro-head-string head-code aggro-bright?)
                                  head-code
-                                 (enemy-shade-string head-code t)
+                                 (enemy-shade-string head-code dist-fade)
                                  :else
                                  ehead)
                        fbody   (cond
                                  (and body-code body-glyph body-glyph-fg)
-                                 (enemy-textured-shade-string body-code t body-glyph body-glyph-fg)
+                                 (enemy-textured-shade-string body-code dist-fade body-glyph body-glyph-fg)
                                  body-code
-                                 (enemy-shade-string body-code t)
+                                 (enemy-shade-string body-code dist-fade)
                                  :else
                                  ebody)
-                       flegs   (if legs-code (enemy-shade-string legs-code t) elegs)]
+                       flegs   (if legs-code (enemy-shade-string legs-code dist-fade) elegs)]
                    (loop [c c-from]
                      (when (php/<= c c-to)
                        (when (php/< d (buf-get dists c))
@@ -1412,16 +1412,18 @@
                                     sprite-shadow)))
                        (recur (php/+ c 1)))))))))
     ;; Chain the fx + pickup painters: each one takes the current
-    ;; blood-paint, mutates internally, returns the buffer. We have
-    ;; to rebind every call because PHP arrays pass by value.
-    (let [blood-paint (paint-blood-fx-into blood-paint stats world dists vw vh)
-          blood-paint (paint-pickups-into  blood-paint (or (:hearts world) [])
-                                           (:player world) dists edists vw vh
-                                           heart-shade-now heart-glyph-now)
-          blood-paint (paint-pickups-into  blood-paint (or (:armors world) [])
-                                           (:player world) dists edists vw vh
-                                           armor-shade-now armor-glyph-now)
-          parts       (buf-mk)]
+    ;; blood-paint, returns a new buffer (PHP arrays pass by value, so
+    ;; the helper owns the allocation). Rename per step to keep phel
+    ;; lint happy about shadowed-binding without losing the chain.
+    ;; Threading (->) would be cleaner but trips arity-mismatch lint.
+    (let [bp-fx     (paint-blood-fx-into blood-paint stats world dists vw vh)
+          bp-hearts (paint-pickups-into  bp-fx (or (:hearts world) [])
+                                         (:player world) dists edists vw vh
+                                         heart-shade-now heart-glyph-now)
+          bp-armors (paint-pickups-into  bp-hearts (or (:armors world) [])
+                                         (:player world) dists edists vw vh
+                                         armor-shade-now armor-glyph-now)
+          parts     (buf-mk)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]
                  (if (php/>= col vw)
@@ -1439,7 +1441,7 @@
                          flr-row   (buf-get (if in-blood? blood-floor-gradient floor-gradient) row)
                          c         (if (and (php/< row visible-mh) (php/>= col mini-col0))
                                      sky-row
-                                     (or (buf-get blood-paint (php/+ (php/* row vw) col))
+                                     (or (buf-get bp-armors (php/+ (php/* row vw) col))
                                          (cond
                                            (php/< row (buf-get tops col))             sky-row
                                            (php/>= row (buf-get bots col))            flr-row
@@ -1488,7 +1490,7 @@
             c-row       (php/+ (php/intdiv vh 2) (if firing? -1 0))
             top-col     (buf-get tops c-col)
             bot-col     (buf-get bots c-col)
-            center-cell (or (buf-get blood-paint (php/+ (php/* c-row vw) c-col))
+            center-cell (or (buf-get bp-armors (php/+ (php/* c-row vw) c-col))
                             (cond
                               (php/< c-row top-col)             (buf-get sky-gradient c-row)
                               (php/>= c-row bot-col)            (buf-get floor-gradient c-row)
@@ -1504,24 +1506,29 @@
                               :else                             (buf-get shades-normal c-col)))
             center-bg   (php/mb_substr center-cell 0
                                        (php/max 0 (php/- (php/mb_strlen center-cell) 1)))
-            parts       (paint-face-overlay parts world stats vw vh dists eface)
-            parts       (paint-wall-lights  parts t vw vh hits hxs hys tops)
-            parts       (paint-door-face    parts stats vw vh hits tops bots)
-            parts       (paint-crosshair    parts stats vw vh center-bg)
-            parts       (paint-intro-splash parts stats vw vh)
-            parts       (paint-blood-drops parts stats vw vh)
-            parts       (paint-flicker parts stats vw vh)
-            parts       (paint-heartbeat-vignette parts stats vw vh)
-            parts       (paint-hit-vignette parts stats bloody? vw vh)
-            parts       (paint-heat-bar     parts t stats vw vh)
-            parts       (paint-kill-streak  parts stats map-col map-row visible-mh)
-            parts       (paint-compass      parts world vw)
-            parts       (paint-rear-warning parts t stats vw)
-            parts       (paint-hearts-hud   parts t stats bloody?)
-            parts       (paint-pistol-hud   parts stats vw vh floor-gradient)]
+            ;; Overlay chain: each helper takes the parts buffer plus
+            ;; its own deps and returns the (possibly larger) buffer.
+            ;; Numbered rebinds so phel lint's shadowed-binding stays
+            ;; quiet without changing semantics. Threading (->) would
+            ;; be cleaner but trips arity-mismatch lint.
+            p1          (paint-face-overlay       parts world stats vw vh dists eface)
+            p2          (paint-wall-lights        p1 t vw vh hits hxs hys tops)
+            p3          (paint-door-face          p2 stats vw vh hits tops bots)
+            p4          (paint-crosshair          p3 stats vw vh center-bg)
+            p5          (paint-intro-splash       p4 stats vw vh)
+            p6          (paint-blood-drops        p5 stats vw vh)
+            p7          (paint-flicker            p6 stats vw vh)
+            p8          (paint-heartbeat-vignette p7 stats vw vh)
+            p9          (paint-hit-vignette       p8 stats bloody? vw vh)
+            p10         (paint-heat-bar           p9 t stats vw vh)
+            p11         (paint-kill-streak        p10 stats map-col map-row visible-mh)
+            p12         (paint-compass            p11 world vw)
+            p13         (paint-rear-warning       p12 t stats vw)
+            p14         (paint-hearts-hud         p13 t stats bloody?)
+            p15         (paint-pistol-hud         p14 stats vw vh floor-gradient)]
         (when (get stats :paused)
-          (buf-push parts (pause-menu-string vw vh (get stats :sound-on))))
-        (php/implode "" parts)))))
+          (buf-push p15 (pause-menu-string vw vh (get stats :sound-on))))
+        (php/implode "" p15)))))
 
 (defn clear-screen
   "ANSI clear + cursor home."

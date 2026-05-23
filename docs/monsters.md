@@ -4,13 +4,15 @@
 
 ## Five types
 
-| Level | Name | Head | Body | Legs | Face | Body pattern |
-|---|---|---|---|---|---|---|
-| 1 | imps        | 196 (bright red) | 124 (dark red) | 52 (black-red) | ●/◯ yellow | `░` |
-| 2 | demons      | 165 (magenta) | 126 (purple) | 90 (deep magenta) | ▼/▾ white | `▒` |
-| 3 | cacodemons  | 51 (bright cyan) | 38 (cyan) | 24 (dark cyan) | ◉/◎ black | `⋄` |
-| 4 | barons      | 46 (bright green) | 34 (green) | 22 (forest) | Λ/λ black | `▓` |
-| 5 | cyberdemons | 240 (grey helmet) | 124 (red flesh) | 238 (grey legs) | ■/□ red blink | `▦` |
+| Level | Name | HP | Head | Body | Legs | Face | Body pattern |
+|---|---|---|---|---|---|---|---|
+| 1 | imps        | 1 | 196 (bright red) | 124 (dark red) | 52 (black-red) | ●/◯ yellow | `░` |
+| 2 | demons      | 2 | 165 (magenta) | 126 (purple) | 90 (deep magenta) | ▼/▾ white | `▒` |
+| 3 | cacodemons  | 3 | 51 (bright cyan) | 38 (cyan) | 24 (dark cyan) | ◉/◎ black | `⋄` |
+| 4 | barons      | 4 | 46 (bright green) | 34 (green) | 22 (forest) | Λ/λ black | `▓` |
+| 5 | cyberdemons | 5 | 240 (grey helmet) | 124 (red flesh) | 238 (grey legs) | ■/□ red blink | `▦` |
+
+Each enemy carries `:lives` (current HP) and `:max-lives` (level cap). `enemy/shoot` decrements `:lives` per hit; only flips `:alive false` and arms the respawn timer when `:lives` hits zero. The renderer reads `damage-ratio = 1 - lives/max-lives` from `project-enemy` and adds it to the per-frame distance fade so the body zone shades darker (toward black) as HP drops — wounded enemies read as "bloodied" from across the room without needing extra glyphs or a HUD bar.
 
 Each row is one map entry under `levels` in `core/level.phel`. Adding a 6th monster is a single map literal.
 

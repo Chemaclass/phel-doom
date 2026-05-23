@@ -24,7 +24,33 @@
   (let [e (new-enemy 5.0 6.0)]
     (is (= 5.0 (:x e)))
     (is (= 6.0 (:y e)))
+    (is (= true (:alive e)))
+    (is (= 1 (:lives e)))
+    (is (= 1 (:max-lives e)))))
+
+(deftest test-new-enemy-with-max-lives
+  (let [e (new-enemy 0.0 0.0 4)]
+    (is (= 4 (:lives e)))
+    (is (= 4 (:max-lives e)))
     (is (= true (:alive e)))))
+
+(deftest test-shoot-wounds-multi-life-enemy-without-killing
+  ;; A 3-life enemy in front of the player. One shot should drop lives
+  ;; to 2 and keep :alive true so render can shade-tint it as wounded.
+  (let [[es' hit? _ idx]
+        (shoot [(new-enemy 3.5 1.5 3)] 1.5 1.5 0.0 10.0 0.5 12.0)]
+    (is (= true hit?))
+    (is (= 0 idx))
+    (is (= true (:alive (first es'))))
+    (is (= 2 (:lives (first es'))))))
+
+(deftest test-shoot-kills-multi-life-enemy-on-final-hit
+  ;; A 2-life enemy: first shot wounds, second shot finishes.
+  (let [[after1 _ _ _]    (shoot [(new-enemy 3.5 1.5 2)] 1.5 1.5 0.0 10.0 0.5 12.0)
+        [after2 hit? _ _] (shoot after1 1.5 1.5 0.0 10.0 0.5 12.0)]
+    (is (= true hit?))
+    (is (= false (:alive (first after2))))
+    (is (= 0 (:lives (first after2))))))
 
 (deftest test-spawn-enemies-count-and-min-dist
   (let [es (spawn-enemies open-grid 5 2.0 5.0 5.0)]
@@ -102,6 +128,16 @@
   (let [es' (advance [{:x 5.0 :y 5.0 :alive false :respawn-after 0.1}]
                      open-grid 8.0 5.0 0.5 0.75)]
     (is (= true (:alive (first es'))))))
+
+(deftest test-respawn-carries-max-lives-and-refills
+  ;; A dead 4-life baron revives with :max-lives 4 and :lives 4 — not
+  ;; trivially-one-shot like a fresh imp would be.
+  (let [es' (advance [{:x 5.0 :y 5.0 :alive false :respawn-after 0.0
+                       :lives 0 :max-lives 4}]
+                     open-grid 8.0 5.0 0.5 0.75)]
+    (is (= true (:alive (first es'))))
+    (is (= 4 (:lives (first es'))))
+    (is (= 4 (:max-lives (first es'))))))
 
 ;; ---------------------------------------------------------------------
 ;; tick-scare: fires the wide-eyed beat ONLY on the inbound crossing

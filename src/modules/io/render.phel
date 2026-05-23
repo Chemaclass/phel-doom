@@ -529,9 +529,11 @@
 
 (defn project-enemy
   "Project one enemy into screen space relative to the player. Returns
-   {:col :half-width :dist} or nil if the enemy is behind the player or
-   off-screen. Distance is fish-eye corrected so it can be compared
-   directly to entries in the wall `dists` array."
+   {:col :half-width :dist :damage-ratio} or nil if the enemy is behind
+   the player or off-screen. `:damage-ratio` is 0.0 at full health and
+   approaches 1.0 as the enemy nears death; render uses it to tint the
+   body shade darker for wounded enemies. Distance is fish-eye corrected
+   so it can be compared directly to entries in the wall `dists` array."
   {:export true}
   [enemy player vw]
   (let [dx (php/- (:x enemy) (:x player))
@@ -543,10 +545,17 @@
           cos-rel  (php/cos rel-norm)]
       (if (php/<= cos-rel 0.05)
         nil
-        (let [dist (php/* (php/sqrt (php/+ (php/* dx dx) (php/* dy dy))) cos-rel)]
-          {:col        (php/intval (php/+ (php/* 0.5 vw) (php/* (php/tan rel-norm) proj-dist)))
-           :half-width (php/max 1 (php/intval (php// proj-dist (php/* (php/max 0.5 dist) 3.0))))
-           :dist       dist})))))
+        (let [dist      (php/* (php/sqrt (php/+ (php/* dx dx) (php/* dy dy))) cos-rel)
+              max-lives (or (:max-lives enemy) 1)
+              lives     (or (:lives enemy) max-lives)
+              dmg       (if (php/<= max-lives 1)
+                          0.0
+                          (php/max 0.0 (php/min 1.0
+                                                (php/- 1.0 (php// lives max-lives)))))]
+          {:col          (php/intval (php/+ (php/* 0.5 vw) (php/* (php/tan rel-norm) proj-dist)))
+           :half-width   (php/max 1 (php/intval (php// proj-dist (php/* (php/max 0.5 dist) 3.0))))
+           :dist         dist
+           :damage-ratio dmg})))))
 
 (defn- collect-enemy-projs
   "Project every alive enemy and return a vector sorted by distance
@@ -1429,7 +1438,8 @@
     (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
            (let [col (:col proj)
                  hw  (:half-width proj)
-                 d   (:dist proj)]
+                 d   (:dist proj)
+                 dmg (or (:damage-ratio proj) 0.0)]
              (let [c-from    (php/max 0 (php/- col hw))
                    c-to      (php/min (php/- vw 1) (php/+ col hw))
                    h         (php/min vh (php/intval (php// proj-dist
@@ -1440,7 +1450,15 @@
                    ;; they're past mid-range.
                    dist-fade (php/min 0.85
                                       (php/* (php// d max-depth)
-                                             (php// d max-depth)))]
+                                             (php// d max-depth)))
+                   ;; Wound tint: combine distance fade with the per-
+                   ;; enemy damage ratio so wounded sprites read as
+                   ;; darker/dirtier even up close. Multiplier kept
+                   ;; modest (0.35) so a fully-wounded cyberdemon at
+                   ;; mid-range still reads distinct from a healthy
+                   ;; one far away. Capped at 0.85 so a near-dead
+                   ;; enemy never fades to invisible.
+                   body-fade (php/min 0.85 (php/+ dist-fade (php/* dmg 0.35)))]
                (let [e-top (php/intdiv (php/- vh h) 2)]
                  (let [e-bot   (php/+ e-top h)
                        e-mid   (php/+ e-top (php/intdiv h 3))
@@ -1457,9 +1475,9 @@
                                  ehead)
                        fbody   (cond
                                  (and body-code body-glyph body-glyph-fg)
-                                 (enemy-textured-shade-string body-code dist-fade body-glyph body-glyph-fg)
+                                 (enemy-textured-shade-string body-code body-fade body-glyph body-glyph-fg)
                                  body-code
-                                 (enemy-shade-string body-code dist-fade)
+                                 (enemy-shade-string body-code body-fade)
                                  :else
                                  ebody)
                        flegs   (if legs-code (enemy-shade-string legs-code dist-fade) elegs)]

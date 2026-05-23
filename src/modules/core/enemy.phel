@@ -26,10 +26,11 @@
 
 (defn new-enemy
   "Create an enemy record. `x` and `y` are world-space floats; `:alive`
-   flips to false when the enemy is shot."
+   flips to false when `:lives` hits zero. Default lives = 1 keeps the
+   one-shot-kill semantics for callers that don't care about HP."
   {:export true}
-  [x y]
-  {:x x :y y :alive true})
+  ([x y]               (new-enemy x y 1))
+  ([ex ey max-lives]   {:x ex :y ey :alive true :lives max-lives :max-lives max-lives}))
 
 (def chase-angle-offsets
   "Angle deltas (radians) tried when an enemy can't walk straight at the
@@ -113,15 +114,24 @@
                          (recur (php/+ i 1) best-i best-d (next es)))))))]
       (if (php/=== best -1)
         [enemies false nil -1]
-        (let [killed       (get enemies best)
-              delay        (php/+ respawn-delay-min
-                                  (php/* (php// (php/mt_rand) (php/mt_getrandmax))
-                                         (php/- respawn-delay-max respawn-delay-min)))
-              after-killed (assoc-in (apply vector enemies) [best :alive] false)]
-          [(assoc-in after-killed [best :respawn-after] delay)
-           true
-           {:x (:x killed) :y (:y killed)}
-           best])))))
+        ;; Decrement lives; flip :alive only when the shot empties the
+        ;; HP pool. Default-1 enemies still die in one hit because the
+        ;; subtract takes them to 0. Multi-life enemies stay :alive true
+        ;; with a lower :lives, which render shades darker as a tell.
+        (let [hit-enemy  (get enemies best)
+              hit-pos    {:x (:x hit-enemy) :y (:y hit-enemy)}
+              prev-lives (or (:lives hit-enemy) 1)
+              new-lives  (php/max 0 (php/- prev-lives 1))
+              hit-vec    (apply vector enemies)
+              wounded    (assoc-in hit-vec [best :lives] new-lives)]
+          (if (php/<= new-lives 0)
+            (let [delay   (php/+ respawn-delay-min
+                                 (php/* (php// (php/mt_rand) (php/mt_getrandmax))
+                                        (php/- respawn-delay-max respawn-delay-min)))
+                  killed' (assoc-in (assoc-in wounded [best :alive] false)
+                                    [best :respawn-after] delay)]
+              [killed' true hit-pos best])
+            [wounded true hit-pos best]))))))
 
 (defn- random-spawn-far-from
   "Random open cell at least min-dist from (px, py). Falls back to nil
@@ -154,7 +164,16 @@
         (assoc e :respawn-after t)
         (let [pos (random-spawn-far-from grid respawn-min-dist player-x player-y)]
           (if pos
-            {:x (first pos) :y (second pos) :alive true}
+            ;; Carry :max-lives across the respawn so a revived baron is
+            ;; still a baron; refill :lives to full and clear the timer.
+            ;; Older callers / test fixtures without :max-lives fall back
+            ;; to 1, preserving the original one-shot-kill behaviour.
+            (let [mx (or (:max-lives e) 1)]
+              {:x         (first pos)
+               :y         (second pos)
+               :alive     true
+               :lives     mx
+               :max-lives mx})
             (assoc e :respawn-after 0.5)))))))
 
 (defn advance
@@ -267,20 +286,26 @@
 
 (defn spawn-enemies
   "Place `n` enemies on random open cells of `grid`, well away from the
-   player's spawn so the first frame isn't an ambush."
+   player's spawn so the first frame isn't an ambush. `max-lives`
+   stamps the per-level HP onto every fresh enemy; default 1 keeps
+   the older one-shot-kill callers working."
   {:export true}
-  [grid n min-dist-from player-x player-y]
-  (loop [acc       []
-         attempts  0
-         remaining n]
-    (cond
-      (php/=== remaining 0) acc
-      (php/> attempts 200)  acc
-      :else
-      (let [[ex ey] (random-spawn grid)
-            d2      (let [dx (php/- ex player-x)
-                          dy (php/- ey player-y)]
-                      (php/+ (php/* dx dx) (php/* dy dy)))]
-        (if (php/< d2 (php/* min-dist-from min-dist-from))
-          (recur acc (php/+ attempts 1) remaining)
-          (recur (conj acc (new-enemy ex ey)) (php/+ attempts 1) (php/- remaining 1)))))))
+  ([grid n min-dist-from player-x player-y]
+   (spawn-enemies grid n min-dist-from player-x player-y 1))
+  ([g n-need min-d px py max-lives]
+   (loop [acc       []
+          attempts  0
+          remaining n-need]
+     (cond
+       (php/=== remaining 0) acc
+       (php/> attempts 200)  acc
+       :else
+       (let [[ex ey] (random-spawn g)
+             d2      (let [dx (php/- ex px)
+                           dy (php/- ey py)]
+                       (php/+ (php/* dx dx) (php/* dy dy)))]
+         (if (php/< d2 (php/* min-d min-d))
+           (recur acc (php/+ attempts 1) remaining)
+           (recur (conj acc (new-enemy ex ey max-lives))
+                  (php/+ attempts 1)
+                  (php/- remaining 1))))))))

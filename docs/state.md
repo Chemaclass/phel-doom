@@ -15,7 +15,7 @@ Pure data shapes that every other module operates on. `src/modules/core/state.ph
  :show-map   <bool>     ; minimap toggle
  :paused     <bool>     ; P toggle
  :sound-on   <bool>     ; N toggle
- :enemies    <vector of enemy maps>
+ :enemies    <vector of {:x :y :alive :lives :max-lives [:respawn-after]}>
  :hearts     <vector of {:x :y}>
  :armors     <vector of {:x :y}>
  :ammo-boxes <vector of {:x :y}>

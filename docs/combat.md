@@ -42,6 +42,8 @@ Hitscan + damage timing + i-frames. `src/modules/core/combat.phel`. Only side ef
 
 `apply-heat` decrements `:mag` by one on every shot, clamped at zero. `decay-timers` ticks `:reload-cooldown` down each frame so the next trigger pull can fire as soon as the brief lockout expires.
 
+A trigger pull on an empty mag with no other gate active routes through `empty-trigger-pull`: arms `:empty-click-secs` (`empty-click-seconds 0.8`) and plays the `:click` sfx. Render reads the timer and paints a centred `CLICK · press R to reload` prompt above the pistol — flips to `OUT OF AMMO` when `:ammo-reserve` is also 0.
+
 Fresh runs start with `:ammo-reserve 30` (three full mags); the cap is `max-reserve` (50). Ammo-box pickups on the map top the reserve back up (see [`level-system.md`](level-system.md)).
 
 ## Shooting

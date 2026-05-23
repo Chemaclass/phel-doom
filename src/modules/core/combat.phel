@@ -76,6 +76,13 @@
    reloads still feel survivable."
   1.5)
 
+(def empty-click-seconds
+  "How long the 'dry-fire click' visual + audio cue lingers after the
+   player pulled the trigger on an empty mag. Long enough that the
+   prompt is readable; short enough that holding the trigger doesn't
+   leave it pinned forever."
+  0.8)
+
 (def heat-per-shot
   "Heat added on each shot. Heat decays continuously; when it crosses
    1.0 the pistol jams. 0.30 = ~4 shots cold-mashed before jam, ~6
@@ -133,6 +140,7 @@
         streak-secs' (php/max 0.0 (php/- (or (:streak-secs world) 0.0) dt))
         cooldown'    (php/max 0.0 (php/- (or (:fire-cooldown world) 0.0) dt))
         reload-cd'   (php/max 0.0 (php/- (or (:reload-cooldown world) 0.0) dt))
+        click-secs'  (php/max 0.0 (php/- (or (:empty-click-secs world) 0.0) dt))
         heat'        (php/max 0.0 (php/- (or (:heat world) 0.0) (php/* heat-cool-rate dt)))
         jam-secs'    (php/max 0.0 (php/- (or (:jam-secs world) 0.0) dt))]
     (assoc world
@@ -143,6 +151,7 @@
            :streak-secs     streak-secs'
            :fire-cooldown   cooldown'
            :reload-cooldown reload-cd'
+           :empty-click-secs click-secs'
            :heat            heat'
            :jam-secs        jam-secs'
            ;; Window expired: streak counter goes back to 0 so the HUD
@@ -303,9 +312,11 @@
       :else   (play-sfx! :shoot 1.0))))
 
 (defn can-fire?
-  "True when the pistol is ready: cooldown elapsed, not jammed, and
-   the magazine still has rounds. Empty mags drop the trigger pull
-   silently — the player has to press R to reload first."
+  "True when the pistol is ready: cooldown elapsed, not jammed, no
+   reload in progress, AND the magazine still has rounds. Empty mags
+   fall through to tick-shooting's dry-fire path which arms the
+   `:empty-click-secs` timer and plays the deny sfx so the player
+   sees they need to press R."
   {:export true}
   [world]
   (and (php/<= (or (:fire-cooldown world) 0.0) 0.0)
@@ -378,10 +389,29 @@
                   (on-shot-hit world enemies' hit-pos idx)
                   (on-shot-miss world)))))
 
+(defn- empty-trigger-pull
+  "Trigger pulled while mag = 0 AND no cooldown / jam in the way. Arm
+   the empty-click timer and play the dry-fire sfx so render can
+   surface the 'press R to reload' prompt this frame. Cooldown / jam
+   pulls stay silent — the player gets visual feedback from those
+   states already (jam label / fire-anim) so doubling up would be
+   noisy."
+  [world]
+  (when (:sound-on world) (play-sfx! :click 0.6))
+  (assoc world :empty-click-secs empty-click-seconds))
+
 (defn tick-shooting
   "Resolve a shot if the trigger was pulled this frame AND the pistol
    is ready (not on cooldown, not jammed). Trigger pulls during a jam
-   are dropped silently."
+   or fire-cooldown are dropped silently. Trigger pulls on an empty
+   mag arm a brief dry-fire click + 'R to reload' prompt instead."
   {:export true}
   [world fire?]
-  (if (and fire? (can-fire? world)) (fire-shot world) world))
+  (cond
+    (not fire?)                          world
+    (can-fire? world)                    (fire-shot world)
+    (and (php/=== (or (:mag world) 0) 0)
+         (php/<= (or (:fire-cooldown world) 0.0) 0.0)
+         (php/<= (or (:jam-secs world) 0.0) 0.0)
+         (php/<= (or (:reload-cooldown world) 0.0) 0.0)) (empty-trigger-pull world)
+    :else                                world))

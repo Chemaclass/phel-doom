@@ -24,13 +24,20 @@
    so the next frame isn't an ambush."
   3.0)
 
+(def hit-flash-seconds
+  "How long the floating HP digit lingers above a hit enemy's head.
+   Long enough to read mid-combat, short enough that a follow-up
+   shot's flash takes over cleanly."
+  1.2)
+
 (defn new-enemy
   "Create an enemy record. `x` and `y` are world-space floats; `:alive`
    flips to false when `:lives` hits zero. Default lives = 1 keeps the
    one-shot-kill semantics for callers that don't care about HP."
   {:export true}
   ([x y]               (new-enemy x y 1))
-  ([ex ey max-lives]   {:x ex :y ey :alive true :lives max-lives :max-lives max-lives}))
+  ([ex ey max-lives]   {:x ex :y ey :alive true :lives max-lives :max-lives max-lives
+                        :hit-flash-secs 0.0}))
 
 (def chase-angle-offsets
   "Angle deltas (radians) tried when an enemy can't walk straight at the
@@ -131,7 +138,10 @@
                   killed' (assoc-in (assoc-in wounded [best :alive] false)
                                     [best :respawn-after] delay)]
               [killed' true hit-pos best])
-            [wounded true hit-pos best]))))))
+            ;; Stamp the hit-flash timer so render can paint the
+            ;; remaining HP digit above the head for a beat.
+            (let [flashed (assoc-in wounded [best :hit-flash-secs] hit-flash-seconds)]
+              [flashed true hit-pos best])))))))
 
 (defn- random-spawn-far-from
   "Random open cell at least min-dist from (px, py). Falls back to nil
@@ -156,7 +166,9 @@
    timer (e.g. spawned that way in a test) stays untouched."
   [e grid player-x player-y ^float dt ^float speed]
   (cond
-    (:alive e)                       (step-toward e grid player-x player-y dt speed)
+    (:alive e)                       (let [stepped (step-toward e grid player-x player-y dt speed)
+                                           flash'  (php/max 0.0 (php/- (or (:hit-flash-secs e) 0.0) dt))]
+                                       (assoc stepped :hit-flash-secs flash'))
     (php/=== (:respawn-after e) nil) e
     :else
     (let [t (php/- (:respawn-after e) dt)]

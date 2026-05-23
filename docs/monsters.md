@@ -14,6 +14,8 @@
 
 Each enemy carries `:lives` (current HP) and `:max-lives` (level cap). `enemy/shoot` decrements `:lives` per hit; only flips `:alive false` and arms the respawn timer when `:lives` hits zero. The renderer reads `damage-ratio = 1 - lives/max-lives` from `project-enemy` and adds it to the per-frame distance fade so the body zone shades darker (toward black) as HP drops — wounded enemies read as "bloodied" from across the room without needing extra glyphs or a HUD bar.
 
+On every non-killing hit, `shoot` also stamps `:hit-flash-secs hit-flash-seconds` (1.2s) onto the wounded enemy. `paint-enemy-hp-flashes` reads the timer and floats the remaining HP digit above the head for that window, bright yellow on a dark BG; `advance` decays the timer each frame so the digit fades on its own without a separate ticker. 1-HP enemies skip the digit (any hit is a kill).
+
 Each row is one map entry under `levels` in `core/level.phel`. Adding a 6th monster is a single map literal.
 
 ## Spawning

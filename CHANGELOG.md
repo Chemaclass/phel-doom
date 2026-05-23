@@ -19,6 +19,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Reload now plays a 1.2s drop / refill / raise animation with its own sfx. Trigger locked out for the whole window.
 - Pause menu now lists every key binding (move, turn, fire, reload, about-face, map, sound, debug, resume, quit) instead of just sound / resume / quit.
 - HUD rearrange. `L1 imps · kills · ammo` strip moved to a right-anchored row 2 at the top of the play area; the cramped bottom strip is gone. Pos / angle / fps moved into the F3 debug overlay. Bottom row now a single dim tagline pointing players at the pause + debug toggles.
+- Minimap auto-scales on narrow terminals: never claims more than ~1/3 of the screen width. Bigger grids (cyberdemons 52×32) compress to every-Nth-cell sampling so the 3D view always gets at least two-thirds of the columns. Walls take priority when a sampled block is mixed so corridors don't visually vanish.
 
 ## [0.2.0] - 2026-05-22
 

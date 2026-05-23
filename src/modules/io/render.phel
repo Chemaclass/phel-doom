@@ -371,86 +371,102 @@
    blink (5) is intentionally dropped so the swap freezes on pause."
   "\e[40;93;1mD\e[0m")
 
-(defn- enemy-cells
-  "Build a PHP array keyed by `row*gw+col` whose truthy entries mark
-   cells currently occupied by an alive enemy. One pass over the
-   enemies vector so the minimap inner loop stays O(1) per cell."
-  [enemies gw]
+(defn- scaled-cells
+  "Build a PHP array keyed by `row*out-w+col` (in MINIMAP coords)
+   whose truthy entries mark cells currently holding a thing
+   accepted by `keep?`. `step` collapses every step×step grid block
+   into one minimap cell, so a far-away pickup still shows up at
+   narrow vw where the minimap has been scaled down."
+  [items step out-w keep?]
   (let [acc (buf-mk)]
-    (loop [es enemies]
-      (when (php/!== es nil)
-        (let [e (first es)]
-          (when (and e (:alive e))
-            (buf-set acc
-                     (php/+ (php/* (php/intval (:y e)) gw) (php/intval (:x e)))
-                     true)))
-        (recur (next es))))
+    (loop [xs items]
+      (when (php/!== xs nil)
+        (let [it (first xs)]
+          (when (and it (keep? it))
+            (let [r (php/intdiv (php/intval (:y it)) step)
+                  c (php/intdiv (php/intval (:x it)) step)]
+              (buf-set acc (php/+ (php/* r out-w) c) true))))
+        (recur (next xs))))
     acc))
 
-(defn- heart-cells
-  "Build a PHP array keyed by `row*gw+col` whose truthy entries mark
-   cells currently holding a heart pickup."
-  [hearts gw]
-  (let [acc (buf-mk)]
-    (loop [hs hearts]
-      (when (php/!== hs nil)
-        (let [h (first hs)]
-          (when h
-            (buf-set acc
-                     (php/+ (php/* (php/intval (:y h)) gw) (php/intval (:x h)))
-                     true)))
-        (recur (next hs))))
-    acc))
+(defn- enemy-cells [enemies step out-w]
+  (scaled-cells enemies step out-w (fn [e] (:alive e))))
 
-(defn- ammo-cells
-  "Build a PHP array keyed by `row*gw+col` whose truthy entries mark
-   cells currently holding an ammo-box pickup."
-  [boxes gw]
-  (let [acc (buf-mk)]
-    (loop [bs boxes]
-      (when (php/!== bs nil)
-        (let [b (first bs)]
-          (when b
-            (buf-set acc
-                     (php/+ (php/* (php/intval (:y b)) gw) (php/intval (:x b)))
-                     true)))
-        (recur (next bs))))
-    acc))
+(defn- heart-cells [hearts step out-w]
+  (scaled-cells hearts step out-w (fn [_] true)))
+
+(defn- ammo-cells [boxes step out-w]
+  (scaled-cells boxes step out-w (fn [_] true)))
 
 (defn- minimap-rows
-  "Render the world's grid into a PHP array of ANSI-coded strings, one
-   per grid row. Reads the grid via :pgrid (PHP-native nested array)
-   and builds each row with php/array_push + implode to avoid Phel
-   collection dispatch in a hot per-frame call. Alive enemies are
-   marked with a red E. `door-glyph` lets the caller swap in a
-   pulsing variant on a sin wave."
-  [world door-glyph]
+  "Render the world's grid into a PHP array of ANSI-coded strings,
+   one per OUTPUT row. `step` collapses every step×step grid block
+   into one minimap cell — at narrow vw the minimap shrinks to stay
+   under ~1/3 of the screen. step=1 keeps the original 1:1 view.
+   `door-glyph` lets the caller swap in a pulsing variant on a sin
+   wave. Wall takes priority over door/enemy/pickup when a sampled
+   block is mixed, so corridors don't visually vanish."
+  [world door-glyph step]
   (let [pgrid               (:pgrid world)
         {:keys [x y angle]} (:player world)
-        pcol                (php/intval x)
-        prow                (php/intval y)
-        marker              (str "\e[40;93;1m" (direction-char angle) "\e[0m")
         gh                  (php/count pgrid)
         gw                  (php/count (buf-get pgrid 0))
-        emap                (enemy-cells (:enemies world) gw)
-        hmap                (heart-cells (:hearts world) gw)
-        amap                (ammo-cells  (:ammo-boxes world) gw)
-        rows                (buf-mk)]
+        out-h               (php/intval (php/ceil (php// gh step)))
+        out-w               (php/intval (php/ceil (php// gw step)))
+        pcol                (php/intdiv (php/intval x) step)
+        prow                (php/intdiv (php/intval y) step)
+        marker              (str "\e[40;93;1m" (direction-char angle) "\e[0m")
+        emap                (enemy-cells (:enemies world) step out-w)
+        hmap                (heart-cells (:hearts world) step out-w)
+        amap                (ammo-cells  (:ammo-boxes world) step out-w)
+        rows                (buf-mk)
+        block-has-wall?     (fn [r0 c0]
+                              (loop [dr 0]
+                                (cond
+                                  (php/>= dr step) false
+                                  (let [grow (buf-get pgrid (php/+ r0 dr))]
+                                    (loop [dc 0]
+                                      (cond
+                                        (php/>= dc step)                         false
+                                        (php/=== 1 (buf-get grow (php/+ c0 dc))) true
+                                        :else                                    (recur (php/+ dc 1))))) true
+                                  :else (recur (php/+ dr 1)))))
+        sample-cell         (fn [r0 c0]
+                              (loop [dr 0 found 0]
+                                (if (php/>= dr step)
+                                  found
+                                  (let [grow (buf-get pgrid (php/+ r0 dr))
+                                        v    (loop [dc 0 acc 0]
+                                               (if (php/>= dc step)
+                                                 acc
+                                                 (let [cell (buf-get grow (php/+ c0 dc))]
+                                                   (cond
+                                                     ;; Wall wins, short-circuit.
+                                                     (php/=== cell 1) 1
+                                                     (php/=== cell 2) (recur (php/+ dc 1) 2)
+                                                     :else            (recur (php/+ dc 1) acc)))))]
+                                    (cond
+                                      (php/=== v 1) 1
+                                      (php/=== v 2) (recur (php/+ dr 1) 2)
+                                      :else         (recur (php/+ dr 1) found))))))]
     (loop [row 0]
-      (when (php/< row gh)
-        (let [grow  (buf-get pgrid row)
+      (when (php/< row out-h)
+        (let [r0    (php/* row step)
               parts (buf-mk)]
           (loop [col 0]
-            (when (php/< col gw)
-              (buf-push parts
-                        (cond
-                          (and (php/=== row prow) (php/=== col pcol)) marker
-                          (php/=== 1 (buf-get grow col))              minimap-wall
-                          (php/=== 2 (buf-get grow col))              door-glyph
-                          (buf-get emap (php/+ (php/* row gw) col))   enemy-marker
-                          (buf-get hmap (php/+ (php/* row gw) col))   heart-marker
-                          (buf-get amap (php/+ (php/* row gw) col))   ammo-marker
-                          :else                                       minimap-floor))
+            (when (php/< col out-w)
+              (let [c0   (php/* col step)
+                    cell (sample-cell r0 c0)]
+                (buf-push parts
+                          (cond
+                            (and (php/=== row prow) (php/=== col pcol))  marker
+                            (php/=== 1 cell)                             minimap-wall
+                            (block-has-wall? r0 c0)                      minimap-wall
+                            (php/=== 2 cell)                             door-glyph
+                            (buf-get emap (php/+ (php/* row out-w) col)) enemy-marker
+                            (buf-get hmap (php/+ (php/* row out-w) col)) heart-marker
+                            (buf-get amap (php/+ (php/* row out-w) col)) ammo-marker
+                            :else                                        minimap-floor)))
               (recur (php/+ col 1))))
           (buf-set rows row (php/implode "" parts)))
         (recur (php/+ row 1))))
@@ -655,12 +671,22 @@
   "Viewport fills the whole terminal. The minimap is an overlay in the
    top-right corner that the M key shows or hides. The HUD row count
    grows by one when the F3 debug overlay is on so the perf row can
-   sit above the standard footer without clipping the 3D view."
-  [cols rows mw stats]
-  {:vw      cols
-   :vh      (- rows (hud-rows-for stats))
-   :map-col (php/max 1 (+ (- cols mw) 1))
-   :map-row 1})
+   sit above the standard footer without clipping the 3D view.
+
+   On narrow terminals the minimap auto-scales so it never claims
+   more than roughly a third of the screen width: `:map-step` is
+   the grid:minimap block size (1 = 1:1, 2 = every 2nd cell, etc.)
+   and `:map-mw` is the resulting on-screen minimap width in cols."
+  [cols rows grid-w stats]
+  (let [max-mw  (php/max 8 (php/intdiv cols 3))
+        step    (php/max 1 (php/intval (php/ceil (php// grid-w max-mw))))
+        mini-mw (php/intval (php/ceil (php// grid-w step)))]
+    {:vw       cols
+     :vh       (- rows (hud-rows-for stats))
+     :map-col  (php/max 1 (+ (- cols mini-mw) 1))
+     :map-row  1
+     :map-step step
+     :map-mw   mini-mw}))
 
 (defn- pulse
   "Pause-aware sin-wave beat at `freq` rad/s, sampled at game-time `t`
@@ -1401,7 +1427,7 @@
    Minimap is overlaid top-right when (:show-map world) is truthy."
   {:export true}
   [world stats cols rows]
-  (let [{:keys [vw vh map-col map-row]}
+  (let [{:keys [vw vh map-col map-row map-step]}
         (layout cols rows (count (first (:grid world))) stats)
         bloody?                            (php/> (or (get stats :iframes) 0.0) 0.0)
         ;; Walls + sky + floor are ALL pure grayscale: enemy colours
@@ -1563,7 +1589,7 @@
         ;; and on the overhead map.
         mini-door                          (if door-bright? minimap-door-pulse minimap-door)
         mrows                              (if (:show-map world)
-                                             (minimap-rows world mini-door)
+                                             (minimap-rows world mini-door map-step)
                                              (buf-mk))
         visible-mh                         (php/min (php/count mrows) vh)
         ;; First 0-indexed column the minimap overdraws. When the

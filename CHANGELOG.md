@@ -18,6 +18,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Per-level enemy HP (L1 imp=1, L2 demon=2, L3 caco=3, L4 baron=4, L5 cyberdemon=5). Wounded sprites shade darker; a yellow HP digit floats above the head for 1.2s after each hit. Distinct `:wound` sfx so the player tells "I hit them" apart from "they hit me".
 - Reload now plays a 1.2s drop / refill / raise animation with its own sfx. Trigger locked out for the whole window.
 - Pause menu now lists every key binding (move, turn, fire, reload, about-face, map, sound, debug, resume, quit) instead of just sound / resume / quit.
+- HUD rearrange. `L1 imps · kills · ammo` strip moved to a right-anchored row 2 at the top of the play area; the cramped bottom strip is gone. Pos / angle / fps moved into the F3 debug overlay. Bottom row now a single dim tagline pointing players at the pause + debug toggles.
 
 ## [0.2.0] - 2026-05-22
 

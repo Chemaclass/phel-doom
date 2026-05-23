@@ -473,20 +473,29 @@
         :else             (str (php/number_format (php// n 1000000.0) 2) "M")))
 
 (defn- hud-debug-line
-  "Single-line perf overlay. Reads the snapshot `frame-stats` already
-   pulled from the side-channel atom — no instrumentation work runs
-   here, so the row repaints cheaply once the cost has been paid by
-   the previous frame's render!. Off when :debug? is false."
-  [stats]
-  (let [snap         (or (get stats :perf-stats) {})
-        frame-ms     (or (get stats :frame-ms) 0)
-        cast-ms      (get snap :cast-ms)
-        render-ms    (get snap :render-ms)
-        bytes        (get snap :bytes)
-        avg-rle      (get snap :avg-rle)
-        php-mem      (get snap :php-mem)
-        php-mem-peak (get snap :php-mem-peak)]
+  "Single-line technical overlay. Reads the snapshot `frame-stats`
+   already pulled from the side-channel atom — no instrumentation work
+   runs here, so the row repaints cheaply once the cost has been paid
+   by the previous frame's render!. Off when :debug? is false. Carries
+   the player position / angle / fps too so the standard game HUD can
+   stay focused on combat info."
+  [world stats]
+  (let [snap                (or (get stats :perf-stats) {})
+        {:keys [x y angle]} (:player world)
+        frame-ms            (or (get stats :frame-ms) 0)
+        fps                 (or (get stats :fps) 0)
+        cast-ms             (get snap :cast-ms)
+        render-ms           (get snap :render-ms)
+        bytes               (get snap :bytes)
+        avg-rle             (get snap :avg-rle)
+        php-mem             (get snap :php-mem)
+        php-mem-peak        (get snap :php-mem-peak)]
     (str "\e[0m\e[1;36m[DEBUG]\e[0m"
+         "  \e[1mpos\e[0m (" (php/number_format x 1) ", " (php/number_format y 1) ")"
+         "  \e[1mangle\e[0m "
+         (php/intval (* (php/fmod (+ angle (* 4.0 php/M_PI)) (* 2.0 php/M_PI))
+                        (/ 180.0 php/M_PI))) "°"
+         "  \e[1mfps\e[0m " fps
          "  \e[1mframe\e[0m " frame-ms "ms"
          "  \e[1mcast\e[0m "  (fmt-ms cast-ms) "ms"
          "  \e[1mrender\e[0m " (fmt-ms render-ms) "ms"
@@ -513,19 +522,13 @@
          mag-col mag "\e[0m/10 "
          res-col "[" reserve "]\e[0m")))
 
-(defn- hud-line [world stats]
-  (let [{:keys [x y angle]} (:player world)]
-    (str "\e[0m\e[1mpos\e[0m ("
-         (php/number_format x 1) ", " (php/number_format y 1) ")"
-         "  \e[1mangle\e[0m "
-         (php/intval (* (php/fmod (+ angle (* 4.0 php/M_PI)) (* 2.0 php/M_PI))
-                        (/ 180.0 php/M_PI)))
-         "°"
-         "  \e[1mL" (or (get stats :level) 1) "\e[0m " (or (get stats :level-name) "")
-         "  \e[1mkills\e[0m " (or (get stats :kills) 0)
-         "  " (ammo-cell stats)
-         "  \e[1mfps\e[0m " (or (get stats :fps) 0)
-         "  \e[2m[wasd ←→ space fire  r reload  e turn  m map  n sound  p pause  q quit]\e[0m")))
+(defn- hud-line
+  "Bottom-status row. Was the dump for pos/angle/fps + a cramped key
+   legend; those moved to the F3 debug overlay and the pause menu.
+   Now a single dim tagline so the bottom strip stays visually
+   anchored without competing with the game info up top."
+  [_world _stats]
+  "\e[0m\e[2mP to pause for controls · F3 for debug\e[0m")
 
 (defn project-enemy
   "Project one enemy into screen space relative to the player. Returns
@@ -860,6 +863,36 @@
             col    (php/max 1 (php/- vw 15))]
         (buf-push parts (str "\e[1;" col "H" label))))
     parts))
+
+(defn- paint-game-info
+  "Top-row game-state strip: `L1 imps · kills 12 · ammo 7/10 [23]`.
+   Right-anchored on screen row 2 (one row below the compass / hearts
+   row) so it stays clear of the row-1 LOW AMMO blink and the
+   centred rear-warning. Visible-only chunk widths drive the col
+   so the right edge stays inside vw regardless of digit growth."
+  [parts stats vw]
+  (let [lvl     (or (get stats :level) 1)
+        name'   (or (get stats :level-name) "")
+        kills   (or (get stats :kills) 0)
+        mag     (or (get stats :mag) 0)
+        reserve (or (get stats :ammo-reserve) 0)
+        mag-col (cond (php/<= mag 0) "\e[1;91m"
+                      (php/<= mag 3) "\e[1;93m"
+                      :else          "\e[1m")
+        res-col (cond (php/<= reserve 0)  "\e[1;91m"
+                      (php/<= reserve 10) "\e[1;93m"
+                      :else               "\e[2m")
+        ;; Build the plain-text version first so the col math doesn't
+        ;; have to count past SGR escapes.
+        plain   (str "L" lvl " " name' "  kills " kills "  ammo "
+                     mag "/10 [" reserve "]")
+        styled  (str "\e[40;97m\e[1mL" lvl "\e[0m\e[40;97m " name'
+                     "  \e[1mkills\e[0m " kills
+                     "  \e[1mammo\e[0m " mag-col mag "\e[0m\e[40;97m/10 "
+                     res-col "[" reserve "]\e[0m")
+        col     (php/max 1 (php/- vw (php/+ (php/strlen plain) 1)))]
+    (buf-push parts (str "\e[2;" col "H" styled)))
+  parts)
 
 (defn- paint-empty-click
   "Trigger pulled on an empty mag: blink a centred prompt above the
@@ -1673,7 +1706,7 @@
                                           (recur (php/+ col 1) c 1))))))
                (buf-push parts "\e[0m\n"))
       (when (get stats :debug?)
-        (buf-push parts (hud-debug-line stats))
+        (buf-push parts (hud-debug-line world stats))
         (buf-push parts "\n"))
       (buf-push parts (hud-line world stats))
       (dotimes [i visible-mh]
@@ -1729,13 +1762,14 @@
             p12         (paint-compass            p11 world vw)
             p13         (paint-rear-warning       p12 t stats vw)
             p14         (paint-low-ammo           p13 t stats vw)
-            p15         (paint-hearts-hud         p14 t stats bloody?)
-            p16         (paint-pistol-hud         p15 stats vw vh floor-gradient)
-            p17         (paint-empty-click        p16 stats vw vh)
-            p18         (paint-enemy-hp-flashes   p17 world vw vh)]
+            p15         (paint-game-info          p14 stats vw)
+            p16         (paint-hearts-hud         p15 t stats bloody?)
+            p17         (paint-pistol-hud         p16 stats vw vh floor-gradient)
+            p18         (paint-empty-click        p17 stats vw vh)
+            p19         (paint-enemy-hp-flashes   p18 world vw vh)]
         (when (get stats :paused)
-          (buf-push p18 (pause-menu-string vw vh (get stats :sound-on))))
-        (php/implode "" p18)))))
+          (buf-push p19 (pause-menu-string vw vh (get stats :sound-on))))
+        (php/implode "" p19)))))
 
 (defn clear-screen
   "ANSI clear + cursor home."

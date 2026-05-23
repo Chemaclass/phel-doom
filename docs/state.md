@@ -17,6 +17,9 @@ Pure data shapes that every other module operates on. `src/modules/core/state.ph
  :sound-on   <bool>     ; N toggle
  :enemies    <vector of enemy maps>
  :hearts     <vector of {:x :y}>
+ :armors     <vector of {:x :y}>
+ :ammo-boxes <vector of {:x :y}>
+ :armor      <int, hits absorbed before lives drop>
  :kills      <int>
  :lives      <int, 0..max-lives>
  :iframes    <float seconds>  ; post-hit invulnerability

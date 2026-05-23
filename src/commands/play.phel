@@ -7,7 +7,7 @@
   (:require phel-doom.modules.glue.controls :refer [refresh-from-keys key-states rising-edges
                                                     initial-key-snapshot])
   (:require phel-doom.modules.core.physics  :refer [apply-physics tick-heartbeat tick-flicker tick-blood-drops tick-door-face])
-  (:require phel-doom.modules.core.combat   :refer [damage-step reload tick-shooting])
+  (:require phel-doom.modules.core.combat   :refer [ammo-per-box damage-step max-reserve reload tick-shooting])
   (:require phel-doom.modules.core.enemy    :refer [advance tick-scare rear-attacker?])
   (:require phel-doom.modules.io.sound    :refer [play-sfx! mute-for!])
   (:require phel-doom.modules.core.level    :refer [build-world num-levels])
@@ -125,6 +125,28 @@
         (when (:sound-on world) (play-sfx! :door))
         (update shielded :armor (fn [a] (php/+ (or a 0) 1)))))))
 
+(defn- ammo-boxes-not-at [boxes px py]
+  (apply vector
+         (filter (fn [b]
+                   (not (and (php/=== (php/intval (:x b)) px)
+                             (php/=== (php/intval (:y b)) py))))
+                 (or boxes []))))
+
+(defn- pickup-ammos
+  "Step-on triggers an ammo-box pickup: bumps :ammo-reserve by
+   `ammo-per-box`, capped at `max-reserve`. Box is removed from the
+   world so the player can't farm a single cell."
+  [world]
+  (let [kept (ammo-boxes-not-at (:ammo-boxes world)
+                                (php/intval (:x (:player world)))
+                                (php/intval (:y (:player world))))]
+    (if (= (count kept) (count (or (:ammo-boxes world) [])))
+      world
+      (let [refilled (assoc world :ammo-boxes kept)]
+        (when (:sound-on world) (play-sfx! :door))
+        (update refilled :ammo-reserve
+                (fn [r] (php/min max-reserve (php/+ (or r 0) ammo-per-box))))))))
+
 (defn- on-door?
   "True when the player's current cell is a door (auto-advances level)."
   [world]
@@ -152,7 +174,8 @@
             w2  (apply-physics w1 dt)
             w3  (pickup-hearts w2)
             w4  (pickup-armors w3)
-            w5  (tick-enemies  w4 dt)
+            w4b (pickup-ammos  w4)
+            w5  (tick-enemies  w4b dt)
             w5b (if (:reload edges) (reload w5) w5)
             w6  (tick-shooting w5b (:fire edges))
             w7  (damage-step   w6 dt)

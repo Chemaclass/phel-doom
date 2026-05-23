@@ -47,6 +47,8 @@ Level N config (1-indexed). Clamps out-of-range to nearest valid.
             (assoc with-foes
                    :level level-num :lives lives
                    :hearts      (maybe-spawn-heart grid lives px py)
+                   :armors      (maybe-spawn-armor grid)
+                   :ammo-boxes  (spawn-ammo-boxes grid)
                    :chase-speed (:chase cfg)
                    ;; enemy visual stamps...
                    :level-name  (:name cfg)
@@ -60,7 +62,9 @@ Sequence:
 3. Player spawn at a random open cell.
 4. `:enemies` monsters at least `enemy-min-spawn-dist = 3.0` from player.
 5. Heart pickup in a random open cell if `lives < max-lives`; otherwise none.
-6. Stamp level metadata (chase speed, monster colours, glyphs, name) + 1.5s intro splash timer.
+6. Armor pickup roughly every other level (50% chance, one cell).
+7. Two ammo-boxes at random open cells (always — reserve is finite, so the player must restock).
+8. Stamp level metadata (chase speed, monster colours, glyphs, name) + 1.5s intro splash timer.
 
 Result feeds into `game-loop`.
 

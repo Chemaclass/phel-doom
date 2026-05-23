@@ -110,6 +110,22 @@
       [{:x ax :y ay}])
     []))
 
+(defn- spawn-ammo-boxes
+  "Every level seeds two ammo boxes at random open cells. Ammo reserve
+   is finite (see combat/max-reserve) so a steady refill keeps the
+   player firing as monster counts ramp. Loops up to a few times so
+   the second box doesn't accidentally land on the first (random-spawn
+   is unconditioned across calls, and a collision would silently halve
+   the reward — both boxes consumed by a single step)."
+  [grid]
+  (let [[ax ay] (random-spawn grid)]
+    (loop [attempt 0]
+      (let [[bx by] (random-spawn grid)]
+        (cond
+          (or (php/!== ax bx) (php/!== ay by)) [{:x ax :y ay} {:x bx :y by}]
+          (php/>= attempt 4)                   [{:x ax :y ay}]
+          :else                                (recur (php/+ attempt 1)))))))
+
 (defn build-world
   "Construct a brand-new world for `level-num` carrying `lives` over
    from the previous level. Walls, enemies, the single door, the
@@ -132,6 +148,7 @@
                    :lives       lives
                    :hearts      (maybe-spawn-heart grid lives px py)
                    :armors      (maybe-spawn-armor grid)
+                   :ammo-boxes  (spawn-ammo-boxes grid)
                    :chase-speed (:chase cfg)
                    :enemy-head-code     (:head-code cfg)
                    :enemy-body-code     (:body-code cfg)

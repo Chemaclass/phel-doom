@@ -1009,6 +1009,28 @@
                    "\e[0m")))
   parts)
 
+(def reload-max-drop
+  "Peak rows the pistol drops below its rest position mid-reload. The
+   sprite is 6 rows tall, so 5 leaves a sliver of muzzle visible at
+   the deepest dip — enough to communicate 'gun is down' without
+   blanking the bottom of the screen entirely."
+  5)
+
+(defn- reload-offset
+  "Map a stats map to a row offset for the pistol sprite this frame.
+   0 when no reload is in progress; otherwise rises smoothly to
+   `reload-max-drop` at the midpoint of the reload window and falls
+   back to 0 as the reload completes. Sin curve gives a natural
+   drop-hold-raise without piecewise branches."
+  [stats]
+  (let [cd  (or (get stats :reload-cooldown) 0.0)
+        dur (or (get stats :reload-duration) 0.0)]
+    (if (or (php/<= cd 0.0) (php/<= dur 0.0))
+      0
+      (let [progress (php/max 0.0 (php/min 1.0 (php/- 1.0 (php// cd dur))))]
+        (php/intval (php/round (php/* reload-max-drop
+                                      (php/sin (php/* progress php/M_PI)))))))))
+
 (defn- paint-pistol-hud
   "FPS-style pistol sprite centre-bottom + muzzle flash when firing.
 
@@ -1016,14 +1038,29 @@
    to leave the SGR prefix) so the half-block glyphs (▐ ▌ ▄) have
    their transparent halves fall on the floor colour instead of the
    terminal default (which on some iTerm2 themes is light/white and
-   draws a halo around the silhouette)."
+   draws a halo around the silhouette).
+
+   While `:reload-cooldown` is positive, the entire sprite is shifted
+   down by `reload-offset` rows so the gun visibly drops out of view
+   and rises back up over the reload window — rows that would land
+   past `vh` are clipped per-row so they don't wrap or trample the
+   HUD beneath."
   [parts stats vw vh floor-gradient]
   (when (php/>= vh 6)
     (let [cc        (php/+ (php/intdiv vw 2) 1)
+          drop      (reload-offset stats)
           row-bg    (fn [r]
                       (let [cell (buf-get floor-gradient r)]
                         (php/mb_substr cell 0
                                        (php/max 0 (php/- (php/mb_strlen cell) 1)))))
+          ;; Render one pistol row only if the dropped row still fits
+          ;; on screen. Returns the cursor + paint string or "" when
+          ;; the row has dipped below the viewport.
+          paint-row (fn [base-row col bg-row sgr glyphs]
+                      (let [r (php/+ base-row drop)]
+                        (if (php/> r vh)
+                          ""
+                          (str "\e[" r ";" col "H" (row-bg bg-row) sgr glyphs))))
           ;; Pistol palette: darker than the floor gradient (which
           ;; sits around codes 239-246 near the camera) so the gun
           ;; reads as a black-steel silhouette against the lit floor.
@@ -1043,14 +1080,23 @@
       ;; are 1-based. Map cursor row → gradient idx by subtracting 1.
       (buf-push parts
                 (str
-                 "\e[" (php/- vh 5) ";" (php/+ cc 1) "H" (row-bg (php/- vh 6)) muzzle "▄▄"
-                 "\e[" (php/- vh 4) ";" cc           "H" (row-bg (php/- vh 5)) slide "▐██▌"
-                 "\e[" (php/- vh 3) ";" (php/- cc 1) "H" (row-bg (php/- vh 4)) slide "▐████▌"
-                 "\e[" (php/- vh 2) ";" (php/- cc 2) "H" (row-bg (php/- vh 3)) slide-dim "▐██████▌"
-                 "\e[" (php/- vh 1) ";" (php/- cc 2) "H" (row-bg (php/- vh 2)) frame "▐█" grip-hi "▓▓▓▓" frame "█▌"
-                 "\e[" vh           ";" (php/- cc 1) "H" (row-bg (php/- vh 1)) grip-lo "▐▓▓▓▓▌"
+                 (paint-row (php/- vh 5) (php/+ cc 1) (php/- vh 6) muzzle    "▄▄")
+                 (paint-row (php/- vh 4) cc           (php/- vh 5) slide     "▐██▌")
+                 (paint-row (php/- vh 3) (php/- cc 1) (php/- vh 4) slide     "▐████▌")
+                 (paint-row (php/- vh 2) (php/- cc 2) (php/- vh 3) slide-dim "▐██████▌")
+                 ;; Upper grip row mixes frame + grip-hi SGRs; pre-bake
+                 ;; the full glyph string so paint-row's clip logic
+                 ;; still owns the cursor + bg + skip-if-offscreen.
+                 (paint-row (php/- vh 1) (php/- cc 2) (php/- vh 2) frame
+                            (str "▐█" grip-hi "▓▓▓▓" frame "█▌"))
+                 (paint-row vh           (php/- cc 1) (php/- vh 1) grip-lo "▐▓▓▓▓▌")
                  "\e[0m"))
-      (when (php/> (or (get stats :fire-anim) 0.0) 0.0)
+      ;; Muzzle flash suppressed during a reload — can-fire? already
+      ;; blocks the trigger pull so :fire-anim should be 0, but the
+      ;; sprite-drop guard makes it impossible to paint a flash
+      ;; floating above a gun that isn't there.
+      (when (and (php/> (or (get stats :fire-anim) 0.0) 0.0)
+                 (php/=== drop 0))
         (buf-push parts
                   (str
                    "\e[" (php/- vh 7) ";" cc "H" (row-bg (php/- vh 8)) "\e[1;93m  ✦  "

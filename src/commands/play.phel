@@ -7,7 +7,7 @@
   (:require phel-doom.modules.glue.controls :refer [refresh-from-keys key-states rising-edges
                                                     initial-key-snapshot])
   (:require phel-doom.modules.core.physics  :refer [apply-physics tick-heartbeat tick-flicker tick-blood-drops tick-door-face])
-  (:require phel-doom.modules.core.combat   :refer [ammo-per-box damage-step max-reserve reload tick-shooting])
+  (:require phel-doom.modules.core.combat   :refer [ammo-per-box damage-step max-reserve reload reloading? reload-cooldown-seconds tick-shooting])
   (:require phel-doom.modules.core.enemy    :refer [advance tick-scare rear-attacker?])
   (:require phel-doom.modules.io.sound    :refer [play-sfx! mute-for!])
   (:require phel-doom.modules.core.level    :refer [build-world num-levels])
@@ -176,7 +176,11 @@
             w4  (pickup-armors w3)
             w4b (pickup-ammos  w4)
             w5  (tick-enemies  w4b dt)
-            w5b (if (:reload edges) (reload w5) w5)
+            w5b (if (:reload edges)
+                  (do
+                    (when (and (:sound-on w5) (reloading? w5)) (play-sfx! :reload))
+                    (reload w5))
+                  w5)
             w6  (tick-shooting w5b (:fire edges))
             w7  (damage-step   w6 dt)
             w8  (tick-heartbeat w7 dt)
@@ -223,6 +227,7 @@
    :mag         (or (:mag world) 0)
    :ammo-reserve (or (:ammo-reserve world) 0)
    :reload-cooldown (or (:reload-cooldown world) 0.0)
+   :reload-duration reload-cooldown-seconds
    :rear-warning? (rear-attacker? (:enemies world)
                                   (:x (:player world))
                                   (:y (:player world))

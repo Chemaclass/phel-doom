@@ -14,7 +14,7 @@ Hitscan + damage timing + i-frames. `src/modules/core/combat.phel`. Only side ef
 (def flash-seconds     0.05)  ; 1-frame all-white impact jolt
 (def mag-size          10)    ; rounds per magazine; reload at R
 (def max-reserve       50)    ; hard cap on the spare ammo pool
-(def reload-cooldown-seconds 0.4) ; brief lockout after a reload
+(def reload-cooldown-seconds 1.5) ; reload animation + firing lockout
 ```
 
 ## Magazine + reload

@@ -68,10 +68,13 @@
   10)
 
 (def reload-cooldown-seconds
-  "Brief lockout after a reload so the player can't trigger-mash R to
-   bypass the empty-mag block when timing a shot. Short enough that
-   reload-mid-combat still feels snappy."
-  0.4)
+  "Length of the reload animation + firing lockout. The pistol drops
+   off-screen, refills, and rises back into view over this window; the
+   trigger stays disabled the whole time so the player commits to the
+   reload instead of mashing through it. 1.5s is long enough that the
+   animation reads as a real action, short enough that mid-combat
+   reloads still feel survivable."
+  1.5)
 
 (def heat-per-shot
   "Heat added on each shot. Heat decays continuously; when it crosses
@@ -325,6 +328,17 @@
            :heat          (if jam? 0.0 heat')
            :jam-secs      (if jam? jam-seconds (or (:jam-secs world) 0.0))
            :mag           mag')))
+
+(defn reloading?
+  "True when the player COULD reload right now — used by play.phel to
+   gate the reload sfx so the click only plays on an actual reload, not
+   every R press during cooldown / when the mag is full / when the
+   reserve is dry."
+  {:export true}
+  [world]
+  (and (php/<= (or (:reload-cooldown world) 0.0) 0.0)
+       (php/< (or (:mag world) 0) mag-size)
+       (php/> (or (:ammo-reserve world) 0) 0)))
 
 (defn reload
   "Top the magazine back up from the spare reserve and arm a short

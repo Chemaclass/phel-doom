@@ -890,6 +890,38 @@
         (buf-push parts (str "\e[1;" col "H" label))))
     parts))
 
+(defn- paint-reload-reminder
+  "Periodic 'press R to RELOAD' nag above the pistol when the player
+   is sitting on a near-empty mag with reserve to spare. Cadence
+   scales with urgency: visible 0.5s every 5s at mag=2, every 3s at
+   mag=1, every 1s at mag=0. Suppressed while reloading (cooldown
+   active), when the reserve is dry (a reload would no-op), and
+   while the dry-fire CLICK is on screen so the two prompts don't
+   stack."
+  [parts stats vw vh]
+  (let [mag     (or (get stats :mag) 0)
+        reserve (or (get stats :ammo-reserve) 0)
+        cd      (or (get stats :reload-cooldown) 0.0)
+        click   (or (get stats :empty-click-secs) 0.0)
+        gt      (or (get stats :game-time) 0.0)]
+    (when (and (php/> reserve 0)
+               (php/<= cd 0.0)
+               (php/<= click 0.0)
+               (php/<= mag 2)
+               (php/>= vh 9))
+      (let [interval (cond (php/<= mag 0) 1.0
+                           (php/<= mag 1) 3.0
+                           :else          5.0)
+            phase    (php/fmod gt interval)]
+        (when (php/< phase 0.5)
+          (let [text  " press R to RELOAD "
+                label (str "\e[40;38;5;226;1m" text "\e[0m")
+                col   (php/max 1 (php/- (php/intdiv vw 2)
+                                        (php/intdiv (php/strlen text) 2)))
+                row   (php/max 3 (php/- vh 8))]
+            (buf-push parts (str "\e[" row ";" col "H" label)))))))
+  parts)
+
 (defn- paint-game-info
   "Top-left game-state strip: `L1 imps · kills 12 · ammo 7/10 [23]`,
    anchored at row 2 col 1 directly under the hearts/armor row. Left
@@ -1788,10 +1820,11 @@
             p16         (paint-hearts-hud         p15 t stats bloody?)
             p17         (paint-pistol-hud         p16 stats vw vh floor-gradient)
             p18         (paint-empty-click        p17 stats vw vh)
-            p19         (paint-enemy-hp-flashes   p18 world vw vh)]
+            p19         (paint-reload-reminder    p18 stats vw vh)
+            p20         (paint-enemy-hp-flashes   p19 world vw vh)]
         (when (get stats :paused)
-          (buf-push p19 (pause-menu-string vw vh (get stats :sound-on))))
-        (php/implode "" p19)))))
+          (buf-push p20 (pause-menu-string vw vh (get stats :sound-on))))
+        (php/implode "" p20)))))
 
 (defn clear-screen
   "ANSI clear + cursor home."

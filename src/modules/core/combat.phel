@@ -53,10 +53,14 @@
   0.12)
 
 (def mag-size
-  "Magazine capacity. Issue #5 phase 1: a fresh mag holds this many
-   shots, then the player must press R to reload. Phase 2 will add a
-   finite reserve count; phase 1 treats reloads as free."
+  "Magazine capacity. A fresh mag holds this many shots; reload draws
+   from the world's `:ammo-reserve` to top it back up."
   10)
+
+(def max-reserve
+  "Hard cap on the spare ammo pool. Ammo-box pickups stop adding
+   beyond this so the player can't stockpile infinitely."
+  50)
 
 (def reload-cooldown-seconds
   "Brief lockout after a reload so the player can't trigger-mash R to
@@ -309,18 +313,30 @@
            :mag           mag')))
 
 (defn reload
-  "Top the magazine back up to `mag-size` and arm a short reload
-   cooldown so trigger-mashing can't fire on the same frame as
-   pressing R. Phase 1 (issue #5): reloads are free — phase 2 will
-   draw from a finite reserve. No-op while a reload is already in
-   progress so spamming R doesn't reset the lockout."
+  "Top the magazine back up from the spare reserve and arm a short
+   reload cooldown so trigger-mashing can't fire on the same frame
+   as pressing R. Three no-op cases that all keep the world identity
+   stable so callers can compare cheaply:
+     - reload already in progress (don't reset the lockout)
+     - mag already full        (don't waste reserve)
+     - reserve empty           (let the player keep pressing R)
+   Otherwise: draw `min(needed, reserve)` rounds from `:ammo-reserve`
+   into `:mag` and arm the cooldown."
   {:export true}
   [world]
-  (if (php/> (or (:reload-cooldown world) 0.0) 0.0)
-    world
-    (assoc world
-           :mag             mag-size
-           :reload-cooldown reload-cooldown-seconds)))
+  (let [mag     (or (:mag world) 0)
+        reserve (or (:ammo-reserve world) 0)
+        needed  (php/- mag-size mag)]
+    (cond
+      (php/> (or (:reload-cooldown world) 0.0) 0.0) world
+      (php/<= needed 0)                             world
+      (php/<= reserve 0)                            world
+      :else
+      (let [drawn (php/min needed reserve)]
+        (assoc world
+               :mag             (php/+ mag drawn)
+               :ammo-reserve    (php/- reserve drawn)
+               :reload-cooldown reload-cooldown-seconds)))))
 
 (defn fire-shot
   "Resolve one trigger pull end-to-end."

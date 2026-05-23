@@ -13,6 +13,7 @@ Hitscan + damage timing + i-frames. `src/modules/core/combat.phel`. Only side ef
 (def fx-ttl-seconds    0.45)  ; blood splatter lifetime
 (def flash-seconds     0.05)  ; 1-frame all-white impact jolt
 (def mag-size          10)    ; rounds per magazine; reload at R
+(def max-reserve       50)    ; hard cap on the spare ammo pool
 (def reload-cooldown-seconds 0.4) ; brief lockout after a reload
 ```
 
@@ -20,16 +21,28 @@ Hitscan + damage timing + i-frames. `src/modules/core/combat.phel`. Only side ef
 
 `can-fire?` requires `:fire-cooldown <= 0`, `:jam-secs <= 0`, `:reload-cooldown <= 0`, AND `:mag > 0`. Trigger pulls on an empty mag drop silently — the player must press **R** to reload.
 
+`reload` draws `min(mag-size - mag, :ammo-reserve)` rounds from the world's spare pool and arms `:reload-cooldown`. Three no-op paths keep the world identity stable so callers can compare cheaply: reload already in progress, mag already full, or reserve empty.
+
 ```phel
 (defn reload [world]
-  (if (php/> (or (:reload-cooldown world) 0.0) 0.0)
-    world
-    (assoc world :mag mag-size :reload-cooldown reload-cooldown-seconds)))
+  (let [mag     (or (:mag world) 0)
+        reserve (or (:ammo-reserve world) 0)
+        needed  (php/- mag-size mag)]
+    (cond
+      (php/> (or (:reload-cooldown world) 0.0) 0.0) world
+      (php/<= needed 0)                              world
+      (php/<= reserve 0)                             world
+      :else
+      (let [drawn (php/min needed reserve)]
+        (assoc world
+               :mag             (php/+ mag drawn)
+               :ammo-reserve    (php/- reserve drawn)
+               :reload-cooldown reload-cooldown-seconds)))))
 ```
 
 `apply-heat` decrements `:mag` by one on every shot, clamped at zero. `decay-timers` ticks `:reload-cooldown` down each frame so the next trigger pull can fire as soon as the brief lockout expires.
 
-Phase 1 ships with infinite reloads (R always tops the mag). Phase 2 (out of scope here) will draw from a finite reserve fed by ammo pickups on the map.
+Fresh runs start with `:ammo-reserve 30` (three full mags); the cap is `max-reserve` (50). Ammo-box pickups on the map top the reserve back up (see [`level-system.md`](level-system.md)).
 
 ## Shooting
 

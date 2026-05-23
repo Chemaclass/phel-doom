@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Added
+
+- Finite ammo reserve (phase 2 of issue #5). Fresh runs start with `:ammo-reserve 30` (three mags) and cap at `max-reserve 50`. Reload draws `min(mag-size - mag, reserve)` rounds; reload is a no-op when the reserve is empty so spamming R stays harmless. HUD ammo cell now reads `ammo N/10 [R]` with both segments coloured (amber under one-mag's worth, red on empty).
+
 ## [0.2.0] - 2026-05-22
 
 ### Added

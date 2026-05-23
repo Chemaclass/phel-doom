@@ -20,7 +20,9 @@
 ```
 (frame->string world stats cols rows)
   │
-  ├── layout cols rows mw → vw, vh, map-col, map-row
+  ├── layout cols rows grid-w → vw, vh, map-col, map-row, map-step, map-mw
+  │     (map-step >= 2 collapses every step×step grid block into one
+  │      minimap cell so the map stays under ~1/3 of the screen width)
   ├── cast-frame world vw → :dists :hits :hxs :hys :sides
   ├── build per-column wall shades (3 strings × vw cols)
   │     - shades-normal     interior wall cell
@@ -36,14 +38,21 @@
   │     - else wall: top-edge / bot-edge / normal by row vs tops/bots
   │     - sky / floor for rows outside [tops, bots)
   ├── overlay layers via absolute cursor positioning:
-  │     - bottom HUD line (hud-line)
-  │     - minimap (top-right rows)
+  │     - bottom HUD line (hud-line — dim tagline)
+  │     - F3 debug row (hud-debug-line, when :debug? is on)
+  │     - minimap (top-right rows, auto-scaled to ≤ 1/3 vw)
   │     - face glyphs (per enemy, occluded by walls)
-  │     - crosshair (centre)
-  │     - level intro splash (if :intro-secs > 0)
-  │     - top-left hearts HUD
-  │     - pistol sprite (centre-bottom)
-  │     - muzzle flash (when :fire-anim > 0)
+  │     - wall-mounted torches, door-face indicator
+  │     - crosshair (centre), kill-streak counter, compass
+  │     - rear-warning (centre row 2 when :rear-warning?)
+  │     - LOW AMMO N pulse (right row 1 when firepower ≤ 3)
+  │     - game-info strip (top-left row 2: L# · kills · ammo)
+  │     - top-left hearts + armor HUD (row 1)
+  │     - pistol sprite + reload-drop animation (centre-bottom)
+  │     - muzzle flash (when :fire-anim > 0 and drop = 0)
+  │     - dry-fire CLICK prompt (above pistol on empty trigger)
+  │     - periodic press-R-to-RELOAD reminder (mag-keyed cadence)
+  │     - floating HP digits above wounded multi-life enemies
   │     - pause menu (if :paused)
   └── concat everything via php/implode into one string
 ```

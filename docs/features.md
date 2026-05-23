@@ -22,8 +22,9 @@ See [rendering.md](rendering.md), [raycaster.md](raycaster.md),
 
 - 5 procedurally-generated levels, escalating difficulty
 - Per-level wall + sky + floor palette
-- Heart pickups (refill life, capped at 5) + armor pickups (absorb
-  one hit)
+- Heart pickups (refill life, capped at 5), armor pickups (absorb
+  one hit), and ammo-box pickups (`+10` rounds, count scales with
+  the level's combat load)
 - Walk-into-door auto-advance, pulsing minimap door + bright 3D door
   glyph
 
@@ -34,11 +35,16 @@ See [level-system.md](level-system.md), [map.md](map.md).
 - 5 monster types — imps, demons, cacodemons, barons, cyberdemons —
   each with distinct color, body texture, animated face glyph, aggro
   pulse at close range
+- Per-level HP (L1 imp 1, L2 demon 2, L3 caco 3, L4 baron 4, L5
+  cyber 5). Wounded body shades darker as HP drops; a yellow HP
+  digit floats above the head for 1.2s after each hit
 - Attack telegraph: face swaps to `:face-attack` glyph within
   aggro-distance (1.8 units)
 - Hitscan combat: blood splatter, muzzle flash, 5-stage death anim,
   3-6s respawn cooldown
-- Pistol with fire cooldown + heat / overheat jam
+- Pistol with 10-round mag drawn from a 30/50-cap spare reserve,
+  1.2s drop / refill / raise reload animation, fire cooldown + heat
+  / overheat jam
 - 5 lives, 1s i-frame window post-hit, directional red band on the
   side the hit came from, knockback shove
 
@@ -46,9 +52,17 @@ See [monsters.md](monsters.md), [combat.md](combat.md).
 
 ## HUD + screens
 
-- Top-left heart + armor HUD, bottom HUD line
-- Compass strip, kill-streak counter, live minimap
-- Pause menu (`p`), start menu (any key dives in, `q` exits)
+- Top-left strip: row 1 hearts + armor, row 2 `L1 imps · kills · ammo`
+- Compass top-centre, top-right minimap (auto-scales to ≤ 1/3 screen
+  width on narrow terminals)
+- Bottom strip: single dim tagline pointing at pause + F3 toggles
+- F3 perf overlay (frame-ms, cast-ms, render-ms, bytes, RLE, mem,
+  pos, angle, fps) — off by default, zero overhead when off
+- Ammo cues: `! LOW AMMO N !` pulse top-right when firepower drops
+  to 3/2/1; periodic `press R to RELOAD` above the pistol on a
+  mag-keyed cadence; dry-fire `CLICK` prompt centred above pistol
+- Pause menu (`p`) lists every key binding
+- Start menu (any key dives in, `q` exits)
 - End screens (death + victory) with cumulative kills + time and
   persisted bests
 - Restart from end screen: `r` fresh seed, `R` same map; both

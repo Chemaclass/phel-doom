@@ -23,13 +23,17 @@ PHP has no portable in-process audio. Lowest-dependency path: call `afplay` / `p
 Combat and other modules raise events by name, not by file:
 
 ```phel
-(play-sfx! :hit)     ; player took damage
-(play-sfx! :shoot)   ; trigger pulled, no hit
-(play-sfx! :kill)    ; trigger pulled, enemy killed
-(play-sfx! :door)    ; level transition or heart pickup
+(play-sfx! :hit)        ; player took damage
+(play-sfx! :shoot)      ; trigger pulled, no hit
+(play-sfx! :kill)       ; trigger pulled, enemy died
+(play-sfx! :wound)      ; trigger pulled, enemy survived (multi-life HP)
+(play-sfx! :reload)     ; reload animation started
+(play-sfx! :click)      ; trigger pulled on empty mag (dry-fire deny)
+(play-sfx! :door)       ; level transition or heart/armor/ammo pickup
+(play-sfx! :heartbeat)  ; low-life pulse
 ```
 
-`macos-sounds` and Linux equivalents map each tag to a file. Distinct cues per tag ("Pop" shoot, "Hero" kill, "Sosumi" hit, "Tink" door).
+`macos-sounds` and Linux equivalents map each tag to a file. Current mapping aims for distinct semantic families: `Pop` for shoot + kill (consistent firing family), `Submarine` for wound (muted thunk so it doesn't compete with the floating HP digit), `Sosumi` for player-hurt, `Basso` for empty-click deny, `Funk` for reload, `Tink` for door / pickup, `Bottle` for heartbeat.
 
 ## Async firing
 

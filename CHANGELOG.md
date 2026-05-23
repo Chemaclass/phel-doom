@@ -11,17 +11,22 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Finite ammo reserve (closes #5). Start with 30 spare rounds, cap 50. HUD now reads `ammo N/10 [R]`; reserve goes amber under one mag, red on empty.
-- Ammo-box pickups: two per level, `+10` rounds each. Pulse brown→yellow in 3D, yellow `A` on minimap.
-- Top-row pulsing `! LOW AMMO N !` warning when total firepower drops to 3/2/1. Stacks above the `‹ behind ›` rear-warning.
-- Pressing fire on an empty mag plays a deny click and shows a centred `CLICK · press R to reload` prompt (flips to `OUT OF AMMO` when the reserve is dry).
-- Per-level enemy HP (L1 imp=1, L2 demon=2, L3 caco=3, L4 baron=4, L5 cyberdemon=5). Wounded sprites shade darker; a yellow HP digit floats above the head for 1.2s after each hit. Distinct `:wound` sfx so the player tells "I hit them" apart from "they hit me".
-- Reload now plays a 1.2s drop / refill / raise animation with its own sfx. Trigger locked out for the whole window.
-- Pause menu now lists every key binding (move, turn, fire, reload, about-face, map, sound, debug, resume, quit) instead of just sound / resume / quit.
-- HUD rearrange. `L1 imps · kills · ammo` strip moved to a right-anchored row 2 at the top of the play area; the cramped bottom strip is gone. Pos / angle / fps moved into the F3 debug overlay. Bottom row now a single dim tagline pointing players at the pause + debug toggles.
-- Minimap auto-scales on narrow terminals: never claims more than ~1/3 of the screen width. Bigger grids (cyberdemons 52×32) compress to every-Nth-cell sampling so the 3D view always gets at least two-thirds of the columns. Walls take priority when a sampled block is mixed so corridors don't visually vanish.
-- Ammo-box count now scales with expected combat load (`ceil(enemies × max-lives / 8)`, floor 2). L1 still gets 2 boxes; L5 cyberdemons jump from 2 → 8 so the player has enough refills to clear the floor. `L1 imps · kills · ammo` strip moved from the top-right (which collided with the minimap) to the top-left, stacked directly under the hearts/armor row.
-- Periodic reload reminder above the pistol when the mag is near-empty and the reserve has rounds. Cadence scales with urgency — visible 0.5s every 5s at mag = 2, every 3s at mag = 1, every 1s at mag = 0. Suppressed during the reload animation and while the dry-fire CLICK is on screen.
+**Ammo loop (closes #5)**
+
+- Finite reserve: start with 30 spare rounds, cap 50. HUD reads `ammo N/10 [R]`.
+- Ammo-box pickups scale with the level's combat load (L1 2 boxes → L5 8). Yellow `A` on minimap, brown→yellow pulse in 3D, `+10` rounds each.
+- Three layered reload cues: top-row `! LOW AMMO N !` pulse when total firepower drops to 3/2/1; periodic `press R to RELOAD` above the pistol (5s at mag 2, 3s at mag 1, 1s at mag 0); centred `CLICK` prompt on dry-fire (flips to `OUT OF AMMO` when reserve is dry).
+- Reload now plays a 1.2s drop / refill / raise pistol animation with its own sfx. Trigger locked out for the window.
+
+**Enemies**
+
+- Per-level HP: L1 imp 1, L2 demon 2, L3 caco 3, L4 baron 4, L5 cyber 5. Body shades darker as HP drops; a yellow HP digit floats above the head 1.2s after each hit. Distinct `:wound` sfx so "I hit them" sounds different from "they hit me".
+
+**HUD + map**
+
+- Game-info strip (`L1 imps · kills · ammo`) lives top-left under the hearts row. Pos / angle / fps moved into the F3 debug overlay. Bottom row is now a single dim tagline.
+- Minimap auto-scales on narrow terminals so it never claims more than ~1/3 of the screen width.
+- Pause menu lists every key binding (move, turn, fire, reload, about-face, map, sound, debug, resume, quit).
 
 ## [0.2.0] - 2026-05-22
 

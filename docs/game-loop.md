@@ -68,25 +68,32 @@ Four lifecycle layers:
 (defn tick-world
   {:export true}
   [world keys ^float dt edges]
-  (let [w0 (handle-toggles world edges)]
+  (let [w0  (handle-toggles world edges)]
     (if (:paused w0)
       w0
-      (let [w1 (refresh-from-keys w0 keys)]
-        (let [w2 (apply-physics w1 dt)]
-          (let [w3 (pickup-hearts w2)]
-            (let [w4 (tick-enemies w3 dt)]
-              (let [w5 (tick-shooting w4 (:fire edges))]
-                (damage-step w5 dt)))))))))
+      (let [w1  (refresh-from-keys w0 keys)
+            w2  (apply-physics w1 dt)
+            w3  (pickup-hearts w2)
+            w4  (pickup-armors w3)
+            w4b (pickup-ammos  w4)
+            w5  (tick-enemies  w4b dt)
+            w5b (if (:reload edges) (reload w5) w5)
+            w6  (tick-shooting w5b (:fire edges))
+            w7  (damage-step   w6 dt)
+            ;; horror layer ...
+            w8  (tick-heartbeat w7 dt)]
+        (advance-game-time w8 dt)))))
 ```
 
 | Step | What it does | Module |
 |---|---|---|
-| `handle-toggles` | Apply rising-edge toggles (pause / map / sound) | `commands/play` |
+| `handle-toggles` | Rising-edge toggles (pause / map / sound / debug / about-face) | `commands/play` |
 | `refresh-from-keys` | Walk input bytes, refresh `:moves` counters | `glue/controls` |
 | `apply-physics` | Rotate then translate then decay counters | `core/physics` |
-| `pickup-hearts` | Standing on a heart = gain a life | `commands/play` |
-| `tick-enemies` | Step alive enemies toward player; tick respawn timers | `core/enemy` |
-| `tick-shooting` | If fire edge, resolve hitscan | `core/combat` |
+| `pickup-hearts` / `pickup-armors` / `pickup-ammos` | Standing on a pickup gains a life / armor stack / `+10` reserve rounds | `commands/play` |
+| `tick-enemies` | Step alive enemies toward player; tick respawn + hit-flash timers | `core/enemy` |
+| `reload` | If R edge: draw from `:ammo-reserve` into `:mag`, arm reload cooldown + animation | `core/combat` |
+| `tick-shooting` | If fire edge: resolve hitscan (kill / wound / miss). Empty mag arms `:empty-click-secs` for the dry-fire CLICK prompt | `core/combat` |
 | `damage-step` | Decay timers; apply contact damage if i-frames are 0 | `core/combat` |
 
 `tick-world` calls no IO. Data in, data out. Lets the test suite drive entire frame sequences without touching the terminal.

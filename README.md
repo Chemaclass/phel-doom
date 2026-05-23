@@ -32,14 +32,14 @@ make play
 | `←` / `→`      | Turn left / right            |
 | `e`            | About-face (snap 180°)       |
 | `space`        | Fire                         |
-| `r`            | Reload (10-round mag)        |
+| `r`            | Reload (draws from spare reserve, ~1.2s anim) |
 | `m`            | Toggle minimap               |
 | `n`            | Toggle sound                 |
-| `p`            | Pause                        |
-| `F3`           | Toggle perf debug overlay    |
+| `p`            | Pause (full controls reference) |
+| `F3`           | Toggle perf + technical overlay |
 | `q`            | Quit                         |
 
-Walk into a door to advance. Walk over a heart to refill a life.
+Walk into a door to advance. Walk over a heart for `+1` life, an armor pickup for one absorbed hit, an ammo box for `+10` rounds in the reserve.
 Press any key on the start menu to play (`q` exits).
 
 For instant-release movement (kitty keyboard protocol, tmux setup,

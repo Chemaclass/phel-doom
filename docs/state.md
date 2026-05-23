@@ -15,7 +15,7 @@ Pure data shapes that every other module operates on. `src/modules/core/state.ph
  :show-map   <bool>     ; minimap toggle
  :paused     <bool>     ; P toggle
  :sound-on   <bool>     ; N toggle
- :enemies    <vector of {:x :y :alive :lives :max-lives [:respawn-after]}>
+ :enemies    <vector of {:x :y :alive :lives :max-lives :hit-flash-secs [:respawn-after]}>
  :hearts     <vector of {:x :y}>
  :armors     <vector of {:x :y}>
  :ammo-boxes <vector of {:x :y}>
@@ -30,6 +30,10 @@ Pure data shapes that every other module operates on. `src/modules/core/state.ph
  :game-time  <float seconds>  ; pause-aware clock for render pulses
  :mag           <int 0..mag-size>     ; rounds in the loaded magazine
  :ammo-reserve  <int 0..max-reserve>  ; spare ammo pool; drained on reload
+ :reload-cooldown  <float seconds>    ; drives the reload drop animation
+ :empty-click-secs <float seconds>    ; dry-fire CLICK prompt timer
+ :heat          <float 0..1>          ; pistol heat; ≥ 1 triggers jam
+ :jam-secs      <float seconds>       ; jammed-pistol lockout
  :moves      {:fwd :back :strafe-left :strafe-right :turn-left :turn-right}}
 ```
 

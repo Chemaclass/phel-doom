@@ -45,16 +45,33 @@
   [kw]
   (get diff-table (normalise kw)))
 
+(defn- scale-spec
+  "Apply hp-mul to one mixed-spec entry's :lives (counts left alone —
+   mixed-spec rooms are author-tuned, the spec vector is the design
+   intent, not a knob to auto-scale)."
+  [spec hp-mul]
+  (assoc spec :lives (php/max 1 (php/intval (php/ceil (php/* (or (:lives spec) 1) hp-mul))))))
+
 (defn scale-cfg
-  "Stamp `diff`'s multipliers onto the level config map: chase speed,
-   per-enemy HP, and enemy count. Floors HP at 1 and enemy count at 1
-   so easy mode can't empty a level."
+  "Stamp `diff`'s multipliers onto the level config map. Always scales
+   chase speed. For single-type rooms (`:enemies` is an int) also
+   scales per-enemy HP + enemy count. For mixed-spec rooms
+   (`:enemies` is a vector) scales each spec's :lives but leaves
+   counts alone — the author's spec is the design, count tweaks
+   should be deliberate per-level."
   [cfg diff]
-  (let [d           (spec-for diff)
-        chase       (or (:chase cfg) 1.0)
-        enemy-lives (or (:enemy-lives cfg) 1)
-        enemies     (or (:enemies cfg) 1)]
+  (let [d        (spec-for diff)
+        chase    (or (:chase cfg) 1.0)
+        enemies  (:enemies cfg)
+        scaled-e (cond
+                   (vector? enemies)
+                   (apply vector (map (fn [s] (scale-spec s (:hp-mul d))) enemies))
+
+                   :else
+                   (php/max 1 (php/intval (php/ceil (php/* (or enemies 1)
+                                                           (:enemies-mul d))))))]
     (assoc cfg
            :chase       (php/* chase (:speed-mul d))
-           :enemy-lives (php/max 1 (php/intval (php/ceil (php/* enemy-lives (:hp-mul d)))))
-           :enemies     (php/max 1 (php/intval (php/ceil (php/* enemies (:enemies-mul d))))))))
+           :enemy-lives (php/max 1 (php/intval (php/ceil (php/* (or (:enemy-lives cfg) 1)
+                                                                (:hp-mul d)))))
+           :enemies     scaled-e)))

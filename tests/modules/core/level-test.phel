@@ -11,12 +11,12 @@
 
 (deftest test-config-for-clamps-out-of-range
   ;; n < 1 yields the first level; n > num-levels yields the last.
-  (is (= "imps"        (:name (config-for 0))))
-  (is (= "imps"        (:name (config-for -10))))
-  (is (= "cyberdemons" (:name (config-for 99)))))
+  (is (= "imps"      (:name (config-for 0))))
+  (is (= "imps"      (:name (config-for -10))))
+  (is (= "the final" (:name (config-for 99)))))
 
-(deftest test-num-levels-is-five
-  (is (= 5 num-levels)))
+(deftest test-num-levels-is-ten
+  (is (= 10 num-levels)))
 
 (deftest test-build-world-stamps-level-metadata
   (let [w (build-world 3 5)]
@@ -31,7 +31,7 @@
   (let [w (build-world 999 5)]
     ;; build-world reads through config-for which clamps to the last
     ;; entry, but the :level field reflects what the caller asked for.
-    (is (= "cyberdemons" (:level-name w)))))
+    (is (= "the final" (:level-name w)))))
 
 (deftest test-build-world-spawns-heart-when-lives-low
   (let [w (build-world 2 3)]
@@ -78,3 +78,49 @@
     (is (nil? (:enemy-head-code w)))
     (is (nil? (:enemy-body-code w)))
     (is (nil? (:enemy-face w)))))
+
+;; ---------------------------------------------------------------------
+;; L6-L10 smoke: each level builds, exposes the right name, and spawns
+;; the expected enemy mix. Random spawn collisions can drop a couple
+;; of enemies in tight maps, so counts are tested with ≤ (not =).
+;; ---------------------------------------------------------------------
+
+(deftest test-level-6-builds-with-spectre-mix
+  (let [w  (build-world 6 5)
+        es (:enemies w)]
+    (is (= "spectres" (:level-name w)))
+    (is (= :spectre   (:enemy w)))
+    (let [types (php/array_unique (php/array_map (fn [e] (php/strval (:type e)))
+                                                 (to-php-array es)))]
+      (is (php/in_array ":spectre" types true)))))
+
+(deftest test-level-7-builds-with-revenant-mix
+  (let [w (build-world 7 5)]
+    (is (= "revenants" (:level-name w)))
+    (is (= :revenant   (:enemy w)))))
+
+(deftest test-level-8-builds-with-archvile-court
+  (let [w (build-world 8 5)]
+    (is (= "archvile court" (:level-name w)))
+    (is (= :archvile         (:enemy w)))))
+
+(deftest test-level-9-builds-with-brood-mix
+  (let [w (build-world 9 5)]
+    (is (= "the brood" (:level-name w)))
+    (is (= :pinky      (:enemy w)))))
+
+(deftest test-level-10-is-the-final-boss-arena
+  ;; Hand-authored layout: the south spawn @ sits at row 17 col 10
+  ;; (cell centre 10.5, 17.5). One boss with 20 HP, four imps.
+  (let [w (build-world 10 5)]
+    (is (= "the final" (:level-name w)))
+    (is (= :cyber      (:enemy w)))
+    ;; Layout was parsed (random-grid would have given different cells).
+    (let [p (:player w)]
+      (is (= 10.5 (:x p)))
+      (is (= 17.5 (:y p))))
+    ;; Exactly one boss spec produced one enemy with 20 HP.
+    (let [es     (:enemies w)
+          bosses (apply vector (filter (fn [e] (= :cyber (:type e))) es))]
+      (is (= 1  (count bosses)))
+      (is (= 20 (:lives (first bosses)))))))

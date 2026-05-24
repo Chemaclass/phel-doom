@@ -20,7 +20,7 @@ See [rendering.md](rendering.md), [raycaster.md](raycaster.md),
 
 ## Levels + map
 
-- 5 procedurally-generated levels, escalating difficulty
+- 10 levels: 5 procedurally-generated escalating rooms (L1-L5), 4 mixed-monster rooms (L6-L9), and L10 a hand-authored boss arena (cyberdemon HP 20 + 4 imp minions)
 - Per-level wall + sky + floor palette
 - Pickups: hearts (cap 5), armor (cap 3, absorbs one hit each), ammo boxes (per-weapon `:ammo-per-box`), berserk (20s ×2 dmg), invuln (10s immune), backpack (1-shot, doubles every weapon's reserve cap)
 - Keycards + locked exits on L4 (blue) / L5 (red). Intro splash adds a `FIND THE <COLOUR> KEY` subtitle on locked levels; compass top-centre tints the E/S/W/N letter pointing at the un-picked card in the lock colour; bumping the door without the matching key pulses `⚿ NEED <COLOUR> KEY ⚿` for 1.5s

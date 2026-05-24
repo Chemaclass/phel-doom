@@ -1,5 +1,6 @@
 (ns phel-doom.modules.io.render
-  (:require phel-doom.modules.core.engine :refer [cast-frame max-depth proj-dist]))
+  (:require phel-doom.modules.core.engine  :refer [cast-frame max-depth proj-dist])
+  (:require phel-doom.modules.core.weapons :refer [weapon-order weapons]))
 
 ;; =====================================================================
 ;; § Hot-loop buffer macros
@@ -714,6 +715,175 @@
   [text width]
   (str text "\e[40;97m" (php/str_repeat " " (php/max 0 (php/- width (php/strlen text))))))
 
+(def help-inner-width
+  "Character width of each interior row of the H info menu — wider
+   than the pause menu to fit the weapon-stats table comfortably."
+  44)
+
+(defn- length-without-sgr
+  "Visible character length of `s` after stripping CSI SGR escapes.
+   Used by help-menu-string to align right-border columns when the
+   interior text carries colour codes (keys, buffs)."
+  [s]
+  (php/strlen (php/preg_replace "/\\x1b\\[[\\d;]*m/" "" s)))
+
+(defn- help-pad
+  "Pad `text` to `width` with trailing spaces, re-applying the menu
+   wash so trailing spaces stay on the dark BG (same trick as
+   pause-pad). Uses `mb_strlen` because the help menu interior
+   carries UTF-8 separators like `·` (2 bytes / 1 column) — counting
+   bytes would over-pad and skew the right border."
+  [text width]
+  (str text "\e[40;97m"
+       (php/str_repeat " " (php/max 0 (php/- width (php/mb_strlen text))))))
+
+(defn- help-weapon-row
+  "Render one weapon entry as a full menu row including both `│`
+   borders. Builds the visible string first (no SGR) so the trailing
+   pad math is byte-accurate, then wraps the body in the per-weapon
+   colour. Active weapon gets a yellow `>` marker; unowned weapons
+   render dim with `--/--` ammo so the player sees the slot exists
+   but still has to find it on the map."
+  [kw spec active? owned? mag reserve cap row-w]
+  (let [name     (or (:name spec) (php/strval kw))
+        dmg      (or (:damage spec) 0)
+        mag-sz   (or (:mag-size spec) 0)
+        marker   (if active? "> " "  ")
+        name-pad (php/str_repeat " " (php/max 0 (php/- 10 (php/strlen name))))
+        ammo-txt (if owned?
+                   (let [mag-frag (str mag "/" mag-sz)]
+                     (str mag-frag
+                          (php/str_repeat " " (php/max 0 (php/- 7 (php/strlen mag-frag))))
+                          "[" reserve "/" cap "]"))
+                   "--/--   [--/--]")
+        body     (str " " marker name name-pad "dmg " dmg "  " ammo-txt)
+        body-pad (php/str_repeat " " (php/max 0 (php/- row-w (php/strlen body))))
+        sgr      (cond active? "\e[1;93m" owned? "\e[97m" :else "\e[2;90m")]
+    (str "│" sgr body "\e[40;97m" body-pad "│")))
+
+(defn- help-menu-string
+  "Build the H info overlay. Three sections — run state, player
+   status, weapons table — plus a short controls reminder. Pure:
+   caller pushes the resulting ANSI string into the parts array.
+
+   Reads everything from `stats` so the overlay never reaches back
+   into `world` directly. `stats` carries the same keys frame-stats
+   stamps in commands/play.phel — see that fn for the full list."
+  [vw vh stats]
+  (let [w           help-inner-width
+        bar         (php/str_repeat "─" w)
+        blnk        (str "│" (help-pad "" w) "│")
+        bord        (fn [text]
+                      (str "│\e[97m" (help-pad text w) "│"))
+        sec         (fn [text]
+                      (str "│\e[1;93m" (help-pad (str " " text) w) "\e[40;97m│"))
+        lives       (or (:lives stats) 0)
+        cap-l       (or (:max-lives stats) 5)
+        armor       (or (:armor stats) 0)
+        kills       (or (:kills stats) 0)
+        streak      (or (:streak stats) 0)
+        level-n     (or (:level stats) 1)
+        level-name  (or (:level-name stats) "?")
+        difficulty  (or (:difficulty stats) :normal)
+        time-s      (or (:game-time-s stats) 0.0)
+        bsec        (or (:berserk-secs stats) 0.0)
+        isec        (or (:invuln-secs stats) 0.0)
+        pack?       (boolean (:backpack? stats))
+        held        (or (:held-keys stats) #{})
+        owned       (or (:owned-weapons stats) #{:pistol})
+        active      (or (:weapon stats) :pistol)
+        ws          (or (:weapon-state stats) {})
+        ;; Active weapon's live mag/reserve live on the top-level
+        ;; mirror; other weapons read from :weapon-state stash so
+        ;; the table reflects each slot's persisted ammo.
+        mag-of      (fn [kw]
+                      (if (php/=== kw active)
+                        (or (:mag stats) 0)
+                        (or (get-in ws [kw :mag]) 0)))
+        reserve-of  (fn [kw]
+                      (if (php/=== kw active)
+                        (or (:ammo-reserve stats) 0)
+                        (or (get-in ws [kw :reserve]) 0)))
+        cap-of      (fn [kw]
+                      (let [base (or (:reserve-cap (get weapons kw)) 0)]
+                        (if pack? (php/* 2 base) base)))
+        weapon-rows (apply vector
+                           (map (fn [kw]
+                                  (help-weapon-row kw (get weapons kw)
+                                                   (php/=== kw active)
+                                                   (contains? owned kw)
+                                                   (mag-of kw)
+                                                   (reserve-of kw)
+                                                   (cap-of kw)
+                                                   w))
+                                weapon-order))
+        keys-str    (cond
+                      (and (contains? held :blue) (contains? held :red))
+                      "\e[94;1mblue\e[40;97m  \e[91;1mred\e[40;97m"
+                      (contains? held :blue)                             "\e[94;1mblue\e[40;97m"
+                      (contains? held :red)                              "\e[91;1mred\e[40;97m"
+                      :else                                              "\e[2;90m(none)\e[40;97m")
+        buffs-str   (let [chunks (apply vector
+                                        (filter (fn [s] (not (php/=== s nil)))
+                                                [(when (php/> bsec 0.0)
+                                                   (str "\e[1;33mBERSERK " (php/intval bsec) "s\e[40;97m"))
+                                                 (when (php/> isec 0.0)
+                                                   (str "\e[1;94mINVULN " (php/intval isec) "s\e[40;97m"))
+                                                 (when pack?
+                                                   "\e[1;32m+PACK\e[40;97m")]))]
+                      (if (php/=== (count chunks) 0)
+                        "\e[2;90m(none)\e[40;97m"
+                        (php/implode "  " (to-php-array chunks))))
+        rows
+        (apply vector
+               (php/array_merge
+                (to-php-array
+                 [(str "┌" bar "┐")
+                  blnk
+                  (str "│\e[1;96m" (help-pad "          ⓘ  INFO  (H to close)" w) "\e[40;97m│")
+                  blnk
+                  (str "├" bar "┤")
+                  blnk
+                  (sec "RUN")
+                  (bord (str "  level:  " level-n "  " level-name))
+                  (bord (str "  kills:  " kills "   streak x" streak))
+                  (bord (str "  time:   " (php/intval time-s) "s"))
+                  (bord (str "  diff:   " (php/ltrim (php/strval difficulty) ":")))
+                  blnk
+                  (sec "PLAYER")
+                  (bord (str "  lives:  " (php/min lives cap-l) "/" cap-l))
+                  (bord (str "  armor:  " armor "/3"))
+                  ;; Literal prefixes are "  keys:   " / "  buffs:  "
+                  ;; — both 10 visible cols. Pad = w - (10 + visible
+                  ;; len of the coloured value).
+                  (str "│\e[97m  keys:   " keys-str
+                       (help-pad "" (php/max 0 (php/- w (php/+ 10 (length-without-sgr keys-str)))))
+                       "│")
+                  (str "│\e[97m  buffs:  " buffs-str
+                       (help-pad "" (php/max 0 (php/- w (php/+ 10 (length-without-sgr buffs-str)))))
+                       "│")
+                  blnk
+                  (sec "WEAPONS  ( > = active )")])
+                (to-php-array weapon-rows)
+                (to-php-array
+                 [blnk
+                  (str "├" bar "┤")
+                  blnk
+                  (bord "  1/2/3 switch · R reload · SPACE fire")
+                  (bord "  H close · P pause · F3 debug · Q quit")
+                  blnk
+                  (str "└" bar "┘")])))]
+    (let [n    (count rows)
+          col0 (php/max 1 (php/- (php/+ (php/intdiv vw 2) 1)
+                                 (php/intdiv (php/+ help-inner-width 2) 2)))
+          row0 (php/max 1 (php/intdiv (php/max 1 (php/- vh n)) 2))]
+      (loop [i 0 acc ""]
+        (if (php/>= i n)
+          acc
+          (recur (php/+ i 1)
+                 (str acc "\e[" (php/+ row0 i) ";" col0 "H\e[40;97m"
+                      (get rows i) "\e[0m")))))))
+
 (defn- pause-menu-string
   "Build the pause overlay as a single ANSI string with absolute cursor
    moves. Pure: caller pushes it into the parts array."
@@ -750,6 +920,7 @@
                                                                    (php/strlen val)))))
                     "│"))
              (bord "  F3     debug overlay")
+             (bord "  h      info menu")
              (bord "  p      resume")
              (bord "  q      quit")
              blnk
@@ -2088,6 +2259,11 @@
             p20         (paint-enemy-hp-flashes   p19 world vw vh)]
         (when (get stats :paused)
           (buf-push p20 (pause-menu-string vw vh (get stats :sound-on))))
+        ;; Help overlay paints last so it sits on top of the pause
+        ;; menu when both are toggled at once (player paused, then
+        ;; pressed H). H + P are independent flags.
+        (when (get stats :help?)
+          (buf-push p20 (help-menu-string vw vh stats)))
         (php/implode "" p20)))))
 
 (defn clear-screen

@@ -30,6 +30,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - HUD top-left strip shows level / kills / active weapon / ammo / `+pack` / held keys / difficulty tag.
 - Death + victory boxes auto-size 22–36 cols and drop best-scores on short rows.
 - Pos / angle / fps moved into F3 debug overlay. Pause menu lists every key binding.
+- New `H` info menu — overlay shows run stats (level / kills / streak / time / difficulty), player status (lives / armor / keys / active powerups), and a per-weapon table with damage / mag / reserve and the active-weapon marker `>`. Stacks on top of the pause overlay so you can H + P together.
 
 **CLI**
 - `--difficulty=easy|normal|hard|nightmare` (`-d`) scales chase speed, enemy HP, enemy count. Default `normal`.

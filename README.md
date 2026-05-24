@@ -37,6 +37,7 @@ make play
 | `m`            | Toggle minimap               |
 | `n`            | Toggle sound                 |
 | `p`            | Pause (full controls reference) |
+| `h`            | Info menu (weapons table, inventory, run stats) |
 | `F3`           | Toggle perf + technical overlay |
 | `q`            | Quit                         |
 

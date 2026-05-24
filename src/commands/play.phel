@@ -1,7 +1,7 @@
 (ns phel-doom.commands.play
   (:require phel.cli :as cli)
   (:require phel.string :as str)
-  (:require phel-doom.modules.core.state    :refer [advance-game-time gain-life max-lives
+  (:require phel-doom.modules.core.state    :refer [advance-game-time gain-life max-armor max-lives
                                                     toggle-debug toggle-map toggle-pause toggle-sound])
   (:require phel-doom.modules.core.map      :refer [door?])
   (:require phel-doom.modules.glue.controls :refer [refresh-from-keys key-states rising-edges
@@ -112,9 +112,11 @@
                  (or armors []))))
 
 (defn- pickup-armors
-  "Step-on triggers an armor pickup: bumps :armor by 1 (stacks). The
-   next contact-damage hit consumes one armor unit instead of a life
-   (see combat/take-damage)."
+  "Step-on triggers an armor pickup: bumps :armor by 1, capped at
+   `max-armor` (3) so the player can't farm an indestructible
+   buffer. The next contact-damage hit consumes one armor unit
+   instead of a life (see combat/take-damage). Pickup is always
+   consumed even at cap to match the heart / gain-life pattern."
   [world]
   (let [kept (armors-not-at (:armors world)
                             (php/intval (:x (:player world)))
@@ -123,7 +125,7 @@
       world
       (let [shielded (assoc world :armors kept)]
         (when (:sound-on world) (play-sfx! :door))
-        (update shielded :armor (fn [a] (php/+ (or a 0) 1)))))))
+        (update shielded :armor (fn [a] (php/min max-armor (php/+ (or a 0) 1))))))))
 
 (defn- ammo-boxes-not-at [boxes px py]
   (apply vector

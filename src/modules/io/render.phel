@@ -1902,81 +1902,113 @@
 ;; wash colour and the 32-wide row strings.
 ;; ---------------------------------------------------------------------
 
-(def end-box-width 32)
+(def end-box-width-cap   "Upper bound on the end-screen box width."   36)
+(def end-box-width-floor "Smallest readable box at very narrow vw."   22)
+(def end-compact-rows    "rows below this drop separators + best-row block." 20)
 
 (defn- end-pad
   "Right-pad `text` with spaces up to `width` visible columns."
   [text width]
   (str text (php/str_repeat " " (php/max 0 (php/- width (php/strlen text))))))
 
+(defn- end-clip
+  "Truncate `text` to at most `width` chars so a long level-name on a
+   tiny terminal can't bleed past the right border."
+  [text width]
+  (let [n (php/strlen text)]
+    (if (php/<= n width) text (php/substr text 0 width))))
+
+(defn- end-row-text
+  "Build one interior text row sized to `width`: clip first, then
+   right-pad. Wrapping the SGR around it is the caller's job."
+  [text width]
+  (end-pad (end-clip text width) width))
+
+(defn- end-centre
+  "Centre a visible-text run inside `width` columns, wrapping the
+   supplied SGR around the whole padded string."
+  [text width sgr]
+  (let [t (end-clip text width)
+        n (php/strlen t)
+        L (php/max 0 (php/intdiv (php/- width n) 2))
+        R (php/max 0 (php/- width (php/+ n L)))]
+    (str sgr (php/str_repeat " " L) t (php/str_repeat " " R) "\e[0m")))
+
+(defn- end-box-width-for
+  "Pick a box width that fits a 4-col total margin while staying within
+   the readable floor / cap."
+  [cols]
+  (php/max end-box-width-floor
+           (php/min end-box-width-cap (php/- cols 4))))
+
 (defn- best-victory-cell [s]
   (if (php/<= s 0) "--" (str s "s")))
 
 (defn- best-rows
-  "Tiny 3-line block summarising the persisted best scores. Same
-   end-pad width so the box border stays aligned."
-  [scores]
-  [(str "\e[2;93m" (end-pad (str "   best kills:   " (:best-kills scores)) end-box-width) "\e[0m")
-   (str "\e[2;93m" (end-pad (str "   best level:   " (:best-level scores)) end-box-width) "\e[0m")
-   (str "\e[2;93m" (end-pad (str "   best time:    "
-                                 (best-victory-cell (:fastest-victory-s scores)))
-                            end-box-width) "\e[0m")])
+  "Tiny 3-line block summarising the persisted best scores."
+  [scores width]
+  [(str "\e[2;93m" (end-row-text (str "   best kills:   " (:best-kills scores)) width) "\e[0m")
+   (str "\e[2;93m" (end-row-text (str "   best level:   " (:best-level scores)) width) "\e[0m")
+   (str "\e[2;93m" (end-row-text (str "   best time:    "
+                                      (best-victory-cell (:fastest-victory-s scores)))
+                                 width) "\e[0m")])
 
-(defn- death-rows [kills survived-s level level-name scores]
-  (let [w (end-pad "" end-box-width)]
+(defn- end-rows
+  "Compose the interior row list for either variant. `title` is the
+   one-line centred banner SGR-painted by the caller; `did-what` is
+   the past-tense phrase under the run stats (`died on` / `cleared`).
+   Compact mode (when the terminal is too short) drops the leading
+   blank-line padding, the best-scores block, and most separators —
+   keeps the box tall enough to read even on a 12-row split."
+  [title-sgr title did-what kills survived-s level level-name scores rows width]
+  (let [bl      (end-row-text "" width)
+        compact (php/< rows end-compact-rows)]
     (apply vector
            (concat
-            [w
-             "\e[91;1m            YOU DIED            \e[0m"
-             w :sep w
-             (str "\e[97m" (end-pad (str "   died on L" level " " level-name) end-box-width) "\e[0m")
-             (str "\e[97m" (end-pad (str "   kills:   " kills)                end-box-width) "\e[0m")
-             (str "\e[97m" (end-pad (str "   time:    " survived-s "s")       end-box-width) "\e[0m")
-             w :sep w]
-            (best-rows scores)
-            [w :sep w
-             "\e[97;1m   r new  R same  q  quit       \e[0m"
-             w :sep w
-             "\e[2;97m   phel-doom by Chemaclass      \e[0m"
-             "\e[2;97m   written in Phel Lang         \e[0m"
-             w]))))
+            (if compact []  [bl])
+            [(end-centre title width title-sgr)]
+            (if compact [:sep] [bl :sep bl])
+            [(str "\e[97m" (end-row-text (str "  " did-what " L" level " " level-name) width) "\e[0m")
+             (str "\e[97m" (end-row-text (str "  kills:   " kills)                width) "\e[0m")
+             (str "\e[97m" (end-row-text (str "  time:    " survived-s "s")       width) "\e[0m")]
+            (if compact
+              [:sep]
+              (concat [bl :sep bl] (best-rows scores width) [bl :sep bl]))
+            [(end-centre "r new  R same  q quit" width "\e[97;1m")]
+            (if compact
+              []
+              [bl :sep bl
+               (str "\e[2;97m" (end-row-text "  phel-doom by Chemaclass" width) "\e[0m")
+               (str "\e[2;97m" (end-row-text "  written in Phel Lang"    width) "\e[0m")
+               bl])))))
 
-(defn- victory-rows [kills survived-s level level-name scores]
-  (let [w (end-pad "" end-box-width)]
-    (apply vector
-           (concat
-            [w
-             "\e[92;1m            VICTORY!            \e[0m"
-             w :sep w
-             (str "\e[97m" (end-pad (str "   cleared L" level " " level-name) end-box-width) "\e[0m")
-             (str "\e[97m" (end-pad (str "   kills:   " kills)                end-box-width) "\e[0m")
-             (str "\e[97m" (end-pad (str "   time:    " survived-s "s")       end-box-width) "\e[0m")
-             w :sep w]
-            (best-rows scores)
-            [w :sep w
-             "\e[97;1m   r new  R same  q  quit       \e[0m"
-             w :sep w
-             "\e[2;97m   phel-doom by Chemaclass      \e[0m"
-             "\e[2;97m   written in Phel Lang         \e[0m"
-             w]))))
+(defn- death-rows [kills survived-s level level-name scores rows width]
+  (end-rows "\e[91;1m" "YOU DIED" "died on"  kills survived-s level level-name scores rows width))
+
+(defn- victory-rows [kills survived-s level level-name scores rows width]
+  (end-rows "\e[92;1m" "VICTORY!" "cleared" kills survived-s level level-name scores rows width))
 
 (defn- render-end-screen
   "Generic end-of-game overlay: full-screen wash in `wash-bg` plus a
    centred ─┌┐│└┘ box whose contents are `items` (interior strings
-   interleaved with :sep markers)."
-  [cols rows wash-bg items]
+   interleaved with :sep markers). Item count is clamped to the
+   available rows so a tall box can't paint past the terminal bottom
+   on very short terminals."
+  [cols rows wash-bg items width]
   (let [parts (buf-mk)
-        bar   (php/str_repeat "─" end-box-width)]
+        bar   (php/str_repeat "─" width)]
     (buf-push parts "\e[H")
     (loop [r 1]
       (when (php/<= r rows)
         (buf-push parts (str "\e[" r ";1H" wash-bg
                              (php/str_repeat " " cols)))
         (recur (php/+ r 1))))
-    (let [n       (count items)
+    (let [;; Reserve 2 rows for the top + bottom border.
+          max-n   (php/max 0 (php/- rows 2))
+          n       (php/min max-n (count items))
           row-top (php/max 1 (php/- (php/intdiv rows 2) (php/intdiv n 2)))
           col0    (php/max 1 (php/- (php/+ (php/intdiv cols 2) 1)
-                                    (php/intdiv (php/+ end-box-width 2) 2)))]
+                                    (php/intdiv (php/+ width 2) 2)))]
       (buf-push parts (str "\e[" row-top ";" col0
                            "H\e[40;97m┌" bar "┐\e[0m"))
       (buf-push parts (str "\e[" (php/+ row-top n 1) ";" col0
@@ -2121,13 +2153,20 @@
 
 (defn render-death-screen
   "Centred YOU DIED box on a dark-red wash. Shows this run + the
-   persisted bests from the scores file."
+   persisted bests from the scores file. Box width adapts to `cols`
+   (capped 22..36) and switches to a compact layout when `rows`
+   drops below `end-compact-rows` so tiny terminals still fit."
   [cols rows kills survived-s level level-name scores]
-  (render-end-screen cols rows "\e[48;5;52m"
-                     (death-rows kills survived-s level level-name scores)))
+  (let [w (end-box-width-for cols)]
+    (render-end-screen cols rows "\e[48;5;52m"
+                       (death-rows kills survived-s level level-name scores rows w)
+                       w)))
 
 (defn render-victory-screen
-  "Centred VICTORY box on a dark-green wash. Run + persisted bests."
+  "Centred VICTORY box on a dark-green wash. Same responsive width +
+   compact-mode rules as render-death-screen."
   [cols rows kills survived-s level level-name scores]
-  (render-end-screen cols rows "\e[48;5;22m"
-                     (victory-rows kills survived-s level level-name scores)))
+  (let [w (end-box-width-for cols)]
+    (render-end-screen cols rows "\e[48;5;22m"
+                       (victory-rows kills survived-s level level-name scores rows w)
+                       w)))

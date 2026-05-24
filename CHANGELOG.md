@@ -14,6 +14,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Ammo loop (closes #5): finite reserve (start 30, cap 50), per-level ammo-box pickups (L1 2 → L5 8), three layered reload cues (LOW AMMO pulse, periodic press-R reminder, dry-fire CLICK), 1.2s drop/refill/raise reload animation.
 - Enemies have per-level HP (1→5). Wounded body shades darker, yellow HP digit floats above the head 1.2s after each hit. Every kill rolls a loot drop (ammo > armor > heart, 50% nothing).
 - HUD reshuffle: game-info strip top-left under hearts; pos/angle/fps moved into the F3 overlay; pause menu lists every key binding; minimap auto-scales to ≤ 1/3 screen on narrow terminals.
+- Armor caps at 3 (was unbounded). Pickups beyond cap consume the box but don't bump — same pattern as max-lives + heart pickups.
+- Death + victory end screens responsive: box width adapts to viewport (22..36 cols, 4-col margin), and short terminals (< 20 rows) drop the best-scores block + extra padding so the screen never clips off the bottom.
 
 ## [0.2.0] - 2026-05-22
 

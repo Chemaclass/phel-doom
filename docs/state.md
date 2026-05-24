@@ -31,6 +31,8 @@ Pure data shapes that every other module operates on. `src/modules/core/state.ph
  :difficulty <kw :easy|:normal|:hard|:nightmare>
  :door-lock  <kw :blue|:red|nil>           ; lock colour on this level's exit
  :weapon     <kw :pistol|:shotgun|:chaingun>  ; active weapon
+ :owned-weapons <set of kw>                ; pistol owned by default; others must be picked up
+ :weapon-pickups <vector of {:x :y :weapon}>
  :weapon-state {<kw> {:mag :reserve}}      ; per-weapon ammo bookkeeping
  :kills      <int>
  :lives      <int, 0..max-lives>

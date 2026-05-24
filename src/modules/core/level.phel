@@ -184,6 +184,24 @@
               (assoc-in grid [y door-x] target)
               (recur (php/+ y 1)))))))))
 
+(defn- maybe-spawn-weapon-pickups
+  "Per-level weapon drops. L2 always seeds a shotgun, L3 always a
+   chaingun. Both skipped if the player already owns the weapon so a
+   re-played level doesn't spam duplicate pickups. Returns a vector
+   of `{:x :y :weapon kw}` items."
+  [grid level-num owned]
+  (let [owned'     (or owned #{:pistol})
+        candidates
+        (cond
+          (php/=== level-num 2) (if (contains? owned' :shotgun)  [] [:shotgun])
+          (php/=== level-num 3) (if (contains? owned' :chaingun) [] [:chaingun])
+          :else                 [])]
+    (apply vector
+           (map (fn [kw]
+                  (let [[wx wy] (random-spawn grid)]
+                    {:x wx :y wy :weapon kw}))
+                candidates))))
+
 (defn- maybe-spawn-keycard
   "Drop one keycard at a random open cell when the level is locked.
    Returns [] on unlocked levels so render / pickup skips."
@@ -224,9 +242,10 @@
    randomised. Level tuning is stamped onto the world so render and
    physics can read it without globals. `backpack?` controls whether
    the new level seeds another backpack — once owned, don't drop more."
-  ([level-num lives] (build-world level-num lives false :normal))
-  ([n l pack?] (build-world n l pack? :normal))
-  ([lv life pack? diff]
+  ([level-num lives] (build-world level-num lives false :normal #{:pistol}))
+  ([n l pack?] (build-world n l pack? :normal #{:pistol}))
+  ([n l pack? diff] (build-world n l pack? diff #{:pistol}))
+  ([lv life pack? diff owned]
    (let [diff' (normalise diff)
          cfg   (scale-cfg (config-for lv) diff')
          lock  (:door-lock cfg)]
@@ -242,18 +261,20 @@
                                                         enemy-min-spawn-dist px py
                                                         (or (:enemy-lives cfg) 1)))]
              (assoc with-foes
-                    :level       lv
-                    :lives       life
-                    :difficulty  diff'
-                    :backpack?   pack?
-                    :hearts      (maybe-spawn-heart grid life px py)
-                    :armors      (maybe-spawn-armor grid)
-                    :berserks    (maybe-spawn-berserk grid)
-                    :invulns     (maybe-spawn-invuln grid)
-                    :backpacks   (maybe-spawn-backpack grid lv pack?)
-                    :keycards    (maybe-spawn-keycard grid lock)
-                    :door-lock   lock
-                    :ammo-boxes  (spawn-ammo-boxes grid (ammo-box-count cfg))
+                    :level         lv
+                    :lives         life
+                    :difficulty    diff'
+                    :backpack?     pack?
+                    :owned-weapons (or owned #{:pistol})
+                    :hearts        (maybe-spawn-heart grid life px py)
+                    :armors        (maybe-spawn-armor grid)
+                    :berserks      (maybe-spawn-berserk grid)
+                    :invulns       (maybe-spawn-invuln grid)
+                    :backpacks     (maybe-spawn-backpack grid lv pack?)
+                    :keycards      (maybe-spawn-keycard grid lock)
+                    :weapon-pickups (maybe-spawn-weapon-pickups grid lv (or owned #{:pistol}))
+                    :door-lock     lock
+                    :ammo-boxes    (spawn-ammo-boxes grid (ammo-box-count cfg))
                     :chase-speed (:chase cfg)
                     :enemy-head-code     (:head-code cfg)
                     :enemy-body-code     (:body-code cfg)

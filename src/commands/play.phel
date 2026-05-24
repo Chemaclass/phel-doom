@@ -9,7 +9,7 @@
   (:require phel-doom.modules.core.physics  :refer [apply-physics tick-heartbeat tick-flicker tick-blood-drops tick-door-face])
   (:require phel-doom.modules.core.combat   :refer [ammo-per-box berserk-seconds damage-step fire-anim-seconds invuln-seconds max-reserve reload reloading? reload-cooldown-seconds tick-shooting])
   (:require phel-doom.modules.core.enemy    :refer [advance tick-scare rear-attacker?])
-  (:require phel-doom.modules.core.weapons  :refer [effective-reserve-cap switch-weapon weapon-spec weapon-order weapons])
+  (:require phel-doom.modules.core.weapons  :refer [effective-reserve-cap give-weapon switch-weapon weapon-spec weapon-order weapons])
   (:require phel-doom.modules.io.sound    :refer [play-sfx! mute-for!])
   (:require phel-doom.modules.core.level    :refer [build-world num-levels])
   (:require phel-doom.modules.io.scores   :refer [update-scores!])
@@ -226,6 +226,35 @@
                              (php/=== (php/intval (:y k)) py))))
                  (or ks []))))
 
+(defn- weapon-pickups-not-at [ws px py]
+  (apply vector
+         (filter (fn [w]
+                   (not (and (php/=== (php/intval (:x w)) px)
+                             (php/=== (php/intval (:y w)) py))))
+                 (or ws []))))
+
+(defn- pickup-weapon-pickups
+  "Step-on consumes a weapon pickup, adds it to :owned-weapons, and
+   auto-switches to it DOOM-style (mid-fight reload-lockout check is
+   bypassed here because the pickup is the trigger, not user input)."
+  [world]
+  (let [px      (php/intval (:x (:player world)))
+        py      (php/intval (:y (:player world)))
+        on-pick (loop [ws (:weapon-pickups world)]
+                  (cond
+                    (php/=== ws nil) nil
+                    :else
+                    (let [w (first ws)]
+                      (if (and (php/=== (php/intval (:x w)) px)
+                               (php/=== (php/intval (:y w)) py))
+                        w
+                        (recur (next ws))))))]
+    (if (php/=== on-pick nil)
+      world
+      (let [kept (weapon-pickups-not-at (:weapon-pickups world) px py)]
+        (when (:sound-on world) (play-sfx! :door))
+        (give-weapon (assoc world :weapon-pickups kept) (:weapon on-pick))))))
+
 (defn- pickup-keycards
   "Step-on consumes the keycard + adds its colour to `:held-keys`.
    try-move uses the set to gate locked-door passage."
@@ -288,7 +317,8 @@
             w4d (pickup-invulns  w4c)
             w4e (pickup-backpacks w4d)
             w4f (pickup-keycards w4e)
-            w5  (tick-enemies  w4f dt)
+            w4g (pickup-weapon-pickups w4f)
+            w5  (tick-enemies  w4g dt)
             w5b (if (:reload edges)
                   (do
                     (when (and (:sound-on w5) (reloading? w5)) (play-sfx! :reload))
@@ -351,8 +381,9 @@
    :invuln-secs  (or (:invuln-secs world) 0.0)
    :backpack?    (boolean (:backpack? world))
    :difficulty   (or (:difficulty world) :normal)
-   :held-keys    (or (:held-keys world) #{})
-   :door-lock    (:door-lock world)
+   :held-keys      (or (:held-keys world) #{})
+   :door-lock      (:door-lock world)
+   :owned-weapons  (or (:owned-weapons world) #{:pistol})
    :rear-warning? (rear-attacker? (:enemies world)
                                   (:x (:player world))
                                   (:y (:player world))
@@ -398,12 +429,13 @@
    :survived-s (php/intval (php/- now t-start))})
 
 (defn- result-next-level [world ^float t-start ^float now]
-  {:next-level true
-   :level      (php/+ (:level world) 1)
-   :kills      (:kills world)
-   :lives      (:lives world)
-   :backpack?  (boolean (:backpack? world))
-   :survived-s (php/intval (php/- now t-start))})
+  {:next-level    true
+   :level         (php/+ (:level world) 1)
+   :kills         (:kills world)
+   :lives         (:lives world)
+   :backpack?     (boolean (:backpack? world))
+   :owned-weapons (or (:owned-weapons world) #{:pistol})
+   :survived-s    (php/intval (php/- now t-start))})
 
 (defn- play-door-sfx [world]
   (when (:sound-on world) (play-sfx! :door)))
@@ -543,9 +575,10 @@
          carry-kills 0
          carry-time  0
          seed        (php/mt_rand)
-         backpack?   false]
+         backpack?   false
+         owned       #{:pistol}]
     (php/mt_srand seed)
-    (let [result (game-loop (build-world level lives backpack? diff))]
+    (let [result (game-loop (build-world level lives backpack? diff owned))]
       (cond
         (= result :quit)
         nil
@@ -553,14 +586,15 @@
         (and (map? result) (:next-level result))
         (let [[k t] (carry-on carry-kills carry-time result)]
           (recur (:level result) (:lives result) k t (php/mt_rand)
-                 (boolean (:backpack? result))))
+                 (boolean (:backpack? result))
+                 (or (:owned-weapons result) #{:pistol})))
 
         (and (map? result) (:victory result))
         (let [[k t]           (carry-on carry-kills carry-time result)
               [kind new-seed] (handle-end victory-loop k t result seed true)]
           (cond
-            (= kind :fresh) (recur 1 max-lives 0 0 (php/mt_rand) false)
-            (= kind :same)  (recur 1 max-lives 0 0 new-seed false)
+            (= kind :fresh) (recur 1 max-lives 0 0 (php/mt_rand) false #{:pistol})
+            (= kind :same)  (recur 1 max-lives 0 0 new-seed false #{:pistol})
             :else           nil))
 
         (and (map? result) (:game-over result))
@@ -569,10 +603,10 @@
               died-on         (or (:level result) 1)]
           (cond
             ;; r: try the level you died on again with a fresh map.
-            (= kind :fresh) (recur died-on max-lives 0 0 (php/mt_rand) false)
+            (= kind :fresh) (recur died-on max-lives 0 0 (php/mt_rand) false #{:pistol})
             ;; R: replay the exact level you died on (same seed + same
             ;; level number reproduces identical geometry + enemies).
-            (= kind :same)  (recur died-on max-lives 0 0 new-seed false)
+            (= kind :same)  (recur died-on max-lives 0 0 new-seed false #{:pistol})
             :else           nil))
 
         :else

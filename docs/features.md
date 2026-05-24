@@ -46,12 +46,13 @@ See [level-system.md](level-system.md), [map.md](map.md).
   aggro-distance (1.8 units)
 - Hitscan combat: blood splatter, muzzle flash, 5-stage death anim,
   3-6s respawn cooldown
-- 3-slot weapon loadout (1/2/3): pistol (10-mag, 0.12s cd, 1 dmg,
-  black-steel + amber-wood palette), shotgun (4-mag, 0.6s cd, 3 dmg,
-  walnut + steel palette), chaingun (30-mag, 0.05s cd, 1 dmg,
-  gun-metal + green-LED palette). Each weapon has its own mag size,
+- 3-slot weapon loadout (1/2/3) — fresh runs start with the pistol;
+  shotgun (L2 pickup) and chaingun (L3 pickup) must be found on the
+  map. Each weapon has its own silhouette (slim single-barrel vs
+  wide twin-barrel vs multi-barrel cluster), palette, mag size,
   fire cooldown, reload duration, damage, reserve cap, and
-  ammo-per-box rate. Switches preserve per-weapon mag + reserve.
+  ammo-per-box rate. Switches preserve per-weapon mag + reserve and
+  are gated by `:owned-weapons`; first-time pickup auto-switches.
   Drop / refill / raise reload animation; sprite kicks up 2 rows
   on every shot.
 - 5 lives, 1s i-frame window post-hit, directional red band on the

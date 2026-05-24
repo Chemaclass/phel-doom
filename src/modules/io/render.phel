@@ -62,6 +62,8 @@
 (def keycard-red-marker  "\e[40;91;1mk\e[0m")
 (def door-blue-marker    "\e[40;94;1m▌\e[0m")
 (def door-red-marker     "\e[40;91;1m▌\e[0m")
+(def shotgun-pickup-marker  "\e[40;33;1mS\e[0m")
+(def chaingun-pickup-marker "\e[40;32;1mC\e[0m")
 (def door-shade
   "Door body cell drawn when a ray hit a door. Frame glyph `▌` (left
    half block) on a dark steel BG with bright orange FG, so a column
@@ -197,6 +199,16 @@
 (def backpack-glyph-bright
   "Black ⊞ on the bright pulse BG."
   "\e[48;5;142;38;5;232;1m⊞")
+
+(def shotgun-pickup-shade  "\e[48;5;94m ")
+(def shotgun-pickup-bright "\e[48;5;130m ")
+(def shotgun-pickup-glyph  "\e[48;5;94;38;5;253;1m▤")
+(def shotgun-pickup-glyph-bright "\e[48;5;130;38;5;253;1m▤")
+
+(def chaingun-pickup-shade  "\e[48;5;238m ")
+(def chaingun-pickup-bright "\e[48;5;244m ")
+(def chaingun-pickup-glyph  "\e[48;5;238;38;5;46;1m▦")
+(def chaingun-pickup-glyph-bright "\e[48;5;244;38;5;46;1m▦")
 
 (def keycard-blue-shade  "\e[48;5;21m ")
 (def keycard-blue-bright "\e[48;5;33m ")
@@ -498,6 +510,10 @@
                                           (fn [k] (php/=== (:colour k) :blue)))
         krmap               (scaled-cells (:keycards world) step out-w
                                           (fn [k] (php/=== (:colour k) :red)))
+        wsmap               (scaled-cells (:weapon-pickups world) step out-w
+                                          (fn [w] (php/=== (:weapon w) :shotgun)))
+        wcmap               (scaled-cells (:weapon-pickups world) step out-w
+                                          (fn [w] (php/=== (:weapon w) :chaingun)))
         rows                (buf-mk)
         block-has-wall?     (fn [r0 c0]
                               (loop [dr 0]
@@ -552,6 +568,8 @@
                             (buf-get pmap (php/+ (php/* row out-w) col))  backpack-marker
                             (buf-get kbmap (php/+ (php/* row out-w) col)) keycard-blue-marker
                             (buf-get krmap (php/+ (php/* row out-w) col)) keycard-red-marker
+                            (buf-get wsmap (php/+ (php/* row out-w) col)) shotgun-pickup-marker
+                            (buf-get wcmap (php/+ (php/* row out-w) col)) chaingun-pickup-marker
                             :else                                         minimap-floor)))
               (recur (php/+ col 1))))
           (buf-set rows row (php/implode "" parts)))
@@ -1383,20 +1401,43 @@
           grip-hi   (:grip-hi   palette)
           grip-lo   (:grip-lo   palette)]
       ;; Gradient indices are 0-based for vh rows; cursor positions
-      ;; are 1-based. Map cursor row → gradient idx by subtracting 1.
-      (buf-push parts
-                (str
-                 (paint-row (php/- vh 5) (php/+ cc 1) (php/- vh 6) muzzle    "▄▄")
-                 (paint-row (php/- vh 4) cc           (php/- vh 5) slide     "▐██▌")
-                 (paint-row (php/- vh 3) (php/- cc 1) (php/- vh 4) slide     "▐████▌")
-                 (paint-row (php/- vh 2) (php/- cc 2) (php/- vh 3) slide-dim "▐██████▌")
-                 ;; Upper grip row mixes frame + grip-hi SGRs; pre-bake
-                 ;; the full glyph string so paint-row's clip logic
-                 ;; still owns the cursor + bg + skip-if-offscreen.
-                 (paint-row (php/- vh 1) (php/- cc 2) (php/- vh 2) frame
-                            (str "▐█" grip-hi "▓▓▓▓" frame "█▌"))
-                 (paint-row vh           (php/- cc 1) (php/- vh 1) grip-lo "▐▓▓▓▓▌")
-                 "\e[0m"))
+      ;; are 1-based. Per-weapon silhouette dispatches on :weapon —
+      ;; pistol stays narrow + single barrel, shotgun widens with a
+      ;; double-barrel muzzle + heavy stock, chaingun adds a multi-
+      ;; barrel cluster + wider housing.
+      (let [weapon (or (get stats :weapon) :pistol)
+            rows
+            (cond
+              (php/=== weapon :shotgun)
+              (str
+               (paint-row (php/- vh 5) (php/- cc 1) (php/- vh 6) muzzle    "▄▄▄▄▄▄")
+               (paint-row (php/- vh 4) (php/- cc 2) (php/- vh 5) slide     "▐██████▌")
+               (paint-row (php/- vh 3) (php/- cc 2) (php/- vh 4) slide     "▐████████▌")
+               (paint-row (php/- vh 2) (php/- cc 3) (php/- vh 3) slide-dim "▐██████████▌")
+               (paint-row (php/- vh 1) (php/- cc 3) (php/- vh 2) frame
+                          (str "▐█" grip-hi "▓▓▓▓▓▓▓▓" frame "█▌"))
+               (paint-row vh           (php/- cc 2) (php/- vh 1) grip-lo "▐▓▓▓▓▓▓▓▓▌"))
+
+              (php/=== weapon :chaingun)
+              (str
+               (paint-row (php/- vh 5) cc           (php/- vh 6) muzzle    "▄ ▄ ▄")
+               (paint-row (php/- vh 4) (php/- cc 2) (php/- vh 5) slide     "▐██████▌")
+               (paint-row (php/- vh 3) (php/- cc 3) (php/- vh 4) slide     "▐████████▌")
+               (paint-row (php/- vh 2) (php/- cc 3) (php/- vh 3) slide-dim "▐██████████▌")
+               (paint-row (php/- vh 1) (php/- cc 3) (php/- vh 2) frame
+                          (str "▐█" grip-hi "▓▓▓▓▓▓▓▓" frame "█▌"))
+               (paint-row vh           (php/- cc 2) (php/- vh 1) grip-lo "▐▓▓▓▓▓▓▓▓▌"))
+
+              :else
+              (str
+               (paint-row (php/- vh 5) (php/+ cc 1) (php/- vh 6) muzzle    "▄▄")
+               (paint-row (php/- vh 4) cc           (php/- vh 5) slide     "▐██▌")
+               (paint-row (php/- vh 3) (php/- cc 1) (php/- vh 4) slide     "▐████▌")
+               (paint-row (php/- vh 2) (php/- cc 2) (php/- vh 3) slide-dim "▐██████▌")
+               (paint-row (php/- vh 1) (php/- cc 2) (php/- vh 2) frame
+                          (str "▐█" grip-hi "▓▓▓▓" frame "█▌"))
+               (paint-row vh           (php/- cc 1) (php/- vh 1) grip-lo "▐▓▓▓▓▌")))]
+        (buf-push parts (str rows "\e[0m")))
       ;; Muzzle flash suppressed during a reload (drop > 0). Tracks
       ;; the recoil so the flash hangs above the muzzle through the
       ;; kick instead of floating in stale screen space.
@@ -1735,6 +1776,11 @@
         keycard-blue-glyph-now             (if keycard-bright? keycard-blue-glyph-bright keycard-blue-glyph)
         keycard-red-shade-now              (if keycard-bright? keycard-red-bright keycard-red-shade)
         keycard-red-glyph-now              (if keycard-bright? keycard-red-glyph-bright keycard-red-glyph)
+        weapon-pickup-bright?              (pulse t 3.0)
+        shotgun-pickup-shade-now           (if weapon-pickup-bright? shotgun-pickup-bright shotgun-pickup-shade)
+        shotgun-pickup-glyph-now           (if weapon-pickup-bright? shotgun-pickup-glyph-bright shotgun-pickup-glyph)
+        chaingun-pickup-shade-now          (if weapon-pickup-bright? chaingun-pickup-bright chaingun-pickup-shade)
+        chaingun-pickup-glyph-now          (if weapon-pickup-bright? chaingun-pickup-glyph-bright chaingun-pickup-glyph)
         ;; Atmospheric haze pulls walls toward black as lives drop, so
         ;; the world reads as 'consumed by darkness' the closer the
         ;; player is to dying. Sky / floor untouched; doors keep their
@@ -1911,6 +1957,18 @@
                                                         (or (:keycards world) [])))
                                          (:player world) dists edists vw vh
                                          keycard-red-shade-now keycard-red-glyph-now)
+          bp-ws     (paint-pickups-into  bp-kr
+                                         (apply vector
+                                                (filter (fn [w] (php/=== (:weapon w) :shotgun))
+                                                        (or (:weapon-pickups world) [])))
+                                         (:player world) dists edists vw vh
+                                         shotgun-pickup-shade-now shotgun-pickup-glyph-now)
+          bp-wc     (paint-pickups-into  bp-ws
+                                         (apply vector
+                                                (filter (fn [w] (php/=== (:weapon w) :chaingun))
+                                                        (or (:weapon-pickups world) [])))
+                                         (:player world) dists edists vw vh
+                                         chaingun-pickup-shade-now chaingun-pickup-glyph-now)
           parts     (buf-mk)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]
@@ -1929,7 +1987,7 @@
                          flr-row   (buf-get (if in-blood? blood-floor-gradient floor-gradient) row)
                          c         (if (and (php/< row visible-mh) (php/>= col mini-col0))
                                      sky-row
-                                     (or (buf-get bp-kr (php/+ (php/* row vw) col))
+                                     (or (buf-get bp-wc (php/+ (php/* row vw) col))
                                          (cond
                                            (php/< row (buf-get tops col))             sky-row
                                            (php/>= row (buf-get bots col))            flr-row
@@ -1978,7 +2036,7 @@
             c-row       (php/+ (php/intdiv vh 2) (if firing? -1 0))
             top-col     (buf-get tops c-col)
             bot-col     (buf-get bots c-col)
-            center-cell (or (buf-get bp-kr (php/+ (php/* c-row vw) c-col))
+            center-cell (or (buf-get bp-wc (php/+ (php/* c-row vw) c-col))
                             (cond
                               (php/< c-row top-col)             (buf-get sky-gradient c-row)
                               (php/>= c-row bot-col)            (buf-get floor-gradient c-row)

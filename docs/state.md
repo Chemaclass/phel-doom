@@ -48,7 +48,10 @@ Pure data shapes that every other module operates on. `src/modules/core/state.ph
  :empty-click-secs <float seconds>    ; dry-fire CLICK prompt timer
  :heat          <float 0..1>          ; pistol heat; ≥ 1 triggers jam
  :jam-secs      <float seconds>       ; jammed-pistol lockout
- :moves      {:fwd :back :strafe-left :strafe-right :turn-left :turn-right}}
+ :stamina              <float 0..max-stamina>  ; sprint pool, default 100.0
+ :sprint-cooldown-secs <float seconds>         ; regen lockout post-sprint
+ :sprint-blocked?      <bool>                  ; latches at 0, clears at threshold
+ :moves      {:fwd :back :strafe-left :strafe-right :turn-left :turn-right :sprint}}
 ```
 
 After `build-world` from `core/level.phel` stamps level metadata, the world also carries:
@@ -89,7 +92,7 @@ On grid mutation (door turning into floor, etc.) **both** must update. See `pick
 
 ## Movement counters (`:moves`)
 
-Six time-limited counters drive directional motion:
+Seven time-limited counters drive directional motion + sprint intent:
 
 ```phel
 {:fwd          <int frames remaining>
@@ -97,10 +100,13 @@ Six time-limited counters drive directional motion:
  :strafe-left  <int>
  :strafe-right <int>
  :turn-left    <int>
- :turn-right   <int>}
+ :turn-right   <int>
+ :sprint       <int>}    ; SHIFT (kitty) or `x` press refresh
 ```
 
 Each input byte from `glue/controls.phel` refreshes the matching counter. Each frame `core/physics.phel` consumes whatever is non-zero (scaled by `dt`) and decays every counter by 1. Counter hits 0 = direction stops.
+
+`:sprint` is intent only — the actual speed boost is gated by `:stamina > 0` AND `not :sprint-blocked?`. See `physics.phel`'s `tick-stamina` + `sprinting?`.
 
 Hold-frame size is the only "feel" knob: shorter = snappier stop, longer = smoother sustained-hold (bridges OS auto-repeat gaps). Current: `move-hold-frames=12`, `turn-hold-frames=3`.
 

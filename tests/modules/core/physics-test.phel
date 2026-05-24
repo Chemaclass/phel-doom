@@ -1,7 +1,7 @@
 (ns phel-doom-tests.modules.core.physics-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.modules.core.state   :refer [new-world new-player])
-  (:require phel-doom.modules.core.physics :refer [try-move apply-physics tick-heartbeat tick-flicker tick-blood-drops tick-door-face]))
+  (:require phel-doom.modules.core.state   :refer [max-stamina new-world new-player])
+  (:require phel-doom.modules.core.physics :refer [try-move apply-physics sprint-engage-threshold sprint-multiplier stamina-drain stamina-regen tick-heartbeat tick-flicker tick-stamina tick-blood-drops tick-door-face]))
 
 ;; Tiny 3x3 grid: walls around the perimeter, open centre.
 (def open-world
@@ -262,3 +262,135 @@
     (is (< (php/abs (- (:door-face-active-secs w') 0.4)) 0.0001))
     ;; Cooldown frozen while active.
     (is (= 10.0 (:door-face-cooldown w')))))
+
+;; ---------------------------------------------------------------------
+;; Sprint + stamina. Hold SHIFT (kitty) or 'x' (any term) refreshes the
+;; :sprint move-slot. While the slot is on AND the player is actually
+;; moving AND stamina > 0, longitudinal/lateral speed is multiplied
+;; by sprint-multiplier and stamina drains at stamina-drain units/sec.
+;; While the slot is off, stamina regenerates after a brief cooldown.
+;; Hitting 0 latches :sprint-blocked? until stamina recovers to
+;; sprint-engage-threshold so the player can't stutter-sprint at empty.
+;; ---------------------------------------------------------------------
+
+(deftest test-tick-stamina-drains-while-sprinting-and-moving
+  (let [w  (-> empty-world
+               (assoc-in [:moves :sprint] 5)
+               (assoc-in [:moves :fwd] 5)
+               (assoc :stamina max-stamina))
+        w' (tick-stamina w 0.1)]
+    (is (< (:stamina w') max-stamina))
+    (is (< (php/abs (- (:stamina w') (- max-stamina (* stamina-drain 0.1)))) 0.0001))))
+
+(deftest test-tick-stamina-no-drain-when-sprint-pressed-but-not-moving
+  ;; Holding SHIFT alone (no WASD) must not bleed stamina.
+  (let [w  (-> empty-world
+               (assoc-in [:moves :sprint] 5)
+               (assoc :stamina max-stamina))
+        w' (tick-stamina w 0.1)]
+    (is (= max-stamina (:stamina w')))))
+
+(deftest test-tick-stamina-regenerates-when-not-sprinting
+  (let [w  (-> empty-world
+               (assoc-in [:moves :sprint] 0)
+               (assoc :stamina 50.0 :sprint-cooldown-secs 0.0))
+        w' (tick-stamina w 0.1)]
+    (is (< (php/abs (- (:stamina w') (+ 50.0 (* stamina-regen 0.1)))) 0.0001))))
+
+(deftest test-tick-stamina-regen-blocked-during-cooldown
+  (let [w  (-> empty-world
+               (assoc-in [:moves :sprint] 0)
+               (assoc :stamina 50.0 :sprint-cooldown-secs 0.5))
+        w' (tick-stamina w 0.1)]
+    (is (= 50.0 (:stamina w')))
+    ;; Cooldown ticks down by dt.
+    (is (< (php/abs (- (:sprint-cooldown-secs w') 0.4)) 0.0001))))
+
+(deftest test-tick-stamina-cooldown-clears-then-regen-resumes
+  (let [w  (-> empty-world
+               (assoc-in [:moves :sprint] 0)
+               (assoc :stamina 50.0 :sprint-cooldown-secs 0.05))
+        w' (tick-stamina w 0.1)]
+    ;; Cooldown ran out (0.05 - 0.1 → 0.0).
+    (is (= 0.0 (:sprint-cooldown-secs w')))
+    ;; Regen runs with the full dt this frame — keeps the impl
+    ;; simple. Once :sprint-cooldown-secs hits 0 the same frame, the
+    ;; whole dt feeds into regen.
+    (is (< (php/abs (- (:stamina w') (+ 50.0 (* stamina-regen 0.1)))) 0.0001))))
+
+(deftest test-tick-stamina-clamps-at-max
+  (let [w  (-> empty-world
+               (assoc-in [:moves :sprint] 0)
+               (assoc :stamina (- max-stamina 1.0) :sprint-cooldown-secs 0.0))
+        w' (tick-stamina w 5.0)]
+    (is (= max-stamina (:stamina w')))))
+
+(deftest test-tick-stamina-blocks-sprint-at-zero
+  ;; Drain past zero in one big frame; expect :sprint-blocked? to latch.
+  (let [w  (-> empty-world
+               (assoc-in [:moves :sprint] 5)
+               (assoc-in [:moves :fwd] 5)
+               (assoc :stamina 1.0))
+        w' (tick-stamina w 1.0)]
+    (is (= 0.0 (:stamina w')))
+    (is (= true (:sprint-blocked? w')))))
+
+(deftest test-tick-stamina-unblocks-only-at-engage-threshold
+  ;; Below threshold: still blocked.
+  (let [w  (-> empty-world
+               (assoc-in [:moves :sprint] 0)
+               (assoc :stamina (- sprint-engage-threshold 5.0)
+                      :sprint-blocked? true
+                      :sprint-cooldown-secs 0.0))
+        w' (tick-stamina w 0.01)]
+    (is (= true (:sprint-blocked? w'))))
+  ;; Above threshold: unblocks.
+  (let [w  (-> empty-world
+               (assoc-in [:moves :sprint] 0)
+               (assoc :stamina sprint-engage-threshold
+                      :sprint-blocked? true
+                      :sprint-cooldown-secs 0.0))
+        w' (tick-stamina w 0.01)]
+    (is (= false (:sprint-blocked? w')))))
+
+(deftest test-apply-physics-sprint-multiplier-applies-to-fwd
+  ;; Same fwd counter + dt, with vs without :sprint slot. Ratio of the
+  ;; resulting deltas must equal sprint-multiplier.
+  (let [base   (-> empty-world
+                   (assoc-in [:moves :fwd] 5)
+                   (assoc :stamina max-stamina))
+        slow   (apply-physics base 0.1)
+        fast-w (-> empty-world
+                   (assoc-in [:moves :fwd] 5)
+                   (assoc-in [:moves :sprint] 5)
+                   (assoc :stamina max-stamina))
+        fast   (apply-physics fast-w 0.1)
+        slow-d (- (:x (:player slow)) 1.5)
+        fast-d (- (:x (:player fast)) 1.5)]
+    (is (php/> fast-d slow-d))
+    (is (< (php/abs (- (/ fast-d slow-d) sprint-multiplier)) 0.0001))))
+
+(deftest test-apply-physics-sprint-no-multiplier-when-blocked
+  ;; Sprint slot pressed but :sprint-blocked? latched → walks at base speed.
+  (let [base  (-> empty-world
+                  (assoc-in [:moves :fwd] 5)
+                  (assoc :stamina max-stamina))
+        slow  (apply-physics base 0.1)
+        blk-w (-> empty-world
+                  (assoc-in [:moves :fwd] 5)
+                  (assoc-in [:moves :sprint] 5)
+                  (assoc :stamina max-stamina :sprint-blocked? true))
+        blk   (apply-physics blk-w 0.1)]
+    (is (< (php/abs (- (:x (:player blk)) (:x (:player slow)))) 0.0001))))
+
+(deftest test-apply-physics-sprint-no-multiplier-at-zero-stamina
+  (let [base   (-> empty-world
+                   (assoc-in [:moves :fwd] 5)
+                   (assoc :stamina max-stamina))
+        slow   (apply-physics base 0.1)
+        empty- (-> empty-world
+                   (assoc-in [:moves :fwd] 5)
+                   (assoc-in [:moves :sprint] 5)
+                   (assoc :stamina 0.0))
+        out    (apply-physics empty- 0.1)]
+    (is (< (php/abs (- (:x (:player out)) (:x (:player slow)))) 0.0001))))

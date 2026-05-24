@@ -1,12 +1,12 @@
 (ns phel-doom.commands.play
   (:require phel.cli :as cli)
   (:require phel.string :as str)
-  (:require phel-doom.modules.core.state    :refer [advance-game-time gain-life max-armor max-lives
+  (:require phel-doom.modules.core.state    :refer [advance-game-time gain-life max-armor max-lives max-stamina
                                                     toggle-debug toggle-map toggle-pause toggle-sound])
   (:require phel-doom.modules.core.map      :refer [door?])
   (:require phel-doom.modules.glue.controls :refer [refresh-from-keys key-states rising-edges
                                                     initial-key-snapshot])
-  (:require phel-doom.modules.core.physics  :refer [apply-physics tick-heartbeat tick-flicker tick-blood-drops tick-door-face])
+  (:require phel-doom.modules.core.physics  :refer [apply-physics tick-heartbeat tick-flicker tick-blood-drops tick-door-face tick-stamina])
   (:require phel-doom.modules.core.combat   :refer [ammo-per-box berserk-seconds damage-step fire-anim-seconds invuln-seconds max-reserve reload reloading? reload-cooldown-seconds tick-shooting])
   (:require phel-doom.modules.core.enemy    :refer [advance tick-scare rear-attacker?])
   (:require phel-doom.modules.core.weapons  :refer [effective-reserve-cap give-weapon switch-weapon weapon-spec weapon-order weapons])
@@ -362,7 +362,14 @@
                   (:select-weapon2 edges) (switch-weapon w1 (get weapon-order 1))
                   (:select-weapon3 edges) (switch-weapon w1 (get weapon-order 2))
                   :else                   w1)
-            w2  (apply-physics w1a dt)
+            ;; tick-stamina runs BEFORE apply-physics so that, on the
+            ;; frame the player's pool empties, the `:sprint-blocked?`
+            ;; latch fires before physics samples it — apply-physics
+            ;; then walks at base speed instead of getting one final
+            ;; 1.6x frame "for free". Drain reads the just-refreshed
+            ;; :moves slots (refresh-from-keys above), so the player
+            ;; pays for the intent the same frame they signal it.
+            w2  (apply-physics (tick-stamina w1a dt) dt)
             w3  (pickup-hearts w2)
             w4  (pickup-armors w3)
             w4b (pickup-ammos  w4)
@@ -443,6 +450,9 @@
    :locked-door-bump-colour (:locked-door-bump-colour world)
    :owned-weapons  (or (:owned-weapons world) #{:pistol})
    :weapon-state   (or (:weapon-state world) {})
+   :stamina        (or (:stamina world) max-stamina)
+   :max-stamina    max-stamina
+   :sprint-blocked? (boolean (:sprint-blocked? world))
    :rear-warning? (rear-attacker? (:enemies world)
                                   (:x (:player world))
                                   (:y (:player world))
@@ -691,6 +701,10 @@
         nil
 
         (and (map? result) (:next-level result))
+        ;; Stamina + sprint-cooldown + :sprint-blocked? are deliberately
+        ;; NOT carried across the door — stepping into the next level
+        ;; counts as a breather, the pool refills to max via new-world.
+        ;; Lives, weapons, mag/reserve and player toggles do carry.
         (let [[k t] (carry-on carry-kills carry-time result)]
           (recur (:level result) (:lives result) k t (php/mt_rand)
                  (boolean (:backpack? result))

@@ -54,10 +54,21 @@ Arrows arrive as 3-byte CSI escapes: `\e[A` up, `\e[B` down, `\e[C` right, `\e[D
    "<" :turn-left
    ">" :turn-right
    "a" :strafe-left
-   "d" :strafe-right})
+   "d" :strafe-right
+   "x" :sprint})
 ```
 
 Each byte refreshes its slot's counter on `:moves`. Counter is the only thing physics reads. See [state.md](state.md).
+
+## Sprint
+
+Hold **SHIFT** (kitty terminals) or **`x`** (anywhere) to sprint. Sprint multiplies forward + strafe speed by `sprint-multiplier` (1.6×) and drains the `:stamina` pool (`max-stamina` 100, drain 30/s). Stamina regenerates at 20/s after a 0.5s post-sprint cooldown. Hitting empty latches `:sprint-blocked?` until stamina recovers to `sprint-engage-threshold` (20) — prevents stutter-sprint at zero.
+
+Two input paths:
+- **Kitty path**: `apply-kitty-events` / `apply-kitty-arrow-events` parse the `mods` field of `\e[<code>;<mods>(:<event>)?u` / `\e[1;<mods>:<event><letter>`. Mods are encoded as `bits + 1`; bit 0 = SHIFT. Press/repeat events on a movement key (WASD or arrows) with the SHIFT bit set refresh the `:sprint` slot too — so holding SHIFT+W keeps the slot warm. Release events do NOT refresh sprint (player let go).
+- **Legacy path**: `key->slot` maps the plain `"x"` byte to `:sprint` so terminals without kitty (Terminal.app, basic xterm) get a working sprint key too. Under kitty, `"x"` arrives as `\e[120u` and resolves via `ascii->slot` to the same `:sprint` refresh.
+
+The `:sprint` slot decays alongside the other movement counters in `decay-move-counters`, so sprint intent naturally evaporates the frame the player lets go.
 
 ## Hold-frames trade-off
 

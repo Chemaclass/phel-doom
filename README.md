@@ -26,6 +26,7 @@ make play
 | `w` / `s` / ↑↓ | Move forward / back          |
 | `a` / `d`      | Strafe left / right          |
 | `←` / `→`      | Turn left / right            |
+| `SHIFT` / `x`  | Sprint (1.6× speed, drains stamina) |
 | `e`            | About-face (snap 180°)       |
 | `space`        | Fire                         |
 | `r`            | Reload (draws from reserve) |

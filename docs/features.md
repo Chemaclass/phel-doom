@@ -57,7 +57,7 @@ See [monsters.md](monsters.md), [combat.md](combat.md).
 
 ## HUD + screens
 
-- Top-left strip: row 1 hearts + armor + `GOD` badge (dev mode), row 2 `L1 imps · kills · weapon · ammo · +pack · ⚿ · [diff]`
+- Top-left strip: row 1 hearts + armor + `GOD` badge (dev mode), row 2 `L1 imps · kills · weapon · ammo · +pack · STA ████████░░ · ⚿ · [diff]`
 - Compass top-centre (facing letter yellow; on locked levels the letter pointing at the un-picked key tints blue/red). Top-right minimap auto-scales to ≤ 1/3 width on narrow terminals.
 - F3 debug overlay (frame-ms, cast/render split, bytes, RLE, mem, pos, angle, fps) — off by default, zero overhead when off
 - Ammo cues: pulsing `! LOW AMMO N !` top-right when firepower drops to 3/2/1; periodic `press R to RELOAD`; dry-fire `CLICK` prompt
@@ -117,5 +117,6 @@ See [scores.md](scores.md).
   reader, not wired to render yet
 - Movement uses kitty keyboard protocol for instant release on
   supported terminals; legacy hold-frames fallback elsewhere
+- Sprint: hold **SHIFT** (kitty) or **`x`** (anywhere) for 1.6× move/strafe speed. Drains a 100-unit `:stamina` pool at 30/s; regenerates at 20/s after a 0.5s cooldown. At empty, sprint stays locked until stamina recovers to 20. HUD shows a 10-cell `STA ████████░░` bar that turns amber under 33% and red at 0.
 
 See [wad-parser.md](wad-parser.md), [input.md](input.md).

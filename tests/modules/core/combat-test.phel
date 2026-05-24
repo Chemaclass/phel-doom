@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.modules.core.state :refer [new-world new-player])
   (:require phel-doom.modules.core.combat
-            :refer [closest-attacker attacker-side berserk? berserk-seconds can-fire? apply-heat damage-step empty-click-seconds invuln? invuln-seconds knockback mag-size reload reloading? roll-loot-kind tick-shooting]))
+            :refer [closest-attacker attacker-side berserk? berserk-seconds can-fire? apply-heat damage-step empty-click-seconds invuln? invuln-seconds knockback mag-size pick-loot-weapon reload reloading? roll-loot-kind tick-shooting]))
 
 ;; ---------------------------------------------------------------------
 ;; closest-attacker: selection rule.
@@ -313,3 +313,31 @@
   (let [w0 (world-with-enemy-on-player 5 true)
         w1 (damage-step w0 0.016)]
     (is (= 5 (:lives w1)))))
+
+;; ---------------------------------------------------------------------
+;; Kill-loot ammo drop picks uniformly from :owned-weapons so each
+;; kill seeds ammo for some gun the player can actually use. Roll is
+;; supplied by the caller so the test is deterministic.
+;; ---------------------------------------------------------------------
+
+(deftest test-pick-loot-weapon-single-owned-always-that-weapon
+  (let [w {:owned-weapons #{:pistol}}]
+    (is (= :pistol (pick-loot-weapon w 0.0)))
+    (is (= :pistol (pick-loot-weapon w 0.5)))
+    (is (= :pistol (pick-loot-weapon w 0.99)))))
+
+(deftest test-pick-loot-weapon-spans-all-owned
+  ;; Sorted owned set [:chaingun :pistol :shotgun]; uniform roll
+  ;; should cover each slot at the right cutoff.
+  (let [w {:owned-weapons #{:pistol :shotgun :chaingun}}]
+    (is (= :chaingun (pick-loot-weapon w 0.0)))
+    (is (= :chaingun (pick-loot-weapon w 0.33)))
+    (is (= :pistol   (pick-loot-weapon w 0.34)))
+    (is (= :pistol   (pick-loot-weapon w 0.66)))
+    (is (= :shotgun  (pick-loot-weapon w 0.67)))
+    (is (= :shotgun  (pick-loot-weapon w 0.99)))))
+
+(deftest test-pick-loot-weapon-fallback-when-missing
+  ;; Defensive: world without :owned-weapons defaults to a pistol-only
+  ;; loadout so we never crash on a stale fixture.
+  (is (= :pistol (pick-loot-weapon {} 0.5))))

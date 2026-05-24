@@ -48,13 +48,19 @@ See [level-system.md](level-system.md), [map.md](map.md).
   3-6s respawn cooldown
 - 3-slot weapon loadout (1/2/3) — fresh runs start with the pistol;
   shotgun (L2 pickup) and chaingun (L3 pickup) must be found on the
-  map. Each weapon has its own silhouette (slim single-barrel vs
-  wide twin-barrel vs multi-barrel cluster), palette, mag size,
-  fire cooldown, reload duration, damage, reserve cap, and
-  ammo-per-box rate. Switches preserve per-weapon mag + reserve and
-  are gated by `:owned-weapons`; first-time pickup auto-switches.
+  map. Damage scales with the tier the weapon first becomes
+  available: pistol 1, shotgun 2, chaingun 3 — every pickup is a
+  strict upgrade. Each weapon has its own silhouette (slim
+  single-barrel vs wide twin-barrel vs multi-barrel cluster),
+  palette, mag size, fire cooldown, reload duration, reserve cap,
+  and ammo-per-box rate. Switches preserve per-weapon mag + reserve
+  and are gated by `:owned-weapons`; first-time pickup auto-switches.
   Drop / refill / raise reload animation; sprite kicks up 2 rows
   on every shot.
+- Kill-loot ammo drops are tagged for a random weapon in the
+  player's `:owned-weapons` set, so every kill seeds usable ammo
+  even if you're holding a different gun. Level-spawned ammo boxes
+  remain weapon-agnostic and refill the active weapon.
 - 5 lives, 1s i-frame window post-hit, directional red band on the
   side the hit came from, knockback shove
 

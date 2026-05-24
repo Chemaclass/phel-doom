@@ -135,23 +135,56 @@
                              (php/=== (php/intval (:y b)) py))))
                  (or boxes []))))
 
+(defn- ammo-box-at
+  "Pick the first ammo box at cell (px, py) so the caller can read
+   its optional `:weapon` tag. nil when no box on cell."
+  [boxes px py]
+  (loop [bs boxes]
+    (cond
+      (php/=== bs nil)       nil
+      (php/=== (count bs) 0) nil
+      :else
+      (let [b (first bs)]
+        (if (and (php/=== (php/intval (:x b)) px)
+                 (php/=== (php/intval (:y b)) py))
+          b
+          (recur (next bs)))))))
+
 (defn- pickup-ammos
-  "Step-on triggers an ammo-box pickup: bumps the ACTIVE weapon's
-   reserve by its `:ammo-per-box`, capped at the weapon's
-   `:reserve-cap`. Box is removed so the player can't farm one cell."
+  "Step-on triggers an ammo-box pickup. Two flavours:
+
+   - Untagged box (level spawn): bumps the ACTIVE weapon's reserve
+     by its `:ammo-per-box`, capped at the weapon's `:reserve-cap`.
+   - Weapon-tagged box (kill-loot, carries `:weapon kw`): bumps
+     THAT weapon's reserve so dropping a chaingun-tagged box while
+     holding the pistol still feeds the chaingun. Top-level
+     `:ammo-reserve` mirror is updated only when the tag matches
+     the currently-held weapon.
+
+   Box is removed so the player can't farm one cell."
   [world]
-  (let [kept (ammo-boxes-not-at (:ammo-boxes world)
-                                (php/intval (:x (:player world)))
-                                (php/intval (:y (:player world))))]
-    (if (= (count kept) (count (or (:ammo-boxes world) [])))
+  (let [px     (php/intval (:x (:player world)))
+        py     (php/intval (:y (:player world)))
+        all    (or (:ammo-boxes world) [])
+        on-box (ammo-box-at all px py)
+        kept   (ammo-boxes-not-at all px py)]
+    (if (php/=== on-box nil)
       world
-      (let [sp       (or (weapon-spec world) {})
-            per-box  (or (:ammo-per-box sp) ammo-per-box)
-            cap      (effective-reserve-cap world)
-            refilled (assoc world :ammo-boxes kept)]
+      (let [tagged-w  (:weapon on-box)
+            target    (or tagged-w (:weapon world) :pistol)
+            target-sp (or (get weapons target) (weapon-spec world) {})
+            per-box   (or (:ammo-per-box target-sp) ammo-per-box)
+            base-cap  (or (:reserve-cap target-sp) 0)
+            cap       (if (:backpack? world) (php/* 2 base-cap) base-cap)
+            stash     (or (:weapon-state world) {})
+            cur       (or (get-in stash [target :reserve]) 0)
+            cur'      (php/min cap (php/+ cur per-box))
+            stash'    (assoc-in stash [target :reserve] cur')
+            refilled  (assoc world :ammo-boxes kept :weapon-state stash')]
         (when (:sound-on world) (play-sfx! :door))
-        (update refilled :ammo-reserve
-                (fn [r] (php/min cap (php/+ (or r 0) per-box))))))))
+        (if (php/=== target (or (:weapon world) :pistol))
+          (assoc refilled :ammo-reserve cur')
+          refilled)))))
 
 (defn- berserks-not-at [bs px py]
   (apply vector

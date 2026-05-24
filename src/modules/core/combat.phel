@@ -341,17 +341,43 @@
   (update world key
           (fn [xs] (conj (or xs []) {:x (:x hit-pos) :y (:y hit-pos)}))))
 
+(defn- push-ammo-loot [world hit-pos weapon-kw]
+  ;; Tagged ammo box — pickup-ammos in commands/play.phel reads
+  ;; `:weapon` to top up that specific weapon's reserve. Boxes
+  ;; without `:weapon` (level-spawn) refill the active weapon.
+  (update world :ammo-boxes
+          (fn [xs]
+            (conj (or xs []) {:x (:x hit-pos) :y (:y hit-pos) :weapon weapon-kw}))))
+
+(defn pick-loot-weapon
+  "Choose a random weapon from `:owned-weapons` for a kill-loot ammo
+   drop. Uniform over the owned set. Pure given `roll` (uniform float
+   in [0, 1)) so tests can pin the outcome. Falls back to :pistol
+   when the world has no owned set (defensive default for fixtures)."
+  [world ^float roll]
+  (let [owned   (or (:owned-weapons world) #{:pistol})
+        ordered (sort owned)
+        n       (count ordered)]
+    (if (php/=== n 0)
+      :pistol
+      (get ordered (php/min (php/- n 1)
+                            (php/intval (php/* roll n)))))))
+
 (defn- push-kill-loot
-  "Possibly drop a pickup at the enemy's death position. Random number
-   pulled from mt_rand here so the caller stays a one-liner; tests
-   exercise the cut-points via `roll-loot-kind` directly."
+  "Possibly drop a pickup at the enemy's death position. Two RNG rolls:
+   one for kind (ammo/armor/heart/nil), one to pick which owned
+   weapon an ammo drop refills. Tests pin both via roll-loot-kind /
+   pick-loot-weapon directly."
   [world hit-pos]
-  (let [roll (php// (php/mt_rand) (php/mt_getrandmax))
-        kind (roll-loot-kind world roll)]
+  (let [roll-kind (php// (php/mt_rand) (php/mt_getrandmax))
+        kind      (roll-loot-kind world roll-kind)]
     (cond
-      (php/=== kind :ammo)  (push-pickup world :ammo-boxes hit-pos)
-      (php/=== kind :armor) (push-pickup world :armors     hit-pos)
-      (php/=== kind :heart) (push-pickup world :hearts     hit-pos)
+      (php/=== kind :ammo)
+      (let [roll-wpn (php// (php/mt_rand) (php/mt_getrandmax))
+            weapon   (pick-loot-weapon world roll-wpn)]
+        (push-ammo-loot world hit-pos weapon))
+      (php/=== kind :armor) (push-pickup world :armors hit-pos)
+      (php/=== kind :heart) (push-pickup world :hearts hit-pos)
       :else                 world)))
 
 (defn- on-shot-hit

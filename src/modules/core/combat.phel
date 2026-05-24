@@ -129,7 +129,7 @@
 (defn berserk?
   "True while the player's berserk timer is still ticking down."
   [world]
-  (php/> (or (:berserk-secs world) 0.0) 0.0))
+  (pos? (or (:berserk-secs world) 0.0)))
 
 (def invuln-seconds
   "Active window of the invulnerability sphere. While > 0 the
@@ -139,7 +139,7 @@
 (defn invuln?
   "True while the player's invulnerability timer is still ticking."
   [world]
-  (php/> (or (:invuln-secs world) 0.0) 0.0))
+  (pos? (or (:invuln-secs world) 0.0)))
 
 (def heat-per-shot
   "Heat added on each shot. Heat decays continuously; when it crosses
@@ -177,7 +177,7 @@
   (let [threshold-sq (php/* touch-damage-dist touch-damage-dist)]
     (loop [es enemies]
       (cond
-        (php/=== es nil) false
+        (nil? es) false
         :else
         (let [e (first es)]
           (if (and e (:alive e) (php/<= (enemy-distance-sq e px py) threshold-sq))
@@ -242,7 +242,7 @@
   [enemies ^float px ^float py]
   (loop [es enemies best-d 1.0e9 best nil]
     (cond
-      (php/=== es nil) best
+      (nil? es) best
       :else
       (let [e (first es)]
         (if (and e (:alive e))
@@ -269,7 +269,7 @@
    unchanged if att is nil or the player and attacker share a cell.
    Exported so the shove-away rule can be unit tested."
   [world att]
-  (if (php/=== att nil)
+  (if (nil? att)
     world
     (let [p   (:player world)
           dx  (php/- (:x p) (:x att))
@@ -383,7 +383,7 @@
         non-basic (apply vector
                          (sort (filter (fn [kw] (php/!== kw :pistol)) owned)))
         n         (count non-basic)]
-    (if (php/=== n 0)
+    (if (zero? n)
       :pistol
       (get non-basic (php/min (php/- n 1)
                               (php/intval (php/* roll n)))))))
@@ -397,21 +397,21 @@
   (let [roll-kind (php// (php/mt_rand) (php/mt_getrandmax))
         kind      (roll-loot-kind world roll-kind)]
     (cond
-      (php/=== kind :ammo)
+      (= kind :ammo)
       (let [roll-wpn (php// (php/mt_rand) (php/mt_getrandmax))
             weapon   (pick-loot-weapon world roll-wpn)]
         (push-ammo-loot world hit-pos weapon))
-      (php/=== kind :armor) (push-pickup world :armors hit-pos)
-      (php/=== kind :heart) (push-pickup world :hearts hit-pos)
-      :else                 world)))
+      (= kind :armor) (push-pickup world :armors hit-pos)
+      (= kind :heart) (push-pickup world :hearts hit-pos)
+      :else           world)))
 
 (defn- maybe-unlock-boss-door
   "On a `:door-lock :boss` level, killing a `:cyber` enemy grants the
    synthetic `:boss` keycard so the exit door becomes passable. No
    physical card spawns for boss locks — this hook is the unlock."
   [world killed-enemy]
-  (if (and (php/=== (:door-lock world) :boss)
-           (php/=== (:type killed-enemy) :cyber))
+  (if (and (= (:door-lock world) :boss)
+           (= (:type killed-enemy) :cyber))
     (assoc world :held-keys
            (conj (or (:held-keys world) #{}) :boss))
     world))
@@ -430,7 +430,7 @@
   [world enemies-after hit-pos idx]
   (let [killed?   (false? (:alive (get enemies-after idx)))
         killed-e  (get enemies-after idx)
-        chain?    (php/> (or (:streak-secs world) 0.0) 0.0)
+        chain?    (pos? (or (:streak-secs world) 0.0))
         streak'   (if chain? (php/+ (or (:streak world) 0) 1) 1)
         ;; Shot-direction knockback: shove wounded enemies one cell
         ;; back along the player's facing so heavy targets visibly
@@ -491,7 +491,7 @@
   (and (php/<= (or (:fire-cooldown world) 0.0) 0.0)
        (php/<= (or (:jam-secs world) 0.0) 0.0)
        (php/<= (or (:reload-cooldown world) 0.0) 0.0)
-       (php/> (or (:mag world) 0) 0)))
+       (pos? (or (:mag world) 0))))
 
 (defn apply-heat
   "After a shot lands, bump heat + arm the per-weapon fire-cooldown,
@@ -521,7 +521,7 @@
   (let [sp (w-spec world)]
     (and (php/<= (or (:reload-cooldown world) 0.0) 0.0)
          (php/< (or (:mag world) 0) (:mag-size sp))
-         (php/> (or (:ammo-reserve world) 0) 0))))
+         (pos? (or (:ammo-reserve world) 0)))))
 
 (defn reload
   "Top the magazine back up from the spare reserve and arm a short
@@ -592,7 +592,7 @@
      (cond
        (not should-fire?) w
        (can-fire? w)      (fire-shot w)
-       (and (php/=== (or (:mag w) 0) 0)
+       (and (zero? (or (:mag w) 0))
             (php/<= (or (:fire-cooldown w) 0.0) 0.0)
             (php/<= (or (:jam-secs w) 0.0) 0.0)
             (php/<= (or (:reload-cooldown w) 0.0) 0.0)) (empty-trigger-pull w)

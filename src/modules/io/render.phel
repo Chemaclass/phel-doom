@@ -57,6 +57,7 @@
 (def ammo-marker     "\e[40;93;1mA\e[0m")
 (def berserk-marker  "\e[40;91;1mB\e[0m")
 (def invuln-marker   "\e[40;96;1mI\e[0m")
+(def backpack-marker "\e[40;33;1mP\e[0m")
 (def door-shade
   "Door body cell drawn when a ray hit a door. Frame glyph `▌` (left
    half block) on a dark steel BG with bright orange FG, so a column
@@ -176,6 +177,22 @@
 (def invuln-glyph-bright
   "Yellow star on cyan pulse."
   "\e[48;5;51;38;5;226;1m★")
+
+(def backpack-shade
+  "Backpack idle BG: dim olive-tan crate so it reads as field gear."
+  "\e[48;5;58m ")
+
+(def backpack-shade-bright
+  "Backpack pulse BG: brighter tan flare."
+  "\e[48;5;142m ")
+
+(def backpack-glyph
+  "White ⊞ on the tan BG: stylised pack."
+  "\e[48;5;58;38;5;231;1m⊞")
+
+(def backpack-glyph-bright
+  "Black ⊞ on the bright pulse BG."
+  "\e[48;5;142;38;5;232;1m⊞")
 
 (def char-aspect 2.0)
 (def base-hud-rows 1)
@@ -437,6 +454,9 @@
 (defn- invuln-cells [is step out-w]
   (scaled-cells is step out-w (fn [_] true)))
 
+(defn- backpack-cells [bs step out-w]
+  (scaled-cells bs step out-w (fn [_] true)))
+
 (defn- minimap-rows
   "Render the world's grid into a PHP array of ANSI-coded strings,
    one per OUTPUT row. `step` collapses every step×step grid block
@@ -460,6 +480,7 @@
         amap                (ammo-cells  (:ammo-boxes world) step out-w)
         bmap                (berserk-cells (:berserks world) step out-w)
         imap                (invuln-cells  (:invulns world) step out-w)
+        pmap                (backpack-cells (:backpacks world) step out-w)
         rows                (buf-mk)
         block-has-wall?     (fn [r0 c0]
                               (loop [dr 0]
@@ -509,6 +530,7 @@
                             (buf-get amap (php/+ (php/* row out-w) col)) ammo-marker
                             (buf-get bmap (php/+ (php/* row out-w) col)) berserk-marker
                             (buf-get imap (php/+ (php/* row out-w) col)) invuln-marker
+                            (buf-get pmap (php/+ (php/* row out-w) col)) backpack-marker
                             :else                                        minimap-floor)))
               (recur (php/+ col 1))))
           (buf-set rows row (php/implode "" parts)))
@@ -990,11 +1012,12 @@
         res-col (cond (php/<= reserve 0)       "\e[1;91m"
                       (php/<= reserve res-low) "\e[1;93m"
                       :else                    "\e[2m")
+        pack    (if (get stats :backpack?) " \e[40;33;1m+pack\e[0m" "")
         styled  (str "\e[40;97m\e[1mL" lvl "\e[0m\e[40;97m " name'
                      "  \e[1mkills\e[0m " kills
                      "  \e[1m" wname "\e[0m\e[40;97m "
                      mag-col mag "\e[0m\e[40;97m/" cap " "
-                     res-col "[" reserve "]\e[0m")]
+                     res-col "[" reserve "]\e[0m" pack)]
     (buf-push parts (str "\e[2;1H" styled)))
   parts)
 
@@ -1666,6 +1689,12 @@
         invuln-bright?                     (pulse t 8.0)
         invuln-shade-now                   (if invuln-bright? invuln-shade-bright invuln-shade)
         invuln-glyph-now                   (if invuln-bright? invuln-glyph-bright invuln-glyph)
+        ;; Backpack pulse — slowest of the powerup family so the
+        ;; one-shot pickup reads as 'permanent gear' rather than a
+        ;; ticking buff.
+        backpack-bright?                   (pulse t 4.0)
+        backpack-shade-now                 (if backpack-bright? backpack-shade-bright backpack-shade)
+        backpack-glyph-now                 (if backpack-bright? backpack-glyph-bright backpack-glyph)
         ;; Atmospheric haze pulls walls toward black as lives drop, so
         ;; the world reads as 'consumed by darkness' the closer the
         ;; player is to dying. Sky / floor untouched; doors keep their
@@ -1827,6 +1856,9 @@
           bp-inv    (paint-pickups-into  bp-bers (or (:invulns world) [])
                                          (:player world) dists edists vw vh
                                          invuln-shade-now invuln-glyph-now)
+          bp-pack   (paint-pickups-into  bp-inv (or (:backpacks world) [])
+                                         (:player world) dists edists vw vh
+                                         backpack-shade-now backpack-glyph-now)
           parts     (buf-mk)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]
@@ -1845,7 +1877,7 @@
                          flr-row   (buf-get (if in-blood? blood-floor-gradient floor-gradient) row)
                          c         (if (and (php/< row visible-mh) (php/>= col mini-col0))
                                      sky-row
-                                     (or (buf-get bp-inv (php/+ (php/* row vw) col))
+                                     (or (buf-get bp-pack (php/+ (php/* row vw) col))
                                          (cond
                                            (php/< row (buf-get tops col))             sky-row
                                            (php/>= row (buf-get bots col))            flr-row
@@ -1894,7 +1926,7 @@
             c-row       (php/+ (php/intdiv vh 2) (if firing? -1 0))
             top-col     (buf-get tops c-col)
             bot-col     (buf-get bots c-col)
-            center-cell (or (buf-get bp-inv (php/+ (php/* c-row vw) c-col))
+            center-cell (or (buf-get bp-pack (php/+ (php/* c-row vw) c-col))
                             (cond
                               (php/< c-row top-col)             (buf-get sky-gradient c-row)
                               (php/>= c-row bot-col)            (buf-get floor-gradient c-row)

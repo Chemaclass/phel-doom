@@ -9,7 +9,7 @@
   (:require phel-doom.modules.core.physics  :refer [apply-physics tick-heartbeat tick-flicker tick-blood-drops tick-door-face])
   (:require phel-doom.modules.core.combat   :refer [ammo-per-box berserk-seconds damage-step fire-anim-seconds invuln-seconds max-reserve reload reloading? reload-cooldown-seconds tick-shooting])
   (:require phel-doom.modules.core.enemy    :refer [advance tick-scare rear-attacker?])
-  (:require phel-doom.modules.core.weapons  :refer [switch-weapon weapon-spec weapon-order weapons])
+  (:require phel-doom.modules.core.weapons  :refer [effective-reserve-cap switch-weapon weapon-spec weapon-order weapons])
   (:require phel-doom.modules.io.sound    :refer [play-sfx! mute-for!])
   (:require phel-doom.modules.core.level    :refer [build-world num-levels])
   (:require phel-doom.modules.io.scores   :refer [update-scores!])
@@ -147,7 +147,7 @@
       world
       (let [sp       (or (weapon-spec world) {})
             per-box  (or (:ammo-per-box sp) ammo-per-box)
-            cap      (or (:reserve-cap sp)  max-reserve)
+            cap      (effective-reserve-cap world)
             refilled (assoc world :ammo-boxes kept)]
         (when (:sound-on world) (play-sfx! :door))
         (update refilled :ammo-reserve
@@ -196,6 +196,29 @@
                  :invulns     kept
                  :invuln-secs invuln-seconds)))))
 
+(defn- backpacks-not-at [bs px py]
+  (apply vector
+         (filter (fn [b]
+                   (not (and (php/=== (php/intval (:x b)) px)
+                             (php/=== (php/intval (:y b)) py))))
+                 (or bs []))))
+
+(defn- pickup-backpacks
+  "One-shot: stepping on a backpack flips `:backpack?` true for the
+   rest of the run. Every weapon's effective reserve cap doubles
+   from that frame on (see weapons/effective-reserve-cap). Pickup
+   carries across levels via build-world's 3-arity."
+  [world]
+  (let [kept (backpacks-not-at (:backpacks world)
+                               (php/intval (:x (:player world)))
+                               (php/intval (:y (:player world))))]
+    (if (= (count kept) (count (or (:backpacks world) [])))
+      world
+      (do (when (:sound-on world) (play-sfx! :door))
+          (assoc world
+                 :backpacks kept
+                 :backpack? true)))))
+
 (defn- on-door?
   "True when the player's current cell is a door (auto-advances level)."
   [world]
@@ -233,7 +256,8 @@
             w4b (pickup-ammos  w4)
             w4c (pickup-berserks w4b)
             w4d (pickup-invulns  w4c)
-            w5  (tick-enemies  w4d dt)
+            w4e (pickup-backpacks w4d)
+            w5  (tick-enemies  w4e dt)
             w5b (if (:reload edges)
                   (do
                     (when (and (:sound-on w5) (reloading? w5)) (play-sfx! :reload))
@@ -293,6 +317,7 @@
    :empty-click-secs (or (:empty-click-secs world) 0.0)
    :berserk-secs (or (:berserk-secs world) 0.0)
    :invuln-secs  (or (:invuln-secs world) 0.0)
+   :backpack?    (boolean (:backpack? world))
    :rear-warning? (rear-attacker? (:enemies world)
                                   (:x (:player world))
                                   (:y (:player world))
@@ -342,6 +367,7 @@
    :level      (php/+ (:level world) 1)
    :kills      (:kills world)
    :lives      (:lives world)
+   :backpack?  (boolean (:backpack? world))
    :survived-s (php/intval (php/- now t-start))})
 
 (defn- play-door-sfx [world]
@@ -477,23 +503,25 @@
          lives       max-lives
          carry-kills 0
          carry-time  0
-         seed        (php/mt_rand)]
+         seed        (php/mt_rand)
+         backpack?   false]
     (php/mt_srand seed)
-    (let [result (game-loop (build-world level lives))]
+    (let [result (game-loop (build-world level lives backpack?))]
       (cond
         (= result :quit)
         nil
 
         (and (map? result) (:next-level result))
         (let [[k t] (carry-on carry-kills carry-time result)]
-          (recur (:level result) (:lives result) k t (php/mt_rand)))
+          (recur (:level result) (:lives result) k t (php/mt_rand)
+                 (boolean (:backpack? result))))
 
         (and (map? result) (:victory result))
         (let [[k t]           (carry-on carry-kills carry-time result)
               [kind new-seed] (handle-end victory-loop k t result seed true)]
           (cond
-            (= kind :fresh) (recur 1 max-lives 0 0 (php/mt_rand))
-            (= kind :same)  (recur 1 max-lives 0 0 new-seed)
+            (= kind :fresh) (recur 1 max-lives 0 0 (php/mt_rand) false)
+            (= kind :same)  (recur 1 max-lives 0 0 new-seed false)
             :else           nil))
 
         (and (map? result) (:game-over result))
@@ -502,10 +530,10 @@
               died-on         (or (:level result) 1)]
           (cond
             ;; r: try the level you died on again with a fresh map.
-            (= kind :fresh) (recur died-on max-lives 0 0 (php/mt_rand))
+            (= kind :fresh) (recur died-on max-lives 0 0 (php/mt_rand) false)
             ;; R: replay the exact level you died on (same seed + same
             ;; level number reproduces identical geometry + enemies).
-            (= kind :same)  (recur died-on max-lives 0 0 new-seed)
+            (= kind :same)  (recur died-on max-lives 0 0 new-seed false)
             :else           nil))
 
         :else

@@ -27,7 +27,7 @@ See [rendering.md](rendering.md), [raycaster.md](raycaster.md),
   ×2 damage), invulnerability sphere (10s i-frames), backpack
   (one-shot, doubles every weapon's reserve cap)
 - Keycards + locked exit doors on L4 (blue) and L5 (red): walk over
-  the `⌷` keycard to add the colour to held keys; physics blocks
+  the `⚿` keycard to add the colour to held keys; physics blocks
   the locked door until you do
 - Walk-into-door auto-advance, pulsing minimap door + bright 3D door
   glyph

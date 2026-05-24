@@ -48,7 +48,7 @@ Walk into a door to advance. Walk over pickups:
 - **berserk** — 20s of `×2` damage
 - **invuln** — 10s damage immunity
 - **backpack** — doubles every weapon's reserve cap
-- **⌷ keycard** — unlocks matching exit on L4 (blue) / L5 (red)
+- **⚿ keycard** — unlocks matching exit on L4 (blue) / L5 (red)
 
 Weapons (DPS-balanced niches, find on map):
 

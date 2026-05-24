@@ -54,6 +54,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - 3D loot glyphs differentiated by **shape** (not just colour) so the pickup type reads at a glance across the room: heart `♥`, armor `◆`, ammo `◉` (was square `▣`), berserk `Ω`, invuln `★`, backpack `⊞`, shotgun `╪`, chaingun `≣`, keycard `⚿` (was square `⌷`).
 - Locked-door cues. L4 (blue) / L5 (red) intro splash now stamps a 2nd line — `FIND THE BLUE KEY` / `FIND THE RED KEY` — under the level name so the lock mechanic is discoverable. Bumping the locked exit without the matching keycard pulses `⚿ NEED BLUE KEY ⚿` (or red) over the upper third of the 3D view for 1.5s; render-only, no gameplay change.
 - L4 enemy count trimmed 9 → 7, L5 trimmed 12 → 9. Late-game toughness now comes mostly from per-enemy HP (4 / 5) and chase speed, not crowd density — leaves room to explore for the keycard without a meat-grinder. Ammo-box budget scales with `enemies × HP` so it auto-rebalances down.
+- Cross-level state now carries the **active weapon slot** + every weapon's **mag / reserve** across the door — stepping into L2 with a half-empty shotgun no longer resets the mag. User-preference toggles (minimap, sound) also follow the player through the door. Retry / restart still resets to fresh defaults (pistol, full minimap + sound).
 - Each weapon now has its own silhouette: pistol slim single-barrel, shotgun wide twin-barrel with broad stock, chaingun multi-barrel cluster on a heavy housing.
 
 ## [0.2.0] - 2026-05-22

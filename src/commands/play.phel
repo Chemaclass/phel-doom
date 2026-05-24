@@ -478,13 +478,32 @@
    :survived-s (php/intval (php/- now t-start))})
 
 (defn- result-next-level [world ^float t-start ^float now]
-  {:next-level    true
-   :level         (php/+ (:level world) 1)
-   :kills         (:kills world)
-   :lives         (:lives world)
-   :backpack?     (boolean (:backpack? world))
-   :owned-weapons (or (:owned-weapons world) #{:pistol})
-   :survived-s    (php/intval (php/- now t-start))})
+  ;; Everything that survives the level cut goes through this map:
+  ;; lives, kills, time, backpack, owned weapons, AND the active
+  ;; weapon slot + per-weapon mag/reserve so reloads don't reset
+  ;; when stepping through the door.
+  (let [active (or (:weapon world) :pistol)
+        stash  (or (:weapon-state world) {})
+        ;; Mirror the active weapon's live :mag / :ammo-reserve back
+        ;; into the stash so the snapshot we pass to the next level
+        ;; is self-consistent.
+        stash' (assoc stash active
+                      {:mag     (or (:mag world) 0)
+                       :reserve (or (:ammo-reserve world) 0)})]
+    {:next-level    true
+     :level         (php/+ (:level world) 1)
+     :kills         (:kills world)
+     :lives         (:lives world)
+     :backpack?     (boolean (:backpack? world))
+     :owned-weapons (or (:owned-weapons world) #{:pistol})
+     :weapon        active
+     :weapon-state  stash'
+     ;; User-preference toggles also follow the player through the
+     ;; door — turning the minimap off / muting sound should NOT
+     ;; reset every level cut.
+     :show-map      (if (php/=== (:show-map world) false) false true)
+     :sound-on      (if (php/=== (:sound-on world) false) false true)
+     :survived-s    (php/intval (php/- now t-start))}))
 
 (defn- play-door-sfx [world]
   (when (:sound-on world) (play-sfx! :door)))
@@ -628,16 +647,35 @@
          carry-time  0
          seed        (php/mt_rand)
          backpack?   false
-         owned       #{:pistol}]
+         owned       #{:pistol}
+         ;; Active weapon + per-weapon mag/reserve stash carried
+         ;; across level cuts so the player doesn't get reset to a
+         ;; full pistol every door. Nil weapon = use build-world's
+         ;; default (pistol).
+         weapon      nil
+         wstate      nil
+         show-map?   true
+         sound-on?   true]
     (php/mt_srand seed)
     (let [w0     (build-world level lives backpack? diff owned)
-          ;; God mode flag survives across level cuts because we
-          ;; re-stamp it on every freshly-built world here. lives
-          ;; itself stays at max-lives — combat/vulnerable? skips
-          ;; damage when :god? is set, so the heart count never
-          ;; needs to be inflated.
+          ;; God mode + carried user toggles + weapon ammo are
+          ;; overlaid on the freshly-built world so build-world
+          ;; stays purely about the level itself.
           w1     (if god? (assoc w0 :god? true) w0)
-          result (game-loop w1)]
+          w2     (assoc w1 :show-map show-map? :sound-on sound-on?)
+          w3     (if (php/=== weapon nil)
+                   w2
+                   (let [stash  (or wstate (:weapon-state w2))
+                         active weapon
+                         loaded (get stash active
+                                     {:mag (or (:mag w2) 0)
+                                      :reserve (or (:ammo-reserve w2) 0)})]
+                     (assoc w2
+                            :weapon       active
+                            :weapon-state stash
+                            :mag          (:mag loaded)
+                            :ammo-reserve (:reserve loaded))))
+          result (game-loop w3)]
       (cond
         (= result :quit)
         nil
@@ -646,14 +684,18 @@
         (let [[k t] (carry-on carry-kills carry-time result)]
           (recur (:level result) (:lives result) k t (php/mt_rand)
                  (boolean (:backpack? result))
-                 (or (:owned-weapons result) #{:pistol})))
+                 (or (:owned-weapons result) #{:pistol})
+                 (or (:weapon result) :pistol)
+                 (or (:weapon-state result) {})
+                 (if (php/=== (:show-map result) false) false true)
+                 (if (php/=== (:sound-on result) false) false true)))
 
         (and (map? result) (:victory result))
         (let [[k t]           (carry-on carry-kills carry-time result)
               [kind new-seed] (handle-end victory-loop k t result seed true)]
           (cond
-            (= kind :fresh) (recur 1 max-lives 0 0 (php/mt_rand) false #{:pistol})
-            (= kind :same)  (recur 1 max-lives 0 0 new-seed false #{:pistol})
+            (= kind :fresh) (recur 1 max-lives 0 0 (php/mt_rand) false #{:pistol} nil nil true true)
+            (= kind :same)  (recur 1 max-lives 0 0 new-seed false #{:pistol} nil nil true true)
             :else           nil))
 
         (and (map? result) (:game-over result))
@@ -662,10 +704,10 @@
               died-on         (or (:level result) 1)]
           (cond
             ;; r: try the level you died on again with a fresh map.
-            (= kind :fresh) (recur died-on max-lives 0 0 (php/mt_rand) false #{:pistol})
+            (= kind :fresh) (recur died-on max-lives 0 0 (php/mt_rand) false #{:pistol} nil nil true true)
             ;; R: replay the exact level you died on (same seed + same
             ;; level number reproduces identical geometry + enemies).
-            (= kind :same)  (recur died-on max-lives 0 0 new-seed false #{:pistol})
+            (= kind :same)  (recur died-on max-lives 0 0 new-seed false #{:pistol} nil nil true true)
             :else           nil))
 
         :else

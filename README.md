@@ -63,6 +63,7 @@ Hold space to spray with the pistol/chaingun. Shotgun needs a fresh pull per she
 CLI:
 - `--difficulty=easy|normal|hard|nightmare` (`-d`) — scales enemy speed, HP, count
 - `--god` (`-g`) or `make play-dev` — no damage, GOD badge in HUD
+- `--armory` (`-a`) or `make play-armory` — own every weapon, infinite ammo (per-frame refill)
 - `--level=N` (`-l`) — start at level N. Pairs with `--god`: `make play-boss` jumps to L10, `make play-level LV=8` starts at L8
 
 Terminal quirks (kitty keyboard, tmux): see [docs/input.md](docs/input.md).

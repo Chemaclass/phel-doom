@@ -111,6 +111,7 @@ See [scores.md](scores.md).
 - `--difficulty=easy|normal|hard|nightmare` (`-d`) — scales enemy chase speed, per-enemy HP, per-level enemy count. HUD tag suppressed for `normal`.
 - `--god` (`-g`) or `make play-dev` — dev mode: contact damage suppressed end-to-end. HUD adds a yellow `GOD` badge after the hearts strip.
 - `--level=N` (`-l`) — start at level N (clamped to 1..num-levels). Combine with `--god` to jump straight into a boss room for testing. Shortcuts: `make play-boss` (L10), `make play-level LV=N`.
+- `--armory` (`-a`) or `make play-armory` — dev cheat: spawn owning every weapon, infinite ammo via per-frame mag + reserve refill. Pairs naturally with `--god` to test every mechanic end-to-end without grinding for pickups.
 
 ## Misc
 

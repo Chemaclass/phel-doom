@@ -7,7 +7,7 @@
   (:require phel-doom.modules.glue.controls :refer [refresh-from-keys key-states rising-edges
                                                     initial-key-snapshot])
   (:require phel-doom.modules.core.physics  :refer [apply-physics tick-heartbeat tick-flicker tick-blood-drops tick-door-face tick-stamina])
-  (:require phel-doom.modules.core.combat   :refer [ammo-per-box berserk-seconds damage-step fire-anim-seconds invuln-seconds max-reserve reload reloading? reload-cooldown-seconds tick-shooting])
+  (:require phel-doom.modules.core.combat   :refer [ammo-per-box berserk-seconds damage-step fire-anim-seconds invuln-seconds max-reserve reload reloading? reload-cooldown-seconds tick-armory tick-shooting])
   (:require phel-doom.modules.core.enemy    :refer [advance tick-scare rear-attacker?])
   (:require phel-doom.modules.core.weapons  :refer [effective-reserve-cap give-weapon switch-weapon weapon-spec weapon-order weapons])
   (:require phel-doom.modules.io.sound    :refer [play-sfx! mute-for!])
@@ -384,7 +384,8 @@
                     (when (and (:sound-on w5) (reloading? w5)) (play-sfx! :reload))
                     (reload w5))
                   w5)
-            w6  (tick-shooting w5b (:fire edges) (:fire-held edges))
+            w5c (tick-armory w5b)
+            w6  (tick-shooting w5c (:fire edges) (:fire-held edges))
             w7  (damage-step   w6 dt)
             w8  (tick-heartbeat w7 dt)
             w9  (tick-flicker  w8 dt)
@@ -653,17 +654,21 @@
    `diff` is the difficulty keyword from --difficulty (or nil for
    :normal). `god?` (from --god / `make play-dev`) stamps :god? on
    every freshly-built world so combat/vulnerable? short-circuits
-   contact damage for the whole run. `start-level` (from --level / -l)
-   sets where the run begins — 1..num-levels, clamped. Death + retry
-   reset to L1 (the start-level only seeds the initial loop entry)."
-  [diff god? start-level]
+   contact damage for the whole run. `armory?` (from --armory / -a)
+   hands the player every weapon at spawn and the per-frame ammo
+   refill in combat/tick-armory keeps the pool topped up so every
+   weapon stays testable without grinding for boxes. `start-level`
+   (from --level / -l) sets where the run begins — 1..num-levels,
+   clamped. Death + retry reset to L1 (the start-level only seeds
+   the initial loop entry)."
+  [diff god? armory? start-level]
   (loop [level       (php/max 1 (php/min num-levels (or start-level 1)))
          lives       max-lives
          carry-kills 0
          carry-time  0
          seed        (php/mt_rand)
          backpack?   false
-         owned       #{:pistol}
+         owned       (if armory? #{:pistol :shotgun :chaingun} #{:pistol})
          ;; Active weapon + per-weapon mag/reserve stash carried
          ;; across level cuts so the player doesn't get reset to a
          ;; full pistol every door. Nil weapon = use build-world's
@@ -678,7 +683,8 @@
           ;; overlaid on the freshly-built world so build-world
           ;; stays purely about the level itself.
           w1     (if god? (assoc w0 :god? true) w0)
-          w2     (assoc w1 :show-map show-map? :sound-on sound-on?)
+          w1a    (if armory? (assoc w1 :armory? true) w1)
+          w2     (assoc w1a :show-map show-map? :sound-on sound-on?)
           w3     (if (php/=== weapon nil)
                    w2
                    (let [stash  (or wstate (:weapon-state w2))
@@ -756,20 +762,21 @@
 
 (defn- run-play [ctx]
   (init-input!)
-  (let [diff   (cli/opt ctx "difficulty")
-        god?   (cli/opt ctx "god")
-        lv-raw (cli/opt ctx "level")
+  (let [diff    (cli/opt ctx "difficulty")
+        god?    (cli/opt ctx "god")
+        armory? (cli/opt ctx "armory")
+        lv-raw  (cli/opt ctx "level")
         ;; CLI gives strings; coerce to int. nil / empty → nil → L1.
-        lv     (cond
-                 (php/=== lv-raw nil) nil
-                 (php/=== lv-raw "")  nil
-                 :else                (php/intval lv-raw))]
+        lv      (cond
+                  (php/=== lv-raw nil) nil
+                  (php/=== lv-raw "")  nil
+                  :else                (php/intval lv-raw))]
     (if (php/=== (show-start-menu!) :quit)
       (do (restore!)
           (clear-screen)
           0)
       (do (clear-screen)
-          (run-levels diff god? lv)
+          (run-levels diff god? armory? lv)
           (restore!)
           (clear-screen)
           (cli/success ctx "Thanks for playing.")
@@ -791,6 +798,10 @@
            :short "g"
            :mode  :none
            :doc   "Dev god mode: contact damage suppressed; GOD badge in HUD."}
+          {:name "armory"
+           :short "a"
+           :mode  :none
+           :doc   "Dev armory: own every weapon + infinite ammo (per-frame refill). Pairs naturally with --god for end-to-end mechanic testing."}
           {:name    "level"
            :short   "l"
            :mode    :optional

@@ -52,10 +52,10 @@ On every kill `on-shot-hit` rolls a uniform float and routes through `roll-loot-
 
 | Band | Drop | Notes |
 |------|------|-------|
-| `[0.00, 0.30)` | `:ammo` (`+10` reserve) | Most common — players burn rounds faster than anything else |
-| `[0.30, 0.45)` | `:armor` (absorb one hit) | Mid — useful but not as scarce as health |
-| `[0.45, 0.50)` | `:heart` (`+1` life) | Rarest, AND suppressed when `lives = max-lives` so it never wastes |
-| `[0.50, 1.00)` | nothing | ~half of kills drop nothing; keeps the floor uncluttered |
+| `[0.00, 0.15)` | `:ammo` (`+10` reserve) | Most common — players burn rounds faster than anything else |
+| `[0.15, 0.22)` | `:armor` (absorb one hit) | Mid — useful but not as scarce as health |
+| `[0.22, 0.25)` | `:heart` (`+1` life) | Rarest, AND suppressed when `lives = max-lives` so it never wastes |
+| `[0.25, 1.00)` | nothing | ~75% of kills drop nothing; keeps the floor uncluttered |
 
 The drop is pushed into the same `:hearts` / `:armors` / `:ammo-boxes` vectors that level-start pickups use, so the existing `pickup-*` helpers in `play.phel` and the minimap markers in `render.phel` need no special case for kill loot vs starting loot.
 

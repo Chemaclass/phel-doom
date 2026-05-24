@@ -12,15 +12,15 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 ### Added
 
 **Weapons + combat**
-- 3-slot loadout (1/2/3): pistol, shotgun (3 dmg), chaingun (spray). Per-weapon mag + reserve persist across switches.
+- 3-slot loadout (1/2/3): pistol, shotgun (3 dmg), chaingun (spray). Per-weapon mag + reserve persist across switches. Each weapon has its own SGR palette so the bottom sprite reads as a distinct piece of kit.
 - Finite ammo (closes #5): reserve + scaled box pickups + 1.2s reload animation + layered reload cues (LOW AMMO pulse, periodic press-R, dry-fire CLICK).
-- Per-level enemy HP 1→5; wounded body shades darker, yellow HP digit above head 1.2s post-hit. Kill rolls loot drop (ammo > armor > heart, 50% nothing).
+- Per-level enemy HP 1→5; wounded body shades darker, yellow HP digit above head 1.2s post-hit. Kill rolls a loot drop (ammo > armor > heart, ~75% nothing).
 - Pistol sprite recoils up 2 rows on shoot (no more screen tilt).
 
 **Powerups + pickups**
-- Berserk sphere — 20s × 2 damage.
-- Invulnerability sphere — 10s damage immunity.
-- Backpack (L2+, one-shot) — doubles every weapon's reserve cap for the rest of the run.
+- Berserk sphere — 20s × 2 damage (~1 in 8 levels).
+- Invulnerability sphere — 10s damage immunity (~1 in 12 levels).
+- Backpack (L2+, one-shot, ~1 in 5 qualifying levels) — doubles every weapon's reserve cap for the rest of the run.
 - Keycards + locked exit on L4 (blue) and L5 (red). Walk over the matching `⌷` to unlock.
 - Armor caps at 3.
 
@@ -32,6 +32,14 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 **CLI**
 - `--difficulty=easy|normal|hard|nightmare` (`-d`) scales chase speed, enemy HP, enemy count. Default `normal`.
+
+### Fixed
+
+- One-shot keys (`1` / `2` / `3` weapon switch, `r` reload, `p`, `n`, `m`, `e`, space) now fire under kitty CSI-u protocol too — `key-states` matches both plain ASCII bytes and `\\e[<code>u` / `\\e[<code>;...u` variants so Ghostty / WezTerm / kitty users can actually swap weapons.
+
+### Changed
+
+- Loot drop chances tuned DOWN after v0.3 playtest: per-kill drop ~25% (was 50%), berserk spawn ~12% (was 25%), invuln ~8% (was 16%), backpack ~20% (was 30%). Floor no longer fills with pickups.
 
 ## [0.2.0] - 2026-05-22
 

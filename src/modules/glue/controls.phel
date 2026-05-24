@@ -218,19 +218,34 @@
   (or (str/contains? keys "\eOR")
       (str/contains? keys "\e[13~")))
 
+(defn- key-pressed?
+  "True when the byte `plain` OR its kitty CSI-u press code appears in
+   `keys`. Some terminals running with `CSI >3u` enabled wrap every
+   key (including plain alphanumerics + digits) as `\\e[<code>u` /
+   `\\e[<code>;<mods>u`. The plain-byte check covers legacy terminals
+   and the CSI-u check covers kitty / Ghostty / aggressive WezTerm so
+   one-shot keys fire either way."
+  [keys plain code]
+  (or (str/contains? keys plain)
+      (str/contains? keys (str "\e[" code "u"))
+      (str/contains? keys (str "\e[" code ";"))))
+
 (defn key-states
-  "Which of the tracked one-shot keys appear in `keys` this frame."
+  "Which of the tracked one-shot keys appear in `keys` this frame.
+   Codes are ASCII codepoints for the matching lowercase letter /
+   digit (m=109, p=112, etc.) so the kitty CSI-u path stays in sync
+   with the legacy byte path."
   [keys]
-  {:m  (str/contains? keys "m")
-   :sp (str/contains? keys " ")
-   :p  (str/contains? keys "p")
-   :n  (str/contains? keys "n")
-   :e  (str/contains? keys "e")
+  {:m  (key-pressed? keys "m" 109)
+   :sp (key-pressed? keys " " 32)
+   :p  (key-pressed? keys "p" 112)
+   :n  (key-pressed? keys "n" 110)
+   :e  (key-pressed? keys "e" 101)
    :f3 (f3-pressed? keys)
-   :r  (str/contains? keys "r")
-   :k1 (str/contains? keys "1")
-   :k2 (str/contains? keys "2")
-   :k3 (str/contains? keys "3")})
+   :r  (key-pressed? keys "r" 114)
+   :k1 (key-pressed? keys "1" 49)
+   :k2 (key-pressed? keys "2" 50)
+   :k3 (key-pressed? keys "3" 51)})
 
 (defn rising-edges
   "Build the edges map tick consumes — truthy only for keys that just

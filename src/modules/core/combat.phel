@@ -3,6 +3,7 @@
   (:require phel-doom.modules.core.enemy   :refer [shoot])
   (:require phel-doom.modules.core.physics :refer [try-move])
   (:require phel-doom.modules.core.state   :refer [max-lives])
+  (:require phel-doom.modules.core.weapons :refer [weapon-spec])
   (:require phel-doom.modules.io.sound   :refer [play-sfx!]))
 
 ;; ---------------------------------------------------------------------
@@ -48,33 +49,47 @@
    Counter resets to 1 if the player waits longer without a kill."
   4.0)
 
+;; Per-weapon cadence / capacity now lives in weapons/spec. These
+;; constants stay as the pistol defaults — every test fixture that
+;; didn't carry a :weapon used the pistol numbers, so falling back to
+;; them via `w-spec` keeps old tests green.
+
 (def fire-cooldown-seconds
-  "Minimum interval between shots so trigger-mashing doesn't fire on
-   every frame (~8 shots/sec cap)."
+  "Default minimum interval between shots (pistol cadence). Per-weapon
+   override in weapons/weapons :fire-cooldown."
   0.12)
 
 (def mag-size
-  "Magazine capacity. A fresh mag holds this many shots; reload draws
-   from the world's `:ammo-reserve` to top it back up."
+  "Default magazine capacity (pistol). Per-weapon override in
+   weapons/weapons :mag-size."
   10)
 
 (def max-reserve
-  "Hard cap on the spare ammo pool. Ammo-box pickups stop adding
-   beyond this so the player can't stockpile infinitely."
+  "Default cap on the spare ammo pool (pistol). Per-weapon override
+   in weapons/weapons :reserve-cap."
   50)
 
 (def ammo-per-box
-  "Rounds each ammo-box pickup adds to `:ammo-reserve`. One full mag
-   per box keeps the math obvious for the player."
+  "Default rounds added to the active weapon's reserve per pickup
+   (pistol). Per-weapon override in weapons/weapons :ammo-per-box."
   10)
 
 (def reload-cooldown-seconds
-  "Length of the reload animation + firing lockout. The pistol drops
-   off-screen, refills, and rises back into view over this window; the
-   trigger stays disabled the whole time so the player commits to the
-   reload instead of mashing through it. 1.2s reads as a real action
-   without slowing mid-combat reloads to a crawl."
+  "Default reload animation + firing lockout (pistol). Per-weapon
+   override in weapons/weapons :reload-duration."
   1.2)
+
+(defn- w-spec
+  "Active-weapon spec with hard-coded pistol fallbacks so a bare test
+   fixture (no :weapon set) still gets sensible numbers."
+  [world]
+  (or (weapon-spec world)
+      {:mag-size        mag-size
+       :fire-cooldown   fire-cooldown-seconds
+       :reload-duration reload-cooldown-seconds
+       :damage          1
+       :reserve-cap     max-reserve
+       :ammo-per-box    ammo-per-box}))
 
 (def empty-click-seconds
   "How long the 'dry-fire click' visual + audio cue lingers after the
@@ -252,10 +267,11 @@
     (cast-ray (:pgrid world) (:x p) (:y p) (:angle p))))
 
 (defn- resolve-shot [world]
-  (let [p (:player world)]
+  (let [p   (:player world)
+        dmg (or (:damage (w-spec world)) 1)]
     (shoot (:enemies world) (:x p) (:y p) (:angle p)
            (cast-wall-distance world)
-           shot-hit-radius shot-max-range)))
+           shot-hit-radius shot-max-range dmg)))
 
 (defn- push-blood-fx [world hit-pos]
   (update world :fx
@@ -366,29 +382,28 @@
        (php/> (or (:mag world) 0) 0)))
 
 (defn apply-heat
-  "After a shot lands, bump heat + arm the cooldown, and burn one
-   round from the magazine. If heat crosses 1.0 the pistol overheats
-   and jams for jam-seconds (heat resets so the player isn't
-   punished twice)."
+  "After a shot lands, bump heat + arm the per-weapon fire-cooldown,
+   and burn one round from the magazine. If heat crosses 1.0 the
+   pistol overheats and jams for jam-seconds (heat resets so the
+   player isn't punished twice)."
   [world]
-  (let [heat' (php/+ (or (:heat world) 0.0) heat-per-shot)
+  (let [sp    (w-spec world)
+        heat' (php/+ (or (:heat world) 0.0) heat-per-shot)
         jam?  (php/>= heat' 1.0)
-        mag'  (php/max 0 (php/- (or (:mag world) mag-size) 1))]
+        mag'  (php/max 0 (php/- (or (:mag world) (:mag-size sp)) 1))]
     (assoc world
-           :fire-cooldown fire-cooldown-seconds
+           :fire-cooldown (:fire-cooldown sp)
            :heat          (if jam? 0.0 heat')
            :jam-secs      (if jam? jam-seconds (or (:jam-secs world) 0.0))
            :mag           mag')))
 
 (defn reloading?
-  "True when the player COULD reload right now — used by play.phel to
-   gate the reload sfx so the click only plays on an actual reload, not
-   every R press during cooldown / when the mag is full / when the
-   reserve is dry."
+  "True when the player COULD reload the active weapon right now."
   [world]
-  (and (php/<= (or (:reload-cooldown world) 0.0) 0.0)
-       (php/< (or (:mag world) 0) mag-size)
-       (php/> (or (:ammo-reserve world) 0) 0)))
+  (let [sp (w-spec world)]
+    (and (php/<= (or (:reload-cooldown world) 0.0) 0.0)
+         (php/< (or (:mag world) 0) (:mag-size sp))
+         (php/> (or (:ammo-reserve world) 0) 0))))
 
 (defn reload
   "Top the magazine back up from the spare reserve and arm a short
@@ -401,9 +416,10 @@
    Otherwise: draw `min(needed, reserve)` rounds from `:ammo-reserve`
    into `:mag` and arm the cooldown."
   [world]
-  (let [mag     (or (:mag world) 0)
+  (let [sp      (w-spec world)
+        mag     (or (:mag world) 0)
         reserve (or (:ammo-reserve world) 0)
-        needed  (php/- mag-size mag)]
+        needed  (php/- (:mag-size sp) mag)]
     (cond
       (php/> (or (:reload-cooldown world) 0.0) 0.0) world
       (php/<= needed 0)                             world
@@ -413,7 +429,7 @@
         (assoc world
                :mag             (php/+ mag drawn)
                :ammo-reserve    (php/- reserve drawn)
-               :reload-cooldown reload-cooldown-seconds)))))
+               :reload-cooldown (:reload-duration sp))))))
 
 (defn fire-shot
   "Resolve one trigger pull end-to-end."

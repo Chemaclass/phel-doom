@@ -1,0 +1,96 @@
+(ns phel-doom.modules.core.weapons)
+
+;; ---------------------------------------------------------------------
+;; Weapon catalogue + per-weapon ammo bookkeeping.
+;;
+;; DOOM-classic roster:
+;;   :pistol    balanced default — light damage, snappy cadence
+;;   :shotgun   slow + hard-hitting — kills a 3-HP caco in one shot
+;;   :chaingun  rapid-fire spray — many shots needed but fastest cd
+;;
+;; Per-weapon stats (mag-size, fire-cooldown, reload-duration, damage,
+;; reserve cap, ammo-per-box) live in `weapons`. Per-weapon ammo state
+;; (current mag count, current reserve) lives on the world under
+;; :weapon-state — a map keyed by the same weapon keyword.
+;;
+;; combat.phel reads the *spec* via `spec` and the *current weapon's
+;; live state* via `mag`/`reserve` helpers; both mirror up to the
+;; top-level :mag / :ammo-reserve fields so existing tests + the
+;; render HUD keep working without rewrites.
+;; ---------------------------------------------------------------------
+
+(def weapons
+  "Per-weapon stat table. Adding a new weapon is one map literal."
+  {:pistol   {:name            "pistol"
+              :mag-size        10
+              :reserve-start   30
+              :reserve-cap     50
+              :ammo-per-box    10
+              :fire-cooldown   0.12
+              :reload-duration 1.2
+              :damage          1}
+   :shotgun  {:name            "shotgun"
+              :mag-size        4
+              :reserve-start   8
+              :reserve-cap     24
+              :ammo-per-box    4
+              :fire-cooldown   0.6
+              :reload-duration 2.0
+              :damage          3}
+   :chaingun {:name            "chaingun"
+              :mag-size        30
+              :reserve-start   0
+              :reserve-cap     90
+              :ammo-per-box    20
+              :fire-cooldown   0.05
+              :reload-duration 1.8
+              :damage          1}})
+
+(def weapon-order
+  "Slot order keyed by 1/2/3."
+  [:pistol :shotgun :chaingun])
+
+(defn current-weapon
+  "Active weapon keyword for `world`. Defaults to :pistol so fresh test
+   worlds (which don't set :weapon) keep behaving like single-pistol
+   runs from before this PR."
+  [world]
+  (or (:weapon world) :pistol))
+
+(defn weapon-spec
+  "Static catalogue entry for the active weapon."
+  [world]
+  (get weapons (current-weapon world)))
+
+(defn initial-weapon-state
+  "Per-weapon ammo state for a brand-new run: starting mag full,
+   reserve at :reserve-start."
+  []
+  (let [build (fn [acc kw]
+                (let [s (get weapons kw)]
+                  (assoc acc kw {:mag     (:mag-size s)
+                                 :reserve (:reserve-start s)})))]
+    (reduce build {} weapon-order)))
+
+(defn switch-weapon
+  "Snap to weapon `to`. Persists the current weapon's mag + reserve
+   back into `:weapon-state`, then loads `to`'s saved state into the
+   mirrored top-level `:mag` / `:ammo-reserve` fields. No-op when
+   the target weapon doesn't exist OR the player is mid-reload (so
+   you can't dodge a reload by hot-swapping)."
+  [world to]
+  (cond
+    (php/=== (get weapons to) nil)                world
+    (php/> (or (:reload-cooldown world) 0.0) 0.0) world
+    :else
+    (let [from   (current-weapon world)
+          saved  (assoc (or (:weapon-state world) {})
+                        from {:mag     (or (:mag world) 0)
+                              :reserve (or (:ammo-reserve world) 0)})
+          loaded (get saved to {:mag (:mag-size (get weapons to))
+                                :reserve (:reserve-start (get weapons to))})]
+      (assoc world
+             :weapon        to
+             :weapon-state  saved
+             :mag           (:mag loaded)
+             :ammo-reserve  (:reserve loaded)))))

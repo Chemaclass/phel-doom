@@ -17,6 +17,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Armor caps at 3 (was unbounded). Pickups beyond cap consume the box but don't bump — same pattern as max-lives + heart pickups.
 - Death + victory end screens responsive: box width adapts to viewport (22..36 cols, 4-col margin), and short terminals (< 20 rows) drop the best-scores block + extra padding so the screen never clips off the bottom.
 - Shoot animation kicks the pistol sprite up ~2 rows instead of tilting the whole 3D view. Sine curve recoil settles back to rest as `:fire-anim` decays.
+- Multi-weapon roster (DOOM-classic 3-slot): **pistol** (10-mag, 0.12s cd, 1 dmg, 1.2s reload), **shotgun** (4-mag, 0.6s cd, 3 dmg, 2.0s reload), **chaingun** (30-mag, 0.05s cd, 1 dmg, 1.8s reload). Number keys 1/2/3 snap to each slot (no-op mid-reload). Per-weapon mag + reserve persist across switches; ammo-box pickups feed the active weapon's reserve at its own `:ammo-per-box` rate capped at the weapon's own `:reserve-cap`. HUD strip shows the active weapon name (`L1 imps  kills 7  pistol 7/10 [23]`).
 
 ## [0.2.0] - 2026-05-22
 

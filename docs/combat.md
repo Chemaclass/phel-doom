@@ -46,6 +46,19 @@ A trigger pull on an empty mag with no other gate active routes through `empty-t
 
 Fresh runs start with `:ammo-reserve 30` (three full mags); the cap is `max-reserve` (50). Ammo-box pickups on the map top the reserve back up (see [`level-system.md`](level-system.md)).
 
+## Kill loot drops
+
+On every kill `on-shot-hit` rolls a uniform float and routes through `roll-loot-kind`:
+
+| Band | Drop | Notes |
+|------|------|-------|
+| `[0.00, 0.30)` | `:ammo` (`+10` reserve) | Most common — players burn rounds faster than anything else |
+| `[0.30, 0.45)` | `:armor` (absorb one hit) | Mid — useful but not as scarce as health |
+| `[0.45, 0.50)` | `:heart` (`+1` life) | Rarest, AND suppressed when `lives = max-lives` so it never wastes |
+| `[0.50, 1.00)` | nothing | ~half of kills drop nothing; keeps the floor uncluttered |
+
+The drop is pushed into the same `:hearts` / `:armors` / `:ammo-boxes` vectors that level-start pickups use, so the existing `pickup-*` helpers in `play.phel` and the minimap markers in `render.phel` need no special case for kill loot vs starting loot.
+
 ## Shooting
 
 ```phel

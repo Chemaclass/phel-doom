@@ -2,6 +2,7 @@
   (:require phel-doom.modules.core.engine  :refer [cast-ray])
   (:require phel-doom.modules.core.enemy   :refer [shoot])
   (:require phel-doom.modules.core.physics :refer [try-move])
+  (:require phel-doom.modules.core.state   :refer [max-lives])
   (:require phel-doom.modules.io.sound   :refer [play-sfx!]))
 
 ;; ---------------------------------------------------------------------
@@ -266,6 +267,48 @@
             (conj (or fx [])
                   {:x (:x hit-pos) :y (:y hit-pos) :ttl fx-ttl-seconds}))))
 
+(def loot-drop-chance
+  "Probability cutoffs for a kill drop, layered on a single uniform roll
+   in [0, 1). Lower bound exclusive, upper bound inclusive of the
+   cumulative range. Ammo dominates (most common need); armor mid;
+   heart only when it would actually heal (lives < cap), so it's also
+   the rarest. The 0.50 ceiling means roughly half of kills drop
+   nothing — keeps the floor uncluttered and the drops feeling
+   earned."
+  {:ammo  0.30          ; 0.00 .. 0.30
+   :armor 0.45          ; 0.30 .. 0.45
+   :heart 0.50})        ; 0.45 .. 0.50 (gated by lives < max-lives)
+
+(defn roll-loot-kind
+  "Decide which pickup (if any) drops on the current kill. nil = no
+   drop. `roll` is a uniform float in [0, 1) supplied by the caller
+   so tests can pin the outcome."
+  {:export true}
+  [world ^float roll]
+  (cond
+    (php/< roll (:ammo  loot-drop-chance)) :ammo
+    (php/< roll (:armor loot-drop-chance)) :armor
+    (and (php/< roll (:heart loot-drop-chance))
+         (php/< (or (:lives world) 0) max-lives)) :heart
+    :else nil))
+
+(defn- push-pickup [world key hit-pos]
+  (update world key
+          (fn [xs] (conj (or xs []) {:x (:x hit-pos) :y (:y hit-pos)}))))
+
+(defn- push-kill-loot
+  "Possibly drop a pickup at the enemy's death position. Random number
+   pulled from mt_rand here so the caller stays a one-liner; tests
+   exercise the cut-points via `roll-loot-kind` directly."
+  [world hit-pos]
+  (let [roll (php// (php/mt_rand) (php/mt_getrandmax))
+        kind (roll-loot-kind world roll)]
+    (cond
+      (php/=== kind :ammo)  (push-pickup world :ammo-boxes hit-pos)
+      (php/=== kind :armor) (push-pickup world :armors     hit-pos)
+      (php/=== kind :heart) (push-pickup world :hearts     hit-pos)
+      :else                 world)))
+
 (defn- on-shot-hit
   "World update on a successful hit. enemy/shoot has already decremented
    `:lives` and (when the pool emptied) flipped `:alive false` and
@@ -276,16 +319,19 @@
    shot that drops the enemy. Streak chains while `:streak-secs` is
    still ticking from the previous kill; otherwise it restarts at 1."
   [world enemies-after hit-pos idx]
-  (let [killed? (false? (:alive (get enemies-after idx)))
-        chain?  (php/> (or (:streak-secs world) 0.0) 0.0)
-        streak' (if chain? (php/+ (or (:streak world) 0) 1) 1)
-        scored  (if killed?
-                  (assoc (update (assoc world :enemies enemies-after)
-                                 :kills (fn [k] (php/+ k 1)))
-                         :streak      streak'
-                         :streak-secs streak-window-seconds)
-                  (assoc world :enemies enemies-after))]
-    (push-blood-fx (assoc scored :fire-anim fire-anim-seconds) hit-pos)))
+  (let [killed?   (false? (:alive (get enemies-after idx)))
+        chain?    (php/> (or (:streak-secs world) 0.0) 0.0)
+        streak'   (if chain? (php/+ (or (:streak world) 0) 1) 1)
+        scored    (if killed?
+                    (assoc (update (assoc world :enemies enemies-after)
+                                   :kills (fn [k] (php/+ k 1)))
+                           :streak      streak'
+                           :streak-secs streak-window-seconds)
+                    (assoc world :enemies enemies-after))
+        ;; Kill drops a random pickup at the corpse's cell. Wounds
+        ;; don't drop — the kill is the reward trigger.
+        with-loot (if killed? (push-kill-loot scored hit-pos) scored)]
+    (push-blood-fx (assoc with-loot :fire-anim fire-anim-seconds) hit-pos)))
 
 (defn- on-shot-miss [world]
   (assoc world :fire-anim fire-anim-seconds))

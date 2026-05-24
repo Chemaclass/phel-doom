@@ -12,7 +12,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 ### Added
 
 **Weapons + combat**
-- 3-slot loadout (1/2/3): pistol (1 dmg), shotgun (2 dmg), chaingun (3 dmg). Damage scales with the level the weapon first becomes available so every pickup is a strict upgrade for its tier. Per-weapon mag + reserve persist across switches. Each weapon has its own SGR palette so the bottom sprite reads as a distinct piece of kit.
+- 3-slot loadout (1/2/3) with DPS-balanced niches: pistol 1 dmg @ 0.12s cd (8 dps fallback), shotgun 3 dmg @ 0.6s cd (5 dps burst killer — 1-shots L1-L3 enemies, 2-shots the L5 baron), chaingun 1 dmg @ 0.05s cd (20 dps sustained spray, ammo hog). Picking up a chaingun does NOT obsolete the shotgun — they own different niches. Per-weapon mag + reserve persist across switches. Each weapon has its own SGR palette so the bottom sprite reads as a distinct piece of kit.
 - Kill-loot ammo drops now carry a `:weapon` tag chosen uniformly from the player's `:owned-weapons` set. Walking over the box tops up THAT weapon's reserve, even if you're holding something else — so every kill seeds usable ammo regardless of what's in your hand. Level-spawned ammo boxes still refill the active weapon.
 - Finite ammo (closes #5): reserve + scaled box pickups + 1.2s reload animation + layered reload cues (LOW AMMO pulse, periodic press-R, dry-fire CLICK).
 - Per-level enemy HP 1→5; wounded body shades darker, yellow HP digit above head 1.2s post-hit. Kill rolls a loot drop (ammo > armor > heart, ~75% nothing).

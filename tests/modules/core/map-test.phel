@@ -2,6 +2,8 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.modules.core.map :refer [default-grid wall? door?
                                                cell-floor cell-wall cell-door
+                                               cell-door-blue cell-door-red
+                                               parse-layout
                                                random-grid random-spawn seed-doors]))
 
 (deftest test-walls-on-perimeter
@@ -117,3 +119,52 @@
                [1 1 1 1 1]]
         [x y] (random-spawn g)]
     (is (= false (wall? g (php/intval x) (php/intval y))))))
+
+;; ---------------------------------------------------------------------
+;; parse-layout: hand-authored ASCII grids → {:grid :spawn}.
+;; ---------------------------------------------------------------------
+
+(deftest test-parse-layout-happy-path
+  (let [out (parse-layout ["#####"
+                           "#...#"
+                           "#.@.#"
+                           "#...#"
+                           "####D"])]
+    (is (not (nil? out)))
+    (let [g       (:grid out)
+          [sx sy] (:spawn out)]
+      (is (= 5 (count g)))
+      (is (= 5 (count (first g))))
+      ;; Walls on the border.
+      (is (= cell-wall (get-in g [0 0])))
+      ;; Spawn cell parsed as floor (so player stands on it).
+      (is (= cell-floor (get-in g [2 2])))
+      ;; Spawn coords centred on the '@' cell.
+      (is (= 2.5 sx))
+      (is (= 2.5 sy))
+      ;; Door in the bottom-right corner.
+      (is (= cell-door (get-in g [4 4]))))))
+
+(deftest test-parse-layout-locked-doors
+  (let [out (parse-layout ["#####"
+                           "#.@.B"
+                           "#...R"
+                           "#####"])
+        g   (:grid out)]
+    (is (= cell-door-blue (get-in g [1 4])))
+    (is (= cell-door-red  (get-in g [2 4])))))
+
+(deftest test-parse-layout-no-spawn-returns-nil
+  ;; Missing '@' = malformed layout. parse-layout returns nil so the
+  ;; caller can throw / fall back.
+  (is (nil? (parse-layout ["#####"
+                           "#...#"
+                           "#####"]))))
+
+(deftest test-parse-layout-unknown-chars-fall-back-to-floor
+  ;; Typos shouldn't crash — render an unknown char as walkable.
+  (let [out (parse-layout ["####"
+                           "#?@#"
+                           "####"])
+        g   (:grid out)]
+    (is (= cell-floor (get-in g [1 1])))))

@@ -1,4 +1,5 @@
 (ns phel-doom.modules.io.render
+  (:require phel-doom.modules.core.enemies :refer [enemy-types])
   (:require phel-doom.modules.core.engine  :refer [cast-frame max-depth proj-dist])
   (:require phel-doom.modules.core.map     :refer [find-door-cell])
   (:require phel-doom.modules.core.weapons :refer [weapon-order weapons]))
@@ -689,7 +690,8 @@
           {:col          (php/intval (php/+ (php/* 0.5 vw) (php/* (php/tan rel-norm) proj-dist)))
            :half-width   (php/max 1 (php/intval (php// proj-dist (php/* (php/max 0.5 dist) 3.0))))
            :dist         dist
-           :damage-ratio dmg})))))
+           :damage-ratio dmg
+           :type         (:type enemy)})))))
 
 (defn- collect-enemy-projs
   "Project every alive enemy and return a vector sorted by distance
@@ -1009,33 +1011,48 @@
    scare-secs window."
   "\e[5;48;5;201;38;5;231;1m☠\e[0m")
 
+(defn- visuals-for-type
+  "Catalog lookup for a type kw, falling back to the level's primary
+   `:enemy` type from stats when the enemy carries no `:type`, then
+   to `:imp` as a last resort so visuals are never empty (every enemy
+   gets a face overlay, no silent skips on unknown types)."
+  [type-kw stats]
+  (or (get enemy-types type-kw)
+      (get enemy-types (or (get stats :enemy) :imp))
+      (get enemy-types :imp)))
+
 (defn- paint-face-overlay
-  "At each visible alive enemy's centre column paint the level's
-   :enemy-face glyph at the upper-third of the sprite. Three modes:
+  "At each visible alive enemy's centre column paint that enemy's
+   catalog face glyph at the upper-third of the sprite. Three modes:
      - scare-secs active  → wide-eyed scare glyph (one-shot beat)
      - d < aggro-distance → :face-attack telegraph
-     - else               → resting :face"
-  [parts world stats vw vh dists eface]
-  (when eface
-    (let [face-attack (get stats :enemy-face-attack)
-          scare?      (php/> (or (get stats :scare-secs) 0.0) 0.0)]
-      (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
-             (let [col   (:col proj)
-                   d     (:dist proj)
-                   glyph (cond
-                           scare?                                     scare-face-glyph
-                           (and face-attack (php/< d aggro-distance)) face-attack
-                           :else                                      eface)]
-               (when (and (php/>= col 0)
-                          (php/< col vw)
-                          (php/< d (buf-get dists col)))
-                 (let [h        (php/min vh (php/intval (php// proj-dist
-                                                               (php/* (php/max 0.5 d) char-aspect))))
-                       face-row (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 6))]
-                   (when (and (php/>= face-row 1) (php/<= face-row vh))
-                     (buf-push parts
-                               (str "\e[" face-row ";"
-                                    (php/+ col 1) "H" glyph)))))))))
+     - else               → resting :face (alternates with :face-alt
+                            on the global face-phase beat)"
+  [parts world stats vw vh dists face-phase]
+  (let [scare? (php/> (or (get stats :scare-secs) 0.0) 0.0)]
+    (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
+           (let [col         (:col proj)
+                 d           (:dist proj)
+                 visuals     (visuals-for-type (:type proj) stats)
+                 face        (get visuals :face)
+                 face-alt    (or (get visuals :face-alt) face)
+                 face-attack (get visuals :face-attack)
+                 idle        (if (php/> face-phase 0.0) face face-alt)
+                 glyph       (cond
+                               scare?                                     scare-face-glyph
+                               (and face-attack (php/< d aggro-distance)) face-attack
+                               :else                                      idle)]
+             (when (and glyph
+                        (php/>= col 0)
+                        (php/< col vw)
+                        (php/< d (buf-get dists col)))
+               (let [h        (php/min vh (php/intval (php// proj-dist
+                                                             (php/* (php/max 0.5 d) char-aspect))))
+                     face-row (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 6))]
+                 (when (and (php/>= face-row 1) (php/<= face-row vh))
+                   (buf-push parts
+                             (str "\e[" face-row ";"
+                                  (php/+ col 1) "H" glyph))))))))
   parts)
 
 (defn- paint-wall-lights
@@ -2037,17 +2054,9 @@
         ;; col-setup loop below. One vw-sized PHP array built per
         ;; frame; lookup is O(1) inside the loop.
         blood-cols                         (build-blood-cols vw bloody? (get stats :hurt-side))
-        ;; Per-enemy distance-fade is composed in the projection loop
-        ;; below and assigned to the per-column arrays. These are the
-        ;; FALLBACK shades used when no level config provides codes
-        ;; (e.g. test worlds built via new-world without going through
-        ;; build-world).
-        ehead                              (or (get stats :enemy-head) enemy-head)
-        ebody                              (or (get stats :enemy-body) enemy-body)
-        elegs                              (or (get stats :enemy-legs) enemy-body)
-        head-code                          (get stats :enemy-head-code)
-        body-code                          (get stats :enemy-body-code)
-        legs-code                          (get stats :enemy-legs-code)
+        ehead                              enemy-head
+        ebody                              enemy-body
+        elegs                              enemy-body
         ;; Pause-aware clock: render samples its blinks/pulses from
         ;; this instead of wall time so every time-driven animation
         ;; freezes the moment the game is paused (issue #7).
@@ -2057,16 +2066,6 @@
         ;; the face. Eye blinks and scales/muscles shift on alternating
         ;; beats so the monster looks animated without per-enemy state.
         face-phase                         (php/sin (php/* t 3.0))
-        eface                              (if (php/> face-phase 0.0)
-                                             (get stats :enemy-face)
-                                             (or (get stats :enemy-face-alt)
-                                                 (get stats :enemy-face)))
-        body-glyph-base                    (get stats :enemy-body-glyph)
-        body-glyph                         (if (php/< face-phase 0.0)
-                                             body-glyph-base
-                                             (or (get stats :enemy-body-glyph-alt)
-                                                 body-glyph-base))
-        body-glyph-fg                      (get stats :enemy-body-glyph-fg)
         ;; Cast phase. When the F3 overlay is on, sample microtime
         ;; around the call so render! can split cast-ms from total
         ;; frame-ms. The branch is the only debug-gated cost in the
@@ -2231,27 +2230,40 @@
                    ;; enemy never fades to invisible.
                    body-fade (php/min 0.85 (php/+ dist-fade (php/* dmg 0.35)))]
                (let [e-top (php/intdiv (php/- vh h) 2)]
-                 (let [e-bot   (php/+ e-top h)
-                       e-mid   (php/+ e-top (php/intdiv h 3))
-                       e-lower (php/+ e-top (php/intdiv (php/* h 2) 3))
+                 (let [e-bot         (php/+ e-top h)
+                       e-mid         (php/+ e-top (php/intdiv h 3))
+                       e-lower       (php/+ e-top (php/intdiv (php/* h 2) 3))
+                       ;; Per-enemy catalog lookup — mixed-monster rooms
+                       ;; (boss + minions) pick the right palette per
+                       ;; sprite, single-type rooms hit the same kw on
+                       ;; every iteration so the cost is one map get.
+                       visuals       (visuals-for-type (:type proj) stats)
+                       head-code     (get visuals :head-code)
+                       body-code     (get visuals :body-code)
+                       legs-code     (get visuals :legs-code)
+                       body-glyph-fg (get visuals :body-glyph-fg)
+                       body-glyph    (if (php/< face-phase 0.0)
+                                       (get visuals :body-glyph)
+                                       (or (get visuals :body-glyph-alt)
+                                           (get visuals :body-glyph)))
                        ;; Faded shade strings for this enemy at its
                        ;; current distance. Computed ONCE per enemy
                        ;; and assigned to every column it covers.
-                       fhead   (cond
-                                 (and head-code (php/< d aggro-distance))
-                                 (enemy-aggro-head-string head-code aggro-bright?)
-                                 head-code
-                                 (enemy-shade-string head-code dist-fade)
-                                 :else
-                                 ehead)
-                       fbody   (cond
-                                 (and body-code body-glyph body-glyph-fg)
-                                 (enemy-textured-shade-string body-code body-fade body-glyph body-glyph-fg)
-                                 body-code
-                                 (enemy-shade-string body-code body-fade)
-                                 :else
-                                 ebody)
-                       flegs   (if legs-code (enemy-shade-string legs-code dist-fade) elegs)]
+                       fhead         (cond
+                                       (and head-code (php/< d aggro-distance))
+                                       (enemy-aggro-head-string head-code aggro-bright?)
+                                       head-code
+                                       (enemy-shade-string head-code dist-fade)
+                                       :else
+                                       ehead)
+                       fbody         (cond
+                                       (and body-code body-glyph body-glyph-fg)
+                                       (enemy-textured-shade-string body-code body-fade body-glyph body-glyph-fg)
+                                       body-code
+                                       (enemy-shade-string body-code body-fade)
+                                       :else
+                                       ebody)
+                       flegs         (if legs-code (enemy-shade-string legs-code dist-fade) elegs)]
                    (loop [c c-from]
                      (when (php/<= c c-to)
                        (when (php/< d (buf-get dists c))
@@ -2413,7 +2425,7 @@
             ;; Numbered rebinds so phel lint's shadowed-binding stays
             ;; quiet without changing semantics. Threading (->) would
             ;; be cleaner but trips arity-mismatch lint.
-            p1          (paint-face-overlay       parts world stats vw vh dists eface)
+            p1          (paint-face-overlay       parts world stats vw vh dists face-phase)
             p2          (paint-wall-lights        p1 t vw vh hits hxs hys tops)
             p3          (paint-door-face          p2 stats vw vh hits tops bots)
             p4          (paint-crosshair          p3 stats vw vh center-bg)

@@ -1,26 +1,34 @@
 # Monsters
 
-`src/modules/core/enemy.phel` (data + AI) and `src/modules/core/level.phel` (per-type catalog). Visual rendering by `io/render.phel`.
+- `src/modules/core/enemies.phel` — type catalog (visuals + default HP)
+- `src/modules/core/enemy.phel` — record + spawn + chase AI
+- Visual rendering in `io/render.phel` (per-enemy `:type` lookup).
 
-## Five types
+## Catalog (`enemy-types`)
 
-| Level | Name | HP | Head | Body | Legs | Face | Body pattern |
-|---|---|---|---|---|---|---|---|
-| 1 | imps        | 1 | 196 (bright red) | 124 (dark red) | 52 (black-red) | ●/◯ yellow | `░` |
-| 2 | demons      | 2 | 165 (magenta) | 126 (purple) | 90 (deep magenta) | ▼/▾ white | `▒` |
-| 3 | cacodemons  | 3 | 51 (bright cyan) | 38 (cyan) | 24 (dark cyan) | ◉/◎ black | `⋄` |
-| 4 | barons      | 4 | 46 (bright green) | 34 (green) | 22 (forest) | Λ/λ black | `▓` |
-| 5 | cyberdemons | 5 | 240 (grey helmet) | 124 (red flesh) | 238 (grey legs) | ■/□ red blink | `▦` |
+Each entry has: `:name :default-lives :head-code :body-code :legs-code :body-glyph :body-glyph-alt :body-glyph-fg :face :face-alt :face-attack`. Render reads them by kw per enemy.
 
-Each enemy carries `:lives` (current HP) and `:max-lives` (level cap). `enemy/shoot` decrements `:lives` per hit; only flips `:alive false` and arms the respawn timer when `:lives` hits zero. The renderer reads `damage-ratio = 1 - lives/max-lives` from `project-enemy` and adds it to the per-frame distance fade so the body zone shades darker (toward black) as HP drops — wounded enemies read as "bloodied" from across the room without needing extra glyphs or a HUD bar.
+| Kw | Name | Default HP | Head | Body | Face | Notes |
+|---|---|---|---|---|---|---|
+| `:imp`      | imp        | 1 | 196 red    | 124 red    | ●/◯ yellow      | L1 default |
+| `:demon`    | demon      | 2 | 165 magenta| 126 purple | ▼/▾ white       | L2 default |
+| `:caco`     | cacodemon  | 3 | 51  cyan   | 38  cyan   | ◉/◎ black       | L3 default |
+| `:baron`    | baron      | 4 | 46  green  | 34  green  | Λ/λ black       | L4 default |
+| `:cyber`    | cyberdemon | 5 | 240 grey   | 124 red    | ■/□ red blink   | L5 default |
+| `:spectre`  | spectre    | 3 | 117 cyan   | 67  steel  | ○/◌ white       | L6+ stub |
+| `:revenant` | revenant   | 4 | 255 bone   | 245 grey   | ☠/◔ black       | L6+ stub |
+| `:archvile` | archvile   | 5 | 208 orange | 166 amber  | ∺/≋ black       | L6+ stub |
+| `:mancubus` | mancubus   | 4 | 137 tan    | 94  brown  | ═/─ black       | L6+ stub |
+| `:pinky`    | pinky      | 2 | 213 pink   | 199 hot-pk | ≣/≡ black       | L6+ stub |
 
-On every non-killing hit, `shoot` also stamps `:hit-flash-secs hit-flash-seconds` (1.2s) onto the wounded enemy. `paint-enemy-hp-flashes` reads the timer and floats the remaining HP digit above the head for that window, bright yellow on a dark BG; `advance` decays the timer each frame so the digit fades on its own without a separate ticker. 1-HP enemies skip the digit (any hit is a kill).
+Adding a new type = append one entry to `enemy-types`. Adding a level that uses it = one entry in `levels` (see [level-system.md](level-system.md)).
 
-Each row is one map entry under `levels` in `core/level.phel`. Adding a 6th monster is a single map literal.
+Each enemy carries `:lives` / `:max-lives` / `:type`. `enemy/shoot` drops `:lives` per hit; only flips `:alive false` and arms respawn when 0. `damage-ratio = 1 - lives/max-lives` darkens the body shade — wounded enemies read as "bloodied" from across the room without a HUD bar. Non-killing hits also stamp `:hit-flash-secs 1.2` so a yellow HP digit floats above the head.
 
 ## Spawning
 
-`spawn-enemies` places N enemies on random open cells at least `min-dist-from` units from the player. Used at level start (`build-world`) and on respawn.
+- `spawn-enemies grid n min-dist px py [max-lives [type-kw]]` — single-type rooms.
+- `spawn-enemies-mixed grid specs min-dist px py` — multi-type. Spec shape: `{:type :count [:lives N]}`. Each enemy carries `:type` for render lookup. Used by `build-world` whenever a level's `:enemies` field is a vector (and for the L10 boss arena where `{:type :cyber :count 1 :lives 20}` + `{:type :imp :count 4}` paints one boss surrounded by minions).
 
 ## Chase AI
 

@@ -1,0 +1,187 @@
+(ns phel-doom.modules.core.enemies)
+
+;; ---------------------------------------------------------------------
+;; Enemy catalog.
+;;
+;; One map literal per monster type. Level entries pick a type by kw
+;; (e.g. `:enemy :imp`) — render reads visuals from this catalog so
+;; the level layer stays purely about disposition (size / wall count /
+;; counts / chase speed / lock colour).
+;;
+;; Adding a new monster type = append one entry here. Adding a new
+;; level that uses it = one entry in levels.phel.
+;;
+;; Visual fields per entry:
+;;   :name             short label (HUD intro + tests)
+;;   :default-lives    HP fallback when a level / spec doesn't override
+;;   :head-code        256-color BG code for the head zone
+;;   :body-code        256-color BG code for the body zone
+;;   :legs-code        256-color BG code for the legs zone
+;;   :body-glyph       1-char texture stamped over the body
+;;   :body-glyph-alt   alt-frame glyph (walk cycle)
+;;   :body-glyph-fg    256-color FG for the body texture
+;;   :face             ANSI escape sequence for the face overlay (idle)
+;;   :face-alt         alt-frame face glyph (eye blink / fang flicker)
+;;   :face-attack      face shown within aggro distance — flashes
+;; ---------------------------------------------------------------------
+
+(def enemy-types
+  {;; --- Current catalog (L1-L5) ----------------------------------
+   :imp
+   {:name           "imp"
+    :default-lives  1
+    :head-code      196
+    :body-code      124
+    :legs-code      52
+    :body-glyph     "░"
+    :body-glyph-alt "▒"
+    :body-glyph-fg  88
+    :face           "\e[48;5;196;38;5;226;1m●\e[0m"
+    :face-alt       "\e[48;5;196;38;5;226;1m◯\e[0m"
+    :face-attack    "\e[5;48;5;196;38;5;226;1m✸\e[0m"}
+
+   :demon
+   {:name           "demon"
+    :default-lives  2
+    :head-code      165
+    :body-code      126
+    :legs-code      90
+    :body-glyph     "▒"
+    :body-glyph-alt "░"
+    :body-glyph-fg  96
+    :face           "\e[48;5;165;38;5;231;1m▼\e[0m"
+    :face-alt       "\e[48;5;165;38;5;231;1m▾\e[0m"
+    :face-attack    "\e[5;48;5;165;38;5;231;1m★\e[0m"}
+
+   :caco
+   {:name           "cacodemon"
+    :default-lives  3
+    :head-code      51
+    :body-code      38
+    :legs-code      24
+    :body-glyph     "⋄"
+    :body-glyph-alt "◇"
+    :body-glyph-fg  24
+    :face           "\e[48;5;51;38;5;232;1m◉\e[0m"
+    :face-alt       "\e[48;5;51;38;5;232;1m◎\e[0m"
+    :face-attack    "\e[5;48;5;51;38;5;196;1m✺\e[0m"}
+
+   :baron
+   {:name           "baron"
+    :default-lives  4
+    :head-code      46
+    :body-code      34
+    :legs-code      22
+    :body-glyph     "▓"
+    :body-glyph-alt "▒"
+    :body-glyph-fg  22
+    :face           "\e[48;5;46;38;5;232;1mΛ\e[0m"
+    :face-alt       "\e[48;5;46;38;5;232;1mλ\e[0m"
+    :face-attack    "\e[5;48;5;46;38;5;196;1m▲\e[0m"}
+
+   :cyber
+   {:name           "cyberdemon"
+    :default-lives  5
+    :head-code      240
+    :body-code      124
+    :legs-code      238
+    :body-glyph     "▦"
+    :body-glyph-alt "▤"
+    :body-glyph-fg  240
+    :face           "\e[48;5;240;38;5;196;1m■\e[0m"
+    :face-alt       "\e[48;5;240;38;5;196;1m□\e[0m"
+    :face-attack    "\e[5;48;5;240;38;5;226;1m✖\e[0m"}
+
+   ;; --- Stubs ready for L6-L10 ------------------------------------
+   :spectre
+   ;; Cyan ghost: pale head + ash-grey body, semi-transparent feel
+   ;; from the high-FG glyph. Hollow eye blinks open.
+   {:name           "spectre"
+    :default-lives  3
+    :head-code      117
+    :body-code      67
+    :legs-code      60
+    :body-glyph     "▒"
+    :body-glyph-alt "░"
+    :body-glyph-fg  153
+    :face           "\e[48;5;117;38;5;231;1m○\e[0m"
+    :face-alt       "\e[48;5;117;38;5;231;1m◌\e[0m"
+    :face-attack    "\e[5;48;5;117;38;5;226;1m✦\e[0m"}
+
+   :revenant
+   ;; White bone, black-grey body, the classic skeletal silhouette.
+   ;; Skull-face stares; the alt frame shows a jaw drop.
+   {:name           "revenant"
+    :default-lives  4
+    :head-code      255
+    :body-code      245
+    :legs-code      237
+    :body-glyph     "▤"
+    :body-glyph-alt "▦"
+    :body-glyph-fg  250
+    :face           "\e[48;5;255;38;5;232;1m☠\e[0m"
+    :face-alt       "\e[48;5;255;38;5;232;1m◔\e[0m"
+    :face-attack    "\e[5;48;5;255;38;5;196;1m✠\e[0m"}
+
+   :archvile
+   ;; Orange caster: bright orange head over a deep amber body.
+   ;; Two-eye face that flickers to a flame on attack.
+   {:name           "archvile"
+    :default-lives  5
+    :head-code      208
+    :body-code      166
+    :legs-code      94
+    :body-glyph     "▓"
+    :body-glyph-alt "▒"
+    :body-glyph-fg  130
+    :face           "\e[48;5;208;38;5;232;1m∺\e[0m"
+    :face-alt       "\e[48;5;208;38;5;232;1m≋\e[0m"
+    :face-attack    "\e[5;48;5;208;38;5;226;1m♨\e[0m"}
+
+   :mancubus
+   ;; Bulky brown: warm tan head, mid-brown body, bog-brown legs.
+   ;; Sneering mouth; gun-barrel on attack.
+   {:name           "mancubus"
+    :default-lives  4
+    :head-code      137
+    :body-code      94
+    :legs-code      58
+    :body-glyph     "▓"
+    :body-glyph-alt "▦"
+    :body-glyph-fg  58
+    :face           "\e[48;5;137;38;5;232;1m═\e[0m"
+    :face-alt       "\e[48;5;137;38;5;232;1m─\e[0m"
+    :face-attack    "\e[5;48;5;137;38;5;226;1m◐\e[0m"}
+
+   :pinky
+   ;; Pink rusher: hot-pink head, magenta body, low HP high speed.
+   ;; Gnashing teeth — fast face cycle for animated chomp.
+   {:name           "pinky"
+    :default-lives  2
+    :head-code      213
+    :body-code      199
+    :legs-code      161
+    :body-glyph     "░"
+    :body-glyph-alt "▒"
+    :body-glyph-fg  89
+    :face           "\e[48;5;213;38;5;232;1m≣\e[0m"
+    :face-alt       "\e[48;5;213;38;5;232;1m≡\e[0m"
+    :face-attack    "\e[5;48;5;213;38;5;226;1m≢\e[0m"}})
+
+(def required-keys
+  "Every entry must carry these — tests pin completeness."
+  [:name :default-lives :head-code :body-code :legs-code
+   :body-glyph :body-glyph-alt :body-glyph-fg
+   :face :face-alt :face-attack])
+
+(defn type-spec
+  "Lookup the spec for a type kw. Returns nil for unknown kws so
+   callers can decide whether to crash or fall back."
+  [type-kw]
+  (get enemy-types type-kw))
+
+(defn default-lives-for
+  "HP fallback when a level / spec doesn't override. Defaults to 1
+   so an unknown type still spawns as a single-shot enemy."
+  [type-kw]
+  (or (get-in enemy-types [type-kw :default-lives]) 1))

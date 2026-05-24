@@ -1,29 +1,66 @@
 # Level system
 
-5-level progression catalog + `build-world` factory. `src/modules/core/level.phel`.
+Progression catalog + `build-world` factory. `src/modules/core/level.phel`.
 
 ## Catalog
 
 ```phel
 (def levels
-  [{:size [22 16] :walls 12 :enemies 4  :chase 0.8 :enemy-lives 1 :name "imps"}
-   {:size [28 20] :walls 22 :enemies 6  :chase 1.0 :enemy-lives 2 :name "demons"}
-   {:size [36 24] :walls 38 :enemies 8  :chase 1.3 :enemy-lives 3 :name "cacodemons"}
-   {:size [44 28] :walls 55 :enemies 5  :chase 1.6 :enemy-lives 4 :door-lock :blue :name "barons"}
-   {:size [52 32] :walls 75 :enemies 7  :chase 2.0 :enemy-lives 5 :door-lock :red  :name "cyberdemons"}])
+  [{:size [22 16] :walls 12 :enemy :imp   :enemies 4 :chase 0.8 :name "imps"}
+   {:size [28 20] :walls 22 :enemy :demon :enemies 6 :chase 1.0 :name "demons"}
+   {:size [36 24] :walls 38 :enemy :caco  :enemies 8 :chase 1.3 :name "cacodemons"}
+   {:size [44 28] :walls 55 :enemy :baron :enemies 5 :chase 1.6 :name "barons"      :door-lock :blue}
+   {:size [52 32] :walls 75 :enemy :cyber :enemies 7 :chase 2.0 :name "cyberdemons" :door-lock :red}])
 ```
+
+Required fields:
 
 | Field | Meaning |
 |---|---|
-| `:size`        | `[width height]` of grid in cells |
-| `:walls`       | Random wall blobs scattered inside |
-| `:enemies`     | Monsters to spawn |
-| `:chase`       | Chase AI speed (units/sec) |
-| `:enemy-lives` | Per-enemy HP; controls hit-flash digit, wounded body shade |
-| `:door-lock`   | `:blue` / `:red` / absent — colour required to pass the exit |
-| `:name`        | Display name (HUD + intro splash) |
+| `:size`     | `[width height]` of grid in cells |
+| `:walls`    | Random wall blobs (procedural path only) |
+| `:enemy`    | Catalog kw — see [monsters.md](monsters.md) for the type list |
+| `:enemies`  | Int (count of `:enemy`) OR vector of mixed specs (see below) |
+| `:chase`    | Chase AI speed (units/sec) |
+| `:name`     | HUD + intro-splash label |
 
-Plus enemy visual fields covered in [monsters.md](monsters.md): `:head-code`, `:body-code`, `:legs-code`, `:body-glyph`, `:body-glyph-fg`, `:face`, `:face-alt`, `:face-attack`.
+Optional:
+
+| Field | Meaning |
+|---|---|
+| `:enemy-lives` | Override the catalog's `:default-lives` (single-type entries only) |
+| `:door-lock`   | `:blue` / `:red` — adds a matching keycard pickup and locks the exit |
+| `:layout`      | Hand-authored ASCII grid (vector of strings) — bypasses `random-grid` |
+
+### Mixed-monster rooms
+
+When `:enemies` is a vector, each spec spawns its own count + HP and the enemy carries `:type` for render lookup:
+
+```phel
+{:size [40 30] :walls 50 :enemy :imp :name "the brood" :chase 1.8
+ :enemies [{:type :pinky :count 3 :lives 2}
+           {:type :baron :count 3 :lives 4}
+           {:type :mancubus :count 2}]}   ; :lives omitted → catalog default
+```
+
+### Hand-authored arenas (`:layout`)
+
+`[" ###### " " #....# " " #..@.# " " #....D " " ###### "]` parses via `map/parse-layout`. Char map:
+
+| Char | Cell |
+|---|---|
+| `#` | wall |
+| `.` | floor |
+| `@` | floor + player spawn |
+| `D` | unlocked door |
+| `B` | blue-locked door |
+| `R` | red-locked door |
+
+`:layout` skips `random-grid`, `seed-doors`, and `lock-the-door` — the author placed everything explicitly. Enemy spawn (random / mixed-spec) still applies on top.
+
+### Adding a new room
+
+Append one map literal to `levels`. Adding a new enemy type = append one entry to `enemies/enemy-types` (see [monsters.md](monsters.md)).
 
 ## `config-for`
 
@@ -38,16 +75,15 @@ Level N config (1-indexed). Clamps out-of-range to nearest valid.
 
 Signature: `(build-world level-num lives backpack? diff owned)`. Sequence per build:
 
-1. `random-grid` with `:walls` random 1×1 / 2×2 blobs
-2. `seed-doors` carves one exit. `lock-the-door` upgrades it to `cell-door-blue` / `cell-door-red` when `:door-lock` is set.
-3. Player spawn at a random open cell with random angle.
-4. `:enemies` monsters at ≥ `enemy-min-spawn-dist 3.0` from player, each with HP = `:enemy-lives`.
-5. `maybe-spawn-heart` only if `lives < max-lives`.
-6. `maybe-spawn-armor` (50%); `maybe-spawn-berserk` (1/8); `maybe-spawn-invuln` (1/12); `maybe-spawn-backpack` (L2+, 1/5, skipped when already owned).
-7. `maybe-spawn-keycard` when `:door-lock` is set.
-8. `maybe-spawn-weapon-pickups`: shotgun on L2 / chaingun on L3, skipped when already owned. Pistol never spawns as a pickup.
-9. `spawn-ammo-boxes` count = `ceil(enemies × max-lives / 8)`, floor 2.
-10. Stamp enemy visuals, `:level-name`, `:difficulty`, 1.5s `:intro-secs`.
+1. Grid: hand-authored (`map/parse-layout` of `:layout`) OR procedural (`random-grid` + `seed-doors` + `lock-the-door`).
+2. Player spawn: `:layout`'s `@` cell OR `random-spawn`. Random angle either way.
+3. Enemies: `spawn-enemies-mixed` from the normalised spec vector. Each enemy carries `:type` for per-enemy render visuals.
+4. `maybe-spawn-heart` only if `lives < max-lives`.
+5. `maybe-spawn-armor` (50%); `maybe-spawn-berserk` (1/8); `maybe-spawn-invuln` (1/12); `maybe-spawn-backpack` (L2+, 1/5, skipped when already owned).
+6. `maybe-spawn-keycard` when `:door-lock` is set.
+7. `maybe-spawn-weapon-pickups`: shotgun on L2 / chaingun on L3, skipped when already owned.
+8. `spawn-ammo-boxes` count = `ceil(sum(count × lives) / 8)`, floor 2.
+9. Stamp `:enemy` (primary type), `:level-name`, `:difficulty`, 1.5s `:intro-secs`.
 
 `run-levels` (in `commands/play.phel`) wraps the call and overlays cross-level carries on top of the fresh world: **active weapon + per-weapon mag/reserve state**, minimap + sound toggles, `:god?` flag.
 

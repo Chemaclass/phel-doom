@@ -11,13 +11,13 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Ammo loop (closes #5): finite reserve (start 30, cap 50), per-level ammo-box pickups (L1 2 → L5 8), three layered reload cues (LOW AMMO pulse, periodic press-R reminder, dry-fire CLICK), 1.2s drop/refill/raise reload animation.
-- Enemies have per-level HP (1→5). Wounded body shades darker, yellow HP digit floats above the head 1.2s after each hit. Every kill rolls a loot drop (ammo > armor > heart, 50% nothing).
-- HUD reshuffle: game-info strip top-left under hearts; pos/angle/fps moved into the F3 overlay; pause menu lists every key binding; minimap auto-scales to ≤ 1/3 screen on narrow terminals.
-- Armor caps at 3 (was unbounded). Pickups beyond cap consume the box but don't bump — same pattern as max-lives + heart pickups.
-- Death + victory end screens responsive: box width adapts to viewport (22..36 cols, 4-col margin), and short terminals (< 20 rows) drop the best-scores block + extra padding so the screen never clips off the bottom.
-- Shoot animation kicks the pistol sprite up ~2 rows instead of tilting the whole 3D view. Sine curve recoil settles back to rest as `:fire-anim` decays.
-- Multi-weapon roster (DOOM-classic 3-slot): **pistol** (10-mag, 0.12s cd, 1 dmg, 1.2s reload), **shotgun** (4-mag, 0.6s cd, 3 dmg, 2.0s reload), **chaingun** (30-mag, 0.05s cd, 1 dmg, 1.8s reload). Number keys 1/2/3 snap to each slot (no-op mid-reload). Per-weapon mag + reserve persist across switches; ammo-box pickups feed the active weapon's reserve at its own `:ammo-per-box` rate capped at the weapon's own `:reserve-cap`. HUD strip shows the active weapon name (`L1 imps  kills 7  pistol 7/10 [23]`).
+- Three weapons on 1/2/3: pistol (snappy, 1 dmg), shotgun (slow, 3 dmg), chaingun (spray, 1 dmg). Per-weapon mag + reserve persist across switches.
+- Ammo loop (closes #5): finite reserve, scaled ammo-box pickups (L1 2 → L5 8), 1.2s reload animation, layered cues (LOW AMMO pulse, periodic press-R reminder, dry-fire CLICK).
+- Per-level enemy HP (1→5). Wounded body shades darker; yellow HP digit above the head 1.2s post-hit. Every kill rolls a loot drop (ammo > armor > heart, 50% nothing).
+- HUD reshuffle: game-info top-left under hearts (shows active weapon); pos/angle/fps moved into the F3 overlay; pause menu lists every key.
+- Shoot recoils the pistol sprite up 2 rows (no more screen tilt).
+- Responsive UI: minimap ≤ 1/3 vw on narrow terminals; death + victory boxes auto-size 22–36 cols and drop the best-scores block on short rows.
+- Armor caps at 3.
 
 ## [0.2.0] - 2026-05-22
 

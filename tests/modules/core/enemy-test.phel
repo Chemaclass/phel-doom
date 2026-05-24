@@ -298,3 +298,60 @@
 
 (deftest test-spawn-enemies-mixed-empty-specs-returns-nothing
   (is (= 0 (count (spawn-enemies-mixed [[0 0] [0 0]] [] 0.0 0.0 0.0)))))
+
+(deftest test-spawn-enemies-mixed-stamps-max-concurrent-when-set
+  ;; Spec sets :max-concurrent 1 → every spawned enemy carries it so
+  ;; advance/respawn can cap minion pressure (used by L10 imps).
+  (let [g  (apply vector
+                  (map (fn [_] (apply vector (map (fn [__] 0) (range 0 10))))
+                       (range 0 10)))
+        es (spawn-enemies-mixed g [{:type :imp :count 2 :lives 1 :max-concurrent 1}]
+                                0.0 0.0 0.0)]
+    (is (= 2 (count es)))
+    (is (every? (fn [e] (= 1 (:max-concurrent e))) es))))
+
+(deftest test-spawn-enemies-mixed-no-max-concurrent-by-default
+  ;; Spec without :max-concurrent → field stays absent (nil).
+  (let [g  (apply vector
+                  (map (fn [_] (apply vector (map (fn [__] 0) (range 0 10))))
+                       (range 0 10)))
+        es (spawn-enemies-mixed g [{:type :imp :count 2 :lives 1}]
+                                0.0 0.0 0.0)]
+    (is (every? (fn [e] (nil? (:max-concurrent e))) es))))
+
+;; ---------------------------------------------------------------------
+;; Respawn cap (:max-concurrent): dead enemies whose revival would
+;; exceed the live count of the same type are held back. The L10 imp
+;; pair (2 with :max-concurrent 1) sees at most 1 revive at a time.
+;; ---------------------------------------------------------------------
+
+(deftest test-advance-respawn-blocked-when-cap-hit
+  ;; Two imps, cap 1. One is alive, one is dead with expired timer.
+  ;; The expired one must NOT revive this frame (cap of 1 alive).
+  (let [es  [{:x 3.0 :y 3.0 :alive true :lives 1 :max-lives 1
+              :type :imp :max-concurrent 1 :hit-flash-secs 0.0}
+             {:x 0.0 :y 0.0 :alive false :lives 0 :max-lives 1
+              :type :imp :max-concurrent 1 :respawn-after 0.0}]
+        es' (advance es open-grid 5.0 5.0 0.1 0.5)]
+    (is (= true  (:alive (first  es'))))   ; the live one stays
+    (is (= false (:alive (second es')))))) ; the dead one stays dead
+
+(deftest test-advance-respawn-fires-when-under-cap
+  ;; One imp, cap 1. It's dead with expired timer. Cap is NOT met
+  ;; (0 alive < 1), so revival proceeds.
+  (let [es  [{:x 0.0 :y 0.0 :alive false :lives 0 :max-lives 1
+              :type :imp :max-concurrent 1 :respawn-after 0.0}]
+        es' (advance es open-grid 5.0 5.0 0.1 0.5)]
+    (is (= true (:alive (first es'))))))
+
+(deftest test-advance-respawn-uncapped-still-works
+  ;; No :max-concurrent → unchanged behaviour from earlier PRs.
+  (let [es  [{:x 0.0 :y 0.0 :alive false :lives 0 :max-lives 2
+              :type :baron :respawn-after 0.0}]
+        es' (advance es open-grid 5.0 5.0 0.1 0.5)
+        e   (first es')]
+    (is (= true (:alive e)))
+    ;; Respawn now carries :type forward (was a bug previously —
+    ;; freshly-revived enemies dropped :type and reverted to the
+    ;; level's default visuals).
+    (is (= :baron (:type e)))))

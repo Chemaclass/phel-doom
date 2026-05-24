@@ -166,12 +166,33 @@
           (recur (php/- attempts 1))
           [ex ey])))))
 
+(defn- alive-count-of-type
+  "How many enemies in `enemies` are currently alive AND carry `:type`
+   matching `t`. Used to enforce :max-concurrent on respawn."
+  [enemies t]
+  (loop [es    enemies
+         total 0]
+    (cond
+      (php/=== es nil)       total
+      (php/=== (count es) 0) total
+      :else
+      (let [e (first es)]
+        (recur (next es)
+               (if (and (:alive e) (php/=== (:type e) t))
+                 (php/+ total 1)
+                 total))))))
+
 (defn- tick-one
   "One frame of update for a single enemy. Alive → walk toward the
    player. Dead WITH a respawn timer → decrement; on expiry revive at
    a random open cell at least respawn-min-dist away. Dead WITHOUT a
-   timer (e.g. spawned that way in a test) stays untouched."
-  [e grid player-x player-y ^float dt ^float speed]
+   timer (e.g. spawned that way in a test) stays untouched.
+
+   Revival respects `:max-concurrent` when set on the enemy spec — if
+   the live count of the same `:type` is already at the cap, the
+   timer is bumped back so the next attempt fires in 0.5s. Lets the
+   L10 boss room cap minion pressure at 1 alive at a time."
+  [e grid player-x player-y ^float dt ^float speed all-enemies]
   (cond
     (:alive e)                       (let [stepped (step-toward e grid player-x player-y dt speed)
                                            flash'  (php/max 0.0 (php/- (or (:hit-flash-secs e) 0.0) dt))]
@@ -181,27 +202,34 @@
     (let [t (php/- (:respawn-after e) dt)]
       (if (php/> t 0.0)
         (assoc e :respawn-after t)
-        (let [pos (random-spawn-far-from grid respawn-min-dist player-x player-y)]
+        (let [cap     (:max-concurrent e)
+              type-kw (:type e)
+              capped? (and cap (php/>= (alive-count-of-type all-enemies type-kw) cap))
+              pos     (when (not capped?)
+                        (random-spawn-far-from grid respawn-min-dist player-x player-y))]
           (if pos
-            ;; Carry :max-lives across the respawn so a revived baron is
-            ;; still a baron; refill :lives to full and clear the timer.
-            ;; Older callers / test fixtures without :max-lives fall back
-            ;; to 1, preserving the original one-shot-kill behaviour.
+            ;; Carry :max-lives, :type, :max-concurrent across the
+            ;; respawn so a revived baron is still a baron and the
+            ;; mixed-room cap keeps holding. Refill :lives to full
+            ;; and clear the timer. Older fixtures without :max-lives
+            ;; fall back to 1.
             (let [mx (or (:max-lives e) 1)]
-              {:x         (first pos)
-               :y         (second pos)
-               :alive     true
-               :lives     mx
-               :max-lives mx})
+              (merge e
+                     {:x         (first pos)
+                      :y         (second pos)
+                      :alive     true
+                      :lives     mx
+                      :max-lives mx}))
             (assoc e :respawn-after 0.5)))))))
 
 (defn advance
   "Per-frame update for every enemy: alive enemies chase the player at
    `speed` units/sec; dead enemies tick their respawn timer and rejoin
-   the fight once it expires."
+   the fight once it expires (unless their `:max-concurrent` cap is
+   already met — see tick-one)."
   [enemies grid player-x player-y dt speed]
   (apply vector
-         (map (fn [e] (tick-one e grid player-x player-y dt speed))
+         (map (fn [e] (tick-one e grid player-x player-y dt speed enemies))
               enemies)))
 
 (def scare-trigger-dist
@@ -330,11 +358,14 @@
                   (php/- remaining 1))))))))
 
 (defn spawn-enemies-mixed
-  "Spawn from a vector of `{:type kw :count N [:lives M]}` specs. Each
-   spec emits `:count` enemies of `:type` with `:lives` HP (falls back
-   to 1 if missing). Returns one flat vector of enemies, each carrying
-   `:type` for render lookup. Used by mixed-monster rooms — the L10
-   boss + surrounding imps falls out of this naturally."
+  "Spawn from a vector of `{:type kw :count N [:lives M] [:max-concurrent K]}`
+   specs. Each spec emits `:count` enemies of `:type` with `:lives` HP
+   (falls back to 1 if missing). Optional `:max-concurrent` caps how
+   many enemies of that type can be alive at once — when set, the
+   advance/respawn step blocks revival past the cap so e.g. the boss
+   room's 2 imps can have at most 1 alive at a time. Returns one flat
+   vector of enemies, each carrying `:type` (and `:max-concurrent` when
+   the spec sets it) for render + AI lookup."
   [grid specs min-d px py]
   (loop [remaining specs
          acc       []]
@@ -346,5 +377,10 @@
             t     (:type spec)
             n     (or (:count spec) 0)
             lives (or (:lives spec) 1)
-            batch (spawn-enemies grid n min-d px py lives t)]
+            cap   (:max-concurrent spec)
+            raw   (spawn-enemies grid n min-d px py lives t)
+            batch (if (nil? cap)
+                    raw
+                    (apply vector
+                           (map (fn [e] (assoc e :max-concurrent cap)) raw)))]
         (recur (next remaining) (apply vector (concat acc batch)))))))

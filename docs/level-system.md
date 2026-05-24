@@ -15,7 +15,7 @@
 | 7 | revenants | random mix | 4 revenants + 2 demons |
 | 8 | archvile court | random mix | 2 archviles + 3 cacos + 2 mancubi |
 | 9 | the brood | random mix | 3 pinkies + 3 barons + 2 mancubi |
-| 10 | the final | **hand-authored arena**, boss-locked exit | 1 cyberdemon BOSS (HP 20) + 4 imps. Kill the boss to unlock the north door. |
+| 10 | the final | **hand-authored arena**, boss-locked north door | 1 cyberdemon BOSS (HP 50) + 2 imps (cap 1 alive). Intro: "KILL THE BOSS TO ESCAPE". Bumping north door without kill: "☠ KILL THE BOSS ☠". Kill triggers victory. |
 
 ## Catalog
 
@@ -70,6 +70,7 @@ When `:enemies` is a vector, each spec spawns its own count + HP and the enemy c
 | `D` | unlocked door |
 | `B` | blue-locked door |
 | `R` | red-locked door |
+| `X` | boss-locked door (synthetic keycard, no pickup) |
 
 `:layout` skips `random-grid`, `seed-doors`, and `lock-the-door` — the author placed everything explicitly. Enemy spawn (random / mixed-spec) still applies on top.
 

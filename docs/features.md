@@ -20,10 +20,10 @@ See [rendering.md](rendering.md), [raycaster.md](raycaster.md),
 
 ## Levels + map
 
-- 10 levels: 5 procedurally-generated escalating rooms (L1-L5), 4 mixed-monster rooms (L6-L9), and L10 a hand-authored boss arena (cyberdemon HP 20 + 4 imp minions)
+- 10 levels: 5 procedurally-generated escalating rooms (L1-L5), 4 mixed-monster rooms (L6-L9), and L10 a hand-authored boss arena (cyberdemon HP 50 + 2 imp minions, cap 1 alive)
 - Per-level wall + sky + floor palette
 - Pickups: hearts (cap 5), armor (cap 3, absorbs one hit each), ammo boxes (per-weapon `:ammo-per-box`), berserk (20s ×2 dmg), invuln (10s immune), backpack (1-shot, doubles every weapon's reserve cap)
-- Keycards + locked exits on L4 (blue) / L5 (red). Intro splash adds a `FIND THE <COLOUR> KEY` subtitle on locked levels; compass top-centre tints the E/S/W/N letter pointing at the un-picked card in the lock colour; bumping the door without the matching key pulses `⚿ NEED <COLOUR> KEY ⚿` for 1.5s
+- Keycards + locked exits on L4 (blue) / L5 (red). Intro splash adds a `FIND THE <COLOUR> KEY` subtitle on locked levels; compass top-centre tints the E/S/W/N letter pointing at the un-picked card in the lock colour; bumping the door without the matching key pulses `⚿ NEED <COLOUR> KEY ⚿` for 1.5s. L10 boss door unlocks via synthetic `:boss` keycard granted on cyberdemon kill (no physical pickup); intro splash: `KILL THE BOSS TO ESCAPE`, door pulse: `☠ KILL THE BOSS ☠`
 - Walk-into-door auto-advance; pulsing minimap door + bright 3D door glyph
 - Cross-level carry: lives, kills, time, owned-weapons, **active weapon**, **per-weapon mag/reserve**, backpack, minimap + sound toggles. Retry/restart resets to fresh defaults.
 
@@ -35,8 +35,9 @@ See [level-system.md](level-system.md), [map.md](map.md).
   each with distinct color, body texture, animated face glyph, aggro
   pulse at close range
 - Per-level HP (L1 imp 1, L2 demon 2, L3 caco 3, L4 baron 4, L5
-  cyber 5). Wounded body shades darker as HP drops; a yellow HP
+  cyber 5; L10 boss cyber 50). Wounded body shades darker as HP drops; a yellow HP
   digit floats above the head for 1.2s after each hit
+- Shot knockback: every wounding hit shoves the enemy ~1 cell back along the shot direction (wall-clamped; killing blow skips push so corpse lands on death cell)
 - Attack telegraph: face swaps to `:face-attack` glyph within
   aggro-distance (1.8 units)
 - Hitscan combat: blood splatter, muzzle flash, 5-stage death anim,
@@ -51,7 +52,7 @@ See [level-system.md](level-system.md), [map.md](map.md).
 
   Pistol + chaingun spray while space is held; shotgun needs a fresh pull per shell. Pistol is the only weapon that overheats / jams. Distinct silhouette + palette per slot. Per-weapon mag/reserve persists across switches. First-time pickup auto-switches. Drop/refill/raise reload anim; sprite recoils 2 rows per shot.
 - Kill-loot ammo skips the pistol when other weapons are owned — biases toward the scarce shotgun + chaingun the player had to hunt for. Level-spawn boxes still refill the active weapon.
-- 5 lives, 1s i-frame, directional red hurt-side band, knockback shove.
+- 5 lives, 1s i-frame, directional red hurt-side band, knockback shove on contact damage.
 
 See [monsters.md](monsters.md), [combat.md](combat.md).
 
@@ -110,8 +111,8 @@ See [scores.md](scores.md).
 
 - `--difficulty=easy|normal|hard|nightmare` (`-d`) — scales enemy chase speed, per-enemy HP, per-level enemy count. HUD tag suppressed for `normal`.
 - `--god` (`-g`) or `make play-dev` — dev mode: contact damage suppressed end-to-end. HUD adds a yellow `GOD` badge after the hearts strip.
-- `--level=N` (`-l`) — start at level N (clamped to 1..num-levels). Combine with `--god` to jump straight into a boss room for testing. Shortcuts: `make play-boss` (L10), `make play-level LV=N`.
-- `--armory` (`-a`) or `make play-armory` — dev cheat: spawn owning every weapon, infinite ammo via per-frame mag + reserve refill. Pairs naturally with `--god` to test every mechanic end-to-end without grinding for pickups.
+- `--level=N` (`-l`) — start at level N (clamped to 1..num-levels). Pairs with `--god` to jump straight into a test level. Shortcuts: `make play-boss` (L10), `make play-level LV=N`.
+- `--armory` (`-a`) or `make play-armory` — dev cheat: spawn owning every weapon, infinite ammo via per-frame mag + reserve refill. Pairs with `--god` to test every mechanic end-to-end without grinding for pickups.
 
 ## Misc
 

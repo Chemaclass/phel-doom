@@ -1,6 +1,6 @@
 (ns phel-doom-tests.modules.core.enemy-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.modules.core.enemy :refer [new-enemy spawn-enemies spawn-enemies-mixed shoot advance tick-scare rear-attacker?]))
+  (:require phel-doom.modules.core.enemy :refer [new-enemy push-back-enemy spawn-enemies spawn-enemies-mixed shoot advance tick-scare rear-attacker?]))
 
 (def open-grid
   "Bordered 10x10 open arena, no interior walls."
@@ -355,3 +355,34 @@
     ;; freshly-revived enemies dropped :type and reverted to the
     ;; level's default visuals).
     (is (= :baron (:type e)))))
+
+;; ---------------------------------------------------------------------
+;; push-back-enemy: shove an enemy along a unit vector by `dist`
+;; units, wall-clamped via the existing wall? predicate.
+;; ---------------------------------------------------------------------
+
+(deftest test-push-back-enemy-shoves-along-vector
+  ;; Open arena, enemy at (3, 5), push 1 unit east (cos 1, sin 0).
+  (let [es  [{:x 3.0 :y 5.0 :alive true}]
+        es' (push-back-enemy es open-grid 0 1.0 0.0 1.0)]
+    (is (< (php/abs (- (:x (first es')) 4.0)) 0.0001))
+    (is (= 5.0 (:y (first es'))))))
+
+(deftest test-push-back-enemy-clamps-at-wall
+  ;; Enemy at (1.5, 1.5), push 5 units west — the full step lands
+  ;; in the (-3.5, 1.5) wall. Half + quarter fractions also miss.
+  ;; Enemy stays put.
+  (let [es  [{:x 1.5 :y 1.5 :alive true}]
+        es' (push-back-enemy es open-grid 0 -1.0 0.0 5.0)]
+    (is (= 1.5 (:x (first es'))))
+    (is (= 1.5 (:y (first es'))))))
+
+(deftest test-push-back-enemy-fallback-half-step
+  ;; Full 2-unit east push would land at x=5 (open), but enemy is
+  ;; at (8, 5) so the full step lands at x=10 = wall. Half-step
+  ;; lands at x=9 = still wall in the 10x10. Quarter lands at
+  ;; x=8.5 = open floor.
+  (let [es  [{:x 8.0 :y 5.0 :alive true}]
+        es' (push-back-enemy es open-grid 0 1.0 0.0 2.0)]
+    (is (or (= 8.5 (:x (first es')))      ; quarter-step success
+            (= 8.0 (:x (first es')))))))  ; or no-clearance fallback

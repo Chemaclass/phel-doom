@@ -1,10 +1,19 @@
 (ns phel-doom.modules.core.combat
   (:require phel-doom.modules.core.engine  :refer [cast-ray])
-  (:require phel-doom.modules.core.enemy   :refer [shoot])
+  (:require phel-doom.modules.core.enemy   :refer [push-back-enemy shoot])
   (:require phel-doom.modules.core.physics :refer [try-move])
   (:require phel-doom.modules.core.state   :refer [max-lives])
   (:require phel-doom.modules.core.weapons :refer [weapon-order weapon-spec weapons])
   (:require phel-doom.modules.io.sound   :refer [play-sfx!]))
+
+(def shot-knockback-distance
+  "World units an enemy is shoved AWAY from the player on every shot
+   that connects. ~1 cell. Wall-clamped (falls back to 0.5 / 0.25 if
+   the full distance lands in geometry) so the push never punts an
+   enemy through a wall. Bigger enemies (more HP) feel weighty as
+   they walk back into range; small enemies get knocked clear of the
+   muzzle giving the player a beat to reload."
+  1.0)
 
 (def armory-reserve
   "Reserve cap stamped onto every weapon when --armory is on. Picked
@@ -423,12 +432,24 @@
         killed-e  (get enemies-after idx)
         chain?    (php/> (or (:streak-secs world) 0.0) 0.0)
         streak'   (if chain? (php/+ (or (:streak world) 0) 1) 1)
+        ;; Shot-direction knockback: shove wounded enemies one cell
+        ;; back along the player's facing so heavy targets visibly
+        ;; recoil per hit. Skip on the killing blow so the corpse +
+        ;; loot drop stay on the death cell.
+        pushed-es (if killed?
+                    enemies-after
+                    (let [a     (:angle (:player world))
+                          cos-a (php/cos a)
+                          sin-a (php/sin a)]
+                      (push-back-enemy enemies-after (:grid world)
+                                       idx cos-a sin-a
+                                       shot-knockback-distance)))
         scored    (if killed?
-                    (assoc (update (assoc world :enemies enemies-after)
+                    (assoc (update (assoc world :enemies pushed-es)
                                    :kills (fn [k] (php/+ k 1)))
                            :streak      streak'
                            :streak-secs streak-window-seconds)
-                    (assoc world :enemies enemies-after))
+                    (assoc world :enemies pushed-es))
         unlocked  (if killed? (maybe-unlock-boss-door scored killed-e) scored)
         ;; Kill drops a random pickup at the corpse's cell. Wounds
         ;; don't drop — the kill is the reward trigger.

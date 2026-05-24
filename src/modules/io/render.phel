@@ -1452,27 +1452,76 @@
                        col0 "H" label)))))
   parts)
 
+(defn- sector-for-angle
+  "World-radian angle → cardinal sector index 0..3 (E S W N) — same
+   mapping the compass uses for the player's facing arrow."
+  [^float angle]
+  (let [norm (php/fmod (php/+ angle (php/* 4.0 php/M_PI))
+                       (php/* 2.0 php/M_PI))]
+    (mod (php/intval (php/+ 0.5 (php// norm (php// php/M_PI 2.0)))) 4)))
+
+(defn- key-direction-hint
+  "When the level is locked AND the player has not picked up the
+   matching keycard AND a card exists in :keycards, return a map
+   `{:sector 0..3 :colour kw}` so paint-compass can tint the
+   cardinal letter pointing at the key. nil otherwise — compass
+   stays in plain facing-only mode."
+  [world]
+  (let [lock  (:door-lock world)
+        held  (or (:held-keys world) #{})
+        cards (or (:keycards world) [])]
+    (cond
+      (php/=== lock nil)        nil
+      (contains? held lock)     nil
+      (php/=== (count cards) 0) nil
+      :else
+      (let [match (first (filter (fn [k] (php/=== (:colour k) lock)) cards))]
+        (if (php/=== match nil)
+          nil
+          (let [px (:x (:player world))
+                py (:y (:player world))
+                dx (php/- (:x match) px)
+                dy (php/- (:y match) py)]
+            {:sector (sector-for-angle (php/atan2 dy dx))
+             :colour lock}))))))
+
 (defn- paint-compass
-  "4-letter cardinal strip at top-centre; the bearing nearest to the
-   player's facing is highlighted yellow."
+  "4-letter cardinal strip at top-centre. Two highlights stack:
+     - yellow bold = player's facing sector
+     - blue / red bold = direction to the nearest un-picked keycard
+       on a locked level (key-direction-hint). When facing AND key
+       point at the same letter, the key colour wins so the player
+       knows where to go even while looking that way.
+   Other letters render dim white on the dark HUD strip."
   [parts world vw]
-  (let [pang   (or (:angle (:player world)) 0.0)
-        norm   (php/fmod (php/+ pang (php/* 4.0 php/M_PI))
-                         (php/* 2.0 php/M_PI))
-        sector (mod (php/intval (php/+ 0.5 (php// norm (php// php/M_PI 2.0))))
-                    4)
-        labels ["E" "S" "W" "N"]
-        cells  (loop [i 0 acc ""]
-                 (if (php/>= i 4)
-                   acc
-                   (recur (php/+ i 1)
-                          (str acc
-                               (if (php/=== i sector)
-                                 (str "\e[40;1;93m" (get labels i) "\e[0m")
-                                 (str "\e[40;2;97m" (get labels i) "\e[0m"))
-                               ;; Spacer cells also need the dark BG
-                               ;; so the strip reads as one solid bar.
-                               (if (php/< i 3) "\e[40m  " "")))))]
+  (let [pang     (or (:angle (:player world)) 0.0)
+        facing   (sector-for-angle pang)
+        key-hint (key-direction-hint world)
+        key-sec  (when key-hint (:sector key-hint))
+        key-sgr  (cond
+                   (php/=== (and key-hint (:colour key-hint)) :blue) "\e[40;94;1m"
+                   (php/=== (and key-hint (:colour key-hint)) :red)  "\e[40;91;1m"
+                   :else                                             nil)
+        labels   ["E" "S" "W" "N"]
+        cells    (loop [i 0 acc ""]
+                   (if (php/>= i 4)
+                     acc
+                     (recur (php/+ i 1)
+                            (str acc
+                                 (cond
+                                    ;; Key direction wins over facing
+                                    ;; so the cue stays visible when
+                                    ;; the player is already aimed at
+                                    ;; the right cardinal.
+                                   (and key-sgr (php/=== i key-sec))
+                                   (str key-sgr (get labels i) "\e[0m")
+
+                                   (php/=== i facing)
+                                   (str "\e[40;1;93m" (get labels i) "\e[0m")
+
+                                   :else
+                                   (str "\e[40;2;97m" (get labels i) "\e[0m"))
+                                 (if (php/< i 3) "\e[40m  " "")))))]
     (buf-push parts
               (str "\e[1;" (php/max 1 (php/- (php/intdiv vw 2) 3))
                    "H" cells)))

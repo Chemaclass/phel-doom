@@ -98,6 +98,21 @@
    leave it pinned forever."
   0.8)
 
+(def berserk-seconds
+  "Active window of the berserk powerup. While > 0 the player's
+   weapon damage is multiplied by `berserk-damage-mul` and render
+   paints a red rage tint on the viewport."
+  20.0)
+
+(def berserk-damage-mul
+  "Damage multiplier applied to every shot while berserk-secs > 0."
+  2)
+
+(defn berserk?
+  "True while the player's berserk timer is still ticking down."
+  [world]
+  (php/> (or (:berserk-secs world) 0.0) 0.0))
+
 (def heat-per-shot
   "Heat added on each shot. Heat decays continuously; when it crosses
    1.0 the pistol jams. 0.30 = ~4 shots cold-mashed before jam, ~6
@@ -156,6 +171,7 @@
         cooldown'    (php/max 0.0 (php/- (or (:fire-cooldown world) 0.0) dt))
         reload-cd'   (php/max 0.0 (php/- (or (:reload-cooldown world) 0.0) dt))
         click-secs'  (php/max 0.0 (php/- (or (:empty-click-secs world) 0.0) dt))
+        berserk'     (php/max 0.0 (php/- (or (:berserk-secs world) 0.0) dt))
         heat'        (php/max 0.0 (php/- (or (:heat world) 0.0) (php/* heat-cool-rate dt)))
         jam-secs'    (php/max 0.0 (php/- (or (:jam-secs world) 0.0) dt))]
     (assoc world
@@ -167,6 +183,7 @@
            :fire-cooldown   cooldown'
            :reload-cooldown reload-cd'
            :empty-click-secs click-secs'
+           :berserk-secs    berserk'
            :heat            heat'
            :jam-secs        jam-secs'
            ;; Window expired: streak counter goes back to 0 so the HUD
@@ -267,8 +284,9 @@
     (cast-ray (:pgrid world) (:x p) (:y p) (:angle p))))
 
 (defn- resolve-shot [world]
-  (let [p   (:player world)
-        dmg (or (:damage (w-spec world)) 1)]
+  (let [p        (:player world)
+        base-dmg (or (:damage (w-spec world)) 1)
+        dmg      (if (berserk? world) (php/* base-dmg berserk-damage-mul) base-dmg)]
     (shoot (:enemies world) (:x p) (:y p) (:angle p)
            (cast-wall-distance world)
            shot-hit-radius shot-max-range dmg)))

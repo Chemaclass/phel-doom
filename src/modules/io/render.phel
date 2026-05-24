@@ -54,7 +54,8 @@
 ;; on some iTerm2 themes) shows through and washes the overlay out.
 (def enemy-marker "\e[40;91;1mE\e[0m")
 (def heart-marker "\e[40;91;1m♥\e[0m")
-(def ammo-marker  "\e[40;93;1mA\e[0m")
+(def ammo-marker     "\e[40;93;1mA\e[0m")
+(def berserk-marker  "\e[40;91;1mB\e[0m")
 (def door-shade
   "Door body cell drawn when a ray hit a door. Frame glyph `▌` (left
    half block) on a dark steel BG with bright orange FG, so a column
@@ -141,6 +142,23 @@
   "Black ▣ on the yellow pulse BG so the icon flips contrast in tempo
    with the shade swap."
   "\e[48;5;220;38;5;52;1m▣")
+
+(def berserk-shade
+  "Berserk sphere idle BG: dark blood-red so it reads as 'rage' from
+   across the room, distinct from the dim heart red (52)."
+  "\e[48;5;88m ")
+
+(def berserk-shade-bright
+  "Berserk sphere pulse BG: saturated bright red flare."
+  "\e[48;5;196m ")
+
+(def berserk-glyph
+  "Yellow Ω on the dark-red BG — Greek omega reads as a 'fury sigil'."
+  "\e[48;5;88;38;5;226;1mΩ")
+
+(def berserk-glyph-bright
+  "White Ω on the bright pulse BG."
+  "\e[48;5;196;38;5;231;1mΩ")
 
 (def char-aspect 2.0)
 (def base-hud-rows 1)
@@ -396,6 +414,9 @@
 (defn- ammo-cells [boxes step out-w]
   (scaled-cells boxes step out-w (fn [_] true)))
 
+(defn- berserk-cells [bs step out-w]
+  (scaled-cells bs step out-w (fn [_] true)))
+
 (defn- minimap-rows
   "Render the world's grid into a PHP array of ANSI-coded strings,
    one per OUTPUT row. `step` collapses every step×step grid block
@@ -417,6 +438,7 @@
         emap                (enemy-cells (:enemies world) step out-w)
         hmap                (heart-cells (:hearts world) step out-w)
         amap                (ammo-cells  (:ammo-boxes world) step out-w)
+        bmap                (berserk-cells (:berserks world) step out-w)
         rows                (buf-mk)
         block-has-wall?     (fn [r0 c0]
                               (loop [dr 0]
@@ -464,6 +486,7 @@
                             (buf-get emap (php/+ (php/* row out-w) col)) enemy-marker
                             (buf-get hmap (php/+ (php/* row out-w) col)) heart-marker
                             (buf-get amap (php/+ (php/* row out-w) col)) ammo-marker
+                            (buf-get bmap (php/+ (php/* row out-w) col)) berserk-marker
                             :else                                        minimap-floor)))
               (recur (php/+ col 1))))
           (buf-set rows row (php/implode "" parts)))
@@ -951,6 +974,21 @@
                      mag-col mag "\e[0m\e[40;97m/" cap " "
                      res-col "[" reserve "]\e[0m")]
     (buf-push parts (str "\e[2;1H" styled)))
+  parts)
+
+(defn- paint-berserk-badge
+  "Centred top-of-screen `BERSERK Ns` banner while :berserk-secs is
+   ticking. Pulses red so the rage state is unmistakeable. Sits on
+   row 3 (under the row-2 game-info strip) so it doesn't fight the
+   compass / hearts."
+  [parts ^float t stats vw]
+  (let [secs (or (get stats :berserk-secs) 0.0)]
+    (when (and (php/> secs 0.0) (pulse t 6.0))
+      (let [text  (str " BERSERK " (php/intval (php/ceil secs)) "s ")
+            label (str "\e[48;5;52;38;5;226;1m" text "\e[0m")
+            col   (php/max 1 (php/- (php/intdiv vw 2)
+                                    (php/intdiv (php/strlen text) 2)))]
+        (buf-push parts (str "\e[3;" col "H" label)))))
   parts)
 
 (defn- paint-empty-click
@@ -1582,6 +1620,11 @@
         ammo-bright?                       (pulse t 7.0)
         ammo-shade-now                     (if ammo-bright? ammo-shade-bright ammo-shade)
         ammo-glyph-now                     (if ammo-bright? ammo-glyph-bright ammo-glyph)
+        ;; Berserk pulse — faster than ammo so a rage sphere flashes
+        ;; the most aggressively of any pickup, telegraphing the buff.
+        berserk-bright?                    (pulse t 9.0)
+        berserk-shade-now                  (if berserk-bright? berserk-shade-bright berserk-shade)
+        berserk-glyph-now                  (if berserk-bright? berserk-glyph-bright berserk-glyph)
         ;; Atmospheric haze pulls walls toward black as lives drop, so
         ;; the world reads as 'consumed by darkness' the closer the
         ;; player is to dying. Sky / floor untouched; doors keep their
@@ -1737,6 +1780,9 @@
           bp-ammos  (paint-pickups-into  bp-armors (or (:ammo-boxes world) [])
                                          (:player world) dists edists vw vh
                                          ammo-shade-now ammo-glyph-now)
+          bp-bers   (paint-pickups-into  bp-ammos (or (:berserks world) [])
+                                         (:player world) dists edists vw vh
+                                         berserk-shade-now berserk-glyph-now)
           parts     (buf-mk)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]
@@ -1755,7 +1801,7 @@
                          flr-row   (buf-get (if in-blood? blood-floor-gradient floor-gradient) row)
                          c         (if (and (php/< row visible-mh) (php/>= col mini-col0))
                                      sky-row
-                                     (or (buf-get bp-ammos (php/+ (php/* row vw) col))
+                                     (or (buf-get bp-bers (php/+ (php/* row vw) col))
                                          (cond
                                            (php/< row (buf-get tops col))             sky-row
                                            (php/>= row (buf-get bots col))            flr-row
@@ -1804,7 +1850,7 @@
             c-row       (php/+ (php/intdiv vh 2) (if firing? -1 0))
             top-col     (buf-get tops c-col)
             bot-col     (buf-get bots c-col)
-            center-cell (or (buf-get bp-ammos (php/+ (php/* c-row vw) c-col))
+            center-cell (or (buf-get bp-bers (php/+ (php/* c-row vw) c-col))
                             (cond
                               (php/< c-row top-col)             (buf-get sky-gradient c-row)
                               (php/>= c-row bot-col)            (buf-get floor-gradient c-row)
@@ -1840,7 +1886,8 @@
             p13         (paint-rear-warning       p12 t stats vw)
             p14         (paint-low-ammo           p13 t stats vw)
             p15         (paint-game-info          p14 stats vw)
-            p16         (paint-hearts-hud         p15 t stats bloody?)
+            p15b        (paint-berserk-badge      p15 t stats vw)
+            p16         (paint-hearts-hud         p15b t stats bloody?)
             p17         (paint-pistol-hud         p16 stats vw vh floor-gradient)
             p18         (paint-empty-click        p17 stats vw vh)
             p19         (paint-reload-reminder    p18 stats vw vh)

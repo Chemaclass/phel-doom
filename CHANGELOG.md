@@ -18,6 +18,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Shoot recoils the pistol sprite up 2 rows (no more screen tilt).
 - Responsive UI: minimap ≤ 1/3 vw on narrow terminals; death + victory boxes auto-size 22–36 cols and drop the best-scores block on short rows.
 - Armor caps at 3.
+- Berserk sphere pickup (rare, ~25% per level). Step on it for 20s of 2× damage on every weapon; rage state shows as a pulsing centred `BERSERK Ns` banner and a red `B` on the minimap.
 
 ## [0.2.0] - 2026-05-22
 

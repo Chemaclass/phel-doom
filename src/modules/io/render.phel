@@ -1275,21 +1275,31 @@
         res-col  (cond (php/<= reserve 0)       "\e[1;91m"
                        (php/<= reserve res-low) "\e[1;93m"
                        :else                    "\e[2m")
-        pack     (if (get stats :backpack?) " \e[40;33;1m+pack\e[0m" "")
+        ;; Each trailing chunk starts with an explicit `\e[40m` so
+        ;; the leading-space byte renders on the dark HUD wash
+        ;; instead of inheriting the terminal-default BG that a
+        ;; bare `\e[0m` reset would leak (the +pack chip otherwise
+        ;; rendered with white halo spaces around it on iTerm2 /
+        ;; Ghostty whose default BG is light).
+        pack     (if (get stats :backpack?) "\e[40m \e[40;33;1m+pack\e[40;97m" "")
         diff     (or (get stats :difficulty) :normal)
         diff-tag (cond
-                   (php/=== diff :easy)      " \e[40;32;1m[easy]\e[0m"
-                   (php/=== diff :hard)      " \e[40;33;1m[hard]\e[0m"
-                   (php/=== diff :nightmare) " \e[40;31;1m[nightmare]\e[0m"
+                   (php/=== diff :easy)      "\e[40m \e[40;32;1m[easy]\e[40;97m"
+                   (php/=== diff :hard)      "\e[40m \e[40;33;1m[hard]\e[40;97m"
+                   (php/=== diff :nightmare) "\e[40m \e[40;31;1m[nightmare]\e[40;97m"
                    :else                     "")
         keys'    (or (get stats :held-keys) #{})
-        keys-tag (str (if (contains? keys' :blue) " \e[40;94;1m⚿\e[0m" "")
-                      (if (contains? keys' :red)  " \e[40;91;1m⚿\e[0m" ""))
-        styled   (str "\e[40;97m\e[1mL" lvl "\e[0m\e[40;97m " name'
-                      "  \e[1mkills\e[0m " kills
-                      "  \e[1m" wname "\e[0m\e[40;97m "
-                      mag-col mag "\e[0m\e[40;97m/" cap " "
-                      res-col "[" reserve "]\e[0m" pack keys-tag diff-tag)]
+        keys-tag (str (if (contains? keys' :blue) "\e[40m \e[40;94;1m⚿\e[40;97m" "")
+                      (if (contains? keys' :red)  "\e[40m \e[40;91;1m⚿\e[40;97m" ""))
+        ;; Same wash-preserving pattern for the inline mag / reserve
+        ;; recolours: replace bare \e[0m resets with \e[40;97m so
+        ;; the row never falls off the dark BG mid-string.
+        styled   (str "\e[40;97m\e[1mL" lvl "\e[22m " name'
+                      "  \e[1mkills\e[22m " kills
+                      "  \e[1m" wname "\e[22m "
+                      mag-col mag "\e[22;97m/" cap " "
+                      res-col "[" reserve "]\e[22;97m"
+                      pack keys-tag diff-tag "\e[0m")]
     (buf-push parts (str "\e[2;1H" styled)))
   parts)
 

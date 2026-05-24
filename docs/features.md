@@ -22,15 +22,10 @@ See [rendering.md](rendering.md), [raycaster.md](raycaster.md),
 
 - 5 procedurally-generated levels, escalating difficulty
 - Per-level wall + sky + floor palette
-- Pickups: hearts (capped at 5), armor (capped at 3, absorbs hits),
-  ammo boxes (`+10` to active weapon's reserve), berserk sphere (20s
-  ×2 damage), invulnerability sphere (10s i-frames), backpack
-  (one-shot, doubles every weapon's reserve cap)
-- Keycards + locked exit doors on L4 (blue) and L5 (red): walk over
-  the `⚿` keycard to add the colour to held keys; physics blocks
-  the locked door until you do
-- Walk-into-door auto-advance, pulsing minimap door + bright 3D door
-  glyph
+- Pickups: hearts (cap 5), armor (cap 3, absorbs one hit each), ammo boxes (per-weapon `:ammo-per-box`), berserk (20s ×2 dmg), invuln (10s immune), backpack (1-shot, doubles every weapon's reserve cap)
+- Keycards + locked exits on L4 (blue) / L5 (red). Intro splash adds a `FIND THE <COLOUR> KEY` subtitle on locked levels; compass top-centre tints the E/S/W/N letter pointing at the un-picked card in the lock colour; bumping the door without the matching key pulses `⚿ NEED <COLOUR> KEY ⚿` for 1.5s
+- Walk-into-door auto-advance; pulsing minimap door + bright 3D door glyph
+- Cross-level carry: lives, kills, time, owned-weapons, **active weapon**, **per-weapon mag/reserve**, backpack, minimap + sound toggles. Retry/restart resets to fresh defaults.
 
 See [level-system.md](level-system.md), [map.md](map.md).
 
@@ -54,29 +49,22 @@ See [level-system.md](level-system.md), [map.md](map.md).
   | shotgun | 3 | 0.6s | 4 | 5 | L2 (single-action) |
   | chaingun | 1 | 0.05s | 30 | 20 | L3 (auto-fire) |
 
-  Pistol + chaingun spray while space is held; shotgun needs a fresh pull per shell. Distinct silhouette + palette per weapon. Per-weapon mag/reserve persists across switches. First-time pickup auto-switches. Drop/refill/raise reload anim; sprite recoils 2 rows per shot.
-- Kill-loot ammo carries a `:weapon` tag picked uniformly from `:owned-weapons` — every kill seeds ammo for some gun you can use. Level-spawn boxes still refill the active weapon.
+  Pistol + chaingun spray while space is held; shotgun needs a fresh pull per shell. Pistol is the only weapon that overheats / jams. Distinct silhouette + palette per slot. Per-weapon mag/reserve persists across switches. First-time pickup auto-switches. Drop/refill/raise reload anim; sprite recoils 2 rows per shot.
+- Kill-loot ammo skips the pistol when other weapons are owned — biases toward the scarce shotgun + chaingun the player had to hunt for. Level-spawn boxes still refill the active weapon.
 - 5 lives, 1s i-frame, directional red hurt-side band, knockback shove.
 
 See [monsters.md](monsters.md), [combat.md](combat.md).
 
 ## HUD + screens
 
-- Top-left strip: row 1 hearts + armor, row 2 `L1 imps · kills · ammo`
-- Compass top-centre, top-right minimap (auto-scales to ≤ 1/3 screen
-  width on narrow terminals)
-- Bottom strip: single dim tagline pointing at pause + F3 toggles
-- F3 perf overlay (frame-ms, cast-ms, render-ms, bytes, RLE, mem,
-  pos, angle, fps) — off by default, zero overhead when off
-- Ammo cues: `! LOW AMMO N !` pulse top-right when firepower drops
-  to 3/2/1; periodic `press R to RELOAD` above the pistol on a
-  mag-keyed cadence; dry-fire `CLICK` prompt centred above pistol
-- Pause menu (`p`) lists every key binding
+- Top-left strip: row 1 hearts + armor + `GOD` badge (dev mode), row 2 `L1 imps · kills · weapon · ammo · +pack · ⚿ · [diff]`
+- Compass top-centre (facing letter yellow; on locked levels the letter pointing at the un-picked key tints blue/red). Top-right minimap auto-scales to ≤ 1/3 width on narrow terminals.
+- F3 debug overlay (frame-ms, cast/render split, bytes, RLE, mem, pos, angle, fps) — off by default, zero overhead when off
+- Ammo cues: pulsing `! LOW AMMO N !` top-right when firepower drops to 3/2/1; periodic `press R to RELOAD`; dry-fire `CLICK` prompt
+- **H** info menu — overlay panel with run stats / player status / per-weapon table / full controls. Couples with pause (opening H freezes the game)
+- Pause panel (`p`) is minimal: PAUSED + "H for info menu" + credits
 - Start menu (any key dives in, `q` exits)
-- End screens (death + victory) with cumulative kills + time and
-  persisted bests
-- Restart from end screen: `r` fresh seed, `R` same map; both
-  restart on the level you died on (victory restarts at L1)
+- End screens (death + victory) with cumulative kills + time + persisted bests. Restart: `r` fresh seed / `R` same map; both restart on the level you died on (victory restarts at L1)
 - About-face on `e` (snap 180°)
 
 ## Horror beats
@@ -118,11 +106,10 @@ See [audio.md](audio.md).
 
 See [scores.md](scores.md).
 
-## Difficulty
+## CLI
 
-- `--difficulty=easy|normal|hard|nightmare` (`-d`) at launch. Per-mode
-  multipliers scale enemy chase speed, per-enemy HP, and per-level
-  enemy count. HUD strip tags the active mode (skipped for normal).
+- `--difficulty=easy|normal|hard|nightmare` (`-d`) — scales enemy chase speed, per-enemy HP, per-level enemy count. HUD tag suppressed for `normal`.
+- `--god` (`-g`) or `make play-dev` — dev mode: contact damage suppressed end-to-end. HUD adds a yellow `GOD` badge after the hearts strip.
 
 ## Misc
 

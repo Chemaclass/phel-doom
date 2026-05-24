@@ -6,22 +6,24 @@
 
 ```phel
 (def levels
-  [{:size [22 16] :walls 12 :enemies 4  :chase 0.8 :name "imps"        ...}
-   {:size [28 20] :walls 22 :enemies 6  :chase 1.0 :name "demons"      ...}
-   {:size [36 24] :walls 38 :enemies 8  :chase 1.3 :name "cacodemons"  ...}
-   {:size [44 28] :walls 55 :enemies 5  :chase 1.6 :name "barons"      ...}
-   {:size [52 32] :walls 75 :enemies 7  :chase 2.0 :name "cyberdemons" ...}])
+  [{:size [22 16] :walls 12 :enemies 4  :chase 0.8 :enemy-lives 1 :name "imps"}
+   {:size [28 20] :walls 22 :enemies 6  :chase 1.0 :enemy-lives 2 :name "demons"}
+   {:size [36 24] :walls 38 :enemies 8  :chase 1.3 :enemy-lives 3 :name "cacodemons"}
+   {:size [44 28] :walls 55 :enemies 5  :chase 1.6 :enemy-lives 4 :door-lock :blue :name "barons"}
+   {:size [52 32] :walls 75 :enemies 7  :chase 2.0 :enemy-lives 5 :door-lock :red  :name "cyberdemons"}])
 ```
 
 | Field | Meaning |
 |---|---|
-| `:size`     | `[width height]` of grid in cells |
-| `:walls`    | Random wall blobs scattered inside |
-| `:enemies`  | Monsters to spawn |
-| `:chase`    | Chase AI speed (units/sec) |
-| `:name`     | Display name (HUD + intro splash) |
+| `:size`        | `[width height]` of grid in cells |
+| `:walls`       | Random wall blobs scattered inside |
+| `:enemies`     | Monsters to spawn |
+| `:chase`       | Chase AI speed (units/sec) |
+| `:enemy-lives` | Per-enemy HP; controls hit-flash digit, wounded body shade |
+| `:door-lock`   | `:blue` / `:red` / absent — colour required to pass the exit |
+| `:name`        | Display name (HUD + intro splash) |
 
-Plus enemy visual fields covered in [monsters.md](monsters.md): `:head-code`, `:body-code`, `:legs-code`, `:body-glyph`, `:body-glyph-fg`, `:face`, `:face-alt`.
+Plus enemy visual fields covered in [monsters.md](monsters.md): `:head-code`, `:body-code`, `:legs-code`, `:body-glyph`, `:body-glyph-fg`, `:face`, `:face-alt`, `:face-attack`.
 
 ## `config-for`
 
@@ -34,39 +36,20 @@ Level N config (1-indexed). Clamps out-of-range to nearest valid.
 
 ## `build-world`
 
-```phel
-(defn build-world [level-num lives]
-  (let [cfg (config-for level-num)]
-    (let [[w h] (:size cfg)
-          grid  (seed-doors (random-grid w h (:walls cfg)) 1)]
-      (let [[px py] (random-spawn grid)]
-        (let [world (new-world grid (new-player px py random-angle))]
-          (let [with-foes (with-enemies world
-                            (spawn-enemies grid (:enemies cfg)
-                                           enemy-min-spawn-dist px py))]
-            (assoc with-foes
-                   :level level-num :lives lives
-                   :hearts      (maybe-spawn-heart grid lives px py)
-                   :armors      (maybe-spawn-armor grid)
-                   :ammo-boxes  (spawn-ammo-boxes grid)
-                   :chase-speed (:chase cfg)
-                   ;; enemy visual stamps...
-                   :level-name  (:name cfg)
-                   :intro-secs  1.5)))))))
-```
+Signature: `(build-world level-num lives backpack? diff owned)`. Sequence per build:
 
-Sequence:
+1. `random-grid` with `:walls` random 1×1 / 2×2 blobs
+2. `seed-doors` carves one exit. `lock-the-door` upgrades it to `cell-door-blue` / `cell-door-red` when `:door-lock` is set.
+3. Player spawn at a random open cell with random angle.
+4. `:enemies` monsters at ≥ `enemy-min-spawn-dist 3.0` from player, each with HP = `:enemy-lives`.
+5. `maybe-spawn-heart` only if `lives < max-lives`.
+6. `maybe-spawn-armor` (50%); `maybe-spawn-berserk` (1/8); `maybe-spawn-invuln` (1/12); `maybe-spawn-backpack` (L2+, 1/5, skipped when already owned).
+7. `maybe-spawn-keycard` when `:door-lock` is set.
+8. `maybe-spawn-weapon-pickups`: shotgun on L2 / chaingun on L3, skipped when already owned. Pistol never spawns as a pickup.
+9. `spawn-ammo-boxes` count = `ceil(enemies × max-lives / 8)`, floor 2.
+10. Stamp enemy visuals, `:level-name`, `:difficulty`, 1.5s `:intro-secs`.
 
-1. Random grid with `:walls` blobs of 1×1 or 2×2.
-2. One door seeded into a random interior wall with a floor neighbour (reachable).
-3. Player spawn at a random open cell.
-4. `:enemies` monsters at least `enemy-min-spawn-dist = 3.0` from player.
-5. Heart pickup in a random open cell if `lives < max-lives`; otherwise none.
-6. Armor pickup roughly every other level (50% chance, one cell).
-7. Two ammo-boxes at random open cells (always — reserve is finite, so the player must restock).
-8. Stamp level metadata (chase speed, monster colours, glyphs, name) + 1.5s intro splash timer.
-
-Result feeds into `game-loop`.
+`run-levels` (in `commands/play.phel`) wraps the call and overlays cross-level carries on top of the fresh world: active weapon + per-weapon mag/reserve, minimap + sound toggles, `:god?` flag.
 
 ## Why exactly one door per level
 

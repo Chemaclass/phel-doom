@@ -5,21 +5,26 @@ Hitscan + damage timing + i-frames. `src/modules/core/combat.phel`. Only side ef
 ## Tunables
 
 ```phel
-(def shot-hit-radius   0.5)   ; off-axis tolerance for the ray to count as a hit
-(def shot-max-range   12.0)   ; hitscan range in world units
-(def touch-damage-dist 0.7)   ; enemy this close = -1 life
+(def shot-hit-radius   0.5)   ; off-axis tolerance for a ray-hit
+(def shot-max-range   12.0)   ; hitscan range, world units
+(def touch-damage-dist 0.7)   ; enemy this close = take-damage
 (def iframe-seconds    1.0)   ; post-hit invulnerability window
 (def fire-anim-seconds 0.09)  ; muzzle flash visibility
 (def fx-ttl-seconds    0.45)  ; blood splatter lifetime
-(def flash-seconds     0.05)  ; 1-frame all-white impact jolt
-(def mag-size          10)    ; rounds per magazine; reload at R
-(def max-reserve       50)    ; hard cap on the spare ammo pool
-(def reload-cooldown-seconds 1.2) ; reload animation + firing lockout
+(def flash-seconds     0.05)  ; 1-frame white impact jolt
+(def heat-per-shot     0.30)  ; pistol-only — see `:overheats?` flag
+(def jam-seconds       1.4)   ; pistol-only lockout when heat ≥ 1
+;; Pistol fallback defaults — overridden per weapon in weapons.phel
+;; (`mag-size`, `fire-cooldown`, `reload-duration`, `reserve-cap`,
+;; `ammo-per-box`, `damage`, `auto-fire?`, `overheats?`).
+(def mag-size 10)
+(def max-reserve 50)
+(def reload-cooldown-seconds 1.2)
 ```
 
 ## Magazine + reload
 
-`can-fire?` requires `:fire-cooldown <= 0`, `:jam-secs <= 0`, `:reload-cooldown <= 0`, AND `:mag > 0`. Trigger pulls on an empty mag drop silently — the player must press **R** to reload.
+`can-fire?` requires `:fire-cooldown <= 0`, `:jam-secs <= 0`, `:reload-cooldown <= 0`, AND `:mag > 0`. Trigger pulls on an empty mag drop silently — the player must press **R** to reload. Mag-size, reload-duration, and reserve-cap come from the active weapon's `weapons` spec (`weapons.phel`).
 
 `reload` draws `min(mag-size - mag, :ammo-reserve)` rounds from the world's spare pool and arms `:reload-cooldown`. Three no-op paths keep the world identity stable so callers can compare cheaply: reload already in progress, mag already full, or reserve empty.
 
@@ -52,12 +57,12 @@ On every kill `on-shot-hit` rolls a uniform float and routes through `roll-loot-
 
 | Band | Drop | Notes |
 |------|------|-------|
-| `[0.00, 0.15)` | `:ammo` (`+10` reserve) | Most common — players burn rounds faster than anything else |
+| `[0.00, 0.15)` | `:ammo` | Most common — kill-loot ammo carries a `:weapon` tag picked uniformly from `:owned-weapons` MINUS the pistol (pistol has level-spawned boxes anyway). Fresh L1 / pistol-only fixtures fall back to pistol. |
 | `[0.15, 0.22)` | `:armor` (absorb one hit) | Mid — useful but not as scarce as health |
 | `[0.22, 0.25)` | `:heart` (`+1` life) | Rarest, AND suppressed when `lives = max-lives` so it never wastes |
 | `[0.25, 1.00)` | nothing | ~75% of kills drop nothing; keeps the floor uncluttered |
 
-The drop is pushed into the same `:hearts` / `:armors` / `:ammo-boxes` vectors that level-start pickups use, so the existing `pickup-*` helpers in `play.phel` and the minimap markers in `render.phel` need no special case for kill loot vs starting loot.
+The drop is pushed into the same `:hearts` / `:armors` / `:ammo-boxes` vectors that level-start pickups use. `pickup-ammos` in `play.phel` reads the box's `:weapon` tag and tops up that weapon's `:weapon-state` reserve (mirror stays in sync only if the tagged weapon is the active one). Untagged (level-spawn) boxes refill the active weapon.
 
 ## Shooting
 
@@ -113,23 +118,20 @@ Ticks four timers by `dt`: `:iframes` (immunity), `:fire-anim` (muzzle flash), `
 
 ```phel
 (and (php/<= (:iframes world) 0.0)
+     (php/<= (or (:invuln-secs world) 0.0) 0.0)
+     (not (:god? world))                ; --god / make play-dev
      (enemies-touching? (:enemies world) px py))
 ```
 
-`enemies-touching?` walks enemies; first alive one within `touch-damage-dist` triggers damage. Squared-distance comparison, no sqrt.
+Four gates: i-frame window, invulnerability sphere timer, dev god mode, AND at least one alive enemy within `touch-damage-dist`. Squared-distance comparison, no sqrt.
 
 ### take-damage
 
-```phel
-(when (:sound-on world) (play-sfx! :hit))
-(assoc (update world :lives dec-clamped)
-       :iframes    iframe-seconds
-       :flash-secs flash-seconds)
-```
-
-- Loses one life (clamped at 0).
+- Armor absorbs the hit first if `:armor > 0` (drops the counter, no life loss).
+- Otherwise loses one life (clamped at 0).
 - 1.0s i-frame: `vulnerable?` returns false, single touch can't drain multiple lives.
-- 0.05s flash: `render!` paints viewport white. One-frame jolt before red i-frame wash.
+- 0.05s flash: `render!` paints viewport white. One-frame jolt before the red i-frame wash.
+- Knockback shove away from the attacker; arms `:hurt-side` so the directional red band paints on the correct edge.
 
 ## i-frame visualization
 

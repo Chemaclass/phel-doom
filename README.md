@@ -2,13 +2,9 @@
 
 [![phel-doom gameplay (YouTube)](https://img.youtube.com/vi/0s-sXxpcoIA/maxresdefault.jpg)](https://www.youtube.com/watch?v=0s-sXxpcoIA)
 
-DOOM-lite raycaster in your terminal. Written in
-[Phel](https://phel-lang.org/), a Lisp that compiles to PHP.
-Non-trivial Phel sample: 256-color ANSI rendering, raycasting,
-procedural levels, FPS combat, persisted scores, WAD parser, ~5ms
-frame time.
+DOOM-lite raycaster in your terminal. Pure [Phel](https://phel-lang.org/) (Lisp on PHP). 256-color ANSI, procedural levels, FPS combat, ~5ms frame.
 
-Full feature catalogue: [docs/features.md](docs/features.md).
+Full feature list: [docs/features.md](docs/features.md).
 
 ## Quick start
 
@@ -44,11 +40,11 @@ Walk into a door to advance. Walk over pickups:
 
 - **♥ heart** — `+1` life
 - **◆ armor** — absorbs one hit (cap 3)
-- **ammo box** — `+N` to a weapon's reserve (kill-loot picks a random owned weapon)
+- **ammo box** — `+N` to a weapon's reserve. Kill-loot tags a random non-pistol weapon you own (pistol always has a refill path via floor boxes)
 - **berserk** — 20s of `×2` damage
 - **invuln** — 10s damage immunity
 - **backpack** — doubles every weapon's reserve cap
-- **⚿ keycard** — unlocks matching exit on L4 (blue) / L5 (red)
+- **⚿ keycard** — unlocks matching exit on L4 (blue) / L5 (red). Compass top-centre tints the cardinal letter pointing at it
 
 Weapons (DPS-balanced niches, find on map):
 

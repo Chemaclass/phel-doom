@@ -21,6 +21,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 **Enemies**
 
 - Per-level HP: L1 imp 1, L2 demon 2, L3 caco 3, L4 baron 4, L5 cyber 5. Body shades darker as HP drops; a yellow HP digit floats above the head 1.2s after each hit. Distinct `:wound` sfx so "I hit them" sounds different from "they hit me".
+- Kill loot drops: every kill rolls for a pickup (30% ammo box, 15% armor, 5% heart when not at max lives, 50% nothing). Drops land on the corpse cell and feed the existing `pickup-*` helpers / minimap markers.
 
 **HUD + map**
 

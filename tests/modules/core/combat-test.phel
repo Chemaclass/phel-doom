@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.modules.core.state :refer [new-world new-player])
   (:require phel-doom.modules.core.combat
-            :refer [closest-attacker attacker-side can-fire? apply-heat empty-click-seconds knockback mag-size reload reloading? tick-shooting]))
+            :refer [closest-attacker attacker-side can-fire? apply-heat empty-click-seconds knockback mag-size reload reloading? roll-loot-kind tick-shooting]))
 
 ;; ---------------------------------------------------------------------
 ;; closest-attacker: selection rule.
@@ -243,3 +243,29 @@
   (let [w (knockback open-arena {:x 3.5 :y 3.5})]
     (is (= 3.5 (:x (:player w))))
     (is (= 3.5 (:y (:player w))))))
+
+;; ---------------------------------------------------------------------
+;; roll-loot-kind: deterministic cut-points for the kill drop roll.
+;; ammo 0.00..0.30, armor 0.30..0.45, heart 0.45..0.50 (gated by
+;; lives < max-lives), nothing 0.50..1.0.
+;; ---------------------------------------------------------------------
+
+(deftest test-roll-loot-kind-ammo-band
+  (is (= :ammo (roll-loot-kind {:lives 3} 0.0)))
+  (is (= :ammo (roll-loot-kind {:lives 3} 0.29))))
+
+(deftest test-roll-loot-kind-armor-band
+  (is (= :armor (roll-loot-kind {:lives 3} 0.30)))
+  (is (= :armor (roll-loot-kind {:lives 3} 0.44))))
+
+(deftest test-roll-loot-kind-heart-band-when-not-full
+  (is (= :heart (roll-loot-kind {:lives 3} 0.45)))
+  (is (= :heart (roll-loot-kind {:lives 4} 0.49))))
+
+(deftest test-roll-loot-kind-heart-band-suppressed-at-full-lives
+  ;; lives == max-lives (5) -> heart would be wasted, drop nothing.
+  (is (= nil (roll-loot-kind {:lives 5} 0.45))))
+
+(deftest test-roll-loot-kind-nothing-band
+  (is (= nil (roll-loot-kind {:lives 3} 0.50)))
+  (is (= nil (roll-loot-kind {:lives 3} 0.99))))

@@ -56,6 +56,7 @@
 (def heart-marker "\e[40;91;1m♥\e[0m")
 (def ammo-marker     "\e[40;93;1mA\e[0m")
 (def berserk-marker  "\e[40;91;1mB\e[0m")
+(def invuln-marker   "\e[40;96;1mI\e[0m")
 (def door-shade
   "Door body cell drawn when a ray hit a door. Frame glyph `▌` (left
    half block) on a dark steel BG with bright orange FG, so a column
@@ -159,6 +160,22 @@
 (def berserk-glyph-bright
   "White Ω on the bright pulse BG."
   "\e[48;5;196;38;5;231;1mΩ")
+
+(def invuln-shade
+  "Invulnerability sphere idle BG: deep electric blue."
+  "\e[48;5;19m ")
+
+(def invuln-shade-bright
+  "Invulnerability sphere pulse BG: bright cyan flare."
+  "\e[48;5;51m ")
+
+(def invuln-glyph
+  "White star on dark blue."
+  "\e[48;5;19;38;5;231;1m★")
+
+(def invuln-glyph-bright
+  "Yellow star on cyan pulse."
+  "\e[48;5;51;38;5;226;1m★")
 
 (def char-aspect 2.0)
 (def base-hud-rows 1)
@@ -417,6 +434,9 @@
 (defn- berserk-cells [bs step out-w]
   (scaled-cells bs step out-w (fn [_] true)))
 
+(defn- invuln-cells [is step out-w]
+  (scaled-cells is step out-w (fn [_] true)))
+
 (defn- minimap-rows
   "Render the world's grid into a PHP array of ANSI-coded strings,
    one per OUTPUT row. `step` collapses every step×step grid block
@@ -439,6 +459,7 @@
         hmap                (heart-cells (:hearts world) step out-w)
         amap                (ammo-cells  (:ammo-boxes world) step out-w)
         bmap                (berserk-cells (:berserks world) step out-w)
+        imap                (invuln-cells  (:invulns world) step out-w)
         rows                (buf-mk)
         block-has-wall?     (fn [r0 c0]
                               (loop [dr 0]
@@ -487,6 +508,7 @@
                             (buf-get hmap (php/+ (php/* row out-w) col)) heart-marker
                             (buf-get amap (php/+ (php/* row out-w) col)) ammo-marker
                             (buf-get bmap (php/+ (php/* row out-w) col)) berserk-marker
+                            (buf-get imap (php/+ (php/* row out-w) col)) invuln-marker
                             :else                                        minimap-floor)))
               (recur (php/+ col 1))))
           (buf-set rows row (php/implode "" parts)))
@@ -989,6 +1011,20 @@
             col   (php/max 1 (php/- (php/intdiv vw 2)
                                     (php/intdiv (php/strlen text) 2)))]
         (buf-push parts (str "\e[3;" col "H" label)))))
+  parts)
+
+(defn- paint-invuln-badge
+  "Centred top-of-screen `INVULN Ns` banner while :invuln-secs is
+   active. Bright cyan on dark blue. Painted on row 4 so it stacks
+   below the berserk banner when both fire at once."
+  [parts ^float t stats vw]
+  (let [secs (or (get stats :invuln-secs) 0.0)]
+    (when (and (php/> secs 0.0) (pulse t 5.0))
+      (let [text  (str " INVULN " (php/intval (php/ceil secs)) "s ")
+            label (str "\e[48;5;19;38;5;51;1m" text "\e[0m")
+            col   (php/max 1 (php/- (php/intdiv vw 2)
+                                    (php/intdiv (php/strlen text) 2)))]
+        (buf-push parts (str "\e[4;" col "H" label)))))
   parts)
 
 (defn- paint-empty-click
@@ -1625,6 +1661,11 @@
         berserk-bright?                    (pulse t 9.0)
         berserk-shade-now                  (if berserk-bright? berserk-shade-bright berserk-shade)
         berserk-glyph-now                  (if berserk-bright? berserk-glyph-bright berserk-glyph)
+        ;; Invuln pulse — different cadence (8 rad/s) so a sphere on
+        ;; the same screen as a berserk doesn't sync up into one beat.
+        invuln-bright?                     (pulse t 8.0)
+        invuln-shade-now                   (if invuln-bright? invuln-shade-bright invuln-shade)
+        invuln-glyph-now                   (if invuln-bright? invuln-glyph-bright invuln-glyph)
         ;; Atmospheric haze pulls walls toward black as lives drop, so
         ;; the world reads as 'consumed by darkness' the closer the
         ;; player is to dying. Sky / floor untouched; doors keep their
@@ -1783,6 +1824,9 @@
           bp-bers   (paint-pickups-into  bp-ammos (or (:berserks world) [])
                                          (:player world) dists edists vw vh
                                          berserk-shade-now berserk-glyph-now)
+          bp-inv    (paint-pickups-into  bp-bers (or (:invulns world) [])
+                                         (:player world) dists edists vw vh
+                                         invuln-shade-now invuln-glyph-now)
           parts     (buf-mk)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]
@@ -1801,7 +1845,7 @@
                          flr-row   (buf-get (if in-blood? blood-floor-gradient floor-gradient) row)
                          c         (if (and (php/< row visible-mh) (php/>= col mini-col0))
                                      sky-row
-                                     (or (buf-get bp-bers (php/+ (php/* row vw) col))
+                                     (or (buf-get bp-inv (php/+ (php/* row vw) col))
                                          (cond
                                            (php/< row (buf-get tops col))             sky-row
                                            (php/>= row (buf-get bots col))            flr-row
@@ -1850,7 +1894,7 @@
             c-row       (php/+ (php/intdiv vh 2) (if firing? -1 0))
             top-col     (buf-get tops c-col)
             bot-col     (buf-get bots c-col)
-            center-cell (or (buf-get bp-bers (php/+ (php/* c-row vw) c-col))
+            center-cell (or (buf-get bp-inv (php/+ (php/* c-row vw) c-col))
                             (cond
                               (php/< c-row top-col)             (buf-get sky-gradient c-row)
                               (php/>= c-row bot-col)            (buf-get floor-gradient c-row)
@@ -1887,7 +1931,8 @@
             p14         (paint-low-ammo           p13 t stats vw)
             p15         (paint-game-info          p14 stats vw)
             p15b        (paint-berserk-badge      p15 t stats vw)
-            p16         (paint-hearts-hud         p15b t stats bloody?)
+            p15c        (paint-invuln-badge       p15b t stats vw)
+            p16         (paint-hearts-hud         p15c t stats bloody?)
             p17         (paint-pistol-hud         p16 stats vw vh floor-gradient)
             p18         (paint-empty-click        p17 stats vw vh)
             p19         (paint-reload-reminder    p18 stats vw vh)

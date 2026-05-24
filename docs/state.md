@@ -19,11 +19,11 @@ Pure data shapes that every other module operates on. `src/modules/core/state.ph
  :hearts     <vector of {:x :y}>
  :armors     <vector of {:x :y}>
  :ammo-boxes <vector of {:x :y}>
- :berserks   <vector of {:x :y}>           ; rage spheres
- :invulns    <vector of {:x :y}>           ; immunity spheres
+ :berserks   <vector of {:x :y}>           ; rage spheres (20s ×2 damage)
+ :invulns    <vector of {:x :y}>           ; immunity spheres (10s invincible)
  :backpacks  <vector of {:x :y}>           ; one-shot reserve doubler
- :keycards   <vector of {:x :y :colour}>   ; :blue / :red keycards
- :held-keys  <set of colour kws>           ; #{:blue :red}
+ :keycards   <vector of {:x :y :colour}>   ; :blue / :red keycards for locked exits
+ :held-keys  <set of colour kws>           ; #{:blue :red} collected so far
  :armor      <int 0..max-armor, hits absorbed before lives drop>
  :backpack?  <bool, persists across level cuts>
  :berserk-secs <float seconds>             ; while > 0: 2x weapon damage
@@ -133,15 +133,6 @@ Float-seconds countdowns on the world, decayed by `decay-timers` in `core/combat
 
 `advance-game-time` adds `dt` to `:game-time` on every non-paused frame; on a paused frame `tick-world` returns early so the value is left untouched. Render samples this clock for every blink/pulse (door, behind warning, jam, pickup throb, enemy face/body cycle, screen-shake) so pressing `p` freezes every visual animation that was driven by the wall clock before. Resume picks up exactly where the freeze caught it.
 
-## Why the world is a flat map, not a record
+## Why a flat map
 
-Phel has `defrecord`, backed by its map-like `defstruct`. This world still stays
-a plain map because it is a broad state aggregate assembled in stages:
-
-- one-liner construction
-- assoc / update without ceremony
-- direct serialization for tests (`(is (= expected (tick-world ...)))`)
-
-Cost: call sites do not get `defstruct`'s fixed key shape. Mitigated by
-documenting the keyset here and centralising key reads in `frame-stats` (so a
-typo is loud).
+Keeps construction simple (one `new-world` call), updates lightweight (`assoc`/`update`), and tests literal (`(is (= expected (tick-world ...)))`). Trade-off: no compiler help on key names, so `frame-stats` centralizes all reads to catch typos.

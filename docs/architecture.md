@@ -1,6 +1,6 @@
 # Architecture
 
-Functional core / imperative shell (Rich Hickey, Stuart Halloway). Pure code under `core/`, side-effecting adapters under `io/`, composition under `glue/`. CLI entrypoint sits outside the modules tree.
+Pure `core/` (deterministic logic) → composition `glue/` (pure wiring) → effects `io/` (terminal/disk/audio). CLI entrypoint in `commands/` and `main.phel`.
 
 ```
 src/
@@ -14,7 +14,9 @@ src/
     │   ├── physics.phel             ; player rotation + translation + counter decay
     │   ├── combat.phel              ; fire-shot + damage-step + tunables
     │   ├── enemy.phel               ; spawn-enemies, advance, shoot, respawn timer
-    │   └── level.phel               ; per-level catalog + build-world factory
+    │   ├── level.phel               ; per-level catalog + build-world factory
+    │   ├── weapons.phel             ; per-weapon stat catalog + switch/reload
+    │   └── difficulty.phel          ; per-difficulty scaling (speed, HP, count)
     ├── io/                          ; effects, touch the OS
     │   ├── input.phel               ; raw STDIN, alt screen buffer
     │   ├── render.phel              ; ANSI escape composition + flush

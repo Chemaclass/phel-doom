@@ -11,60 +11,31 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-**Movement**
-- Sprint verb (closes #35). Hold **SHIFT** (kitty / Ghostty / WezTerm / iTerm2 ≥ 3.5) or **`x`** (any terminal) to multiply forward + strafe speed by `sprint-multiplier` (1.6×) at the cost of draining a `:stamina` pool. Pool defaults to `max-stamina` (100), drains at 30 units/sec while sprinting AND moving, regenerates at 20 units/sec after a 0.5s post-sprint cooldown. Hitting empty latches `:sprint-blocked?` until stamina recovers to `sprint-engage-threshold` (20) — prevents stutter-sprint at zero. HUD top-left strip gets a new chip `STA ████████░░` (10 cells, white → amber under 33% → red at 0). Turn-speed is unchanged. Kitty path parses the SHIFT bit out of the CSI-u mods field; legacy path uses the plain `"x"` byte; both refresh a new `:sprint` movement slot that decays alongside WASD so sprint intent evaporates the frame the player lets go.
-
-**Weapons + combat**
-- 3-slot loadout (1/2/3) with DPS-balanced niches: pistol 1 dmg @ 0.12s cd (8 dps fallback), shotgun 3 dmg @ 0.6s cd (5 dps burst killer — 1-shots L1-L3 enemies, 2-shots the L5 baron), chaingun 1 dmg @ 0.05s cd (20 dps sustained spray, ammo hog). Picking up a chaingun does NOT obsolete the shotgun — they own different niches. Per-weapon mag + reserve persist across switches. Each weapon has its own SGR palette so the bottom sprite reads as a distinct piece of kit.
-- Auto-fire while space held for pistol + chaingun (`:auto-fire? true` in weapons spec). Without it, the chaingun's 0.05s cd was capped by the player's tap rate, so the 20 dps niche was unreachable. Shotgun stays single-action — each shell requires a fresh trigger pull.
-- Overheat / jam is now pistol-only (`:overheats? true`). Chaingun would otherwise jam in ~0.4s of held auto-fire (0.30 heat-per-shot × 20 shots/s) — that's anti-feature for a "sustained spray" weapon. Pistol still risks jam if you mash the trigger; trade-off for its high-tap-rate niche.
-- Kill-loot ammo drops now carry a `:weapon` tag chosen uniformly from the player's `:owned-weapons` set. Walking over the box tops up THAT weapon's reserve, even if you're holding something else — so every kill seeds usable ammo regardless of what's in your hand. Level-spawned ammo boxes still refill the active weapon.
-- Finite ammo (closes #5): reserve + scaled box pickups + 1.2s reload animation + layered reload cues (LOW AMMO pulse, periodic press-R, dry-fire CLICK).
-- Per-level enemy HP 1→5; wounded body shades darker, yellow HP digit above head 1.2s post-hit. Kill rolls a loot drop (ammo > armor > heart, ~75% nothing).
-- Pistol sprite recoils up 2 rows on shoot (no more screen tilt).
-
-**Powerups + pickups**
-- Berserk sphere — 20s × 2 damage (~1 in 8 levels).
-- Invulnerability sphere — 10s damage immunity (~1 in 12 levels).
-- Backpack (L2+, one-shot, ~1 in 5 qualifying levels) — doubles every weapon's reserve cap for the rest of the run.
-- Keycards + locked exit on L4 (blue) and L5 (red). Walk over the matching `⚿` to unlock.
-- Armor caps at 3.
-
-**Map + HUD**
-- Minimap auto-scales to ≤ 1/3 vw on narrow terminals.
-- HUD top-left strip shows level / kills / active weapon / ammo / `+pack` / held keys / difficulty tag.
-- Death + victory boxes auto-size 22–36 cols and drop best-scores on short rows.
-- Pos / angle / fps moved into F3 debug overlay. Pause menu lists every key binding.
-- New `H` info menu — overlay shows run stats (level / kills / streak / time / difficulty), player status (lives / armor / keys / active powerups), a per-weapon table with damage / mag / reserve and the active-weapon marker `>`, and the full controls reference. Opening H freezes the game so you can read it; closing H resumes. The PAUSED panel itself is now minimal (title + credits + "H for info menu" hint) — every control binding lives in the H panel.
-- `pause-pad` switched to `mb_strlen` so multi-byte glyphs (`← →`, `· `) no longer over-count and shrink the menu's trailing pad — the broken right border on the `← →    turn` row is fixed.
-
-**CLI**
-- `--difficulty=easy|normal|hard|nightmare` (`-d`) scales chase speed, enemy HP, enemy count. Default `normal`.
-- `--god` (`-g`) dev mode + `make play-dev` shortcut: contact damage suppressed end-to-end so the player can walk every room / test every weapon without dying. HUD paints a yellow `GOD` badge after the hearts strip.
-
-**Render**
-- HUD lives strip now caps the filled-heart count at `:max-lives` so the row stays one line even when `:lives` is inflated (dev god mode). Engine still tracks the real value for take-damage / heart-pickup math.
+- Sprint: hold `SHIFT` (kitty terminals) or `x` (anywhere) for 1.6× speed; drains a 100-unit stamina pool (30/s drain, 20/s regen, 0.5s cooldown, 20-unit re-engage threshold). HUD shows a 10-cell `STA ████████░░` bar. Closes #35.
+- Weapon loadout (1/2/3): pistol (1 dmg, auto-fire, overheats), shotgun (3 dmg, single-action), chaingun (1 dmg @ 0.05s cd, auto-fire). Shotgun + chaingun must be found on map; pickup auto-switches. Per-weapon mag + reserve persist across switches and across levels.
+- Finite ammo: reserve + scaled box pickups + 1.2s reload + low-ammo / press-R / dry-fire CLICK cues. Closes #5.
+- Per-level enemy HP scaling 1 → 5; wounded body shades darker, yellow HP digit floats above head for 1.2s post-hit.
+- Powerups: berserk sphere (20s × 2 dmg), invuln sphere (10s immunity), backpack (one-shot, doubles every weapon's reserve cap for the run).
+- Keycards + locked exits on L4 (blue) / L5 (red). Compass top-centre tints toward the un-picked card, flips to door (orange) once held. `⚿ NEED <COLOUR> KEY ⚿` pulse on locked-door bump.
+- `H` info menu: run stats, player status, per-weapon table, full controls. Opens paused; `ESC` closes both H and the pause panel.
+- `--difficulty=easy|normal|hard|nightmare` (`-d`) scales chase speed, HP, enemy count.
+- `--god` (`-g`) / `make play-dev`: contact damage suppressed; yellow `GOD` badge in HUD.
 
 ### Fixed
 
-- One-shot keys (`1` / `2` / `3` weapon switch, `r` reload, `p`, `n`, `m`, `e`, space) now fire under kitty CSI-u protocol too — `key-states` matches both plain ASCII bytes and `\\e[<code>u` / `\\e[<code>;...u` variants so Ghostty / WezTerm / kitty users can actually swap weapons.
-- Weapon-slot keys no longer revert on release under kitty CSI-u. The release event `\e[<code>;<mods>:3u` embeds the digits `1` and `3` as mods/event, which the old substring check mis-read as a fresh press of `1` or `3`. `key-pressed?` now strips CSI escapes before the plain-byte test and matches only press events (`\e[<code>u`, `\e[<code>;<mods>(:1)?u`), so a held `2` switches to shotgun once and stays put.
+- One-shot keys (1/2/3, R, P, N, M, E, space) now fire under kitty CSI-u protocol too.
+- Kitty CSI-u release events no longer mis-fire weapon-slot switches.
+- Pause menu border alignment on rows containing multi-byte glyphs (`← →`, `· `).
 
 ### Changed
 
-- Loot drop chances tuned DOWN after v0.3 playtest: per-kill drop ~25% (was 50%), berserk spawn ~12% (was 25%), invuln ~8% (was 16%), backpack ~20% (was 30%). Floor no longer fills with pickups.
-- Weapons must be found on the map. Fresh runs only own the pistol. Shotgun pickup (`╪`) seeds on L2 and the chaingun (`≣`) on L3 — pickup auto-switches to the new weapon DOOM-style. `1`/`2`/`3` only switches to weapons in `:owned-weapons` so pressing 2 before finding the shotgun does nothing. Owned weapons persist across level cuts.
-- 3D loot glyphs differentiated by **shape** (not just colour) so the pickup type reads at a glance across the room: heart `♥`, armor `◆`, ammo `◉` (was square `▣`), berserk `Ω`, invuln `★`, backpack `⊞`, shotgun `╪`, chaingun `≣`, keycard `⚿` (was square `⌷`).
-- Locked-door cues. L4 (blue) / L5 (red) intro splash now stamps a 2nd line — `FIND THE BLUE KEY` / `FIND THE RED KEY` — under the level name so the lock mechanic is discoverable. Bumping the locked exit without the matching keycard pulses `⚿ NEED BLUE KEY ⚿` (or red) over the upper third of the 3D view for 1.5s; render-only, no gameplay change.
-- Compass top-centre now doubles as a quest-target hint. The cardinal letter pointing at the player's next goal tints:
-  - **orange** (door colour) → exit door
-  - **blue / red** (lock colour) → keycard, when the level is locked and the matching card is still on the floor
-  Tint flips from key → door the instant the player picks up the card, so the compass alone is enough to navigate without the 2D map. Yellow facing-letter still shown; quest tint wins on overlap. Explained in the start menu (`COMPASS HINT` section, full-height layout) and the H info menu (`COMPASS HINT` section).
-- `ESC` closes the H info menu and the PAUSE panel. No-op when nothing is open (won't pause the game by accident). `key-states` detects bare ESC by stripping CSI / SS3 sequences first so arrow keys, kitty CSI-u events, and F-keys never register as ESC presses.
-- L4 enemy count trimmed 9 → 7 → 5, L5 trimmed 12 → 9 → 7. Late-game toughness now comes mostly from per-enemy HP (4 / 5) and chase speed, not crowd density — leaves room to explore for the keycard without a meat-grinder. Ammo-box budget scales with `enemies × HP` so it auto-rebalances down.
-- Kill-loot ammo drops now exclude the pistol when other weapons are owned. Pistol has a guaranteed refill path via level-spawned ammo boxes, so kill-loot biases toward the scarce shotgun + chaingun the player had to hunt down. Pistol-only loadouts (fresh L1 runs) still fall back to pistol ammo.
-- Cross-level state now carries the **active weapon slot** + every weapon's **mag / reserve** across the door — stepping into L2 with a half-empty shotgun no longer resets the mag. User-preference toggles (minimap, sound) also follow the player through the door. Retry / restart still resets to fresh defaults (pistol, full minimap + sound).
-- Each weapon now has its own silhouette: pistol slim single-barrel, shotgun wide twin-barrel with broad stock, chaingun multi-barrel cluster on a heavy housing.
+- Loot drop rates tuned down post-playtest (~25% per kill, ~12% berserk, ~8% invuln, ~20% backpack).
+- 3D pickups differentiated by **shape** (not colour alone): `♥` heart, `◆` armor, `◉` ammo, `Ω` berserk, `★` invuln, `⊞` backpack, `╪` shotgun, `≣` chaingun, `⚿` keycard.
+- Kill-loot ammo excludes the pistol when other weapons owned (pistol refills from level boxes).
+- L4 / L5 enemy counts trimmed (toughness shifts to per-enemy HP + chase speed, leaves room to hunt keys).
+- Compass cardinal letter tints orange (exit door) / blue / red (keycard quest target). Yellow facing-letter still shown.
+- Pause panel minimal (title + credits + `H for info` hint); every control binding moved to the H panel.
+- HUD top-left strip: `L# name · kills · weapon · mag/cap [reserve] · +pack · STA bar · ⚿ · [diff]`. Pos / angle / fps moved into F3 debug overlay.
 
 ## [0.2.0] - 2026-05-22
 

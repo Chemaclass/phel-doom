@@ -24,9 +24,9 @@ Hitscan + damage timing + i-frames. `src/modules/core/combat.phel`. Only side ef
 
 ## Magazine + reload
 
-`can-fire?` requires `:fire-cooldown <= 0`, `:jam-secs <= 0`, `:reload-cooldown <= 0`, AND `:mag > 0`. Trigger pulls on an empty mag drop silently — the player must press **R** to reload. Mag-size, reload-duration, and reserve-cap come from the active weapon's `weapons` spec (`weapons.phel`).
+`can-fire?` requires `:mag > 0`, `:fire-cooldown <= 0`, `:jam-secs <= 0`, AND `:reload-cooldown <= 0`. Empty mag returns silent; player presses **R** to reload. Mag-size, reload-duration, and reserve-cap come from the active weapon's `weapons` spec (`weapons.phel`).
 
-`reload` draws `min(mag-size - mag, :ammo-reserve)` rounds from the world's spare pool and arms `:reload-cooldown`. Three no-op paths keep the world identity stable so callers can compare cheaply: reload already in progress, mag already full, or reserve empty.
+`reload` draws `min(mag-size - mag, :ammo-reserve)` into `:mag` and arms `:reload-cooldown`. Three no-op paths (reload-in-progress, mag-full, reserve-empty) keep the world identity stable for cheap comparison.
 
 ```phel
 (defn reload [world]
@@ -112,7 +112,7 @@ Pushed into `(:fx world)`. `decay-fx` ticks each `:ttl` by dt, drops expired. `i
 
 ### decay-timers
 
-Ticks four timers by `dt`: `:iframes` (immunity), `:fire-anim` (muzzle flash), `:intro-secs` (level splash), `:flash-secs` (white impact). Also calls `decay-fx`.
+Decrements `:iframes`, `:fire-anim`, `:intro-secs`, `:flash-secs` by `dt`. Also decays `:fx` (blood splatters).
 
 ### vulnerable?
 

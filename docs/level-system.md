@@ -49,16 +49,11 @@ Signature: `(build-world level-num lives backpack? diff owned)`. Sequence per bu
 9. `spawn-ammo-boxes` count = `ceil(enemies × max-lives / 8)`, floor 2.
 10. Stamp enemy visuals, `:level-name`, `:difficulty`, 1.5s `:intro-secs`.
 
-`run-levels` (in `commands/play.phel`) wraps the call and overlays cross-level carries on top of the fresh world: active weapon + per-weapon mag/reserve, minimap + sound toggles, `:god?` flag.
-
-## Why exactly one door per level
-
-Earlier iterations had multiple doors. Player couldn't tell which was the exit. One door = unambiguous goal.
+`run-levels` (in `commands/play.phel`) wraps the call and overlays cross-level carries on top of the fresh world: **active weapon + per-weapon mag/reserve state**, minimap + sound toggles, `:god?` flag.
 
 ## Why hearts only when lives < max-lives
 
-1. Maxed hearts are wasted pickups; skipping keeps minimap less cluttered.
-2. Decision happens at `build-world` with the carried lives count, so a full-health player enters every room with no heart visible. Seeing a heart on the minimap signals "below cap" without text.
+Wasted pickups clutter the minimap; seeing a heart signals "below cap" without text.
 
 ## Reading order through a run
 

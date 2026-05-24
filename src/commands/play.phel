@@ -68,8 +68,9 @@
 
 (defn- handle-toggles
   "Apply rising-edge toggle keys (pause / minimap / sound / debug /
-   help / about-face) for this frame. Debug + help edges stay outside
-   the paused short-circuit so F3 / H still flip overlays while paused."
+   help / escape / about-face) for this frame. Debug + help edges
+   stay outside the paused short-circuit so F3 / H still flip
+   overlays while paused."
   [world edges]
   (let [after-pause (if (:toggle-pause edges) (toggle-pause world) world)
         after-map   (if (:toggle-map edges) (toggle-map after-pause) after-pause)
@@ -84,8 +85,17 @@
                       (-> after-debug
                           (update :help? not)
                           (assoc :paused (not (:help? after-debug))))
-                      after-debug)]
-    (if (:about-face edges) (about-face after-help) after-help)))
+                      after-debug)
+        ;; ESC closes whichever modal is open: HELP first (it
+        ;; coupled pause on open, so closing it also unfreezes),
+        ;; otherwise PAUSE alone. No-op when nothing is open so
+        ;; ESC never accidentally pauses the game.
+        after-esc   (cond
+                      (not (:escape edges)) after-help
+                      (:help? after-help)   (assoc after-help :help? false :paused false)
+                      (:paused after-help)  (assoc after-help :paused false)
+                      :else                 after-help)]
+    (if (:about-face edges) (about-face after-esc) after-esc)))
 
 (defn- tick-enemies
   "Step every alive enemy one dt-scaled frame toward the player, using

@@ -159,3 +159,36 @@
 (deftest test-rising-edges-toggle-help-does-not-refire-while-held
   (let [held (assoc initial-key-snapshot :h true)]
     (is (= false (:toggle-help (rising-edges held held))))))
+
+;; ---------------------------------------------------------------------
+;; ESC: bare ESC byte closes whichever modal is open. Must NOT fire
+;; on directional escape sequences (arrow keys, kitty events, F3).
+;; ---------------------------------------------------------------------
+
+(deftest test-key-states-detects-bare-esc
+  (is (= true  (:esc (key-states "\e"))))
+  (is (= false (:esc (key-states "")))))
+
+(deftest test-key-states-ignores-esc-inside-csi
+  ;; Arrow keys (`\e[A` etc), kitty CSI-u events, F3 (`\eOR`,
+  ;; `\e[13~`) all start with ESC but must NOT register as
+  ;; bare-ESC presses — those bytes are part of a sequence.
+  (is (= false (:esc (key-states "\e[A"))))
+  (is (= false (:esc (key-states "\e[B"))))
+  (is (= false (:esc (key-states "\e[D"))))
+  (is (= false (:esc (key-states "\eOR"))))    ; F3 xterm
+  (is (= false (:esc (key-states "\e[13~"))))  ; F3 linux
+  (is (= false (:esc (key-states "\e[50;1:3u"))))) ; kitty release
+
+(deftest test-key-states-esc-with-trailing-input
+  ;; ESC mixed with arrow keys should still detect the bare ESC.
+  (is (= true (:esc (key-states "\e[A\e")))))
+
+(deftest test-rising-edges-escape-fires-on-fresh-esc
+  (let [edges (rising-edges (assoc initial-key-snapshot :esc true)
+                            initial-key-snapshot)]
+    (is (= true (:escape edges)))))
+
+(deftest test-rising-edges-escape-does-not-refire-while-held
+  (let [held (assoc initial-key-snapshot :esc true)]
+    (is (= false (:escape (rising-edges held held))))))

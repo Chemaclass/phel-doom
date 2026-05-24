@@ -33,6 +33,7 @@ make play
 | `m` / `n`      | Toggle minimap / sound       |
 | `p`            | Pause                        |
 | `h`            | Info menu (stats, weapons table, controls) — also pauses |
+| `ESC`          | Close help / pause |
 | `F3`           | Debug overlay (fps, pos, perf) |
 | `q`            | Quit                         |
 
@@ -44,7 +45,9 @@ Walk into a door to advance. Walk over pickups:
 - **berserk** — 20s of `×2` damage
 - **invuln** — 10s damage immunity
 - **backpack** — doubles every weapon's reserve cap
-- **⚿ keycard** — unlocks matching exit on L4 (blue) / L5 (red). Compass top-centre tints the cardinal letter pointing at it
+- **⚿ keycard** — unlocks matching exit on L4 (blue) / L5 (red)
+
+Compass top-centre tints one cardinal letter (E/S/W/N) toward your next target — **orange** = exit door, **blue / red** = keycard you still need. Built so you can play in 3D without checking the 2D map.
 
 Weapons (DPS-balanced niches, find on map):
 

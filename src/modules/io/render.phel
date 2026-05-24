@@ -1,5 +1,6 @@
 (ns phel-doom.modules.io.render
   (:require phel-doom.modules.core.engine  :refer [cast-frame max-depth proj-dist])
+  (:require phel-doom.modules.core.map     :refer [find-door-cell])
   (:require phel-doom.modules.core.weapons :refer [weapon-order weapons]))
 
 ;; =====================================================================
@@ -741,12 +742,15 @@
 (defn- help-pad
   "Pad `text` to `width` with trailing spaces, re-applying the menu
    wash so trailing spaces stay on the dark BG (same trick as
-   pause-pad). Uses `mb_strlen` because the help menu interior
-   carries UTF-8 separators like `·` (2 bytes / 1 column) — counting
-   bytes would over-pad and skew the right border."
+   pause-pad). Strips SGR escapes before counting so colour-tagged
+   rows (`\\e[94;1mblue\\e[40;97m`) line up with plain rows; counts
+   the remainder with `mb_strlen` because the interior carries
+   UTF-8 separators (`·`) that take 1 column but multiple bytes."
   [text width]
-  (str text "\e[40;97m"
-       (php/str_repeat " " (php/max 0 (php/- width (php/mb_strlen text))))))
+  (let [visible-len (php/mb_strlen
+                     (php/preg_replace "/\\x1b\\[[\\d;]*m/" "" text))]
+    (str text "\e[40;97m"
+         (php/str_repeat " " (php/max 0 (php/- width visible-len))))))
 
 (defn- help-weapon-row
   "Render one weapon entry as a full menu row including both `│`
@@ -851,7 +855,7 @@
                 (to-php-array
                  [(str "┌" bar "┐")
                   blnk
-                  (str "│\e[1;96m" (help-pad "          ⓘ  INFO  (H to close)" w) "\e[40;97m│")
+                  (str "│\e[1;96m" (help-pad "        ⓘ  INFO  (H or ESC to close)" w) "\e[40;97m│")
                   blnk
                   (str "├" bar "┤")
                   blnk
@@ -878,6 +882,13 @@
                 (to-php-array weapon-rows)
                 (to-php-array
                  [blnk
+                  (sec "COMPASS HINT")
+                  (bord "  Top E S W N strip tints the letter")
+                  (bord "  pointing at your next quest target:")
+                  (bord "    \e[38;5;214;1morange\e[40;97m = exit door")
+                  (bord "    \e[94;1mblue\e[40;97m / \e[91;1mred\e[40;97m = keycard (locked door)")
+                  (bord "  Use it to navigate without the 2D map.")
+                  blnk
                   (sec "CONTROLS")
                   (bord "  wasd / ↑↓     move forward / back")
                   (bord "  a / d         strafe left / right")
@@ -890,7 +901,7 @@
                   (bord "  n             toggle sound")
                   (bord "  F3            debug overlay")
                   (bord "  p             pause / resume")
-                  (bord "  h             close this menu")
+                  (bord "  h / ESC      close this menu")
                   (bord "  q             quit")
                   blnk
                   (str "└" bar "┘")])))]
@@ -922,7 +933,7 @@
              blnk
              (str "│\e[1;93m" (pause-pad "             PAUSED" w) "\e[40;97m│")
              blnk
-             (str "│\e[2;97m" (pause-pad "       H for info menu" w) "\e[22;40;97m│")
+             (str "│\e[2;97m" (pause-pad "   H for info  ·  ESC resumes" w) "\e[22;40;97m│")
              blnk
              (str "├" bar "┤")
              blnk
@@ -1470,68 +1481,84 @@
                        (php/* 2.0 php/M_PI))]
     (mod (php/intval (php/+ 0.5 (php// norm (php// php/M_PI 2.0)))) 4)))
 
-(defn- key-direction-hint
-  "When the level is locked AND the player has not picked up the
-   matching keycard AND a card exists in :keycards, return a map
-   `{:sector 0..3 :colour kw}` so paint-compass can tint the
-   cardinal letter pointing at the key. nil otherwise — compass
-   stays in plain facing-only mode."
+(defn- bearing-sector
+  "Sector index (0..3 E/S/W/N) of the vector from player to target
+   cell (tx, ty). Nil-safe: returns nil if either coord is nil."
+  [world ^float tx ^float ty]
+  (let [px (:x (:player world))
+        py (:y (:player world))]
+    (sector-for-angle (php/atan2 (php/- ty py) (php/- tx px)))))
+
+(defn- quest-target-hint
+  "Compass directional helper. Returns `{:sector 0..3 :tag kw}`
+   where `:tag` is:
+     :blue / :red  — point at the matching un-picked keycard on a
+                     locked level (player still needs the key)
+     :door         — point at the exit door (the key is already in
+                     hand, or the level was never locked)
+   nil — nothing useful to point at (no door in grid; defensive).
+
+   Door tint reuses the in-world door SGR colour (orange) so the
+   compass cue and the 3D door glyph read as the same artifact."
   [world]
-  (let [lock  (:door-lock world)
-        held  (or (:held-keys world) #{})
-        cards (or (:keycards world) [])]
+  (let [lock      (:door-lock world)
+        held      (or (:held-keys world) #{})
+        cards     (or (:keycards world) [])
+        need-key? (and lock (not (contains? held lock)))]
     (cond
-      (php/=== lock nil)        nil
-      (contains? held lock)     nil
-      (php/=== (count cards) 0) nil
-      :else
+      need-key?
       (let [match (first (filter (fn [k] (php/=== (:colour k) lock)) cards))]
         (if (php/=== match nil)
           nil
-          (let [px (:x (:player world))
-                py (:y (:player world))
-                dx (php/- (:x match) px)
-                dy (php/- (:y match) py)]
-            {:sector (sector-for-angle (php/atan2 dy dx))
-             :colour lock}))))))
+          {:sector (bearing-sector world (:x match) (:y match))
+           :tag    lock}))
+
+      :else
+      (let [door (find-door-cell (:grid world))]
+        (if (php/=== door nil)
+          nil
+          (let [[dx dy] door]
+            ;; Aim at cell-centre so 0.5 nudges don't bias the sector
+            ;; toward the cell's upper-left corner.
+            {:sector (bearing-sector world (php/+ dx 0.5) (php/+ dy 0.5))
+             :tag    :door}))))))
 
 (defn- paint-compass
-  "4-letter cardinal strip at top-centre. Two highlights stack:
-     - yellow bold = player's facing sector
-     - blue / red bold = direction to the nearest un-picked keycard
-       on a locked level (key-direction-hint). When facing AND key
-       point at the same letter, the key colour wins so the player
-       knows where to go even while looking that way.
-   Other letters render dim white on the dark HUD strip."
+  "Top-centre 4-letter cardinal strip. Three highlights stack:
+     - yellow bold = player's facing sector (always shown)
+     - tinted bold = QUEST TARGET sector — points at the keycard
+       (blue / red, lock colour) on locked levels until the player
+       grabs the card, then switches to the exit door (orange,
+       SGR 214 to match the in-world door glyph).
+   Quest tint wins over facing tint on the same letter so the cue
+   stays visible when the player is already aimed at the right
+   cardinal. Other letters render dim white on the dark HUD strip."
   [parts world vw]
-  (let [pang     (or (:angle (:player world)) 0.0)
-        facing   (sector-for-angle pang)
-        key-hint (key-direction-hint world)
-        key-sec  (when key-hint (:sector key-hint))
-        key-sgr  (cond
-                   (php/=== (and key-hint (:colour key-hint)) :blue) "\e[40;94;1m"
-                   (php/=== (and key-hint (:colour key-hint)) :red)  "\e[40;91;1m"
-                   :else                                             nil)
-        labels   ["E" "S" "W" "N"]
-        cells    (loop [i 0 acc ""]
-                   (if (php/>= i 4)
-                     acc
-                     (recur (php/+ i 1)
-                            (str acc
-                                 (cond
-                                    ;; Key direction wins over facing
-                                    ;; so the cue stays visible when
-                                    ;; the player is already aimed at
-                                    ;; the right cardinal.
-                                   (and key-sgr (php/=== i key-sec))
-                                   (str key-sgr (get labels i) "\e[0m")
+  (let [pang   (or (:angle (:player world)) 0.0)
+        facing (sector-for-angle pang)
+        quest  (quest-target-hint world)
+        q-sec  (when quest (:sector quest))
+        q-sgr  (cond
+                 (php/=== (and quest (:tag quest)) :blue) "\e[40;94;1m"
+                 (php/=== (and quest (:tag quest)) :red)  "\e[40;91;1m"
+                 (php/=== (and quest (:tag quest)) :door) "\e[40;38;5;214;1m"
+                 :else                                    nil)
+        labels ["E" "S" "W" "N"]
+        cells  (loop [i 0 acc ""]
+                 (if (php/>= i 4)
+                   acc
+                   (recur (php/+ i 1)
+                          (str acc
+                               (cond
+                                 (and q-sgr (php/=== i q-sec))
+                                 (str q-sgr (get labels i) "\e[0m")
 
-                                   (php/=== i facing)
-                                   (str "\e[40;1;93m" (get labels i) "\e[0m")
+                                 (php/=== i facing)
+                                 (str "\e[40;1;93m" (get labels i) "\e[0m")
 
-                                   :else
-                                   (str "\e[40;2;97m" (get labels i) "\e[0m"))
-                                 (if (php/< i 3) "\e[40m  " "")))))]
+                                 :else
+                                 (str "\e[40;2;97m" (get labels i) "\e[0m"))
+                               (if (php/< i 3) "\e[40m  " "")))))]
     (buf-push parts
               (str "\e[1;" (php/max 1 (php/- (php/intdiv vw 2) 3))
                    "H" cells)))
@@ -2657,6 +2684,14 @@
                   (pad-visible "    advance. Walk over a heart to refill" w)
                   (pad-visible "    a life. Pick up armor to absorb a hit." w)
                   (pad-visible "    Survive 5 levels." w)
+                  blank
+                  (pad-visible "  \e[1mCOMPASS HINT\e[40;97m" w)
+                  blank
+                  (pad-visible "    Top-centre \e[93mE S W N\e[40;97m strip tints the" w)
+                  (pad-visible "    letter toward your next target:" w)
+                  (pad-visible "      \e[38;5;214;1morange\e[40;97m = exit door" w)
+                  (pad-visible "      \e[94;1mblue\e[40;97m / \e[91;1mred\e[40;97m = keycard (locked door)" w)
+                  (pad-visible "    Use it to navigate without the 2D map." w)
                   blank]
         footer   [:sep blank
                   (pad-visible "      \e[2;97mpress any key to start\e[40;97m" w)

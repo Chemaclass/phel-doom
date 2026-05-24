@@ -318,6 +318,7 @@
    :berserk-secs (or (:berserk-secs world) 0.0)
    :invuln-secs  (or (:invuln-secs world) 0.0)
    :backpack?    (boolean (:backpack? world))
+   :difficulty   (or (:difficulty world) :normal)
    :rear-warning? (rear-attacker? (:enemies world)
                                   (:x (:player world))
                                   (:y (:player world))
@@ -497,8 +498,12 @@
    PRNG seed before calling build-world so the player can replay the
    SAME map sequence by hitting R on an end screen (fresh seed = lower
    r, same seed = capital R). Lives + kills + time carry across
-   levels; death/victory both update the persisted scores file."
-  []
+   levels; death/victory both update the persisted scores file.
+
+   `diff` is the difficulty keyword from --difficulty (or nil for
+   :normal). Threaded into every build-world call so retries via
+   r / R preserve the same balance the player picked at startup."
+  [diff]
   (loop [level       1
          lives       max-lives
          carry-kills 0
@@ -506,7 +511,7 @@
          seed        (php/mt_rand)
          backpack?   false]
     (php/mt_srand seed)
-    (let [result (game-loop (build-world level lives backpack?))]
+    (let [result (game-loop (build-world level lives backpack? diff))]
       (cond
         (= result :quit)
         nil
@@ -562,21 +567,28 @@
 
 (defn- run-play [ctx]
   (init-input!)
-  (if (php/=== (show-start-menu!) :quit)
-    (do (restore!)
-        (clear-screen)
-        0)
-    (do (clear-screen)
-        (run-levels)
-        (restore!)
-        (clear-screen)
-        (cli/success ctx "Thanks for playing.")
-        (print-credits)
-        0)))
+  (let [diff (cli/opt ctx "difficulty")]
+    (if (php/=== (show-start-menu!) :quit)
+      (do (restore!)
+          (clear-screen)
+          0)
+      (do (clear-screen)
+          (run-levels diff)
+          (restore!)
+          (clear-screen)
+          (cli/success ctx "Thanks for playing.")
+          (print-credits)
+          0))))
 
 (def play-command
   {:name "play"
    :doc  "Start the DOOM showcase. WASD / arrow keys move + turn,
           space fires, M toggles the minimap, N toggles sound,
           P pauses, Q quits. Walk into a door to advance levels."
+   :opts [{:name    "difficulty"
+           :short   "d"
+           :mode    :optional
+           :doc     "easy | normal | hard | nightmare (default normal)"
+           :default "normal"
+           :coerce  :keyword}]
    :run  run-play})

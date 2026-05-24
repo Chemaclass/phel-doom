@@ -1,0 +1,60 @@
+(ns phel-doom.modules.core.difficulty)
+
+;; ---------------------------------------------------------------------
+;; Difficulty multipliers applied on top of each level's base config.
+;; Selected via --difficulty CLI flag (see commands/play.phel); default
+;; is :normal so the existing balance shipped by /play stays unchanged.
+;;
+;; Multipliers scale chase speed, enemy HP, and per-level enemy count.
+;; Powerups + ammo are unaffected — the dial is purely combat density
+;; and lethality.
+;; ---------------------------------------------------------------------
+
+(def diff-table
+  "Per-difficulty multipliers. Keys must match the CLI keyword."
+  {:easy      {:speed-mul    0.7
+               :hp-mul       1.0
+               :enemies-mul  0.7}
+   :normal    {:speed-mul    1.0
+               :hp-mul       1.0
+               :enemies-mul  1.0}
+   :hard      {:speed-mul    1.3
+               :hp-mul       1.3
+               :enemies-mul  1.3}
+   :nightmare {:speed-mul    1.8
+               :hp-mul       1.5
+               :enemies-mul  1.5}})
+
+(def default-diff
+  "Difficulty used when the CLI flag is absent / unrecognised."
+  :normal)
+
+(defn normalise
+  "Resolve a CLI input (kw, string, or nil) to a difficulty keyword
+   present in `diff-table`. Unknown values fall back to `default-diff`
+   so a typo can't crash run startup."
+  [v]
+  (let [kw (cond
+             (php/=== v nil) default-diff
+             (keyword? v)    v
+             :else           (keyword (php/strtolower (php/strval v))))]
+    (if (contains? diff-table kw) kw default-diff)))
+
+(defn spec-for
+  "Multiplier map for the given difficulty keyword."
+  [kw]
+  (get diff-table (normalise kw)))
+
+(defn scale-cfg
+  "Stamp `diff`'s multipliers onto the level config map: chase speed,
+   per-enemy HP, and enemy count. Floors HP at 1 and enemy count at 1
+   so easy mode can't empty a level."
+  [cfg diff]
+  (let [d           (spec-for diff)
+        chase       (or (:chase cfg) 1.0)
+        enemy-lives (or (:enemy-lives cfg) 1)
+        enemies     (or (:enemies cfg) 1)]
+    (assoc cfg
+           :chase       (php/* chase (:speed-mul d))
+           :enemy-lives (php/max 1 (php/intval (php/ceil (php/* enemy-lives (:hp-mul d)))))
+           :enemies     (php/max 1 (php/intval (php/ceil (php/* enemies (:enemies-mul d))))))))

@@ -356,17 +356,22 @@
 
 (defn pick-loot-weapon
   "Choose a random weapon from `:owned-weapons` for a kill-loot ammo
-   drop. Uniform over the owned set. Pure given `roll` (uniform float
-   in [0, 1)) so tests can pin the outcome. Falls back to :pistol
-   when the world has no owned set (defensive default for fixtures)."
+   drop. Uniform over the owned set MINUS the pistol — the player
+   always starts with the pistol AND its reserve refills via
+   level-spawned ammo boxes, so kill-loot biases toward the scarce
+   weapons (shotgun, chaingun) that the player had to hunt for on
+   the map. Pure given `roll` (uniform float in [0, 1)) so tests
+   can pin the outcome. Falls back to :pistol only when nothing
+   else is owned (fresh-run / defensive fixture)."
   [world ^float roll]
-  (let [owned   (or (:owned-weapons world) #{:pistol})
-        ordered (sort owned)
-        n       (count ordered)]
+  (let [owned     (or (:owned-weapons world) #{:pistol})
+        non-basic (apply vector
+                         (sort (filter (fn [kw] (php/!== kw :pistol)) owned)))
+        n         (count non-basic)]
     (if (php/=== n 0)
       :pistol
-      (get ordered (php/min (php/- n 1)
-                            (php/intval (php/* roll n)))))))
+      (get non-basic (php/min (php/- n 1)
+                              (php/intval (php/* roll n)))))))
 
 (defn- push-kill-loot
   "Possibly drop a pickup at the enemy's death position. Two RNG rolls:

@@ -344,26 +344,37 @@
 ;; supplied by the caller so the test is deterministic.
 ;; ---------------------------------------------------------------------
 
-(deftest test-pick-loot-weapon-single-owned-always-that-weapon
+(deftest test-pick-loot-weapon-pistol-only-falls-back-to-pistol
+  ;; Fresh run: pistol is the only owned weapon. Kill-loot has
+  ;; nothing else to pick from so it falls back to pistol — the
+  ;; player still gets some ammo, just for the basic gun.
   (let [w {:owned-weapons #{:pistol}}]
     (is (= :pistol (pick-loot-weapon w 0.0)))
     (is (= :pistol (pick-loot-weapon w 0.5)))
     (is (= :pistol (pick-loot-weapon w 0.99)))))
 
-(deftest test-pick-loot-weapon-spans-all-owned
-  ;; Sorted owned set [:chaingun :pistol :shotgun]; uniform roll
-  ;; should cover each slot at the right cutoff.
+(deftest test-pick-loot-weapon-excludes-pistol-when-others-owned
+  ;; Pistol always has a refill path via level-spawned ammo boxes;
+  ;; kill-loot biases toward the scarce shotgun + chaingun. With
+  ;; both owned the roll spans only those two — pistol never lands.
   (let [w {:owned-weapons #{:pistol :shotgun :chaingun}}]
     (is (= :chaingun (pick-loot-weapon w 0.0)))
-    (is (= :chaingun (pick-loot-weapon w 0.33)))
-    (is (= :pistol   (pick-loot-weapon w 0.34)))
-    (is (= :pistol   (pick-loot-weapon w 0.66)))
-    (is (= :shotgun  (pick-loot-weapon w 0.67)))
+    (is (= :chaingun (pick-loot-weapon w 0.49)))
+    (is (= :shotgun  (pick-loot-weapon w 0.5)))
     (is (= :shotgun  (pick-loot-weapon w 0.99)))))
 
+(deftest test-pick-loot-weapon-only-shotgun-owned-skips-pistol
+  ;; Mid-game on L2: player owns pistol + shotgun. Every kill-loot
+  ;; ammo drop must tag shotgun — never pistol.
+  (let [w {:owned-weapons #{:pistol :shotgun}}]
+    (is (= :shotgun (pick-loot-weapon w 0.0)))
+    (is (= :shotgun (pick-loot-weapon w 0.5)))
+    (is (= :shotgun (pick-loot-weapon w 0.99)))))
+
 (deftest test-pick-loot-weapon-fallback-when-missing
-  ;; Defensive: world without :owned-weapons defaults to a pistol-only
-  ;; loadout so we never crash on a stale fixture.
+  ;; Defensive: world without :owned-weapons defaults to pistol-only
+  ;; loadout (so we never crash on a stale fixture), which then
+  ;; falls back to pistol per the rule above.
   (is (= :pistol (pick-loot-weapon {} 0.5))))
 
 ;; ---------------------------------------------------------------------

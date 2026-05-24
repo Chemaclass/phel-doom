@@ -20,6 +20,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Armor caps at 3.
 - Berserk sphere pickup (rare, ~25% per level). Step on it for 20s of 2× damage on every weapon; rage state shows as a pulsing centred `BERSERK Ns` banner and a red `B` on the minimap.
 - Invulnerability sphere pickup (rarer, ~16% per level). 10s of damage immunity (contact hits are skipped while `:invuln-secs > 0`). Pulsing centred `INVULN Ns` banner on row 4 + cyan `I` on the minimap.
+- Backpack pickup (L2+, ~30% per qualifying level). One-shot that doubles every weapon's effective reserve cap for the rest of the run; persists across level cuts. HUD strip gains a `+pack` indicator; minimap shows yellow `P`.
 
 ## [0.2.0] - 2026-05-22
 

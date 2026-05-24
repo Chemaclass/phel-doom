@@ -46,7 +46,7 @@
   │     - crosshair (centre), kill-streak counter, compass
   │     - rear-warning (centre row 2 when :rear-warning?)
   │     - LOW AMMO N pulse (right row 1 when firepower ≤ 3)
-  │     - game-info strip (top-left row 2: L# · kills · ammo)
+  │     - game-info strip (top-left row 2: L# · kills · weapon · ammo · +pack · STA bar · keys · [diff])
   │     - top-left hearts + armor HUD (row 1)
   │     - pistol sprite + reload-drop animation (centre-bottom)
   │     - muzzle flash (when :fire-anim > 0 and drop = 0)

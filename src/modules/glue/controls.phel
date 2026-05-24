@@ -31,23 +31,39 @@
    way the game can tell the player let go."
   3)
 
+(def sprint-hold-frames
+  "Frames the :sprint slot stays warm after a SHIFT-mod or 'x' byte.
+   Short (~50ms) because there is no explicit SHIFT-release signal
+   on the kitty path — sprint MUST decay fast enough that releasing
+   SHIFT while still walking forward stops the speed boost (and the
+   stamina drain) within a frame or two. Without this the 18-frame
+   move-hold-frames bridge would leave sprint hot for ~300ms after
+   release, which the HUD bar exposes as a phantom drain."
+  3)
+
 (def key->slot
   "Map a single-byte input to the direction-counter slot it activates.
    Arrow-key escape sequences are normalised to ^ _ < > before lookup
-   so they slot in alongside WASD."
+   so they slot in alongside WASD. `x` arms the sprint slot — the
+   legacy / non-kitty fallback for terminals that don't expose SHIFT
+   modifier bits via CSI-u."
   {"^" :fwd    "w" :fwd
    "_" :back   "s" :back
    "<" :turn-left
    ">" :turn-right
    "a" :strafe-left
-   "d" :strafe-right})
+   "d" :strafe-right
+   "x" :sprint})
 
 (def turn-slots
   "Slots that use turn-hold-frames instead of move-hold-frames."
   #{:turn-left :turn-right})
 
 (defn- hold-frames-for [slot]
-  (if (turn-slots slot) turn-hold-frames move-hold-frames))
+  (cond
+    (turn-slots slot)      turn-hold-frames
+    (php/=== slot :sprint) sprint-hold-frames
+    :else                  move-hold-frames))
 
 (defn refresh-move
   "If `byte` maps to a direction slot, refresh that slot's counter on
@@ -91,12 +107,15 @@
 ;; ---------------------------------------------------------------------
 
 (def ascii->slot
-  "ASCII codepoint -> direction-counter slot. Only WASD movement +
-   ←→ turn (kitty reports left-arrow as 57351, right as 57349)."
+  "ASCII codepoint -> direction-counter slot. WASD movement, ←→ turn
+   (kitty reports left-arrow as 57351, right as 57349), and 'x' (120)
+   as the legacy sprint key — works under kitty too without needing
+   the SHIFT modifier bit."
   {119 :fwd
    115 :back
    97 :strafe-left
    100 :strafe-right
+   120 :sprint
    57351 :turn-left
    57349 :turn-right})
 
@@ -110,17 +129,39 @@
   [world slot]
   (assoc-in world [:moves slot] (hold-frames-for slot)))
 
+(def movement-slots
+  "Slots whose press counts as 'the player is trying to walk' for
+   SHIFT-modifier sprint arming. Turn slots are excluded — sprint is
+   a translation modifier, not a rotation one (issue #35 design)."
+  #{:fwd :back :strafe-left :strafe-right})
+
+(defn- shift-mods?
+  "Kitty encodes the mod field as `bits + 1`, so plain SHIFT alone
+   arrives as mods=2 (bits=1, bit 0 = SHIFT). 0 / missing means no
+   mods. Returns true when the SHIFT bit is set."
+  [mods]
+  (and (php/> mods 0)
+       (php/=== (php/intval (php/% (php/- mods 1) 2)) 1)))
+
 (defn- handle-kitty-event
-  "Apply one parsed kitty event [code event-type] to `world`. Press +
-   repeat refresh the slot's hold; release clears the slot to 0 so
-   the player stops the instant they let go."
-  [world code event-type]
+  "Apply one parsed kitty event [code event-type mods] to `world`.
+   Press + repeat refresh the slot's hold; release clears the slot
+   to 0 so the player stops the instant they let go. When the event
+   is press/repeat AND the SHIFT modifier bit is set AND the slot is
+   a movement slot, also refresh `:sprint` so SHIFT+WASD primes the
+   sprint pool (this is the kitty path of the user-picked
+   `SHIFT (kitty) + x fallback` binding from issue #35)."
+  [world code event-type mods]
   (let [slot (get ascii->slot code)]
-    (if (nil? slot)
-      world
-      (cond
-        (php/=== event-type 3) (clear-slot world slot)
-        :else                  (press-slot world slot)))))
+    (cond
+      (php/=== event-type 3)
+      (if (nil? slot) world (clear-slot world slot))
+
+      :else
+      (let [w1 (if (nil? slot) world (press-slot world slot))]
+        (if (and (shift-mods? mods) (contains? movement-slots slot))
+          (press-slot w1 :sprint)
+          w1)))))
 
 (defn- apply-kitty-events
   "Scan `keys` for kitty CSI-u sequences and fold them into `world`.
@@ -130,24 +171,28 @@
   [world keys]
   (let [matches (php/array)
         ;; Regex: ESC [ <code> ( ; mods ( : event )? )? u
-        ;; - code is digits
-        ;; - optional ;mods (digits)
-        ;; - optional :event (digits) inside the mods group
-        re      "/\\x1b\\[(\\d+)(?:;\\d+(?::(\\d+))?)?u/"]
+        ;; - code  is digits
+        ;; - mods  optional digits after the first ';' (kitty encodes
+        ;;         as bits+1; bit 0 = SHIFT — used by sprint arming)
+        ;; - event optional digits after ':' (1=press 2=repeat 3=release)
+        re      "/\\x1b\\[(\\d+)(?:;(\\d+)(?::(\\d+))?)?u/"]
     (php/preg_match_all re keys matches)
-    (let [codes  (php/aget matches 1)
-          events (php/aget matches 2)
-          n      (php/count codes)]
+    (let [codes-arr (php/aget matches 1)
+          mods-arr  (php/aget matches 2)
+          ev-arr    (php/aget matches 3)
+          n         (php/count codes-arr)]
       (loop [i 0 w world]
         (if (php/>= i n)
           [w (php/preg_replace re "" keys)]
-          (let [code (php/intval (php/aget codes i))]
-            (let [evraw (php/aget events i)]
-              ;; Missing :event capture means press (event-type 1).
-              (let [event (if (or (php/=== evraw nil) (php/=== evraw ""))
-                            1
-                            (php/intval evraw))]
-                (recur (php/+ i 1) (handle-kitty-event w code event))))))))))
+          (let [code  (php/intval (php/aget codes-arr i))
+                mraw  (php/aget mods-arr i)
+                mods  (if (or (php/=== mraw nil) (php/=== mraw "")) 0 (php/intval mraw))
+                evraw (php/aget ev-arr i)
+                ;; Missing :event capture means press (event-type 1).
+                event (if (or (php/=== evraw nil) (php/=== evraw ""))
+                        1
+                        (php/intval evraw))]
+            (recur (php/+ i 1) (handle-kitty-event w code event mods))))))))
 
 (def arrow-letter->slot
   "Kitty-enhanced arrow CSI sequences (`\\e[1;<mods>(:<event>)?<letter>`)
@@ -162,30 +207,39 @@
   "Strip kitty-enhanced arrow sequences from `keys` and fold them
    into `world`. Pattern: ESC [ 1 [;mods[:event]] <A|B|C|D>. Event 3
    = release (clear slot); anything else = press/repeat (refresh hold).
+   When the mods bitfield has SHIFT set AND the slot is a movement
+   slot, also refresh `:sprint` so SHIFT+arrow keeps the player
+   sprinting (mirrors the SHIFT+WASD path in apply-kitty-events).
    Plain legacy arrows (\\e[A etc.) are untouched here and handled
    downstream by normalise-arrows. Returns [world leftover]."
   [world keys]
   (let [matches (php/array)
-        re      "/\\x1b\\[1(?:;\\d+(?::(\\d+))?)?([ABCD])/"]
+        re      "/\\x1b\\[1(?:;(\\d+)(?::(\\d+))?)?([ABCD])/"]
     (php/preg_match_all re keys matches)
-    (let [events  (php/aget matches 1)
-          letters (php/aget matches 2)
-          n       (php/count letters)]
+    (let [mods-arr (php/aget matches 1)
+          ev-arr   (php/aget matches 2)
+          letters  (php/aget matches 3)
+          n        (php/count letters)]
       (loop [i 0 w world]
         (if (php/>= i n)
           [w (php/preg_replace re "" keys)]
           (let [letter (php/aget letters i)
-                evraw  (php/aget events i)
+                mraw   (php/aget mods-arr i)
+                mods   (if (or (php/=== mraw nil) (php/=== mraw "")) 0 (php/intval mraw))
+                evraw  (php/aget ev-arr i)
                 event  (if (or (php/=== evraw nil) (php/=== evraw ""))
                          1
                          (php/intval evraw))
                 slot   (get arrow-letter->slot letter)]
             (recur (php/+ i 1)
-                   (if (nil? slot)
-                     w
-                     (cond
-                       (php/=== event 3) (clear-slot w slot)
-                       :else             (press-slot w slot))))))))))
+                   (cond
+                     (nil? slot)       w
+                     (php/=== event 3) (clear-slot w slot)
+                     :else
+                     (let [w1 (press-slot w slot)]
+                       (if (and (shift-mods? mods) (contains? movement-slots slot))
+                         (press-slot w1 :sprint)
+                         w1))))))))))
 
 (defn refresh-from-keys
   "Fold every input byte into `world`. Three-stage parse: kitty CSI-u

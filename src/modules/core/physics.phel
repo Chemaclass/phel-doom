@@ -1,5 +1,5 @@
 (ns phel-doom.modules.core.physics
-  (:require phel-doom.modules.core.state :refer [move-player turn-player])
+  (:require phel-doom.modules.core.state :refer [max-stamina move-player turn-player])
   (:require phel-doom.modules.core.map   :refer [missing-key-for passable? wall?]))
 
 (def locked-bump-secs
@@ -29,6 +29,37 @@
 (def turn-speed
   "Radians per second of sustained rotation."
   2.0)
+
+(def sprint-multiplier
+  "Speed multiplier applied to longitudinal + lateral motion while the
+   sprint slot is on AND stamina is available. Turn-speed is NOT
+   scaled — sprint is a translation modifier, not a rotation one."
+  1.6)
+
+(def stamina-drain
+  "Stamina units burned per second while sprinting AND moving. At
+   max-stamina (100) this gives ~3.3s of sustained sprint before the
+   pool empties."
+  30.0)
+
+(def stamina-regen
+  "Stamina units recovered per second while NOT sprinting and once
+   the post-sprint cooldown has elapsed. Slower than drain so the
+   chase-then-recover loop has a real tactical cost."
+  20.0)
+
+(def sprint-cooldown-after
+  "Seconds the regen is held back after a sprint stops. Prevents
+   tap-shift-tap-shift abuse — the player needs a brief beat off
+   the trigger before the pool starts refilling."
+  0.5)
+
+(def sprint-engage-threshold
+  "Stamina value (out of max-stamina) the player must recover to
+   before sprint can re-engage after a full depletion. Below this
+   :sprint-blocked? stays latched even though stamina > 0, so the
+   player can't stutter-sprint at empty."
+  20.0)
 
 (defn try-move
   "Translate the player by (dx, dy) unless the destination cell holds
@@ -62,17 +93,38 @@
   [moves slot ^float speed ^float dt]
   (if (counter-on? moves slot) (php/* speed dt) 0.0))
 
+(defn- sprinting?
+  "True when the player is actively burning sprint this frame: sprint
+   intent armed AND stamina pool not empty AND not latched-blocked."
+  [world]
+  (let [moves (:moves world)]
+    (and (counter-on? moves :sprint)
+         (php/> (or (:stamina world) 0.0) 0.0)
+         (not (:sprint-blocked? world)))))
+
+(defn- sprint-factor
+  "Speed multiplier to apply this frame — sprint-multiplier when the
+   sprint gate is open, 1.0 otherwise."
+  [world]
+  (if (sprinting? world) sprint-multiplier 1.0))
+
 (defn- turn-delta [moves ^float dt]
   (php/- (contribution moves :turn-right turn-speed dt)
          (contribution moves :turn-left  turn-speed dt)))
 
-(defn- longitudinal-delta [moves ^float dt]
-  (php/- (contribution moves :fwd  move-speed dt)
-         (contribution moves :back move-speed dt)))
+(defn- longitudinal-delta [world ^float dt]
+  (let [moves (:moves world)
+        sf    (sprint-factor world)]
+    (php/* sf
+           (php/- (contribution moves :fwd  move-speed dt)
+                  (contribution moves :back move-speed dt)))))
 
-(defn- lateral-delta [moves ^float dt]
-  (php/- (contribution moves :strafe-right strafe-speed dt)
-         (contribution moves :strafe-left  strafe-speed dt)))
+(defn- lateral-delta [world ^float dt]
+  (let [moves (:moves world)
+        sf    (sprint-factor world)]
+    (php/* sf
+           (php/- (contribution moves :strafe-right strafe-speed dt)
+                  (contribution moves :strafe-left  strafe-speed dt)))))
 
 (defn- apply-rotation [world ^float turn-by]
   (if (php/=== turn-by 0.0)
@@ -98,18 +150,65 @@
             :strafe-left  (decay-counter (:strafe-left m))
             :strafe-right (decay-counter (:strafe-right m))
             :turn-left    (decay-counter (:turn-left m))
-            :turn-right   (decay-counter (:turn-right m))})))
+            :turn-right   (decay-counter (:turn-right m))
+            :sprint       (decay-counter (or (:sprint m) 0))})))
+
+(defn- any-movement-on? [world]
+  (let [m (:moves world)]
+    (or (counter-on? m :fwd)
+        (counter-on? m :back)
+        (counter-on? m :strafe-left)
+        (counter-on? m :strafe-right))))
 
 (defn apply-physics
   "Per-frame: rotate, then translate using the new heading, then
-   decay every counter by one frame."
+   decay every counter by one frame. Translation deltas read both
+   `:moves` AND the sprint state (via sprint-factor) so sprint
+   intent x stamina > 0 x not-blocked yields a 1.6x boost."
   [world ^float dt]
   (let [moves (:moves world)]
     (let [turned (apply-rotation world (turn-delta moves dt))]
       (let [walked (apply-translation turned
-                                      (longitudinal-delta moves dt)
-                                      (lateral-delta moves dt))]
+                                      (longitudinal-delta turned dt)
+                                      (lateral-delta turned dt))]
         (decay-move-counters walked)))))
+
+(defn tick-stamina
+  "Drain stamina while sprinting + moving, regenerate while not (after
+   a brief cooldown), and manage the :sprint-blocked? latch.
+
+   - sprinting + moving: stamina -= stamina-drain * dt (clamped >= 0).
+     On hitting 0, latch :sprint-blocked? true and arm cooldown.
+   - not sprinting: tick cooldown down; once 0, regen by
+     stamina-regen * dt (clamped <= max-stamina). Once stamina recovers
+     past sprint-engage-threshold, clear :sprint-blocked? so the player
+     can sprint again."
+  [world ^float dt]
+  (let [stam  (or (:stamina world) max-stamina)
+        cd    (or (:sprint-cooldown-secs world) 0.0)
+        blkd? (boolean (:sprint-blocked? world))
+        spr?  (sprinting? world)
+        move? (any-movement-on? world)]
+    (cond
+      (and spr? move?)
+      (let [stam'  (php/max 0.0 (php/- stam (php/* stamina-drain dt)))
+            empty? (php/<= stam' 0.0)]
+        (assoc world
+               :stamina               stam'
+               :sprint-blocked?       (or blkd? empty?)
+               :sprint-cooldown-secs  (if empty? sprint-cooldown-after cd)))
+
+      :else
+      (let [cd'        (php/max 0.0 (php/- cd dt))
+            regen?     (php/<= cd' 0.0)
+            stam'      (if regen?
+                         (php/min max-stamina (php/+ stam (php/* stamina-regen dt)))
+                         stam)
+            unblocked? (and blkd? (php/>= stam' sprint-engage-threshold))]
+        (assoc world
+               :stamina               stam'
+               :sprint-cooldown-secs  cd'
+               :sprint-blocked?       (and blkd? (not unblocked?)))))))
 
 (def blood-drop-spawn-rate
   "Expected new drops per second (Bernoulli per-frame using dt)."

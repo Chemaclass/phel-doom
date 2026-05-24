@@ -11,6 +11,9 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+**Movement**
+- Sprint verb (closes #35). Hold **SHIFT** (kitty / Ghostty / WezTerm / iTerm2 ≥ 3.5) or **`x`** (any terminal) to multiply forward + strafe speed by `sprint-multiplier` (1.6×) at the cost of draining a `:stamina` pool. Pool defaults to `max-stamina` (100), drains at 30 units/sec while sprinting AND moving, regenerates at 20 units/sec after a 0.5s post-sprint cooldown. Hitting empty latches `:sprint-blocked?` until stamina recovers to `sprint-engage-threshold` (20) — prevents stutter-sprint at zero. HUD top-left strip gets a new chip `STA ████████░░` (10 cells, white → amber under 33% → red at 0). Turn-speed is unchanged. Kitty path parses the SHIFT bit out of the CSI-u mods field; legacy path uses the plain `"x"` byte; both refresh a new `:sprint` movement slot that decays alongside WASD so sprint intent evaporates the frame the player lets go.
+
 **Weapons + combat**
 - 3-slot loadout (1/2/3) with DPS-balanced niches: pistol 1 dmg @ 0.12s cd (8 dps fallback), shotgun 3 dmg @ 0.6s cd (5 dps burst killer — 1-shots L1-L3 enemies, 2-shots the L5 baron), chaingun 1 dmg @ 0.05s cd (20 dps sustained spray, ammo hog). Picking up a chaingun does NOT obsolete the shotgun — they own different niches. Per-weapon mag + reserve persist across switches. Each weapon has its own SGR palette so the bottom sprite reads as a distinct piece of kit.
 - Auto-fire while space held for pistol + chaingun (`:auto-fire? true` in weapons spec). Without it, the chaingun's 0.05s cd was capped by the player's tap rate, so the 20 dps niche was unreachable. Shotgun stays single-action — each shell requires a fresh trigger pull.

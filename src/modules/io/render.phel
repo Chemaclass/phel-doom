@@ -1263,6 +1263,44 @@
             (buf-push parts (str "\e[" row ";" col "H" label)))))))
   parts)
 
+(def stamina-bar-cells
+  "Width of the STA bar in cells. 10 is wide enough to read the pool
+   level at a glance without crowding the HUD strip on narrow
+   terminals (40-col)."
+  10)
+
+(defn- stamina-chip
+  "Render the sprint stamina HUD chip:
+       ` STA ████████░░`
+   - 10 cells total, filled = (intval (* cells (stam/max))).
+   - Fill colour: white at ≥33%, amber under 33%, red when latched
+     blocked OR at 0 — so the player sees the colour shift before the
+     pool empties and notices the cooldown latch.
+   - Same `\\e[40m` BG-wash + `\\e[40;97m` close pattern as the +pack
+     / [diff] chips so the leading space + trailing handoff stay on
+     the dark HUD wash on light-bg terminals."
+  [stats]
+  ;; :stamina + :max-stamina always populated by frame-stats; no
+  ;; fallback so a missing field surfaces as a visible render bug
+  ;; instead of a silently-wrong bar.
+  (let [stam      (get stats :stamina)
+        smax      (get stats :max-stamina)
+        ratio     (php// stam smax)
+        clamped   (php/max 0.0 (php/min 1.0 ratio))
+        filled    (php/intval (php/floor (php/* stamina-bar-cells clamped)))
+        empty-n   (php/- stamina-bar-cells filled)
+        blocked?  (boolean (get stats :sprint-blocked?))
+        fill-col  (cond
+                    (or blocked? (php/<= stam 0.0)) "\e[40;91;1m"
+                    (php/< clamped 0.33)            "\e[40;33;1m"
+                    :else                           "\e[40;97;1m")
+        empty-col "\e[40;38;5;240m"]
+    (str "\e[40m " fill-col "STA "
+         (php/str_repeat "█" filled)
+         empty-col
+         (php/str_repeat "░" empty-n)
+         "\e[40;97m")))
+
 (defn- paint-game-info
   "Top-left game-state strip: `L1 imps · kills 12 · ammo 7/10 [23]`,
    anchored at row 2 col 1 directly under the hearts/armor row. Left
@@ -1302,6 +1340,7 @@
         keys'    (or (get stats :held-keys) #{})
         keys-tag (str (if (contains? keys' :blue) "\e[40m \e[40;94;1m⚿\e[40;97m" "")
                       (if (contains? keys' :red)  "\e[40m \e[40;91;1m⚿\e[40;97m" ""))
+        sta-chip (stamina-chip stats)
         ;; Same wash-preserving pattern for the inline mag / reserve
         ;; recolours: replace bare \e[0m resets with \e[40;97m so
         ;; the row never falls off the dark BG mid-string.
@@ -1310,7 +1349,7 @@
                       "  \e[1m" wname "\e[22m "
                       mag-col mag "\e[22;97m/" cap " "
                       res-col "[" reserve "]\e[22;97m"
-                      pack keys-tag diff-tag "\e[0m")]
+                      pack sta-chip keys-tag diff-tag "\e[0m")]
     (buf-push parts (str "\e[2;1H" styled)))
   parts)
 

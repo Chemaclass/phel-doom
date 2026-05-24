@@ -11,6 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+- `--level=N` (`-l`) CLI flag — start the run at level N (clamped to 1..num-levels). Pairs naturally with `--god` for dev testing: `make play-boss` drops straight into the L10 boss arena, `make play-level LV=8` starts at level 8. Death + retry still reset to L1; the flag only seeds the initial loop entry.
 - **5 new levels** taking the run from 5 to 10 rooms. L6-L9 mix multiple monster types per room for a chaotic late-game; L10 is a hand-authored boss arena.
   - **L6 spectres** — 4 spectres (HP 3, agile) + 2 imps. Spectres debut.
   - **L7 revenants** — 4 revenants (HP 4) + 2 demons.

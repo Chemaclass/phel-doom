@@ -150,6 +150,28 @@
              (let [flashed (assoc-in wounded [best :hit-flash-secs] hit-flash-seconds)]
                [flashed true hit-pos best]))))))))
 
+(defn push-back-enemy
+  "Shove the enemy at `idx` along `(cos-a, sin-a)` by `dist` world
+   units; on wall collision try a half then a quarter step before
+   giving up. Returns the enemies vector with the moved enemy in
+   place, or unchanged when no fraction clears. Used by combat to
+   knock enemies back along the shot direction — bigger enemies
+   visibly recoil, giving the player time to reload + reposition."
+  [enemies grid idx ^float cos-a ^float sin-a ^float dist]
+  (let [e        (get enemies idx)
+        ex       (:x e)
+        ey       (:y e)
+        try-push (fn [k]
+                   (let [nx (php/+ ex (php/* dist k cos-a))
+                         ny (php/+ ey (php/* dist k sin-a))]
+                     (if (wall? grid (php/intval nx) (php/intval ny))
+                       nil
+                       [nx ny])))
+        pos      (or (try-push 1.0) (try-push 0.5) (try-push 0.25))]
+    (if pos
+      (assoc enemies idx (assoc e :x (first pos) :y (second pos)))
+      enemies)))
+
 (defn- random-spawn-far-from
   "Random open cell at least min-dist from (px, py). Falls back to nil
    after a few attempts so the caller can keep the enemy dead another

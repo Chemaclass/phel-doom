@@ -1,6 +1,12 @@
 (ns phel-doom.modules.core.physics
   (:require phel-doom.modules.core.state :refer [move-player turn-player])
-  (:require phel-doom.modules.core.map   :refer [passable? wall?]))
+  (:require phel-doom.modules.core.map   :refer [missing-key-for passable? wall?]))
+
+(def locked-bump-secs
+  "How long the 'NEED <COLOUR> KEY' HUD hint stays on after the player
+   bounces off a locked door. ~1.5s is long enough to read without
+   blocking the screen when the player keeps colliding."
+  1.5)
 
 ;; ---------------------------------------------------------------------
 ;; Player physics: rotation + translation + counter decay.
@@ -26,14 +32,28 @@
 
 (defn try-move
   "Translate the player by (dx, dy) unless the destination cell holds
-   a wall OR a locked door without the matching keycard."
+   a wall OR a locked door without the matching keycard. When a
+   bump is caused specifically by a missing keycard, arm
+   :locked-door-bump-secs + record the colour so the render layer
+   can paint 'NEED <COLOUR> KEY' over the 3D view. Wall bumps are
+   silent — only the locked-door case is informational."
   [world ^float dx ^float dy]
   (let [{:keys [grid player held-keys]} world
         nx                              (+ (:x player) dx)
-        ny                              (+ (:y player) dy)]
-    (if (passable? grid held-keys (php/intval nx) (php/intval ny))
+        ny                              (+ (:y player) dy)
+        ix                              (php/intval nx)
+        iy                              (php/intval ny)]
+    (cond
+      (passable? grid held-keys ix iy)
       (move-player world dx dy)
-      world)))
+
+      :else
+      (let [need (missing-key-for grid held-keys ix iy)]
+        (if (php/=== need nil)
+          world
+          (assoc world
+                 :locked-door-bump-secs   locked-bump-secs
+                 :locked-door-bump-colour need))))))
 
 (defn- counter-on? [moves slot]
   (php/> (get moves slot) 0))

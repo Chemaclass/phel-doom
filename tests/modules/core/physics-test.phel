@@ -42,6 +42,41 @@
     (is (= 1.5 (:y p)))))
 
 ;; ---------------------------------------------------------------------
+;; try-move + locked doors: arming the NEED <COLOUR> KEY HUD cue.
+;; ---------------------------------------------------------------------
+
+(def blue-door-world
+  (new-world [[1 1 1]
+              [1 0 3]  ; cell-door-blue at (2,1)
+              [1 1 1]]
+             (new-player 1.5 1.5 0.0)))
+
+(deftest test-try-move-into-locked-door-without-key-arms-bump-cue
+  ;; Player stays put AND the world records why so render can paint
+  ;; 'NEED BLUE KEY' over the 3D view.
+  (let [w (try-move blue-door-world 1.0 0.0)
+        p (:player w)]
+    (is (= 1.5 (:x p)))
+    (is (= 1.5 (:y p)))
+    (is (php/> (:locked-door-bump-secs w) 0.0))
+    (is (= :blue (:locked-door-bump-colour w)))))
+
+(deftest test-try-move-into-locked-door-with-matching-key-passes
+  ;; Holding the blue key turns the locked door into a regular door
+  ;; (passable trigger). No bump cue armed.
+  (let [w0 (assoc blue-door-world :held-keys #{:blue})
+        w  (try-move w0 1.0 0.0)
+        p  (:player w)]
+    (is (= 2.5 (:x p)))
+    (is (= 0.0 (or (:locked-door-bump-secs w) 0.0)))))
+
+(deftest test-try-move-into-wall-does-not-arm-bump-cue
+  ;; Wall bump stays silent — only LOCKED doors arm the HUD cue.
+  (let [w (try-move open-world 1.0 0.0)]
+    (is (= 0.0 (or (:locked-door-bump-secs w) 0.0)))
+    (is (php/=== nil (:locked-door-bump-colour w)))))
+
+;; ---------------------------------------------------------------------
 ;; apply-physics: counters drive movement, decay each frame.
 ;; ---------------------------------------------------------------------
 

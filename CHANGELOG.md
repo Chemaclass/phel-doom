@@ -52,6 +52,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Loot drop chances tuned DOWN after v0.3 playtest: per-kill drop ~25% (was 50%), berserk spawn ~12% (was 25%), invuln ~8% (was 16%), backpack ~20% (was 30%). Floor no longer fills with pickups.
 - Weapons must be found on the map. Fresh runs only own the pistol. Shotgun pickup (`╪`) seeds on L2 and the chaingun (`≣`) on L3 — pickup auto-switches to the new weapon DOOM-style. `1`/`2`/`3` only switches to weapons in `:owned-weapons` so pressing 2 before finding the shotgun does nothing. Owned weapons persist across level cuts.
 - 3D loot glyphs differentiated by **shape** (not just colour) so the pickup type reads at a glance across the room: heart `♥`, armor `◆`, ammo `◉` (was square `▣`), berserk `Ω`, invuln `★`, backpack `⊞`, shotgun `╪`, chaingun `≣`, keycard `⌷`.
+- Locked-door cues. L4 (blue) / L5 (red) intro splash now stamps a 2nd line — `FIND THE BLUE KEY` / `FIND THE RED KEY` — under the level name so the lock mechanic is discoverable. Bumping the locked exit without the matching keycard pulses `⌷ NEED BLUE KEY ⌷` (or red) over the upper third of the 3D view for 1.5s; render-only, no gameplay change.
 - Each weapon now has its own silhouette: pistol slim single-barrel, shotgun wide twin-barrel with broad stock, chaingun multi-barrel cluster on a heavy housing.
 
 ## [0.2.0] - 2026-05-22

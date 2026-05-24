@@ -99,18 +99,19 @@
 
    ;; L10 — the final. Hand-authored arena: open chamber with a
    ;; central pillar for cover, player spawns south, BOSS-locked
-   ;; door north. ONE cyberdemon boss with 20 HP (needs ~7 shotgun
-   ;; shells or ~20 chaingun rounds) surrounded by 4 imps as
-   ;; harassment. The 'X' in the layout is a boss-locked door:
-   ;; impassable until combat conj's `:boss` onto :held-keys when
-   ;; the cyberdemon dies. Walk through after killing the boss to
-   ;; win the run.
+   ;; door north. ONE cyberdemon boss with 50 HP (needs ~17 shotgun
+   ;; shells or ~50 chaingun rounds — a real fight). Two imps
+   ;; harass at MOST 1 alive at a time (`:max-concurrent 1` blocks
+   ;; the respawn from doubling up). The 'X' in the layout is a
+   ;; boss-locked door: impassable until combat conj's `:boss` onto
+   ;; :held-keys when the cyberdemon dies. Walk through after the
+   ;; kill to win the run.
    {:enemy     :cyber
     :chase     1.5
     :name      "the final"
     :door-lock :boss
-    :enemies   [{:type :cyber :count 1 :lives 20}
-                {:type :imp   :count 4 :lives 1}]
+    :enemies   [{:type :cyber :count 1 :lives 50}
+                {:type :imp   :count 2 :lives 1 :max-concurrent 1}]
     :layout    ["####################"
                 "#.........X........#"
                 "#..................#"
@@ -323,11 +324,11 @@
 
 (defn- normalise-enemies
   "Coerce the level's `:enemies` field into a vector of mixed specs
-   `[{:type :count :lives}]`. Single-type entries (int + `:enemy` +
-   optional `:enemy-lives`) become a 1-element vector. Already-mixed
-   entries pass through unchanged, with `:type` falling back to
-   `:enemy` and `:lives` to the catalog default when the spec omits
-   either field."
+   `[{:type :count :lives [:max-concurrent]}]`. Single-type entries
+   (int + `:enemy` + optional `:enemy-lives`) become a 1-element
+   vector. Already-mixed entries get `:type` defaulted from `:enemy`
+   and `:lives` from the catalog when omitted; any extra spec keys
+   (e.g. `:max-concurrent`) pass through verbatim."
   [cfg]
   (let [es (:enemies cfg)]
     (cond
@@ -335,9 +336,10 @@
       (apply vector
              (map (fn [spec]
                     (let [t (or (:type spec) (:enemy cfg) :imp)]
-                      {:type  t
-                       :count (or (:count spec) 0)
-                       :lives (or (:lives spec) (default-lives-for t))}))
+                      (merge spec
+                             {:type  t
+                              :count (or (:count spec) 0)
+                              :lives (or (:lives spec) (default-lives-for t))})))
                   es))
 
       :else

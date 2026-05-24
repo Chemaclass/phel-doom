@@ -9,8 +9,8 @@
   [{:size [22 16] :walls 12 :enemies 4  :chase 0.8 :name "imps"        ...}
    {:size [28 20] :walls 22 :enemies 6  :chase 1.0 :name "demons"      ...}
    {:size [36 24] :walls 38 :enemies 8  :chase 1.3 :name "cacodemons"  ...}
-   {:size [44 28] :walls 55 :enemies 9  :chase 1.6 :name "barons"      ...}
-   {:size [52 32] :walls 75 :enemies 12 :chase 2.0 :name "cyberdemons" ...}])
+   {:size [44 28] :walls 55 :enemies 7  :chase 1.6 :name "barons"      ...}
+   {:size [52 32] :walls 75 :enemies 9  :chase 2.0 :name "cyberdemons" ...}])
 ```
 
 | Field | Meaning |

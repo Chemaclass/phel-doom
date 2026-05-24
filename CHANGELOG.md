@@ -53,6 +53,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Weapons must be found on the map. Fresh runs only own the pistol. Shotgun pickup (`╪`) seeds on L2 and the chaingun (`≣`) on L3 — pickup auto-switches to the new weapon DOOM-style. `1`/`2`/`3` only switches to weapons in `:owned-weapons` so pressing 2 before finding the shotgun does nothing. Owned weapons persist across level cuts.
 - 3D loot glyphs differentiated by **shape** (not just colour) so the pickup type reads at a glance across the room: heart `♥`, armor `◆`, ammo `◉` (was square `▣`), berserk `Ω`, invuln `★`, backpack `⊞`, shotgun `╪`, chaingun `≣`, keycard `⌷`.
 - Locked-door cues. L4 (blue) / L5 (red) intro splash now stamps a 2nd line — `FIND THE BLUE KEY` / `FIND THE RED KEY` — under the level name so the lock mechanic is discoverable. Bumping the locked exit without the matching keycard pulses `⌷ NEED BLUE KEY ⌷` (or red) over the upper third of the 3D view for 1.5s; render-only, no gameplay change.
+- L4 enemy count trimmed 9 → 7, L5 trimmed 12 → 9. Late-game toughness now comes mostly from per-enemy HP (4 / 5) and chase speed, not crowd density — leaves room to explore for the keycard without a meat-grinder. Ammo-box budget scales with `enemies × HP` so it auto-rebalances down.
 - Each weapon now has its own silhouette: pistol slim single-barrel, shotgun wide twin-barrel with broad stock, chaingun multi-barrel cluster on a heavy housing.
 
 ## [0.2.0] - 2026-05-22

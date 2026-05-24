@@ -1,4 +1,4 @@
-.PHONY: help install d dev t test f format fc fix b build r repl doctor clean
+.PHONY: help install d dev t test f format fc fix b build r repl doctor clean p play play-dev
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -13,6 +13,9 @@ dev: ## run CLI from sources (pass args: make dev ARGS="play")
 p: play
 play: ## start the DOOM showcase
 	vendor/bin/phel run phel-doom.main play
+
+play-dev: ## god mode: no damage, GOD badge in HUD — for testing rooms / weapons end-to-end
+	vendor/bin/phel run phel-doom.main play --god
 
 t: test
 test: ## run phel tests

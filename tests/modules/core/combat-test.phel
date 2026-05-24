@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.modules.core.state :refer [new-world new-player])
   (:require phel-doom.modules.core.combat
-            :refer [closest-attacker attacker-side berserk? berserk-seconds can-fire? apply-heat empty-click-seconds invuln? invuln-seconds knockback mag-size reload reloading? roll-loot-kind tick-shooting]))
+            :refer [closest-attacker attacker-side berserk? berserk-seconds can-fire? apply-heat damage-step empty-click-seconds invuln? invuln-seconds knockback mag-size reload reloading? roll-loot-kind tick-shooting]))
 
 ;; ---------------------------------------------------------------------
 ;; closest-attacker: selection rule.
@@ -283,3 +283,33 @@
   (is (= true  (invuln? {:invuln-secs 5.0})))
   (is (= false (invuln? {:invuln-secs 0.0})))
   (is (= false (invuln? {}))))
+
+;; ---------------------------------------------------------------------
+;; God mode (--god / `make play-dev`): damage-step must not decrement
+;; :lives even when an enemy is sitting on top of the player and
+;; i-frames have expired.
+;; ---------------------------------------------------------------------
+
+(defn- world-with-enemy-on-player [lives god?]
+  (let [grid   [[1 1 1] [1 0 1] [1 1 1]]
+        player (new-player 1.5 1.5 0.0)
+        base   (new-world grid player)]
+    (assoc base
+           :lives    lives
+           :iframes  0.0
+           :enemies  [{:x 1.5 :y 1.5 :alive true :lives 1 :max-lives 1 :hit-flash-secs 0.0}]
+           :god?     god?)))
+
+(deftest test-damage-step-drops-life-without-god
+  ;; Sanity baseline: without god?, contact damage decrements :lives
+  ;; once per i-frame window.
+  (let [w0 (world-with-enemy-on-player 5 false)
+        w1 (damage-step w0 0.016)]
+    (is (= 4 (:lives w1)))))
+
+(deftest test-damage-step-spares-life-in-god-mode
+  ;; With :god? true the touch hit is suppressed entirely so the
+  ;; player can roam every room without dying.
+  (let [w0 (world-with-enemy-on-player 5 true)
+        w1 (damage-step w0 0.016)]
+    (is (= 5 (:lives w1)))))

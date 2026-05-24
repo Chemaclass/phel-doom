@@ -52,6 +52,8 @@ Walk into a door to advance. Walk over pickups to collect:
 
 Launch with `--difficulty=easy|normal|hard|nightmare` (`-d`) to scale enemy speed, HP, and count. Press any key on the start menu to play (`q` exits).
 
+Dev god mode: `make play-dev` (or `--god` / `-g`) suppresses every contact hit so you can walk every room / test every weapon without dying. Top-left HUD adds a yellow `GOD` badge while active.
+
 For instant-release movement (kitty keyboard protocol, tmux setup,
 terminal compatibility): see [docs/input.md](docs/input.md).
 

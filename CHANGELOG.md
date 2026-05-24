@@ -32,6 +32,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 **CLI**
 - `--difficulty=easy|normal|hard|nightmare` (`-d`) scales chase speed, enemy HP, enemy count. Default `normal`.
+- `--god` (`-g`) dev mode + `make play-dev` shortcut: contact damage suppressed end-to-end so the player can walk every room / test every weapon without dying. HUD paints a yellow `GOD` badge after the hearts strip.
+
+**Render**
+- HUD lives strip now caps the filled-heart count at `:max-lives` so the row stays one line even when `:lives` is inflated (dev god mode). Engine still tracks the real value for take-damage / heart-pickup math.
 
 ### Fixed
 

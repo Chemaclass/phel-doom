@@ -381,6 +381,7 @@
    :invuln-secs  (or (:invuln-secs world) 0.0)
    :backpack?    (boolean (:backpack? world))
    :difficulty   (or (:difficulty world) :normal)
+   :god?         (boolean (:god? world))
    :held-keys      (or (:held-keys world) #{})
    :door-lock      (:door-lock world)
    :owned-weapons  (or (:owned-weapons world) #{:pistol})
@@ -567,9 +568,12 @@
    levels; death/victory both update the persisted scores file.
 
    `diff` is the difficulty keyword from --difficulty (or nil for
-   :normal). Threaded into every build-world call so retries via
-   r / R preserve the same balance the player picked at startup."
-  [diff]
+   :normal). `god?` (from --god / `make play-dev`) stamps :god? on
+   every freshly-built world so combat/vulnerable? short-circuits
+   contact damage for the whole run. Both are threaded into every
+   build-world call so r/R retries preserve the same balance + dev
+   flags the player launched with."
+  [diff god?]
   (loop [level       1
          lives       max-lives
          carry-kills 0
@@ -578,7 +582,14 @@
          backpack?   false
          owned       #{:pistol}]
     (php/mt_srand seed)
-    (let [result (game-loop (build-world level lives backpack? diff owned))]
+    (let [w0     (build-world level lives backpack? diff owned)
+          ;; God mode flag survives across level cuts because we
+          ;; re-stamp it on every freshly-built world here. lives
+          ;; itself stays at max-lives — combat/vulnerable? skips
+          ;; damage when :god? is set, so the heart count never
+          ;; needs to be inflated.
+          w1     (if god? (assoc w0 :god? true) w0)
+          result (game-loop w1)]
       (cond
         (= result :quit)
         nil
@@ -635,13 +646,14 @@
 
 (defn- run-play [ctx]
   (init-input!)
-  (let [diff (cli/opt ctx "difficulty")]
+  (let [diff (cli/opt ctx "difficulty")
+        god? (cli/opt ctx "god")]
     (if (php/=== (show-start-menu!) :quit)
       (do (restore!)
           (clear-screen)
           0)
       (do (clear-screen)
-          (run-levels diff)
+          (run-levels diff god?)
           (restore!)
           (clear-screen)
           (cli/success ctx "Thanks for playing.")
@@ -658,5 +670,9 @@
            :mode    :optional
            :doc     "easy | normal | hard | nightmare (default normal)"
            :default "normal"
-           :coerce  :keyword}]
+           :coerce  :keyword}
+          {:name "god"
+           :short "g"
+           :mode  :none
+           :doc   "Dev god mode: contact damage suppressed; GOD badge in HUD."}]
    :run  run-play})

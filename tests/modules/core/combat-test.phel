@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.modules.core.state :refer [new-world new-player])
   (:require phel-doom.modules.core.combat
-            :refer [closest-attacker attacker-side berserk? berserk-seconds can-fire? apply-heat damage-step empty-click-seconds invuln? invuln-seconds knockback mag-size pick-loot-weapon reload reloading? roll-loot-kind tick-shooting]))
+            :refer [armory-reserve closest-attacker attacker-side berserk? berserk-seconds can-fire? apply-heat damage-step empty-click-seconds invuln? invuln-seconds knockback mag-size pick-loot-weapon reload reloading? roll-loot-kind tick-armory tick-shooting]))
 
 ;; ---------------------------------------------------------------------
 ;; closest-attacker: selection rule.
@@ -495,3 +495,33 @@
         w1 (tick-shooting w0 true true)]
     (is (= 1 (:kills w1)))
     (is (not (contains? (or (:held-keys w1) #{}) :boss)))))
+
+;; ---------------------------------------------------------------------
+;; tick-armory: dev cheat that effectively grants infinite ammo by
+;; refilling mag + reserve each tick. No-op when :armory? is falsy.
+;; ---------------------------------------------------------------------
+
+(deftest test-tick-armory-noop-when-flag-off
+  (let [w0 {:mag 3 :ammo-reserve 5 :weapon :pistol
+            :weapon-state {:pistol {:mag 3 :reserve 5}}}
+        w1 (tick-armory w0)]
+    (is (= 3 (:mag w1)))
+    (is (= 5 (:ammo-reserve w1)))))
+
+(deftest test-tick-armory-refills-mag-and-reserve
+  (let [w0 {:armory? true :weapon :pistol :mag 1 :ammo-reserve 0}
+        w1 (tick-armory w0)]
+    (is (= 10 (:mag w1)))
+    (is (= armory-reserve (:ammo-reserve w1)))
+    (is (= 0.0 (:reload-cooldown w1)))))
+
+(deftest test-tick-armory-stamps-every-weapon-in-stash
+  (let [w0    {:armory? true :weapon :chaingun}
+        w1    (tick-armory w0)
+        stash (:weapon-state w1)]
+    (is (= 10 (get-in stash [:pistol :mag])))
+    (is (= 4  (get-in stash [:shotgun :mag])))
+    (is (= 30 (get-in stash [:chaingun :mag])))
+    (is (= armory-reserve (get-in stash [:pistol :reserve])))
+    (is (= armory-reserve (get-in stash [:shotgun :reserve])))
+    (is (= armory-reserve (get-in stash [:chaingun :reserve])))))

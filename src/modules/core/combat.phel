@@ -3,8 +3,14 @@
   (:require phel-doom.modules.core.enemy   :refer [shoot])
   (:require phel-doom.modules.core.physics :refer [try-move])
   (:require phel-doom.modules.core.state   :refer [max-lives])
-  (:require phel-doom.modules.core.weapons :refer [weapon-spec])
+  (:require phel-doom.modules.core.weapons :refer [weapon-order weapon-spec weapons])
   (:require phel-doom.modules.io.sound   :refer [play-sfx!]))
+
+(def armory-reserve
+  "Reserve cap stamped onto every weapon when --armory is on. Picked
+   big enough to read as 'infinite' in the HUD chip even after long
+   chaingun sprays, small enough to render as 4 digits."
+  9999)
 
 ;; ---------------------------------------------------------------------
 ;; Combat: the hitscan trigger pull (fire-shot) and the damage / i-frame
@@ -570,3 +576,25 @@
             (php/<= (or (:jam-secs w) 0.0) 0.0)
             (php/<= (or (:reload-cooldown w) 0.0) 0.0)) (empty-trigger-pull w)
        :else              w))))
+
+(defn tick-armory
+  "Dev cheat: when `:armory?` is set, refill every weapon's mag to
+   capacity and reserve to `armory-reserve` each tick + clear the
+   reload cooldown. Net effect is effectively-infinite ammo with no
+   reload pauses, so the player can test every weapon's hit feel
+   without grinding for boxes. No-op when `:armory?` is falsy."
+  [world]
+  (if (not (:armory? world))
+    world
+    (let [active  (or (:weapon world) :pistol)
+          stash   (reduce (fn [acc kw]
+                            (let [s (get weapons kw)]
+                              (assoc acc kw {:mag     (:mag-size s)
+                                             :reserve armory-reserve})))
+                          {} weapon-order)
+          mag-cap (:mag-size (get weapons active))]
+      (assoc world
+             :weapon-state    stash
+             :mag             mag-cap
+             :ammo-reserve    armory-reserve
+             :reload-cooldown 0.0))))

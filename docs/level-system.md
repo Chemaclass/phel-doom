@@ -15,7 +15,7 @@
 | 7 | revenants | random mix | 4 revenants + 2 demons |
 | 8 | archvile court | random mix | 2 archviles + 3 cacos + 2 mancubi |
 | 9 | the brood | random mix | 3 pinkies + 3 barons + 2 mancubi |
-| 10 | the final | **hand-authored arena** | 1 cyberdemon BOSS (HP 20) + 4 imps |
+| 10 | the final | **hand-authored arena**, boss-locked exit | 1 cyberdemon BOSS (HP 20) + 4 imps. Kill the boss to unlock the north door. |
 
 ## Catalog
 

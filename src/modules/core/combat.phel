@@ -390,6 +390,17 @@
       (php/=== kind :heart) (push-pickup world :hearts hit-pos)
       :else                 world)))
 
+(defn- maybe-unlock-boss-door
+  "On a `:door-lock :boss` level, killing a `:cyber` enemy grants the
+   synthetic `:boss` keycard so the exit door becomes passable. No
+   physical card spawns for boss locks — this hook is the unlock."
+  [world killed-enemy]
+  (if (and (php/=== (:door-lock world) :boss)
+           (php/=== (:type killed-enemy) :cyber))
+    (assoc world :held-keys
+           (conj (or (:held-keys world) #{}) :boss))
+    world))
+
 (defn- on-shot-hit
   "World update on a successful hit. enemy/shoot has already decremented
    `:lives` and (when the pool emptied) flipped `:alive false` and
@@ -398,9 +409,12 @@
    accordingly. A blood splatter fires on every hit so the player sees
    the wound, but `:kills` and `:streak` only advance on the final
    shot that drops the enemy. Streak chains while `:streak-secs` is
-   still ticking from the previous kill; otherwise it restarts at 1."
+   still ticking from the previous kill; otherwise it restarts at 1.
+   When the killed enemy is the L10 boss the exit door unlocks via
+   `maybe-unlock-boss-door`."
   [world enemies-after hit-pos idx]
   (let [killed?   (false? (:alive (get enemies-after idx)))
+        killed-e  (get enemies-after idx)
         chain?    (php/> (or (:streak-secs world) 0.0) 0.0)
         streak'   (if chain? (php/+ (or (:streak world) 0) 1) 1)
         scored    (if killed?
@@ -409,9 +423,10 @@
                            :streak      streak'
                            :streak-secs streak-window-seconds)
                     (assoc world :enemies enemies-after))
+        unlocked  (if killed? (maybe-unlock-boss-door scored killed-e) scored)
         ;; Kill drops a random pickup at the corpse's cell. Wounds
         ;; don't drop — the kill is the reward trigger.
-        with-loot (if killed? (push-kill-loot scored hit-pos) scored)]
+        with-loot (if killed? (push-kill-loot unlocked hit-pos) unlocked)]
     (push-blood-fx (assoc with-loot :fire-anim fire-anim-seconds) hit-pos)))
 
 (defn- on-shot-miss [world]

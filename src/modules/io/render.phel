@@ -711,9 +711,13 @@
   "Pad `text` to `width` with trailing spaces. Re-applies the pause
    menu's dark BG before padding so trailing spaces don't fall on
    default terminal BG after an internal `\\e[0m` reset (the right
-   `│` border otherwise reads as detached from the item)."
+   `│` border otherwise reads as detached from the item). Uses
+   `mb_strlen` so multi-byte glyphs in the controls list (`← →`,
+   each 3 bytes / 1 column) don't over-count and shrink the pad —
+   the byte-counting variant left the `← →    turn` row's right
+   border ~4 columns short."
   [text width]
-  (str text "\e[40;97m" (php/str_repeat " " (php/max 0 (php/- width (php/strlen text))))))
+  (str text "\e[40;97m" (php/str_repeat " " (php/max 0 (php/- width (php/mb_strlen text))))))
 
 (def help-inner-width
   "Character width of each interior row of the H info menu — wider
@@ -867,10 +871,20 @@
                 (to-php-array weapon-rows)
                 (to-php-array
                  [blnk
-                  (str "├" bar "┤")
-                  blnk
-                  (bord "  1/2/3 switch · R reload · SPACE fire")
-                  (bord "  H close · P pause · F3 debug · Q quit")
+                  (sec "CONTROLS")
+                  (bord "  wasd / ↑↓     move forward / back")
+                  (bord "  a / d         strafe left / right")
+                  (bord "  ← →           turn left / right")
+                  (bord "  e             about-face (snap 180)")
+                  (bord "  space         fire")
+                  (bord "  r             reload")
+                  (bord "  1 / 2 / 3     switch weapon slot")
+                  (bord "  m             toggle minimap")
+                  (bord "  n             toggle sound")
+                  (bord "  F3            debug overlay")
+                  (bord "  p             pause / resume")
+                  (bord "  h             close this menu")
+                  (bord "  q             quit")
                   blnk
                   (str "└" bar "┘")])))]
     (let [n    (count rows)
@@ -891,38 +905,17 @@
   (let [rows
         (let [w pause-inner-width]
           (let [bar  (php/str_repeat "─" w)
-                blnk (str "│" (pause-pad "" w) "│")
-                bord (fn [text]
-                       (str "│\e[97m" (pause-pad text w) "│"))]
-            ;; Internal SGR resets use `\e[40;97m` (menu wash) instead
-            ;; of `\e[0;97m` so the trailing pad + right `│` border
-            ;; stay on the menu's dark BG. With a bare `\e[0;97m` the
-            ;; BG drops to terminal default and the row reads as a
-            ;; light block on transparent / light iTerm2 themes.
+                blnk (str "│" (pause-pad "" w) "│")]
+            ;; Minimal post-refactor: PAUSED title + credits. The full
+            ;; controls reference lives in the H info menu now, so the
+            ;; pause overlay stays a quick visual confirmation of the
+            ;; freeze rather than a wall of text. `sound-on?` kept in
+            ;; the signature so callers don't need to change; not used.
             [(str "┌" bar "┐")
              blnk
              (str "│\e[1;93m" (pause-pad "             PAUSED" w) "\e[40;97m│")
              blnk
-             (str "├" bar "┤")
-             blnk
-             (bord "  wasd   move")
-             (bord "  ← →    turn")
-             (bord "  space  fire")
-             (bord "  r      reload")
-             (bord "  e      about-face")
-             (bord "  m      toggle map")
-             ;; Sound row built from visible-only chunks so the right
-             ;; border lines up no matter how many ANSI bytes the
-             ;; emphasis adds inside.
-             (let [val (if sound-on? "on" "off")]
-               (str "│\e[40;97m  n      sound: \e[1m" val "\e[40;97m"
-                    (php/str_repeat " " (php/max 0 (php/- w (php/+ (php/strlen "  n      sound: ")
-                                                                   (php/strlen val)))))
-                    "│"))
-             (bord "  F3     debug overlay")
-             (bord "  h      info menu")
-             (bord "  p      resume")
-             (bord "  q      quit")
+             (str "│\e[2;97m" (pause-pad "       H for info menu" w) "\e[22;40;97m│")
              blnk
              (str "├" bar "┤")
              blnk

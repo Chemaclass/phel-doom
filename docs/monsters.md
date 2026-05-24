@@ -28,7 +28,7 @@ Each enemy carries `:lives` / `:max-lives` / `:type`. `enemy/shoot` drops `:live
 ## Spawning
 
 - `spawn-enemies grid n min-dist px py [max-lives [type-kw]]` — single-type rooms.
-- `spawn-enemies-mixed grid specs min-dist px py` — multi-type. Spec shape: `{:type :count [:lives N]}`. Each enemy carries `:type` for render lookup. Used by `build-world` whenever a level's `:enemies` field is a vector (and for the L10 boss arena where `{:type :cyber :count 1 :lives 20}` + `{:type :imp :count 4}` paints one boss surrounded by minions).
+- `spawn-enemies-mixed grid specs min-dist px py` — multi-type. Spec shape: `{:type :count [:lives N] [:max-concurrent K]}`. Each enemy carries `:type` for render lookup and optional `:max-concurrent` cap. Used by `build-world` whenever a level's `:enemies` field is a vector (and for the L10 boss arena where `{:type :cyber :count 1 :lives 50}` + `{:type :imp :count 2 :max-concurrent 1}` paints one boss with 2 minions but only 1 alive at a time).
 
 ## Chase AI
 
@@ -40,7 +40,7 @@ Each enemy carries `:lives` / `:max-lives` / `:type`. `enemy/shoot` drops `:live
 
 Stop distance: enemies don't close past `stop-dist = 0.6` to avoid piling up inside the player's cell.
 
-## Respawn cooldown
+## Respawn cooldown + max-concurrent cap
 
 Killed enemies stay in the vector with `:alive false` and `:respawn-after` set to a random 3-6s.
 
@@ -61,6 +61,8 @@ Killed enemies stay in the vector with `:alive false` and `:respawn-after` set t
 ```
 
 `respawn-min-dist = 3.0` keeps revivals away from the player. No valid cell = bump 0.5s, try next frame instead of forcing an ambush spawn.
+
+Optional `:max-concurrent` cap on a spawned enemy type enforces a max-alive count. Revival checks the count of `:alive` enemies of the same `:type`; respawn is delayed until a sibling dies (up to respawn cap). `:type` is now preserved across respawn (bug fix: revived enemies previously dropped `:type`).
 
 ## Rendering: 3 zones + face overlay
 

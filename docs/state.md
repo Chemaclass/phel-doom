@@ -15,21 +15,23 @@ Pure data shapes that every other module operates on. `src/modules/core/state.ph
  :show-map   <bool>     ; minimap toggle
  :paused     <bool>     ; P toggle
  :sound-on   <bool>     ; N toggle
- :enemies    <vector of {:x :y :alive :lives :max-lives :hit-flash-secs [:respawn-after]}>
+ :enemies    <vector of {:x :y :alive :lives :max-lives :type :hit-flash-secs [:respawn-after] [:max-concurrent]}>
  :hearts     <vector of {:x :y}>
  :armors     <vector of {:x :y}>
  :ammo-boxes <vector of {:x :y}>
  :berserks   <vector of {:x :y}>           ; rage spheres (20s ×2 damage)
  :invulns    <vector of {:x :y}>           ; immunity spheres (10s invincible)
  :backpacks  <vector of {:x :y}>           ; one-shot reserve doubler
- :keycards   <vector of {:x :y :colour}>   ; :blue / :red keycards for locked exits
- :held-keys  <set of colour kws>           ; #{:blue :red} collected so far
+ :keycards   <vector of {:x :y :colour}>   ; :blue / :red / :boss keycards for locked exits (boss = synthetic, no pickup)
+ :held-keys  <set of colour kws>           ; #{:blue :red :boss} collected so far
  :armor      <int 0..max-armor, hits absorbed before lives drop>
  :backpack?  <bool, persists across level cuts>
+ :armory?    <bool, --armory flag; infinite ammo per-frame refill>
  :berserk-secs <float seconds>             ; while > 0: 2x weapon damage
  :invuln-secs  <float seconds>             ; while > 0: contact hits skipped
  :difficulty <kw :easy|:normal|:hard|:nightmare>
- :door-lock  <kw :blue|:red|nil>           ; lock colour on this level's exit
+ :god?       <bool, --god flag; no damage>
+ :door-lock  <kw :blue|:red|:boss|nil>     ; lock colour on this level's exit (:boss = synthetic, no keycard pickup)
  :weapon     <kw :pistol|:shotgun|:chaingun>  ; active weapon
  :owned-weapons <set of kw>                ; pistol owned by default; others must be picked up
  :weapon-pickups <vector of {:x :y :weapon}>

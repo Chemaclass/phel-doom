@@ -7,6 +7,7 @@ Hitscan + damage timing + i-frames. `src/modules/core/combat.phel`. Only side ef
 ```phel
 (def shot-hit-radius   0.5)   ; off-axis tolerance for a ray-hit
 (def shot-max-range   12.0)   ; hitscan range, world units
+(def shot-knockback-distance 1.0) ; world units pushed back per wounding hit
 (def touch-damage-dist 0.7)   ; enemy this close = take-damage
 (def iframe-seconds    1.0)   ; post-hit invulnerability window
 (def fire-anim-seconds 0.09)  ; muzzle flash visibility
@@ -20,6 +21,7 @@ Hitscan + damage timing + i-frames. `src/modules/core/combat.phel`. Only side ef
 (def mag-size 10)
 (def max-reserve 50)
 (def reload-cooldown-seconds 1.2)
+(def armory-reserve 999) ; per-weapon reserve cap under --armory
 ```
 
 ## Magazine + reload
@@ -102,7 +104,7 @@ Dead enemy stays in vector with respawn timer. `tick-enemies` counts down + revi
 
 Pushed into `(:fx world)`. `decay-fx` ticks each `:ttl` by dt, drops expired. `io/render.phel` paints them as bright-pink, mid-red, dim-red blocks via projection math.
 
-## Damage
+## Damage + knockback
 
 ```phel
 (defn damage-step [world dt]
@@ -125,13 +127,17 @@ Decrements `:iframes`, `:fire-anim`, `:intro-secs`, `:flash-secs` by `dt`. Also 
 
 Four gates: i-frame window, invulnerability sphere timer, dev god mode, AND at least one alive enemy within `touch-damage-dist`. Squared-distance comparison, no sqrt.
 
-### take-damage
+### take-damage (player contact)
 
 - Armor absorbs the hit first if `:armor > 0` (drops the counter, no life loss).
 - Otherwise loses one life (clamped at 0).
 - 1.0s i-frame: `vulnerable?` returns false, single touch can't drain multiple lives.
 - 0.05s flash: `render!` paints viewport white. One-frame jolt before the red i-frame wash.
-- Knockback shove away from the attacker; arms `:hurt-side` so the directional red band paints on the correct edge.
+- Player knockback shove away from the attacker; arms `:hurt-side` so the directional red band paints on the correct edge.
+
+### Shot knockback (enemy-only)
+
+Every wounding enemy hit (`:lives > 0` after damage) pushes the enemy ~1 cell back along the shot direction. Movement respects walls (half-step or quarter-step fallback if full step hits a wall). Killing blows skip knockback so the corpse lands on the death cell and loot drops cleanly. See `enemy/push-back-enemy`.
 
 ## i-frame visualization
 

@@ -5,12 +5,22 @@
 ## Cells
 
 ```phel
-(def cell-floor   0)  ; walkable empty
-(def cell-wall    1)  ; solid wall, blocks rays and player
-(def cell-door    2)  ; passable trigger, blocks rays only
+(def cell-floor     0)  ; walkable empty
+(def cell-wall      1)  ; solid wall, blocks rays and player
+(def cell-door      2)  ; unlocked door: passable trigger, blocks rays only
+(def cell-door-blue 3)  ; blue-keyed door: blocks until player holds :blue keycard
+(def cell-door-red  4)  ; red-keyed door: blocks until player holds :red keycard
+(def cell-door-boss 5)  ; boss-locked door: blocks until player kills the boss (grants synthetic :boss keycard)
 ```
 
-Every cell is one of these ints. Constants exported so no module uses raw `0/1/2` literals. `(= cell-door (cell g x y))` reads as purpose.
+Every cell is one of these ints. Constants exported so no module uses raw `0/1/2/3/4/5` literals. `(= cell-door (cell g x y))` reads as purpose.
+
+`lock-colours` maps locked-door cell values to keycard keywords:
+```phel
+{3 :blue   4 :red   5 :boss}
+```
+
+`:boss` is a synthetic "colour" — no physical keycard item ever spawns for it; the kw is granted automatically by `combat/maybe-unlock-boss-door` when the boss is killed on a `:door-lock :boss` level.
 
 ## Lookup helpers
 

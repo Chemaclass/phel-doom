@@ -70,7 +70,7 @@ idx = clamp(0, 23,
 
 Indexes `shade-table[0..23]`: pre-baked ANSI strings for the 256-color grayscale palette (232..255). One PHP-array lookup per column.
 
-Door columns get solid `door-shade` (orange) in `shades-normal` and a half-block edge mix in `shades-top-edge`/`shades-bot-edge`.
+Door columns get solid `door-shade` (orange for unlocked, blue/red for locked keycards, bright red for boss-lock) in `shades-normal` and a half-block edge mix in `shades-top-edge`/`shades-bot-edge`. Paint function `paint-locked-bump` handles door-locked state messaging (e.g. "NEED BLUE KEY" or "KILL THE BOSS").
 
 ## Half-block edge anti-aliasing
 

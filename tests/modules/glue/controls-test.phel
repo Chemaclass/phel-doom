@@ -91,3 +91,48 @@
   (let [edges (rising-edges {:sp false :m false :p false :n false :e false :r true}
                             {:sp false :m false :p false :n false :e false :r false})]
     (is (= true (:reload edges)))))
+
+;; ---------------------------------------------------------------------
+;; Weapon-slot one-shots (1/2/3) — regression: kitty CSI-u release
+;; events for one slot must NOT trigger the other two.
+;; ---------------------------------------------------------------------
+
+(deftest test-key-states-detects-digits-plain
+  (let [s (key-states "2")]
+    (is (= false (:k1 s)))
+    (is (= true  (:k2 s)))
+    (is (= false (:k3 s)))))
+
+(deftest test-key-states-kitty-press-of-key-2-only-fires-k2
+  ;; \e[50u  — press of digit '2' (codepoint 50) under kitty CSI-u.
+  (let [s (key-states "\e[50u")]
+    (is (= false (:k1 s)))
+    (is (= true  (:k2 s)))
+    (is (= false (:k3 s)))))
+
+(deftest test-key-states-kitty-release-of-key-2-still-only-fires-k2
+  ;; \e[50;1:3u — release of key-2 with mods=1, event=3. Bytes '1'
+  ;; and '3' inside the CSI must NOT match plain '1' / '3', and the
+  ;; release event itself must NOT match k2's press regex either.
+  (let [s (key-states "\e[50;1:3u")]
+    (is (= false (:k1 s)))
+    (is (= false (:k2 s)))
+    (is (= false (:k3 s)))))
+
+(deftest test-key-states-kitty-repeat-of-key-2-does-not-fire-press
+  ;; \e[50;1:2u — repeat event. Must not register as a press.
+  (let [s (key-states "\e[50;1:2u")]
+    (is (= false (:k2 s)))))
+
+(deftest test-key-states-kitty-press-of-key-1-with-mods
+  ;; \e[49;1u — kitty press with mods, no explicit event marker.
+  (let [s (key-states "\e[49;1u")]
+    (is (= true  (:k1 s)))
+    (is (= false (:k2 s)))
+    (is (= false (:k3 s)))))
+
+(deftest test-key-states-letter-key-not-confused-by-digit-in-csi
+  ;; A CSI containing '1' must not light up :k1.
+  (is (= false (:k1 (key-states "\e[1;2D"))))
+  ;; ...but plain "1" still does.
+  (is (= true  (:k1 (key-states "1")))))

@@ -219,16 +219,25 @@
       (str/contains? keys "\e[13~")))
 
 (defn- key-pressed?
-  "True when the byte `plain` OR its kitty CSI-u press code appears in
+  "True when the byte `plain` OR its kitty CSI-u PRESS code appears in
    `keys`. Some terminals running with `CSI >3u` enabled wrap every
    key (including plain alphanumerics + digits) as `\\e[<code>u` /
-   `\\e[<code>;<mods>u`. The plain-byte check covers legacy terminals
-   and the CSI-u check covers kitty / Ghostty / aggressive WezTerm so
-   one-shot keys fire either way."
+   `\\e[<code>;<mods>u` / `\\e[<code>;<mods>:<event>u` where event
+   1=press, 2=repeat, 3=release.
+
+   Two gotchas drive the implementation:
+   1. The plain-byte substring check must NOT see inside CSI escapes
+      — `\\e[50;1:3u` (release of key-2) contains the bytes '1' and
+      '3', which would otherwise falsely match plain '1' and '3'. So
+      strip every CSI sequence before doing the plain compare.
+   2. The kitty regex matches PRESS events only (no `:event` suffix
+      OR `:1`); repeat (`:2`) and release (`:3`) are excluded so a
+      held key fires exactly once on its rising edge."
   [keys plain code]
-  (or (str/contains? keys plain)
-      (str/contains? keys (str "\e[" code "u"))
-      (str/contains? keys (str "\e[" code ";"))))
+  (let [stripped (php/preg_replace "/\\x1b\\[[\\d;:<=>?]*[@-~]/" "" keys)
+        kitty-re (str "/\\x1b\\[" code "(?:u|;\\d+(?::1)?u)/")]
+    (or (str/contains? stripped plain)
+        (php/=== 1 (php/preg_match kitty-re keys)))))
 
 (defn key-states
   "Which of the tracked one-shot keys appear in `keys` this frame.

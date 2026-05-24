@@ -36,6 +36,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 ### Fixed
 
 - One-shot keys (`1` / `2` / `3` weapon switch, `r` reload, `p`, `n`, `m`, `e`, space) now fire under kitty CSI-u protocol too — `key-states` matches both plain ASCII bytes and `\\e[<code>u` / `\\e[<code>;...u` variants so Ghostty / WezTerm / kitty users can actually swap weapons.
+- Weapon-slot keys no longer revert on release under kitty CSI-u. The release event `\e[<code>;<mods>:3u` embeds the digits `1` and `3` as mods/event, which the old substring check mis-read as a fresh press of `1` or `3`. `key-pressed?` now strips CSI escapes before the plain-byte test and matches only press events (`\e[<code>u`, `\e[<code>;<mods>(:1)?u`), so a held `2` switches to shotgun once and stays put.
 
 ### Changed
 

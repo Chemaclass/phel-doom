@@ -9,6 +9,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-24
+
 ### Added
 
 - L10 boss arena rebalanced: boss HP **20 → 50** (a real fight — ~17 shotgun shells or ~50 chaingun rounds). Imps trimmed **4 → 2** with `:max-concurrent 1` so the respawn step caps minion pressure at one alive at a time, letting the player focus on the boss instead of getting swamped. Mixed-spec rooms can now carry a `:max-concurrent N` field per spec; `spawn-enemies-mixed` stamps it on each enemy, `advance/tick-one` blocks revival past the cap. Respawn also now carries `:type` + `:max-concurrent` forward (previously dropped — revived enemies reverted to the level's default visuals).
@@ -106,7 +108,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `cast + render` under 5 ms per frame at 120×30.
 - Flat PHP arrays on hot paths; `:tag` types for OPcache JIT tracing.
 
-[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Chemaclass/phel-doom/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Chemaclass/phel-doom/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Chemaclass/phel-doom/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Chemaclass/phel-doom/releases/tag/v0.1.0

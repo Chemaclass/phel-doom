@@ -111,6 +111,30 @@
   (let [w (apply-heat {:heat 0.0 :jam-secs 0.0 :mag 0})]
     (is (= 0 (:mag w)))))
 
+(deftest test-apply-heat-chaingun-never-jams
+  ;; Chaingun's spec has :overheats? false. Even pushed to the very
+  ;; edge of jam, apply-heat must keep :heat at 0 and :jam-secs at 0
+  ;; — the 20 dps auto-fire niche depends on no overheat lockout.
+  (let [w (apply-heat {:weapon :chaingun :heat 0.99 :jam-secs 0.0 :mag 30})]
+    (is (= 0.0 (:heat w)))
+    (is (= 0.0 (:jam-secs w)))
+    (is (= 29  (:mag w)))))
+
+(deftest test-apply-heat-shotgun-never-jams
+  ;; Same for shotgun — :overheats? false. Fire-cooldown still arms,
+  ;; mag still decrements, but no heat / jam side-effects.
+  (let [w (apply-heat {:weapon :shotgun :heat 0.99 :jam-secs 0.0 :mag 4})]
+    (is (= 0.0 (:heat w)))
+    (is (= 0.0 (:jam-secs w)))
+    (is (= 3   (:mag w)))))
+
+(deftest test-apply-heat-pistol-still-jams
+  ;; Pistol is the only weapon that overheats. Pushed to ~1.0 the
+  ;; jam timer arms and heat resets.
+  (let [w (apply-heat {:weapon :pistol :heat 0.99 :jam-secs 0.0 :mag 10})]
+    (is (php/> (:jam-secs w) 0.0))
+    (is (= 0.0 (:heat w)))))
+
 ;; ---------------------------------------------------------------------
 ;; reload: tops the mag back up, arms a brief cooldown.
 ;; ---------------------------------------------------------------------

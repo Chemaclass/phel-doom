@@ -81,7 +81,9 @@
 
 (defn- w-spec
   "Active-weapon spec with hard-coded pistol fallbacks so a bare test
-   fixture (no :weapon set) still gets sensible numbers."
+   fixture (no :weapon set) still gets sensible numbers. Fallback
+   inherits the pistol's `:overheats? true` so legacy fixtures
+   keep exercising the heat / jam path."
   [world]
   (or (weapon-spec world)
       {:mag-size        mag-size
@@ -89,7 +91,8 @@
        :reload-duration reload-cooldown-seconds
        :damage          1
        :reserve-cap     max-reserve
-       :ammo-per-box    ammo-per-box}))
+       :ammo-per-box    ammo-per-box
+       :overheats?      true}))
 
 (def empty-click-seconds
   "How long the 'dry-fire click' visual + audio cue lingers after the
@@ -443,14 +446,20 @@
 
 (defn apply-heat
   "After a shot lands, bump heat + arm the per-weapon fire-cooldown,
-   and burn one round from the magazine. If heat crosses 1.0 the
-   pistol overheats and jams for jam-seconds (heat resets so the
-   player isn't punished twice)."
+   and burn one round from the magazine. Heat / jam math only runs
+   for weapons whose spec has `:overheats? true` (pistol only); on
+   other weapons heat stays at 0 and the jam timer is never set.
+   Chaingun would otherwise hit jam in under half a second of
+   auto-fire (0.30 heat-per-shot × 20 shots/s) — that's
+   anti-feature for a 'sustained spray' weapon."
   [world]
-  (let [sp    (w-spec world)
-        heat' (php/+ (or (:heat world) 0.0) heat-per-shot)
-        jam?  (php/>= heat' 1.0)
-        mag'  (php/max 0 (php/- (or (:mag world) (:mag-size sp)) 1))]
+  (let [sp        (w-spec world)
+        overheat? (boolean (:overheats? sp))
+        heat'     (if overheat?
+                    (php/+ (or (:heat world) 0.0) heat-per-shot)
+                    0.0)
+        jam?      (and overheat? (php/>= heat' 1.0))
+        mag'      (php/max 0 (php/- (or (:mag world) (:mag-size sp)) 1))]
     (assoc world
            :fire-cooldown (:fire-cooldown sp)
            :heat          (if jam? 0.0 heat')

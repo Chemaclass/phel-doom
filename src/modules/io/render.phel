@@ -58,6 +58,10 @@
 (def berserk-marker  "\e[40;91;1mB\e[0m")
 (def invuln-marker   "\e[40;96;1mI\e[0m")
 (def backpack-marker "\e[40;33;1mP\e[0m")
+(def keycard-blue-marker "\e[40;94;1mk\e[0m")
+(def keycard-red-marker  "\e[40;91;1mk\e[0m")
+(def door-blue-marker    "\e[40;94;1m▌\e[0m")
+(def door-red-marker     "\e[40;91;1m▌\e[0m")
 (def door-shade
   "Door body cell drawn when a ray hit a door. Frame glyph `▌` (left
    half block) on a dark steel BG with bright orange FG, so a column
@@ -193,6 +197,15 @@
 (def backpack-glyph-bright
   "Black ⊞ on the bright pulse BG."
   "\e[48;5;142;38;5;232;1m⊞")
+
+(def keycard-blue-shade  "\e[48;5;21m ")
+(def keycard-blue-bright "\e[48;5;33m ")
+(def keycard-blue-glyph  "\e[48;5;21;38;5;231;1m⌷")
+(def keycard-blue-glyph-bright "\e[48;5;33;38;5;231;1m⌷")
+(def keycard-red-shade   "\e[48;5;52m ")
+(def keycard-red-bright  "\e[48;5;124m ")
+(def keycard-red-glyph   "\e[48;5;52;38;5;231;1m⌷")
+(def keycard-red-glyph-bright "\e[48;5;124;38;5;231;1m⌷")
 
 (def char-aspect 2.0)
 (def base-hud-rows 1)
@@ -481,6 +494,10 @@
         bmap                (berserk-cells (:berserks world) step out-w)
         imap                (invuln-cells  (:invulns world) step out-w)
         pmap                (backpack-cells (:backpacks world) step out-w)
+        kbmap               (scaled-cells (:keycards world) step out-w
+                                          (fn [k] (php/=== (:colour k) :blue)))
+        krmap               (scaled-cells (:keycards world) step out-w
+                                          (fn [k] (php/=== (:colour k) :red)))
         rows                (buf-mk)
         block-has-wall?     (fn [r0 c0]
                               (loop [dr 0]
@@ -521,17 +538,21 @@
                     cell (sample-cell r0 c0)]
                 (buf-push parts
                           (cond
-                            (and (php/=== row prow) (php/=== col pcol))  marker
-                            (php/=== 1 cell)                             minimap-wall
-                            (block-has-wall? r0 c0)                      minimap-wall
-                            (php/=== 2 cell)                             door-glyph
-                            (buf-get emap (php/+ (php/* row out-w) col)) enemy-marker
-                            (buf-get hmap (php/+ (php/* row out-w) col)) heart-marker
-                            (buf-get amap (php/+ (php/* row out-w) col)) ammo-marker
-                            (buf-get bmap (php/+ (php/* row out-w) col)) berserk-marker
-                            (buf-get imap (php/+ (php/* row out-w) col)) invuln-marker
-                            (buf-get pmap (php/+ (php/* row out-w) col)) backpack-marker
-                            :else                                        minimap-floor)))
+                            (and (php/=== row prow) (php/=== col pcol))   marker
+                            (php/=== 1 cell)                              minimap-wall
+                            (block-has-wall? r0 c0)                       minimap-wall
+                            (php/=== 2 cell)                              door-glyph
+                            (php/=== 3 cell)                              door-blue-marker
+                            (php/=== 4 cell)                              door-red-marker
+                            (buf-get emap (php/+ (php/* row out-w) col))  enemy-marker
+                            (buf-get hmap (php/+ (php/* row out-w) col))  heart-marker
+                            (buf-get amap (php/+ (php/* row out-w) col))  ammo-marker
+                            (buf-get bmap (php/+ (php/* row out-w) col))  berserk-marker
+                            (buf-get imap (php/+ (php/* row out-w) col))  invuln-marker
+                            (buf-get pmap (php/+ (php/* row out-w) col))  backpack-marker
+                            (buf-get kbmap (php/+ (php/* row out-w) col)) keycard-blue-marker
+                            (buf-get krmap (php/+ (php/* row out-w) col)) keycard-red-marker
+                            :else                                         minimap-floor)))
               (recur (php/+ col 1))))
           (buf-set rows row (php/implode "" parts)))
         (recur (php/+ row 1))))
@@ -887,7 +908,7 @@
     (let [glyph "\e[5;48;5;232;38;5;196;1mʘ\e[0m"]
       (loop [col 0]
         (when (php/< col vw)
-          (when (php/=== 2 (buf-get hits col))
+          (when (let [h (buf-get hits col)] (or (php/=== 2 h) (php/=== 3 h) (php/=== 4 h)))
             (let [t (buf-get tops col)
                   b (buf-get bots col)
                   r (php/+ t (php/intdiv (php/max 1 (php/- b t)) 3))]
@@ -1019,11 +1040,14 @@
                    (php/=== diff :hard)      " \e[40;33;1m[hard]\e[0m"
                    (php/=== diff :nightmare) " \e[40;31;1m[nightmare]\e[0m"
                    :else                     "")
+        keys'    (or (get stats :held-keys) #{})
+        keys-tag (str (if (contains? keys' :blue) " \e[40;94;1m⌷\e[0m" "")
+                      (if (contains? keys' :red)  " \e[40;91;1m⌷\e[0m" ""))
         styled   (str "\e[40;97m\e[1mL" lvl "\e[0m\e[40;97m " name'
                       "  \e[1mkills\e[0m " kills
                       "  \e[1m" wname "\e[0m\e[40;97m "
                       mag-col mag "\e[0m\e[40;97m/" cap " "
-                      res-col "[" reserve "]\e[0m" pack diff-tag)]
+                      res-col "[" reserve "]\e[0m" pack keys-tag diff-tag)]
     (buf-push parts (str "\e[2;1H" styled)))
   parts)
 
@@ -1422,7 +1446,7 @@
               floor-c-l (if blood? floor-blood-code floor-c)]
           (buf-set tops col top)
           (buf-set bots col (php/+ top wall-h))
-          (if (php/=== 2 (buf-get hits col))
+          (if (let [h (buf-get hits col)] (or (php/=== 2 h) (php/=== 3 h) (php/=== 4 h)))
             (do (buf-set normal      col door-shade-now)
                 (buf-set top-edge    col (str "\e[48;5;" door-code-now ";38;5;" sky-c-l "m▀"))
                 (buf-set bot-edge    col (str "\e[48;5;" floor-c-l ";38;5;" door-code-now "m▀"))
@@ -1701,6 +1725,13 @@
         backpack-bright?                   (pulse t 4.0)
         backpack-shade-now                 (if backpack-bright? backpack-shade-bright backpack-shade)
         backpack-glyph-now                 (if backpack-bright? backpack-glyph-bright backpack-glyph)
+        ;; Keycards pulse at the same beat as pickups; colour is per-
+        ;; card so paint-keycards-into picks the right shade.
+        keycard-bright?                    (pulse t 5.5)
+        keycard-blue-shade-now             (if keycard-bright? keycard-blue-bright keycard-blue-shade)
+        keycard-blue-glyph-now             (if keycard-bright? keycard-blue-glyph-bright keycard-blue-glyph)
+        keycard-red-shade-now              (if keycard-bright? keycard-red-bright keycard-red-shade)
+        keycard-red-glyph-now              (if keycard-bright? keycard-red-glyph-bright keycard-red-glyph)
         ;; Atmospheric haze pulls walls toward black as lives drop, so
         ;; the world reads as 'consumed by darkness' the closer the
         ;; player is to dying. Sky / floor untouched; doors keep their
@@ -1865,6 +1896,18 @@
           bp-pack   (paint-pickups-into  bp-inv (or (:backpacks world) [])
                                          (:player world) dists edists vw vh
                                          backpack-shade-now backpack-glyph-now)
+          bp-kb     (paint-pickups-into  bp-pack
+                                         (apply vector
+                                                (filter (fn [k] (php/=== (:colour k) :blue))
+                                                        (or (:keycards world) [])))
+                                         (:player world) dists edists vw vh
+                                         keycard-blue-shade-now keycard-blue-glyph-now)
+          bp-kr     (paint-pickups-into  bp-kb
+                                         (apply vector
+                                                (filter (fn [k] (php/=== (:colour k) :red))
+                                                        (or (:keycards world) [])))
+                                         (:player world) dists edists vw vh
+                                         keycard-red-shade-now keycard-red-glyph-now)
           parts     (buf-mk)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]
@@ -1883,7 +1926,7 @@
                          flr-row   (buf-get (if in-blood? blood-floor-gradient floor-gradient) row)
                          c         (if (and (php/< row visible-mh) (php/>= col mini-col0))
                                      sky-row
-                                     (or (buf-get bp-pack (php/+ (php/* row vw) col))
+                                     (or (buf-get bp-kr (php/+ (php/* row vw) col))
                                          (cond
                                            (php/< row (buf-get tops col))             sky-row
                                            (php/>= row (buf-get bots col))            flr-row
@@ -1932,7 +1975,7 @@
             c-row       (php/+ (php/intdiv vh 2) (if firing? -1 0))
             top-col     (buf-get tops c-col)
             bot-col     (buf-get bots c-col)
-            center-cell (or (buf-get bp-pack (php/+ (php/* c-row vw) c-col))
+            center-cell (or (buf-get bp-kr (php/+ (php/* c-row vw) c-col))
                             (cond
                               (php/< c-row top-col)             (buf-get sky-gradient c-row)
                               (php/>= c-row bot-col)            (buf-get floor-gradient c-row)

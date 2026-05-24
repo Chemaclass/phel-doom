@@ -1,6 +1,6 @@
 (ns phel-doom.modules.core.level
   (:require phel-doom.modules.core.state      :refer [new-player new-world with-enemies max-lives])
-  (:require phel-doom.modules.core.map        :refer [random-grid random-spawn seed-doors])
+  (:require phel-doom.modules.core.map        :refer [cell-door cell-door-blue cell-door-red random-grid random-spawn seed-doors])
   (:require phel-doom.modules.core.enemy      :refer [spawn-enemies])
   (:require phel-doom.modules.core.difficulty :refer [normalise scale-cfg]))
 
@@ -59,7 +59,7 @@
     :face     "\e[48;5;51;38;5;232;1m◉\e[0m"
     :face-alt "\e[48;5;51;38;5;232;1m◎\e[0m"
     :face-attack "\e[5;48;5;51;38;5;196;1m✺\e[0m"}
-   {:size [44 28] :walls 55 :enemies 9 :chase 1.6 :enemy-lives 4
+   {:size [44 28] :walls 55 :enemies 9 :chase 1.6 :enemy-lives 4 :door-lock :blue
     :name "barons"
     ;; Green muscle with horn that tilts on the alt frame. Body
     ;; reads as thick muscle via dark-shade fill. Atmosphere:
@@ -69,7 +69,7 @@
     :face     "\e[48;5;46;38;5;232;1mΛ\e[0m"
     :face-alt "\e[48;5;46;38;5;232;1mλ\e[0m"
     :face-attack "\e[5;48;5;46;38;5;196;1m▲\e[0m"}
-   {:size [52 32] :walls 75 :enemies 12 :chase 2.0 :enemy-lives 5
+   {:size [52 32] :walls 75 :enemies 12 :chase 2.0 :enemy-lives 5 :door-lock :red
     :name "cyberdemons"
     ;; Classic DOOM cyberdemon silhouette: grey helmet up top, red
     ;; flesh torso in the middle, grey cyborg legs below. Body
@@ -157,6 +157,48 @@
         max-lives (or (:enemy-lives cfg) 1)]
     (php/max 2 (php/intval (php/ceil (php// (php/* enemies max-lives) 8))))))
 
+(defn- lock-cell-for
+  "Map a lock-colour kw to the matching locked-door cell value."
+  [colour]
+  (cond
+    (php/=== colour :blue) cell-door-blue
+    (php/=== colour :red)  cell-door-red
+    :else                  cell-door))
+
+(defn- lock-the-door
+  "Replace the FIRST cell-door in `grid` with the locked variant for
+   `colour`. seed-doors only places one door per level so this is a
+   single-row scan; returns the original grid unchanged when colour
+   is nil (unlocked level) or no door was found (defensive)."
+  [grid colour]
+  (if (php/=== colour nil)
+    grid
+    (let [target (lock-cell-for colour)
+          h      (count grid)]
+      (loop [y 0]
+        (cond
+          (php/>= y h) grid
+          :else
+          (let [row    (get grid y)
+                w      (count row)
+                door-x (loop [x 0]
+                         (cond
+                           (php/>= x w)                    -1
+                           (php/=== cell-door (get row x)) x
+                           :else                           (recur (php/+ x 1))))]
+            (if (php/>= door-x 0)
+              (assoc-in grid [y door-x] target)
+              (recur (php/+ y 1)))))))))
+
+(defn- maybe-spawn-keycard
+  "Drop one keycard at a random open cell when the level is locked.
+   Returns [] on unlocked levels so render / pickup skips."
+  [grid colour]
+  (if (php/=== colour nil)
+    []
+    (let [[kx ky] (random-spawn grid)]
+      [{:x kx :y ky :colour colour}])))
+
 (defn- spawn-ammo-boxes
   "Seed `n` ammo boxes at random open cells, retrying when
    `random-spawn` collides with one already placed (otherwise
@@ -192,9 +234,12 @@
   ([n l pack?] (build-world n l pack? :normal))
   ([lv life pack? diff]
    (let [diff' (normalise diff)
-         cfg   (scale-cfg (config-for lv) diff')]
+         cfg   (scale-cfg (config-for lv) diff')
+         lock  (:door-lock cfg)]
      (let [[w h] (:size cfg)
-           grid  (seed-doors (random-grid w h (:walls cfg)) 1)]
+           grid  (lock-the-door
+                  (seed-doors (random-grid w h (:walls cfg)) 1)
+                  lock)]
        (let [[px py] (random-spawn grid)]
          (let [world (new-world grid (new-player px py (php/* (rand-int 360)
                                                               (php// php/M_PI 180.0))))]
@@ -212,6 +257,8 @@
                     :berserks    (maybe-spawn-berserk grid)
                     :invulns     (maybe-spawn-invuln grid)
                     :backpacks   (maybe-spawn-backpack grid lv pack?)
+                    :keycards    (maybe-spawn-keycard grid lock)
+                    :door-lock   lock
                     :ammo-boxes  (spawn-ammo-boxes grid (ammo-box-count cfg))
                     :chase-speed (:chase cfg)
                     :enemy-head-code     (:head-code cfg)

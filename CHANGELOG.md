@@ -22,6 +22,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Invulnerability sphere pickup (rarer, ~16% per level). 10s of damage immunity (contact hits are skipped while `:invuln-secs > 0`). Pulsing centred `INVULN Ns` banner on row 4 + cyan `I` on the minimap.
 - Backpack pickup (L2+, ~30% per qualifying level). One-shot that doubles every weapon's effective reserve cap for the rest of the run; persists across level cuts. HUD strip gains a `+pack` indicator; minimap shows yellow `P`.
 - `--difficulty=easy|normal|hard|nightmare` (`-d`) CLI option. Multipliers scale enemy chase speed, per-enemy HP, and per-level enemy count. easy: 0.7× speed/enemies, hp ×1.0. hard: 1.3× across the board. nightmare: 1.8× speed, 1.5× hp + count. HUD strip surfaces the active mode (`[easy]` / `[hard]` / `[nightmare]`); normal is unlabelled.
+- Keycards + locked doors. L4 (barons) gates the exit with a **blue** lock; L5 (cyberdemons) gates with a **red** lock. Walk over the matching `⌷` keycard pickup to add it to `:held-keys`; physics blocks the locked door until you do. Minimap colour-codes both door (`▌`) and keycard (`k`); HUD strip shows a small `⌷` for every key held.
 
 ## [0.2.0] - 2026-05-22
 

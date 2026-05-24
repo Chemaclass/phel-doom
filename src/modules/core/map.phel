@@ -16,10 +16,24 @@
   "Solid wall: blocks player movement and the raycaster."
   1)
 (def cell-door
-  "Door cell: blocks the raycaster (visible as a door in the 3D view +
-   on the minimap) but does NOT block the player — stepping into it is
-   what advances the run to the next level."
+  "Unlocked door: blocks the raycaster, passable by the player. Stepping
+   in advances the run to the next level."
   2)
+
+(def cell-door-blue
+  "Blue-keyed door: same render + level-advance behaviour as cell-door,
+   but try-move blocks until the player holds the matching key."
+  3)
+
+(def cell-door-red
+  "Red-keyed door — see cell-door-blue."
+  4)
+
+(def lock-colours
+  "Map from locked-door cell value back to the matching keycard kw.
+   Drives door-lock + passable? + render door tint."
+  {3 :blue
+   4 :red})
 
 (def default-grid
   "16×16 starter map kept around for deterministic tests."
@@ -58,10 +72,29 @@
   (= cell-wall (cell grid x y)))
 
 (defn door?
-  "True when (x, y) holds a door. Walking into a door cell triggers a
-   level transition."
+  "True when (x, y) holds ANY door variant (unlocked + locked).
+   Walking onto a door triggers a level transition (after the lock
+   check resolves)."
   [grid x y]
-  (= cell-door (cell grid x y)))
+  (let [c (cell grid x y)]
+    (or (= cell-door c) (contains? lock-colours c))))
+
+(defn door-lock
+  "Keycard colour required to pass this cell, or nil for an unlocked
+   door (or any non-door cell)."
+  [grid x y]
+  (get lock-colours (cell grid x y)))
+
+(defn passable?
+  "True when the player CAN walk into (x, y) given their held keys.
+   Walls always block; locked doors block until the matching key is
+   held. Unlocked doors + floors pass freely."
+  [grid held-keys x y]
+  (let [c (cell grid x y)]
+    (cond
+      (= cell-wall c)            false
+      (contains? lock-colours c) (contains? (or held-keys #{}) (get lock-colours c))
+      :else                      true)))
 
 (defn- has-floor-neighbour?
   "True when at least one of the four orthogonal neighbours of (x, y) is

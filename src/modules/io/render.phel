@@ -1160,6 +1160,25 @@
    blanking the bottom of the screen entirely."
   5)
 
+(def recoil-max-up
+  "Peak rows the pistol kicks UP per shot. Replaces the old camera-
+   tilt (which moved the whole 3D view); only the pistol sprite
+   bounces now."
+  2)
+
+(defn- recoil-offset
+  "Negative row delta (pistol rises) from :fire-anim. Sine curve so
+   the kick peaks mid-window and lands back at rest. 0 when no shot
+   is in progress."
+  [stats]
+  (let [t (or (get stats :fire-anim) 0.0)
+        d (or (get stats :fire-anim-duration) 0.0)]
+    (if (or (php/<= t 0.0) (php/<= d 0.0))
+      0
+      (let [progress (php/max 0.0 (php/min 1.0 (php/- 1.0 (php// t d))))]
+        (php/intval (php/round (php/* recoil-max-up
+                                      (php/sin (php/* progress php/M_PI)))))))))
+
 (defn- reload-offset
   "Map a stats map to a row offset for the pistol sprite this frame.
    0 when no reload is in progress; otherwise rises smoothly to
@@ -1193,16 +1212,21 @@
   (when (php/>= vh 6)
     (let [cc        (php/+ (php/intdiv vw 2) 1)
           drop      (reload-offset stats)
+          ;; Recoil shifts the sprite UP (negative row delta) on every
+          ;; shot. Combined with the reload drop so a fire mid-reload
+          ;; just nudges the in-flight reload position.
+          recoil    (recoil-offset stats)
+          shift     (php/- drop recoil)
           row-bg    (fn [r]
                       (let [cell (buf-get floor-gradient r)]
                         (php/mb_substr cell 0
                                        (php/max 0 (php/- (php/mb_strlen cell) 1)))))
-          ;; Render one pistol row only if the dropped row still fits
+          ;; Render one pistol row only if the shifted row still fits
           ;; on screen. Returns the cursor + paint string or "" when
-          ;; the row has dipped below the viewport.
+          ;; the row has slid below the viewport or above row 1.
           paint-row (fn [base-row col bg-row sgr glyphs]
-                      (let [r (php/+ base-row drop)]
-                        (if (php/> r vh)
+                      (let [r (php/+ base-row shift)]
+                        (if (or (php/> r vh) (php/< r 1))
                           ""
                           (str "\e[" r ";" col "H" (row-bg bg-row) sgr glyphs))))
           ;; Pistol palette: darker than the floor gradient (which
@@ -1235,17 +1259,18 @@
                             (str "▐█" grip-hi "▓▓▓▓" frame "█▌"))
                  (paint-row vh           (php/- cc 1) (php/- vh 1) grip-lo "▐▓▓▓▓▌")
                  "\e[0m"))
-      ;; Muzzle flash suppressed during a reload — can-fire? already
-      ;; blocks the trigger pull so :fire-anim should be 0, but the
-      ;; sprite-drop guard makes it impossible to paint a flash
-      ;; floating above a gun that isn't there.
+      ;; Muzzle flash suppressed during a reload (drop > 0). Tracks
+      ;; the recoil so the flash hangs above the muzzle through the
+      ;; kick instead of floating in stale screen space.
       (when (and (php/> (or (get stats :fire-anim) 0.0) 0.0)
                  (php/=== drop 0))
-        (buf-push parts
-                  (str
-                   "\e[" (php/- vh 7) ";" cc "H" (row-bg (php/- vh 8)) "\e[1;93m  ✦  "
-                   "\e[" (php/- vh 6) ";" cc "H" (row-bg (php/- vh 7)) "\e[1;93m *★* "
-                   "\e[0m")))))
+        (let [r-top (php/max 1 (php/+ (php/- vh 7) shift))
+              r-bot (php/max 1 (php/+ (php/- vh 6) shift))]
+          (buf-push parts
+                    (str
+                     "\e[" r-top ";" cc "H" (row-bg (php/- vh 8)) "\e[1;93m  ✦  "
+                     "\e[" r-bot ";" cc "H" (row-bg (php/- vh 7)) "\e[1;93m *★* "
+                     "\e[0m"))))))
   parts)
 
 (defn- compute-wall-shades
@@ -1261,10 +1286,9 @@
    `cast`       ray-cast outputs {:dists :hits :sides :hxs :hys}
    `palette`    {:stbl :ctbl :sky-c :floor-c :door-shade-now :door-code-now}
    `blood-cols` per-col directional blood mask (from build-blood-cols)
-   `kick-shift` 0 or 1, vertical recoil shift while firing.
    `haze-shift` int 0-23: how many shade-table steps to pull walls
                 toward black. Doors are kept bright as a nav cue."
-  [vw vh kick-shift haze-shift cast palette blood-cols]
+  [vw vh haze-shift cast palette blood-cols]
   (let [{:keys [dists hits sides hxs hys]}                             cast
         {:keys [stbl ctbl sky-c floor-c door-shade-now door-code-now]} palette
         tops                                                           (buf-mk)
@@ -1279,7 +1303,7 @@
         (let [dist      (buf-get dists col)
               wall-h    (php/min vh (php/intval
                                      (php// proj-dist (php/* (php/max 0.3 dist) char-aspect))))
-              top       (php/+ (php/intdiv (php/- vh wall-h) 2) kick-shift)
+              top       (php/intdiv (php/- vh wall-h) 2)
               blood?    (php/> (buf-get blood-cols col) 0.4)
               stbl-l    (if blood? shade-table-blood stbl)
               ctbl-l    (if blood? shade-code-table-blood ctbl)
@@ -1550,10 +1574,6 @@
         ammo-bright?                       (pulse t 7.0)
         ammo-shade-now                     (if ammo-bright? ammo-shade-bright ammo-shade)
         ammo-glyph-now                     (if ammo-bright? ammo-glyph-bright ammo-glyph)
-        ;; Camera kick: while :fire-anim > 0 shift the wall vertical
-        ;; position one row down so the horizon tilts up. Settles back
-        ;; as the timer decays in combat.phel.
-        kick-shift                         (if (php/> (or (get stats :fire-anim) 0.0) 0.0) 1 0)
         ;; Atmospheric haze pulls walls toward black as lives drop, so
         ;; the world reads as 'consumed by darkness' the closer the
         ;; player is to dying. Sky / floor untouched; doors keep their
@@ -1578,7 +1598,7 @@
          :bot-edge          shades-bot-edge
          :top-shadow        shades-top-shadow
          :bot-shadow        shades-bot-shadow}
-        (compute-wall-shades vw vh kick-shift haze-shift
+        (compute-wall-shades vw vh haze-shift
                              {:dists dists :hits hits :sides sides
                               :hxs hxs    :hys hys}
                              {:stbl stbl :ctbl ctbl

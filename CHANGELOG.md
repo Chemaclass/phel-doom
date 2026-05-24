@@ -16,6 +16,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - HUD reshuffle: game-info strip top-left under hearts; pos/angle/fps moved into the F3 overlay; pause menu lists every key binding; minimap auto-scales to ≤ 1/3 screen on narrow terminals.
 - Armor caps at 3 (was unbounded). Pickups beyond cap consume the box but don't bump — same pattern as max-lives + heart pickups.
 - Death + victory end screens responsive: box width adapts to viewport (22..36 cols, 4-col margin), and short terminals (< 20 rows) drop the best-scores block + extra padding so the screen never clips off the bottom.
+- Shoot animation kicks the pistol sprite up ~2 rows instead of tilting the whole 3D view. Sine curve recoil settles back to rest as `:fire-anim` decays.
 
 ## [0.2.0] - 2026-05-22
 

@@ -653,11 +653,11 @@
    `diff` is the difficulty keyword from --difficulty (or nil for
    :normal). `god?` (from --god / `make play-dev`) stamps :god? on
    every freshly-built world so combat/vulnerable? short-circuits
-   contact damage for the whole run. Both are threaded into every
-   build-world call so r/R retries preserve the same balance + dev
-   flags the player launched with."
-  [diff god?]
-  (loop [level       1
+   contact damage for the whole run. `start-level` (from --level / -l)
+   sets where the run begins — 1..num-levels, clamped. Death + retry
+   reset to L1 (the start-level only seeds the initial loop entry)."
+  [diff god? start-level]
+  (loop [level       (php/max 1 (php/min num-levels (or start-level 1)))
          lives       max-lives
          carry-kills 0
          carry-time  0
@@ -756,14 +756,20 @@
 
 (defn- run-play [ctx]
   (init-input!)
-  (let [diff (cli/opt ctx "difficulty")
-        god? (cli/opt ctx "god")]
+  (let [diff   (cli/opt ctx "difficulty")
+        god?   (cli/opt ctx "god")
+        lv-raw (cli/opt ctx "level")
+        ;; CLI gives strings; coerce to int. nil / empty → nil → L1.
+        lv     (cond
+                 (php/=== lv-raw nil) nil
+                 (php/=== lv-raw "")  nil
+                 :else                (php/intval lv-raw))]
     (if (php/=== (show-start-menu!) :quit)
       (do (restore!)
           (clear-screen)
           0)
       (do (clear-screen)
-          (run-levels diff god?)
+          (run-levels diff god? lv)
           (restore!)
           (clear-screen)
           (cli/success ctx "Thanks for playing.")
@@ -784,5 +790,10 @@
           {:name "god"
            :short "g"
            :mode  :none
-           :doc   "Dev god mode: contact damage suppressed; GOD badge in HUD."}]
+           :doc   "Dev god mode: contact damage suppressed; GOD badge in HUD."}
+          {:name    "level"
+           :short   "l"
+           :mode    :optional
+           :doc     "Start at level N (1..num-levels). Clamped. Pairs naturally with --god to drop straight into a boss room for testing."
+           :default ""}]
    :run  run-play})

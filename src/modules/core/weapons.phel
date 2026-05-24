@@ -107,15 +107,23 @@
                                  :reserve (:reserve-start s)})))]
     (reduce build {} weapon-order)))
 
+(defn owns?
+  "True when the player has picked up weapon `kw`. Pistol is always
+   owned (fresh-run default). Other weapons require a map pickup."
+  [world kw]
+  (contains? (or (:owned-weapons world) #{:pistol}) kw))
+
 (defn switch-weapon
   "Snap to weapon `to`. Persists the current weapon's mag + reserve
    back into `:weapon-state`, then loads `to`'s saved state into the
-   mirrored top-level `:mag` / `:ammo-reserve` fields. No-op when
-   the target weapon doesn't exist OR the player is mid-reload (so
-   you can't dodge a reload by hot-swapping)."
+   mirrored top-level `:mag` / `:ammo-reserve` fields. No-op when:
+     - the target weapon doesn't exist
+     - the player hasn't picked it up yet (must find on the map)
+     - the player is mid-reload (no hot-swap to dodge the lockout)"
   [world to]
   (cond
     (php/=== (get weapons to) nil)                world
+    (not (owns? world to))                        world
     (php/> (or (:reload-cooldown world) 0.0) 0.0) world
     :else
     (let [from   (current-weapon world)
@@ -129,3 +137,30 @@
              :weapon-state  saved
              :mag           (:mag loaded)
              :ammo-reserve  (:reserve loaded)))))
+
+(defn give-weapon
+  "Add `kw` to `:owned-weapons` AND snap to it (DOOM-style auto-switch
+   on first pickup). Refills the weapon's mag+reserve to its starting
+   values so the player can immediately fire the new weapon. No-op
+   if the weapon is unknown OR already owned (skip the auto-switch
+   so the player doesn't get yanked off their current weapon by a
+   redundant pickup)."
+  [world kw]
+  (cond
+    (php/=== (get weapons kw) nil) world
+    (owns? world kw)               world
+    :else
+    (let [owned (conj (or (:owned-weapons world) #{:pistol}) kw)
+          sp    (get weapons kw)
+          ;; Stash current weapon's state then load the new one fresh.
+          from  (current-weapon world)
+          saved (assoc (or (:weapon-state world) {})
+                       from {:mag     (or (:mag world) 0)
+                             :reserve (or (:ammo-reserve world) 0)})
+          fresh {:mag (:mag-size sp) :reserve (:reserve-start sp)}]
+      (assoc world
+             :owned-weapons owned
+             :weapon        kw
+             :weapon-state  (assoc saved kw fresh)
+             :mag           (:mag fresh)
+             :ammo-reserve  (:reserve fresh)))))

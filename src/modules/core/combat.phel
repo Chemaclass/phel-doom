@@ -514,16 +514,28 @@
   (assoc world :empty-click-secs empty-click-seconds))
 
 (defn tick-shooting
-  "Resolve a shot if the trigger was pulled this frame AND the pistol
-   is ready (not on cooldown, not jammed). Trigger pulls during a jam
-   or fire-cooldown are dropped silently. Trigger pulls on an empty
-   mag arm a brief dry-fire click + 'R to reload' prompt instead."
-  [world fire?]
-  (cond
-    (not fire?)                          world
-    (can-fire? world)                    (fire-shot world)
-    (and (php/=== (or (:mag world) 0) 0)
-         (php/<= (or (:fire-cooldown world) 0.0) 0.0)
-         (php/<= (or (:jam-secs world) 0.0) 0.0)
-         (php/<= (or (:reload-cooldown world) 0.0) 0.0)) (empty-trigger-pull world)
-    :else                                world))
+  "Resolve a shot when the trigger is active this frame AND the
+   active weapon is ready (not on cooldown, not jammed).
+
+   Trigger semantics depend on the weapon's `:auto-fire?` flag:
+     - auto-fire (pistol, chaingun): fires every frame the trigger
+       is held once `:fire-cooldown` elapses. Holding space sprays.
+     - single-action (shotgun): each shell requires a fresh rising
+       edge — holding space does not re-fire after the first shot.
+
+   Trigger pulls during a jam / fire-cooldown / mid-reload are
+   dropped silently. Pulls on an empty mag arm a dry-fire click +
+   'R to reload' prompt instead. Two-arity kept for legacy callers
+   (e.g. tests) that pre-date :fire-held."
+  ([world fire?] (tick-shooting world fire? false))
+  ([w fire-edge? fire-held?]
+   (let [auto?        (boolean (:auto-fire? (weapon-spec w)))
+         should-fire? (or fire-edge? (and auto? fire-held?))]
+     (cond
+       (not should-fire?) w
+       (can-fire? w)      (fire-shot w)
+       (and (php/=== (or (:mag w) 0) 0)
+            (php/<= (or (:fire-cooldown w) 0.0) 0.0)
+            (php/<= (or (:jam-secs w) 0.0) 0.0)
+            (php/<= (or (:reload-cooldown w) 0.0) 0.0)) (empty-trigger-pull w)
+       :else              w))))

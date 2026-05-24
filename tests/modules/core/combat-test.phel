@@ -341,3 +341,60 @@
   ;; Defensive: world without :owned-weapons defaults to a pistol-only
   ;; loadout so we never crash on a stale fixture.
   (is (= :pistol (pick-loot-weapon {} 0.5))))
+
+;; ---------------------------------------------------------------------
+;; Auto-fire dispatch in tick-shooting. Chaingun/pistol spray while
+;; the trigger is held; shotgun requires a fresh rising edge per shot.
+;; ---------------------------------------------------------------------
+
+(defn- ready-world [weapon mag]
+  ;; Cooldowns clear, mag loaded, weapon active. Empty enemies vector
+  ;; so fire-shot's hitscan can't crash on a missing cast target.
+  (let [grid   [[1 1 1] [1 0 1] [1 1 1]]
+        player (new-player 1.5 1.5 0.0)
+        base   (new-world grid player)]
+    (assoc base
+           :weapon          weapon
+           :owned-weapons   #{:pistol :shotgun :chaingun}
+           :mag             mag
+           :ammo-reserve    10
+           :fire-cooldown   0.0
+           :reload-cooldown 0.0
+           :jam-secs        0.0
+           :iframes         0.0
+           :enemies         [])))
+
+(deftest test-tick-shooting-chaingun-held-without-edge-fires
+  ;; Trigger HELD but no rising edge — chaingun should still fire
+  ;; because its :auto-fire? is true.
+  (let [w0 (ready-world :chaingun 30)
+        w1 (tick-shooting w0 false true)]
+    (is (= 29 (:mag w1)))))
+
+(deftest test-tick-shooting-pistol-held-without-edge-fires
+  ;; Pistol is also auto-fire — holding space taps out shots at cd.
+  (let [w0 (ready-world :pistol 10)
+        w1 (tick-shooting w0 false true)]
+    (is (= 9 (:mag w1)))))
+
+(deftest test-tick-shooting-shotgun-held-without-edge-does-not-fire
+  ;; Shotgun is single-action. Holding the trigger without a fresh
+  ;; rising edge must NOT fire — the player has to re-pull.
+  (let [w0 (ready-world :shotgun 4)
+        w1 (tick-shooting w0 false true)]
+    (is (= 4 (:mag w1)))))
+
+(deftest test-tick-shooting-shotgun-rising-edge-fires
+  ;; Confirmed: shotgun fires on the rising edge regardless of held
+  ;; state — single-action just gates the held-only path.
+  (let [w0 (ready-world :shotgun 4)
+        w1 (tick-shooting w0 true true)]
+    (is (= 3 (:mag w1)))))
+
+(deftest test-tick-shooting-legacy-arity-still-works
+  ;; Old 2-arity (pre-:fire-held) callers must keep working. Fire
+  ;; rising-edge true behaves identical to old behaviour for any
+  ;; weapon — held-vs-edge dispatch only matters for the new arity.
+  (let [w0 (ready-world :shotgun 4)
+        w1 (tick-shooting w0 true)]
+    (is (= 3 (:mag w1)))))

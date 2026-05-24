@@ -46,24 +46,17 @@ See [level-system.md](level-system.md), [map.md](map.md).
   aggro-distance (1.8 units)
 - Hitscan combat: blood splatter, muzzle flash, 5-stage death anim,
   3-6s respawn cooldown
-- 3-slot weapon loadout (1/2/3) — fresh runs start with the pistol;
-  shotgun (L2 pickup) and chaingun (L3 pickup) must be found on the
-  map. DPS-balanced niches rather than monotonic upgrades: pistol
-  1 dmg @ 0.12s cd (8 dps balanced fallback), shotgun 3 dmg @ 0.6s
-  cd (5 dps burst killer with a 4-shell mag), chaingun 1 dmg @
-  0.05s cd (20 dps sustained spray, 30-round mag). Each weapon has
-  its own silhouette (slim single-barrel vs wide twin-barrel vs
-  multi-barrel cluster), palette, mag size, fire cooldown, reload
-  duration, reserve cap, and ammo-per-box rate. Switches preserve
-  per-weapon mag + reserve and are gated by `:owned-weapons`;
-  first-time pickup auto-switches. Drop / refill / raise reload
-  animation; sprite kicks up 2 rows on every shot.
-- Kill-loot ammo drops are tagged for a random weapon in the
-  player's `:owned-weapons` set, so every kill seeds usable ammo
-  even if you're holding a different gun. Level-spawned ammo boxes
-  remain weapon-agnostic and refill the active weapon.
-- 5 lives, 1s i-frame window post-hit, directional red band on the
-  side the hit came from, knockback shove
+- 3-slot loadout (1/2/3), DPS-balanced niches. Pistol on every run; shotgun + chaingun must be found.
+
+  | Slot | Dmg | Cd | Mag | DPS | Tier |
+  |---|---|---|---|---|---|
+  | pistol | 1 | 0.12s | 10 | 8 | L1 (auto-fire) |
+  | shotgun | 3 | 0.6s | 4 | 5 | L2 (single-action) |
+  | chaingun | 1 | 0.05s | 30 | 20 | L3 (auto-fire) |
+
+  Pistol + chaingun spray while space is held; shotgun needs a fresh pull per shell. Distinct silhouette + palette per weapon. Per-weapon mag/reserve persists across switches. First-time pickup auto-switches. Drop/refill/raise reload anim; sprite recoils 2 rows per shot.
+- Kill-loot ammo carries a `:weapon` tag picked uniformly from `:owned-weapons` — every kill seeds ammo for some gun you can use. Level-spawn boxes still refill the active weapon.
+- 5 lives, 1s i-frame, directional red hurt-side band, knockback shove.
 
 See [monsters.md](monsters.md), [combat.md](combat.md).
 

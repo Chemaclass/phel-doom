@@ -32,31 +32,39 @@ make play
 | `←` / `→`      | Turn left / right            |
 | `e`            | About-face (snap 180°)       |
 | `space`        | Fire                         |
-| `r`            | Reload (draws from spare reserve, ~1.2s anim) |
+| `r`            | Reload (draws from reserve) |
 | `1` / `2` / `3` | Switch weapon (pistol / shotgun / chaingun) |
-| `m`            | Toggle minimap               |
-| `n`            | Toggle sound                 |
-| `p`            | Pause (full controls reference) |
-| `h`            | Info menu (weapons table, inventory, run stats) |
-| `F3`           | Toggle perf + technical overlay |
+| `m` / `n`      | Toggle minimap / sound       |
+| `p`            | Pause                        |
+| `h`            | Info menu (stats, weapons table, controls) — also pauses |
+| `F3`           | Debug overlay (fps, pos, perf) |
 | `q`            | Quit                         |
 
-Walk into a door to advance. Walk over pickups to collect:
+Walk into a door to advance. Walk over pickups:
 
-- **Heart** `+1` life
-- **Armor** absorbs one contact hit (capped at 3)
-- **Ammo box** `+N` rounds to the active weapon's reserve
-- **Berserk sphere** 20s of `×2` weapon damage
-- **Invulnerability sphere** 10s of damage immunity
-- **Backpack** doubles every weapon's reserve cap for the run
-- **Keycard** `⌷` unlocks matching coloured exit on L4 / L5
+- **♥ heart** — `+1` life
+- **◆ armor** — absorbs one hit (cap 3)
+- **ammo box** — `+N` to a weapon's reserve (kill-loot picks a random owned weapon)
+- **berserk** — 20s of `×2` damage
+- **invuln** — 10s damage immunity
+- **backpack** — doubles every weapon's reserve cap
+- **⌷ keycard** — unlocks matching exit on L4 (blue) / L5 (red)
 
-Launch with `--difficulty=easy|normal|hard|nightmare` (`-d`) to scale enemy speed, HP, and count. Press any key on the start menu to play (`q` exits).
+Weapons (DPS-balanced niches, find on map):
 
-Dev god mode: `make play-dev` (or `--god` / `-g`) suppresses every contact hit so you can walk every room / test every weapon without dying. Top-left HUD adds a yellow `GOD` badge while active.
+| Weapon | Dmg | Cd | Mag | DPS | Tier |
+|---|---|---|---|---|---|
+| pistol | 1 | 0.12s | 10 | 8 | L1 start (auto-fire) |
+| shotgun | 3 | 0.6s | 4 | 5 | L2 pickup (single-action) |
+| chaingun | 1 | 0.05s | 30 | 20 | L3 pickup (auto-fire) |
 
-For instant-release movement (kitty keyboard protocol, tmux setup,
-terminal compatibility): see [docs/input.md](docs/input.md).
+Hold space to spray with the pistol/chaingun. Shotgun needs a fresh pull per shell.
+
+CLI:
+- `--difficulty=easy|normal|hard|nightmare` (`-d`) — scales enemy speed, HP, count
+- `--god` (`-g`) or `make play-dev` — no damage, GOD badge in HUD
+
+Terminal quirks (kitty keyboard, tmux): see [docs/input.md](docs/input.md).
 
 ## Docs
 

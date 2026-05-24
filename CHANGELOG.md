@@ -11,6 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+- **L10 boss door is now boss-locked.** The exit refuses to open until the cyberdemon dies — walking through the door BEFORE the kill pulses `☠ KILL THE BOSS ☠` over the upper third of the 3D view. Killing the cyberdemon auto-grants the synthetic `:boss` keycard (no physical card spawns) so the door becomes passable. Walking through after the kill triggers the victory screen. Intro splash shows a red `KILL THE BOSS TO ESCAPE` subtitle on entry. New `cell-door-boss` (cell value 5) + `X` char in `parse-layout` for hand-authored boss arenas.
 - `--level=N` (`-l`) CLI flag — start the run at level N (clamped to 1..num-levels). Pairs naturally with `--god` for dev testing: `make play-boss` drops straight into the L10 boss arena, `make play-level LV=8` starts at level 8. Death + retry still reset to L1; the flag only seeds the initial loop entry.
 - **5 new levels** taking the run from 5 to 10 rooms. L6-L9 mix multiple monster types per room for a chaotic late-game; L10 is a hand-authored boss arena.
   - **L6 spectres** — 4 spectres (HP 3, agile) + 2 imps. Spectres debut.

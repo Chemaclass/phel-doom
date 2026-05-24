@@ -1,6 +1,6 @@
 (ns phel-doom-tests.modules.core.keycards-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.modules.core.map :refer [door-lock door? find-door-cell missing-key-for passable? wall?]))
+  (:require phel-doom.modules.core.map :refer [cell-door-boss door-lock door? find-door-cell missing-key-for parse-layout passable? wall?]))
 
 (def grid-with-doors
   ;; Row 1: wall, cell-door, cell-door-blue, cell-door-red, wall.
@@ -73,3 +73,39 @@
   (is (= :blue (missing-key-for grid-with-doors #{} 2 1)))    ; blue locked, no key
   (is (= :red  (missing-key-for grid-with-doors #{:blue} 3 1))) ; red locked, only have blue
   (is (= nil   (missing-key-for grid-with-doors #{:blue} 2 1)))) ; blue locked, have blue
+
+;; ---------------------------------------------------------------------
+;; Boss-locked door (cell-door-boss = 5). No physical keycard ever
+;; spawns for it; combat conj's `:boss` into :held-keys when the boss
+;; dies. The standard passable? / missing-key-for / door? machinery
+;; then unlocks it via the same flow as :blue / :red.
+;; ---------------------------------------------------------------------
+
+(def grid-with-boss-door
+  [[1 1 1 1 1]
+   [1 0 0 0 5]   ; cell-door-boss at (4, 1)
+   [1 1 1 1 1]])
+
+(deftest test-boss-door-is-a-door
+  (is (= true (door? grid-with-boss-door 4 1))))
+
+(deftest test-boss-door-lock-returns-boss-kw
+  (is (= :boss (door-lock grid-with-boss-door 4 1))))
+
+(deftest test-boss-door-blocks-without-key
+  (is (= false (passable? grid-with-boss-door #{} 4 1)))
+  (is (= false (passable? grid-with-boss-door #{:blue :red} 4 1))))
+
+(deftest test-boss-door-opens-with-boss-key
+  (is (= true (passable? grid-with-boss-door #{:boss} 4 1))))
+
+(deftest test-missing-key-for-boss-door
+  (is (= :boss (missing-key-for grid-with-boss-door #{} 4 1)))
+  (is (= nil   (missing-key-for grid-with-boss-door #{:boss} 4 1))))
+
+(deftest test-parse-layout-x-char-produces-boss-door
+  (let [out (parse-layout ["#####"
+                           "#.@.X"
+                           "#####"])
+        g   (:grid out)]
+    (is (= cell-door-boss (get-in g [1 4])))))

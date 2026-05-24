@@ -433,3 +433,65 @@
   (let [w0 (ready-world :shotgun 4)
         w1 (tick-shooting w0 true)]
     (is (= 3 (:mag w1)))))
+
+;; ---------------------------------------------------------------------
+;; Boss-locked door unlock: on a :door-lock :boss level, killing a
+;; :cyber-type enemy conj's :boss into :held-keys so the exit door
+;; becomes passable. No keycard ever spawns; the kill IS the key.
+;; ---------------------------------------------------------------------
+
+(defn- boss-world []
+  ;; 8x3 corridor: walls top/bottom, open between. Player at (1.5, 1.5)
+  ;; faces east; boss 3 cells east with clear line of sight. Shotgun
+  ;; loaded so a single shot drops a 1-HP cyber.
+  (let [grid   [[1 1 1 1 1 1 1 1]
+                [1 0 0 0 0 0 0 1]
+                [1 1 1 1 1 1 1 1]]
+        player (new-player 1.5 1.5 0.0)
+        base   (new-world grid player)]
+    (assoc base
+           :weapon          :shotgun
+           :owned-weapons   #{:pistol :shotgun}
+           :mag             4
+           :ammo-reserve    10
+           :fire-cooldown   0.0
+           :reload-cooldown 0.0
+           :jam-secs        0.0
+           :iframes         0.0
+           :door-lock       :boss
+           :held-keys       #{}
+           :enemies         [{:x 4.5 :y 1.5 :alive true :lives 1 :max-lives 1
+                              :hit-flash-secs 0.0 :type :cyber}])))
+
+(deftest test-tick-shooting-kill-of-cyber-on-boss-lock-grants-boss-key
+  (let [w0 (boss-world)
+        w1 (tick-shooting w0 true true)]
+    (is (= 1 (:kills w1)))
+    (is (contains? (:held-keys w1) :boss))))
+
+(deftest test-tick-shooting-kill-of-non-cyber-does-not-grant-boss-key
+  ;; A :imp dying on a :boss-locked level must NOT unlock the door —
+  ;; only the boss type counts.
+  (let [w0 (assoc (boss-world) :enemies
+                  [{:x 4.5 :y 1.5 :alive true :lives 1 :max-lives 1
+                    :hit-flash-secs 0.0 :type :imp}])
+        w1 (tick-shooting w0 true true)]
+    (is (= 1 (:kills w1)))
+    (is (not (contains? (or (:held-keys w1) #{}) :boss)))))
+
+(deftest test-tick-shooting-wounding-cyber-does-not-grant-boss-key
+  ;; Cyber HP 4 vs shotgun dmg 3 — one shell wounds (lives 1) but
+  ;; doesn't kill. No unlock yet.
+  (let [w0 (assoc (boss-world) :enemies
+                  [{:x 4.5 :y 1.5 :alive true :lives 4 :max-lives 4
+                    :hit-flash-secs 0.0 :type :cyber}])
+        w1 (tick-shooting w0 true true)]
+    (is (not (contains? (or (:held-keys w1) #{}) :boss)))))
+
+(deftest test-tick-shooting-cyber-kill-without-boss-lock-noop-on-keys
+  ;; Killing a :cyber on a non-boss-locked level (e.g. L5) must NOT
+  ;; spuriously grant a :boss key.
+  (let [w0 (assoc (boss-world) :door-lock :red)
+        w1 (tick-shooting w0 true true)]
+    (is (= 1 (:kills w1)))
+    (is (not (contains? (or (:held-keys w1) #{}) :boss)))))

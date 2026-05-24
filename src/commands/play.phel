@@ -219,6 +219,36 @@
                  :backpacks kept
                  :backpack? true)))))
 
+(defn- keycards-not-at [ks px py]
+  (apply vector
+         (filter (fn [k]
+                   (not (and (php/=== (php/intval (:x k)) px)
+                             (php/=== (php/intval (:y k)) py))))
+                 (or ks []))))
+
+(defn- pickup-keycards
+  "Step-on consumes the keycard + adds its colour to `:held-keys`.
+   try-move uses the set to gate locked-door passage."
+  [world]
+  (let [px      (php/intval (:x (:player world)))
+        py      (php/intval (:y (:player world)))
+        on-card (loop [ks (:keycards world)]
+                  (cond
+                    (php/=== ks nil) nil
+                    :else
+                    (let [k (first ks)]
+                      (if (and (php/=== (php/intval (:x k)) px)
+                               (php/=== (php/intval (:y k)) py))
+                        k
+                        (recur (next ks))))))]
+    (if (php/=== on-card nil)
+      world
+      (let [kept (keycards-not-at (:keycards world) px py)]
+        (when (:sound-on world) (play-sfx! :door))
+        (assoc world
+               :keycards  kept
+               :held-keys (conj (or (:held-keys world) #{}) (:colour on-card)))))))
+
 (defn- on-door?
   "True when the player's current cell is a door (auto-advances level)."
   [world]
@@ -257,7 +287,8 @@
             w4c (pickup-berserks w4b)
             w4d (pickup-invulns  w4c)
             w4e (pickup-backpacks w4d)
-            w5  (tick-enemies  w4e dt)
+            w4f (pickup-keycards w4e)
+            w5  (tick-enemies  w4f dt)
             w5b (if (:reload edges)
                   (do
                     (when (and (:sound-on w5) (reloading? w5)) (play-sfx! :reload))
@@ -319,6 +350,8 @@
    :invuln-secs  (or (:invuln-secs world) 0.0)
    :backpack?    (boolean (:backpack? world))
    :difficulty   (or (:difficulty world) :normal)
+   :held-keys    (or (:held-keys world) #{})
+   :door-lock    (:door-lock world)
    :rear-warning? (rear-attacker? (:enemies world)
                                   (:x (:player world))
                                   (:y (:player world))

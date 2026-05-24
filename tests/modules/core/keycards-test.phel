@@ -1,0 +1,47 @@
+(ns phel-doom-tests.modules.core.keycards-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.modules.core.map :refer [door-lock door? passable? wall?]))
+
+(def grid-with-doors
+  ;; Row 1: wall, cell-door, cell-door-blue, cell-door-red, wall.
+  [[1 1 1 1 1]
+   [1 2 3 4 1]
+   [1 0 0 0 1]
+   [1 1 1 1 1]])
+
+(deftest test-door-predicate-matches-every-door-variant
+  (is (= true  (door? grid-with-doors 1 1)))
+  (is (= true  (door? grid-with-doors 2 1)))
+  (is (= true  (door? grid-with-doors 3 1)))
+  (is (= false (door? grid-with-doors 0 1)))
+  (is (= false (door? grid-with-doors 1 2))))
+
+(deftest test-door-lock-returns-colour-or-nil
+  (is (= nil   (door-lock grid-with-doors 1 1)))   ; unlocked
+  (is (= :blue (door-lock grid-with-doors 2 1)))
+  (is (= :red  (door-lock grid-with-doors 3 1)))
+  (is (= nil   (door-lock grid-with-doors 1 2))))  ; floor
+
+(deftest test-passable-blocks-walls
+  (is (= false (passable? grid-with-doors #{} 0 1))))
+
+(deftest test-passable-allows-floors
+  (is (= true (passable? grid-with-doors #{} 1 2))))
+
+(deftest test-passable-allows-unlocked-door
+  (is (= true (passable? grid-with-doors #{} 1 1))))
+
+(deftest test-passable-blocks-locked-door-without-key
+  (is (= false (passable? grid-with-doors #{} 2 1)))
+  (is (= false (passable? grid-with-doors #{:red} 2 1)))) ; wrong key
+
+(deftest test-passable-allows-locked-door-with-matching-key
+  (is (= true (passable? grid-with-doors #{:blue} 2 1)))
+  (is (= true (passable? grid-with-doors #{:red}  3 1))))
+
+(deftest test-wall-predicate-still-only-true-for-walls
+  ;; Sanity: existing wall? semantics unchanged.
+  (is (= true  (wall? grid-with-doors 0 1)))
+  (is (= false (wall? grid-with-doors 1 1)))
+  (is (= false (wall? grid-with-doors 2 1)))   ; locked door is NOT a wall
+  (is (= false (wall? grid-with-doors 1 2))))

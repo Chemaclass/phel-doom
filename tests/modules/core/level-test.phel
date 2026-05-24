@@ -42,3 +42,39 @@
   (let [w (build-world 2 5)]
     (is (= 0 (count (:hearts w))))
     (is (= 5 (:lives w)))))
+
+;; ---------------------------------------------------------------------
+;; Slim-entry refactor regression: each level's `:enemy` kw is stamped
+;; on every enemy, and the world's primary `:enemy` matches the level's
+;; catalog type.
+;; ---------------------------------------------------------------------
+
+(deftest test-build-world-stamps-primary-enemy-kw
+  (is (= :imp   (:enemy (build-world 1 5))))
+  (is (= :demon (:enemy (build-world 2 5))))
+  (is (= :baron (:enemy (build-world 4 5))))
+  (is (= :cyber (:enemy (build-world 5 5)))))
+
+(deftest test-build-world-enemies-all-carry-type
+  (let [w  (build-world 1 5)
+        es (:enemies w)]
+    (is (every? (fn [e] (= :imp (:type e))) es))))
+
+(deftest test-build-world-enemy-lives-match-catalog-default
+  ;; L1 :imp has :default-lives 1; build-world's slim entry omits
+  ;; :enemy-lives so the catalog default flows through.
+  (let [w (build-world 1 5)
+        e (first (:enemies w))]
+    (is (= 1 (:lives e))))
+  ;; L5 :cyber has :default-lives 5 — same path.
+  (let [w (build-world 5 5)
+        e (first (:enemies w))]
+    (is (= 5 (:lives e)))))
+
+(deftest test-build-world-drops-world-level-enemy-visual-fields
+  ;; Refactor moved visuals out of the world. Sanity-check the dead
+  ;; fields really are gone so render can't accidentally re-read them.
+  (let [w (build-world 1 5)]
+    (is (nil? (:enemy-head-code w)))
+    (is (nil? (:enemy-body-code w)))
+    (is (nil? (:enemy-face w)))))

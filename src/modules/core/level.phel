@@ -1,7 +1,8 @@
 (ns phel-doom.modules.core.level
   (:require phel-doom.modules.core.state      :refer [new-player new-world with-enemies max-lives])
-  (:require phel-doom.modules.core.map        :refer [cell-door cell-door-blue cell-door-red random-grid random-spawn seed-doors])
-  (:require phel-doom.modules.core.enemy      :refer [spawn-enemies])
+  (:require phel-doom.modules.core.map        :refer [cell-door cell-door-blue cell-door-red parse-layout random-grid random-spawn seed-doors])
+  (:require phel-doom.modules.core.enemy      :refer [spawn-enemies spawn-enemies-mixed])
+  (:require phel-doom.modules.core.enemies    :refer [enemy-types type-spec default-lives-for])
   (:require phel-doom.modules.core.difficulty :refer [normalise scale-cfg]))
 
 ;; ---------------------------------------------------------------------
@@ -23,63 +24,32 @@
   3.0)
 
 (def levels
-  "Per-level configuration. Each entry bumps difficulty: bigger room,
-   more enemies, faster chase, a distinct monster *type* with its own
-   silhouette. Each sprite splits into three vertical zones (head /
-   body / legs) plus a face glyph painted over the head's centre
-   column as a post-pass overlay — gives each monster a recognisable
-   silhouette + face from across the room."
-  [{:size [22 16] :walls 12 :enemies 4 :chase 0.8 :enemy-lives 1
-    :name "imps"
-    ;; Bright red head, dark red body, blackened legs. Body shows
-    ;; a stippled scale pattern in a darker red. Eye blinks between
-    ;; ● (open) and ◯ (squinting). Atmosphere: hellish red haze.
-    :head-code 196 :body-code 124 :legs-code 52
-    :body-glyph "░" :body-glyph-fg 88 :body-glyph-alt "▒"
-    :face     "\e[48;5;196;38;5;226;1m●\e[0m"
-    :face-alt "\e[48;5;196;38;5;226;1m◯\e[0m"
-    :face-attack "\e[5;48;5;196;38;5;226;1m✸\e[0m"}
-   {:size [28 20] :walls 22 :enemies 6 :chase 1.0 :enemy-lives 2
-    :name "demons"
-    ;; Magenta with a white fang. Body has a 'medium shade' muscle
-    ;; texture in a darker purple. Fang flickers. Atmosphere: dim
-    ;; purple sanctum.
-    :head-code 165 :body-code 126 :legs-code 90
-    :body-glyph "▒" :body-glyph-fg 96 :body-glyph-alt "░"
-    :face     "\e[48;5;165;38;5;231;1m▼\e[0m"
-    :face-alt "\e[48;5;165;38;5;231;1m▾\e[0m"
-    :face-attack "\e[5;48;5;165;38;5;231;1m★\e[0m"}
-   {:size [36 24] :walls 38 :enemies 8 :chase 1.3 :enemy-lives 3
-    :name "cacodemons"
-    ;; Floating cyan ball with a single eye that dilates. Body
-    ;; (= bottom half of the orb) shows small diamond spots.
-    ;; Atmosphere: deep cold void.
-    :head-code 51 :body-code 38 :legs-code 24
-    :body-glyph "⋄" :body-glyph-fg 24 :body-glyph-alt "◇"
-    :face     "\e[48;5;51;38;5;232;1m◉\e[0m"
-    :face-alt "\e[48;5;51;38;5;232;1m◎\e[0m"
-    :face-attack "\e[5;48;5;51;38;5;196;1m✺\e[0m"}
-   {:size [44 28] :walls 55 :enemies 5 :chase 1.6 :enemy-lives 4 :door-lock :blue
-    :name "barons"
-    ;; Green muscle with horn that tilts on the alt frame. Body
-    ;; reads as thick muscle via dark-shade fill. Atmosphere:
-    ;; bile-green chamber.
-    :head-code 46 :body-code 34 :legs-code 22
-    :body-glyph "▓" :body-glyph-fg 22 :body-glyph-alt "▒"
-    :face     "\e[48;5;46;38;5;232;1mΛ\e[0m"
-    :face-alt "\e[48;5;46;38;5;232;1mλ\e[0m"
-    :face-attack "\e[5;48;5;46;38;5;196;1m▲\e[0m"}
-   {:size [52 32] :walls 75 :enemies 7 :chase 2.0 :enemy-lives 5 :door-lock :red
-    :name "cyberdemons"
-    ;; Classic DOOM cyberdemon silhouette: grey helmet up top, red
-    ;; flesh torso in the middle, grey cyborg legs below. Body
-    ;; pattern shows grey armor plates over the red flesh. LED
-    ;; switches off on the alt frame. Atmosphere: industrial smog.
-    :head-code 240 :body-code 124 :legs-code 238
-    :body-glyph "▦" :body-glyph-fg 240 :body-glyph-alt "▤"
-    :face     "\e[48;5;240;38;5;196;1m■\e[0m"
-    :face-alt "\e[48;5;240;38;5;196;1m□\e[0m"
-    :face-attack "\e[5;48;5;240;38;5;226;1m✖\e[0m"}])
+  "Per-level configuration. Each entry is intentionally tiny — visuals
+   live in `enemies.phel` so a new level needs only disposition data
+   (size / walls / enemy type / count / chase speed). Required fields
+   per entry:
+
+     :size       [w h] room dimensions in grid cells
+     :walls      random wall-blob count for procgen rooms
+     :enemy      catalog kw (see enemies/enemy-types) — single type
+     :enemies    int (count of :enemy) OR vector of mixed specs
+                 `[{:type :imp :count 4 :lives 1} {:type :baron …}]`
+     :chase      enemy speed (units/sec)
+     :name       short label used in the intro splash + HUD chip
+
+   Optional:
+
+     :enemy-lives  override the catalog's :default-lives (single-type only)
+     :door-lock    :blue | :red — adds a keycard + locked exit
+     :layout       vector of ASCII strings (see map/parse-layout) —
+                   bypasses random-grid for hand-authored arenas
+
+   Adding a new room = append one map literal here."
+  [{:size [22 16] :walls 12 :enemy :imp   :enemies 4 :chase 0.8 :name "imps"}
+   {:size [28 20] :walls 22 :enemy :demon :enemies 6 :chase 1.0 :name "demons"}
+   {:size [36 24] :walls 38 :enemy :caco  :enemies 8 :chase 1.3 :name "cacodemons"}
+   {:size [44 28] :walls 55 :enemy :baron :enemies 5 :chase 1.6 :name "barons"     :door-lock :blue}
+   {:size [52 32] :walls 75 :enemy :cyber :enemies 7 :chase 2.0 :name "cyberdemons" :door-lock :red}])
 
 (def num-levels
   "Total levels in the catalog; clamped on every lookup."
@@ -138,18 +108,33 @@
     (let [[bx by] (random-spawn grid)]
       [{:x bx :y by}])))
 
+(defn- specs-total-hp
+  "Sum `count * lives` across a mixed-spec vector. Used to size the
+   ammo box budget per level — the player needs roughly enough
+   bullets to cover every monster's HP."
+  [specs]
+  (loop [xs specs total 0]
+    (cond
+      (php/=== xs nil)       total
+      (php/=== (count xs) 0) total
+      :else
+      (let [s (first xs)]
+        (recur (next xs)
+               (php/+ total (php/* (or (:count s) 0) (or (:lives s) 1))))))))
+
 (defn- ammo-box-count
   "Per-level ammo-box budget. Scales with the expected shot count
-   (`enemies * max-lives`) so bigger maps with tougher monsters get
-   more refill points — at L5 the player faces ~60 HP across the
-   level and needs steady restocks; at L1 two boxes already cover
-   the 4 imps with reserve to spare. Floor of 2 so every level has
-   at least one fallback. Divisor 8 was tuned to give roughly
-   1.3 mags of ammo per expected kill."
+   (sum of `count * lives` across enemies) so bigger maps with
+   tougher monsters get more refill points. Floor of 2 so every
+   level has at least one fallback. Divisor 8 tuned to give
+   roughly 1.3 mags of ammo per expected kill."
   [cfg]
-  (let [enemies   (or (:enemies cfg) 0)
-        max-lives (or (:enemy-lives cfg) 1)]
-    (php/max 2 (php/intval (php/ceil (php// (php/* enemies max-lives) 8))))))
+  (let [enemies (:enemies cfg)
+        hp      (cond
+                  (vector? enemies) (specs-total-hp enemies)
+                  :else             (php/* (or enemies 0)
+                                           (or (:enemy-lives cfg) 1)))]
+    (php/max 2 (php/intval (php/ceil (php// hp 8))))))
 
 (defn- lock-cell-for
   "Map a lock-colour kw to the matching locked-door cell value."
@@ -235,58 +220,98 @@
           (recur acc (php/+ attempts 1))
           (recur (conj acc {:x bx :y by}) (php/+ attempts 1)))))))
 
+(defn- build-grid
+  "Two paths: hand-authored `:layout` (parsed via map/parse-layout —
+   bypasses random + seed-doors + lock-the-door, the author put doors
+   + locks directly in the ASCII) OR random `random-grid + seed-doors
+   + lock-the-door` for the procedural path. Returns `{:grid :spawn}`."
+  [cfg]
+  (if (:layout cfg)
+    (or (parse-layout (:layout cfg))
+        (throw (php/new php/InvalidArgumentException
+                        (str "Level layout missing player spawn '@': "
+                             (:name cfg)))))
+    (let [[w h] (:size cfg)
+          grid  (lock-the-door
+                 (seed-doors (random-grid w h (:walls cfg)) 1)
+                 (:door-lock cfg))]
+      {:grid grid :spawn (random-spawn grid)})))
+
+(defn- normalise-enemies
+  "Coerce the level's `:enemies` field into a vector of mixed specs
+   `[{:type :count :lives}]`. Single-type entries (int + `:enemy` +
+   optional `:enemy-lives`) become a 1-element vector. Already-mixed
+   entries pass through unchanged, with `:type` falling back to
+   `:enemy` and `:lives` to the catalog default when the spec omits
+   either field."
+  [cfg]
+  (let [es (:enemies cfg)]
+    (cond
+      (vector? es)
+      (apply vector
+             (map (fn [spec]
+                    (let [t (or (:type spec) (:enemy cfg) :imp)]
+                      {:type  t
+                       :count (or (:count spec) 0)
+                       :lives (or (:lives spec) (default-lives-for t))}))
+                  es))
+
+      :else
+      (let [t (or (:enemy cfg) :imp)]
+        [{:type  t
+          :count (or es 0)
+          :lives (or (:enemy-lives cfg) (default-lives-for t))}]))))
+
 (defn build-world
   "Construct a brand-new world for `level-num` carrying `lives` over
-   from the previous level. Walls, enemies, the single door, the
-   player spawn, and (when lives < max-lives) one heart pickup are all
-   randomised. Level tuning is stamped onto the world so render and
-   physics can read it without globals. `backpack?` controls whether
-   the new level seeds another backpack — once owned, don't drop more."
+   from the previous level. Walls, enemies, doors, player spawn, and
+   pickups are randomised by default; a level entry can opt into a
+   hand-authored `:layout` for boss arenas. Enemies stamp `:type` so
+   render reads per-enemy visuals from the catalog."
   ([level-num lives] (build-world level-num lives false :normal #{:pistol}))
   ([n l pack?] (build-world n l pack? :normal #{:pistol}))
   ([n l pack? diff] (build-world n l pack? diff #{:pistol}))
   ([lv life pack? diff owned]
-   (let [diff' (normalise diff)
-         cfg   (scale-cfg (config-for lv) diff')
-         lock  (:door-lock cfg)]
-     (let [[w h] (:size cfg)
-           grid  (lock-the-door
-                  (seed-doors (random-grid w h (:walls cfg)) 1)
-                  lock)]
-       (let [[px py] (random-spawn grid)]
-         (let [world (new-world grid (new-player px py (php/* (rand-int 360)
-                                                              (php// php/M_PI 180.0))))]
-           (let [with-foes (with-enemies world
-                                         (spawn-enemies grid (:enemies cfg)
-                                                        enemy-min-spawn-dist px py
-                                                        (or (:enemy-lives cfg) 1)))]
-             (assoc with-foes
-                    :level         lv
-                    :lives         life
-                    :difficulty    diff'
-                    :backpack?     pack?
-                    :owned-weapons (or owned #{:pistol})
-                    :hearts        (maybe-spawn-heart grid life px py)
-                    :armors        (maybe-spawn-armor grid)
-                    :berserks      (maybe-spawn-berserk grid)
-                    :invulns       (maybe-spawn-invuln grid)
-                    :backpacks     (maybe-spawn-backpack grid lv pack?)
-                    :keycards      (maybe-spawn-keycard grid lock)
-                    :weapon-pickups (maybe-spawn-weapon-pickups grid lv (or owned #{:pistol}))
-                    :door-lock     lock
-                    :ammo-boxes    (spawn-ammo-boxes grid (ammo-box-count cfg))
-                    :chase-speed (:chase cfg)
-                    :enemy-head-code     (:head-code cfg)
-                    :enemy-body-code     (:body-code cfg)
-                    :enemy-legs-code     (:legs-code cfg)
-                    :enemy-body-glyph    (:body-glyph cfg)
-                    :enemy-body-glyph-alt (:body-glyph-alt cfg)
-                    :enemy-body-glyph-fg (:body-glyph-fg cfg)
-                    :enemy-face          (:face cfg)
-                    :enemy-face-alt      (:face-alt cfg)
-                    :enemy-face-attack   (:face-attack cfg)
-                    :level-name  (:name cfg)
-                   ;; Show a centred splash for the first ~1.5s of the
-                   ;; level. tick-world decays this each frame; render
-                   ;; layer paints the overlay while it's > 0.
-                    :intro-secs  1.5))))))))
+   (let [diff'                (normalise diff)
+         raw                  (config-for lv)
+         ;; Resolve :enemy-lives from the catalog BEFORE scale-cfg —
+         ;; otherwise scale-cfg's missing-field default of 1 masks
+         ;; the catalog default and every monster spawns with 1 HP.
+         primed               (if (or (vector? (:enemies raw)) (:enemy-lives raw))
+                                raw
+                                (assoc raw :enemy-lives
+                                       (default-lives-for (or (:enemy raw) :imp))))
+         cfg                  (scale-cfg primed diff')
+         lock                 (:door-lock cfg)
+         {:keys [grid spawn]} (build-grid cfg)
+         [px py]              spawn
+         specs                (normalise-enemies cfg)
+         world                (new-world grid (new-player px py (php/* (rand-int 360)
+                                                                       (php// php/M_PI 180.0))))
+         with-foes            (with-enemies world
+                                            (spawn-enemies-mixed grid specs
+                                                                 enemy-min-spawn-dist px py))]
+     (assoc with-foes
+            :level         lv
+            :lives         life
+            :difficulty    diff'
+            :backpack?     pack?
+            :owned-weapons (or owned #{:pistol})
+            :hearts        (maybe-spawn-heart grid life px py)
+            :armors        (maybe-spawn-armor grid)
+            :berserks      (maybe-spawn-berserk grid)
+            :invulns       (maybe-spawn-invuln grid)
+            :backpacks     (maybe-spawn-backpack grid lv pack?)
+            :keycards      (maybe-spawn-keycard grid lock)
+            :weapon-pickups (maybe-spawn-weapon-pickups grid lv (or owned #{:pistol}))
+            :door-lock     lock
+            :ammo-boxes    (spawn-ammo-boxes grid (ammo-box-count cfg))
+            :chase-speed   (:chase cfg)
+            ;; Primary type fallback for render — used when an enemy
+            ;; doesn't carry its own :type (defensive only, every
+            ;; enemy from spawn-enemies-mixed has one).
+            :enemy         (or (:enemy cfg) (:type (first specs)))
+            :level-name    (:name cfg)
+            ;; Centred 1.5s intro splash. tick-world decays this; render
+            ;; paints the overlay while > 0.
+            :intro-secs    1.5))))

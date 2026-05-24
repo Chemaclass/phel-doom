@@ -218,3 +218,58 @@
         (if (= cell-floor (get (get grid y) x))
           [(+ 0.5 x) (+ 0.5 y)]
           (recur))))))
+
+;; ---------------------------------------------------------------------
+;; Hand-authored layouts.
+;;
+;; A layout is a vector of equal-length strings — one per row, top-down.
+;; Char map:
+;;   '#' wall            '.' floor
+;;   'D' unlocked door   'B' blue-locked door   'R' red-locked door
+;;   '@' floor + records [x y] as the player spawn (cell centre)
+;;
+;; parse-layout returns {:grid <vec-of-vec> :spawn [x y]} when the
+;; layout is well-formed, nil when no '@' is found. Used by level.phel
+;; when a level entry carries :layout to bypass the random-grid path.
+;; ---------------------------------------------------------------------
+
+(def ^:private layout-char->cell
+  {"#" cell-wall
+   "." cell-floor
+   "@" cell-floor
+   "D" cell-door
+   "B" cell-door-blue
+   "R" cell-door-red})
+
+(defn- parse-row
+  "Convert one layout string into [row-vec maybe-spawn-x]. Returns
+   nil for spawn-x when the row doesn't contain '@'. Unknown chars
+   fall back to floor so a typo doesn't crash."
+  [s y]
+  (let [w (php/strlen s)]
+    (loop [x       0
+           row     []
+           spawn-x nil]
+      (if (php/>= x w)
+        [row spawn-x]
+        (let [ch    (php/substr s x 1)
+              cell  (or (get layout-char->cell ch) cell-floor)
+              spawn (if (= ch "@") x spawn-x)]
+          (recur (php/+ x 1) (conj row cell) spawn))))))
+
+(defn parse-layout
+  "Parse a hand-authored ASCII grid into `{:grid :spawn}`. Returns
+   nil when the layout has no '@' (no player spawn)."
+  [rows]
+  (let [h (count rows)]
+    (loop [y     0
+           grid  []
+           spawn nil]
+      (if (php/>= y h)
+        (when (not (nil? spawn))
+          {:grid grid :spawn spawn})
+        (let [[row sx] (parse-row (get rows y) y)
+              spawn'   (if (and (nil? spawn) (not (nil? sx)))
+                         [(+ 0.5 sx) (+ 0.5 y)]
+                         spawn)]
+          (recur (php/+ y 1) (conj grid row) spawn'))))))

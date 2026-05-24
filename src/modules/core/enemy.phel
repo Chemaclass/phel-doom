@@ -33,10 +33,15 @@
 (defn new-enemy
   "Create an enemy record. `x` and `y` are world-space floats; `:alive`
    flips to false when `:lives` hits zero. Default lives = 1 keeps the
-   one-shot-kill semantics for callers that don't care about HP."
-  ([x y]               (new-enemy x y 1))
-  ([ex ey max-lives]   {:x ex :y ey :alive true :lives max-lives :max-lives max-lives
-                        :hit-flash-secs 0.0}))
+   one-shot-kill semantics for callers that don't care about HP. The
+   optional `type-kw` records which monster catalog entry (see
+   `enemies/enemy-types`) this enemy belongs to — render reads it
+   for per-enemy visuals, so mixed-type rooms (boss + minions) work
+   without world-level fields."
+  ([x y]                      (new-enemy x y 1 nil))
+  ([ex ey max-lives]          (new-enemy ex ey max-lives nil))
+  ([ex ey max-lives type-kw]  {:x ex :y ey :alive true :lives max-lives :max-lives max-lives
+                               :hit-flash-secs 0.0 :type type-kw}))
 
 (def chase-angle-offsets
   "Angle deltas (radians) tried when an enemy can't walk straight at the
@@ -299,10 +304,14 @@
   "Place `n` enemies on random open cells of `grid`, well away from the
    player's spawn so the first frame isn't an ambush. `max-lives`
    stamps the per-level HP onto every fresh enemy; default 1 keeps
-   the older one-shot-kill callers working."
+   the older one-shot-kill callers working. The 7-arity variant
+   also stamps `:type` so the renderer can pick the right visuals
+   per enemy (mixed-type rooms)."
   ([grid n min-dist-from player-x player-y]
-   (spawn-enemies grid n min-dist-from player-x player-y 1))
+   (spawn-enemies grid n min-dist-from player-x player-y 1 nil))
   ([g n-need min-d px py max-lives]
+   (spawn-enemies g n-need min-d px py max-lives nil))
+  ([g n-need min-d px py max-lives type-kw]
    (loop [acc       []
           attempts  0
           remaining n-need]
@@ -316,6 +325,26 @@
                        (php/+ (php/* dx dx) (php/* dy dy)))]
          (if (php/< d2 (php/* min-d min-d))
            (recur acc (php/+ attempts 1) remaining)
-           (recur (conj acc (new-enemy ex ey max-lives))
+           (recur (conj acc (new-enemy ex ey max-lives type-kw))
                   (php/+ attempts 1)
                   (php/- remaining 1))))))))
+
+(defn spawn-enemies-mixed
+  "Spawn from a vector of `{:type kw :count N [:lives M]}` specs. Each
+   spec emits `:count` enemies of `:type` with `:lives` HP (falls back
+   to 1 if missing). Returns one flat vector of enemies, each carrying
+   `:type` for render lookup. Used by mixed-monster rooms — the L10
+   boss + surrounding imps falls out of this naturally."
+  [grid specs min-d px py]
+  (loop [remaining specs
+         acc       []]
+    (cond
+      (php/=== remaining nil)       acc
+      (php/=== (count remaining) 0) acc
+      :else
+      (let [spec  (first remaining)
+            t     (:type spec)
+            n     (or (:count spec) 0)
+            lives (or (:lives spec) 1)
+            batch (spawn-enemies grid n min-d px py lives t)]
+        (recur (next remaining) (apply vector (concat acc batch)))))))

@@ -1,6 +1,6 @@
 (ns phel-doom-tests.modules.core.enemy-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.modules.core.enemy :refer [new-enemy spawn-enemies shoot advance tick-scare rear-attacker?]))
+  (:require phel-doom.modules.core.enemy :refer [new-enemy spawn-enemies spawn-enemies-mixed shoot advance tick-scare rear-attacker?]))
 
 (def open-grid
   "Bordered 10x10 open arena, no interior walls."
@@ -251,3 +251,50 @@
 (deftest test-rear-attacker-side-arc-doesnt-trigger
   ;; Enemy due north (90° off facing) — flank, not back.
   (is (= false (rear-attacker? [{:x 5.0 :y 8.0 :alive true}] 5.0 5.0 0.0))))
+
+;; ---------------------------------------------------------------------
+;; :type on new-enemy + spawn-enemies — required by render's per-enemy
+;; visual lookup for mixed-monster rooms.
+;; ---------------------------------------------------------------------
+
+(deftest test-new-enemy-default-type-nil
+  ;; 2-arity callers (pre-mixed-rooms) get :type nil — render falls
+  ;; back to the level's primary type.
+  (is (nil? (:type (new-enemy 1.5 1.5)))))
+
+(deftest test-new-enemy-stamps-type-when-given
+  (is (= :baron (:type (new-enemy 1.5 1.5 4 :baron)))))
+
+(deftest test-spawn-enemies-stamps-type-on-each
+  ;; Open grid so spawn-enemies always succeeds for the small N here.
+  (let [g  (apply vector
+                  (map (fn [_] (apply vector (map (fn [__] 0) (range 0 8))))
+                       (range 0 8)))
+        ;; Border with walls so random-spawn-style placement has room
+        g' (assoc g 0 (apply vector (map (fn [_] 1) (range 0 8))))
+        es (spawn-enemies g' 3 0.0 0.0 0.0 4 :cyber)]
+    (is (= 3 (count es)))
+    (is (every? (fn [e] (= :cyber (:type e))) es))
+    (is (every? (fn [e] (= 4 (:lives e))) es))))
+
+;; ---------------------------------------------------------------------
+;; spawn-enemies-mixed: one spec per enemy type. Counts + lives + type
+;; must all line up.
+;; ---------------------------------------------------------------------
+
+(deftest test-spawn-enemies-mixed-counts-per-type
+  (let [g      (apply vector
+                      (map (fn [_] (apply vector (map (fn [__] 0) (range 0 12))))
+                           (range 0 12)))
+        specs  [{:type :imp   :count 3 :lives 1}
+                {:type :cyber :count 1 :lives 20}]
+        es     (spawn-enemies-mixed g specs 0.0 0.0 0.0)
+        imps   (filter (fn [e] (= :imp   (:type e))) es)
+        bosses (filter (fn [e] (= :cyber (:type e))) es)]
+    (is (= 4 (count es)))
+    (is (= 3 (count imps)))
+    (is (= 1 (count bosses)))
+    (is (= 20 (:lives (first bosses))))))
+
+(deftest test-spawn-enemies-mixed-empty-specs-returns-nothing
+  (is (= 0 (count (spawn-enemies-mixed [[0 0] [0 0]] [] 0.0 0.0 0.0)))))

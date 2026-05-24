@@ -9,6 +9,16 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Added
+
+- **5 new levels** taking the run from 5 to 10 rooms. L6-L9 mix multiple monster types per room for a chaotic late-game; L10 is a hand-authored boss arena.
+  - **L6 spectres** — 4 spectres (HP 3, agile) + 2 imps. Spectres debut.
+  - **L7 revenants** — 4 revenants (HP 4) + 2 demons.
+  - **L8 archvile court** — 2 archviles (HP 5) + 3 cacos + 2 mancubi. Three-way mix.
+  - **L9 the brood** — 3 pinkies (HP 2, very fast) + 3 barons + 2 mancubi. Chaos pace.
+  - **L10 the final** — open chamber with a central pillar for cover, one cyberdemon BOSS (HP 20) + 4 imps. Hand-authored via the new `:layout` field. Walk through the north door after clearing to win the run.
+- `difficulty/scale-cfg` now scales mixed-spec rooms correctly: applies `:hp-mul` to each spec's `:lives`, leaves counts alone (mixed entries are author-tuned by design).
+
 ### Changed
 
 - Enemy catalog extracted to `core/enemies.phel`. Levels are now slim data: `{:size :walls :enemy :imp :enemies 4 :chase 0.8}`. Visuals (head/body/legs/face/glyph) live in `enemy-types` keyed by kw (`:imp :demon :caco :baron :cyber` + 5 stubs ready for L6-L10: `:spectre :revenant :archvile :mancubus :pinky`). Adding a new room = one map literal in `levels`; adding a new monster = one map literal in `enemy-types`.

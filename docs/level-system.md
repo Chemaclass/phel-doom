@@ -1,6 +1,21 @@
 # Level system
 
-Progression catalog + `build-world` factory. `src/modules/core/level.phel`.
+10-level progression catalog + `build-world` factory. `src/modules/core/level.phel`.
+
+## Levels at a glance
+
+| # | Name | Type | Enemies |
+|---|---|---|---|
+| 1 | imps | random | 4 imps |
+| 2 | demons | random | 6 demons (shotgun pickup) |
+| 3 | cacodemons | random | 8 cacos (chaingun pickup) |
+| 4 | barons | random + blue lock | 5 barons |
+| 5 | cyberdemons | random + red lock | 7 cyberdemons |
+| 6 | spectres | random mix | 4 spectres + 2 imps |
+| 7 | revenants | random mix | 4 revenants + 2 demons |
+| 8 | archvile court | random mix | 2 archviles + 3 cacos + 2 mancubi |
+| 9 | the brood | random mix | 3 pinkies + 3 barons + 2 mancubi |
+| 10 | the final | **hand-authored arena** | 1 cyberdemon BOSS (HP 20) + 4 imps |
 
 ## Catalog
 

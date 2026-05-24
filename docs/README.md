@@ -15,7 +15,7 @@ One doc per subsystem. Each points to its source files + functions.
 | ANSI render pipeline | [rendering.md](rendering.md) |
 | Enemies: chase AI, faces, fades, aggro | [monsters.md](monsters.md) |
 | Hitscan + damage + respawn | [combat.md](combat.md) |
-| 5-level progression | [level-system.md](level-system.md) |
+| 10-level progression + L10 boss arena | [level-system.md](level-system.md) |
 | Terminal input | [input.md](input.md) |
 | Audio | [audio.md](audio.md) |
 | High-scores persistence | [scores.md](scores.md) |
@@ -43,7 +43,8 @@ src/modules/core/                      ; pure logic, no IO
   physics.phel     player movement + counter decay
   combat.phel      hitscan + damage + heat/jam + knockback + berserk/invuln timers
   enemy.phel       chase AI + shoot resolution + respawn
-  level.phel       5-level config catalog + build-world (pickups, keycards, lock)
+  level.phel       10-level catalog + build-world (random or hand-authored)
+  enemies.phel     enemy-types catalog (visuals + default HP per kw)
   weapons.phel     3-weapon catalogue + per-weapon ammo state + switch
   difficulty.phel  easy/normal/hard/nightmare multipliers
 src/modules/io/                        ; side effects only

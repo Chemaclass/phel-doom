@@ -7,7 +7,7 @@
   (:require phel-doom.modules.glue.controls :refer [refresh-from-keys key-states rising-edges
                                                     initial-key-snapshot])
   (:require phel-doom.modules.core.physics  :refer [apply-physics tick-heartbeat tick-flicker tick-blood-drops tick-door-face])
-  (:require phel-doom.modules.core.combat   :refer [ammo-per-box berserk-seconds damage-step fire-anim-seconds max-reserve reload reloading? reload-cooldown-seconds tick-shooting])
+  (:require phel-doom.modules.core.combat   :refer [ammo-per-box berserk-seconds damage-step fire-anim-seconds invuln-seconds max-reserve reload reloading? reload-cooldown-seconds tick-shooting])
   (:require phel-doom.modules.core.enemy    :refer [advance tick-scare rear-attacker?])
   (:require phel-doom.modules.core.weapons  :refer [switch-weapon weapon-spec weapon-order weapons])
   (:require phel-doom.modules.io.sound    :refer [play-sfx! mute-for!])
@@ -175,6 +175,27 @@
                  :berserks     kept
                  :berserk-secs berserk-seconds)))))
 
+(defn- invulns-not-at [is px py]
+  (apply vector
+         (filter (fn [i]
+                   (not (and (php/=== (php/intval (:x i)) px)
+                             (php/=== (php/intval (:y i)) py))))
+                 (or is []))))
+
+(defn- pickup-invulns
+  "Step-on consumes the invulnerability sphere + arms
+   `:invuln-secs` of damage immunity. Refresh-not-add on stack."
+  [world]
+  (let [kept (invulns-not-at (:invulns world)
+                             (php/intval (:x (:player world)))
+                             (php/intval (:y (:player world))))]
+    (if (= (count kept) (count (or (:invulns world) [])))
+      world
+      (do (when (:sound-on world) (play-sfx! :door))
+          (assoc world
+                 :invulns     kept
+                 :invuln-secs invuln-seconds)))))
+
 (defn- on-door?
   "True when the player's current cell is a door (auto-advances level)."
   [world]
@@ -211,7 +232,8 @@
             w4  (pickup-armors w3)
             w4b (pickup-ammos  w4)
             w4c (pickup-berserks w4b)
-            w5  (tick-enemies  w4c dt)
+            w4d (pickup-invulns  w4c)
+            w5  (tick-enemies  w4d dt)
             w5b (if (:reload edges)
                   (do
                     (when (and (:sound-on w5) (reloading? w5)) (play-sfx! :reload))
@@ -270,6 +292,7 @@
    :reload-duration (or (:reload-duration (weapon-spec world)) reload-cooldown-seconds)
    :empty-click-secs (or (:empty-click-secs world) 0.0)
    :berserk-secs (or (:berserk-secs world) 0.0)
+   :invuln-secs  (or (:invuln-secs world) 0.0)
    :rear-warning? (rear-attacker? (:enemies world)
                                   (:x (:player world))
                                   (:y (:player world))

@@ -9,6 +9,7 @@
   (:require phel-doom.modules.core.physics  :refer [apply-physics tick-heartbeat tick-flicker tick-blood-drops tick-door-face])
   (:require phel-doom.modules.core.combat   :refer [ammo-per-box damage-step fire-anim-seconds max-reserve reload reloading? reload-cooldown-seconds tick-shooting])
   (:require phel-doom.modules.core.enemy    :refer [advance tick-scare rear-attacker?])
+  (:require phel-doom.modules.core.weapons  :refer [switch-weapon weapon-spec weapon-order weapons])
   (:require phel-doom.modules.io.sound    :refer [play-sfx! mute-for!])
   (:require phel-doom.modules.core.level    :refer [build-world num-levels])
   (:require phel-doom.modules.io.scores   :refer [update-scores!])
@@ -135,19 +136,22 @@
                  (or boxes []))))
 
 (defn- pickup-ammos
-  "Step-on triggers an ammo-box pickup: bumps :ammo-reserve by
-   `ammo-per-box`, capped at `max-reserve`. Box is removed from the
-   world so the player can't farm a single cell."
+  "Step-on triggers an ammo-box pickup: bumps the ACTIVE weapon's
+   reserve by its `:ammo-per-box`, capped at the weapon's
+   `:reserve-cap`. Box is removed so the player can't farm one cell."
   [world]
   (let [kept (ammo-boxes-not-at (:ammo-boxes world)
                                 (php/intval (:x (:player world)))
                                 (php/intval (:y (:player world))))]
     (if (= (count kept) (count (or (:ammo-boxes world) [])))
       world
-      (let [refilled (assoc world :ammo-boxes kept)]
+      (let [sp       (or (weapon-spec world) {})
+            per-box  (or (:ammo-per-box sp) ammo-per-box)
+            cap      (or (:reserve-cap sp)  max-reserve)
+            refilled (assoc world :ammo-boxes kept)]
         (when (:sound-on world) (play-sfx! :door))
         (update refilled :ammo-reserve
-                (fn [r] (php/min max-reserve (php/+ (or r 0) ammo-per-box))))))))
+                (fn [r] (php/min cap (php/+ (or r 0) per-box))))))))
 
 (defn- on-door?
   "True when the player's current cell is a door (auto-advances level)."
@@ -172,7 +176,15 @@
       ;; but the lint pass doesn't macro-expand it (arity-mismatch
       ;; false positives), so stick with sequential let bindings.
       (let [w1  (refresh-from-keys w0 keys)
-            w2  (apply-physics w1 dt)
+            ;; Weapon swap (1/2/3) routes through weapons/switch-weapon
+            ;; — no-op when the player is mid-reload so the lockout
+            ;; can't be skipped.
+            w1a (cond
+                  (:select-weapon1 edges) (switch-weapon w1 (get weapon-order 0))
+                  (:select-weapon2 edges) (switch-weapon w1 (get weapon-order 1))
+                  (:select-weapon3 edges) (switch-weapon w1 (get weapon-order 2))
+                  :else                   w1)
+            w2  (apply-physics w1a dt)
             w3  (pickup-hearts w2)
             w4  (pickup-armors w3)
             w4b (pickup-ammos  w4)
@@ -226,10 +238,13 @@
    :game-time   (or (:game-time world) 0.0)
    :debug?      (:debug? world)
    :perf-stats  (when (:debug? world) (read-perf-snapshot))
+   :weapon      (or (:weapon world) :pistol)
+   :weapon-name (or (:name (weapon-spec world)) "pistol")
    :mag         (or (:mag world) 0)
+   :mag-size    (or (:mag-size (weapon-spec world)) 10)
    :ammo-reserve (or (:ammo-reserve world) 0)
    :reload-cooldown (or (:reload-cooldown world) 0.0)
-   :reload-duration reload-cooldown-seconds
+   :reload-duration (or (:reload-duration (weapon-spec world)) reload-cooldown-seconds)
    :empty-click-secs (or (:empty-click-secs world) 0.0)
    :rear-warning? (rear-attacker? (:enemies world)
                                   (:x (:player world))

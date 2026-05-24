@@ -11,23 +11,9 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-**Ammo loop (closes #5)**
-
-- Finite reserve: start with 30 spare rounds, cap 50. HUD reads `ammo N/10 [R]`.
-- Ammo-box pickups scale with the level's combat load (L1 2 boxes → L5 8). Yellow `A` on minimap, brown→yellow pulse in 3D, `+10` rounds each.
-- Three layered reload cues: top-row `! LOW AMMO N !` pulse when total firepower drops to 3/2/1; periodic `press R to RELOAD` above the pistol (5s at mag 2, 3s at mag 1, 1s at mag 0); centred `CLICK` prompt on dry-fire (flips to `OUT OF AMMO` when reserve is dry).
-- Reload now plays a 1.2s drop / refill / raise pistol animation with its own sfx. Trigger locked out for the window.
-
-**Enemies**
-
-- Per-level HP: L1 imp 1, L2 demon 2, L3 caco 3, L4 baron 4, L5 cyber 5. Body shades darker as HP drops; a yellow HP digit floats above the head 1.2s after each hit. Distinct `:wound` sfx so "I hit them" sounds different from "they hit me".
-- Kill loot drops: every kill rolls for a pickup (30% ammo box, 15% armor, 5% heart when not at max lives, 50% nothing). Drops land on the corpse cell and feed the existing `pickup-*` helpers / minimap markers.
-
-**HUD + map**
-
-- Game-info strip (`L1 imps · kills · ammo`) lives top-left under the hearts row. Pos / angle / fps moved into the F3 debug overlay. Bottom row is now a single dim tagline.
-- Minimap auto-scales on narrow terminals so it never claims more than ~1/3 of the screen width.
-- Pause menu lists every key binding (move, turn, fire, reload, about-face, map, sound, debug, resume, quit).
+- Ammo loop (closes #5): finite reserve (start 30, cap 50), per-level ammo-box pickups (L1 2 → L5 8), three layered reload cues (LOW AMMO pulse, periodic press-R reminder, dry-fire CLICK), 1.2s drop/refill/raise reload animation.
+- Enemies have per-level HP (1→5). Wounded body shades darker, yellow HP digit floats above the head 1.2s after each hit. Every kill rolls a loot drop (ammo > armor > heart, 50% nothing).
+- HUD reshuffle: game-info strip top-left under hearts; pos/angle/fps moved into the F3 overlay; pause menu lists every key binding; minimap auto-scales to ≤ 1/3 screen on narrow terminals.
 
 ## [0.2.0] - 2026-05-22
 

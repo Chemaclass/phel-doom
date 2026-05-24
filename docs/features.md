@@ -22,9 +22,13 @@ See [rendering.md](rendering.md), [raycaster.md](raycaster.md),
 
 - 5 procedurally-generated levels, escalating difficulty
 - Per-level wall + sky + floor palette
-- Heart pickups (refill life, capped at 5), armor pickups (absorb
-  one hit), and ammo-box pickups (`+10` rounds, count scales with
-  the level's combat load)
+- Pickups: hearts (capped at 5), armor (capped at 3, absorbs hits),
+  ammo boxes (`+10` to active weapon's reserve), berserk sphere (20s
+  ×2 damage), invulnerability sphere (10s i-frames), backpack
+  (one-shot, doubles every weapon's reserve cap)
+- Keycards + locked exit doors on L4 (blue) and L5 (red): walk over
+  the `⌷` keycard to add the colour to held keys; physics blocks
+  the locked door until you do
 - Walk-into-door auto-advance, pulsing minimap door + bright 3D door
   glyph
 
@@ -42,9 +46,12 @@ See [level-system.md](level-system.md), [map.md](map.md).
   aggro-distance (1.8 units)
 - Hitscan combat: blood splatter, muzzle flash, 5-stage death anim,
   3-6s respawn cooldown
-- Pistol with 10-round mag drawn from a 30/50-cap spare reserve,
-  1.2s drop / refill / raise reload animation, fire cooldown + heat
-  / overheat jam
+- 3-slot weapon loadout (1/2/3): pistol (10-mag, 0.12s cd, 1 dmg),
+  shotgun (4-mag, 0.6s cd, 3 dmg), chaingun (30-mag, 0.05s cd, 1 dmg).
+  Each weapon has its own mag size, fire cooldown, reload duration,
+  damage, reserve cap, and ammo-per-box rate. Switches preserve
+  per-weapon mag + reserve. Pistol-sprite drop / refill / raise
+  reload animation; sprite kicks up 2 rows on every shot.
 - 5 lives, 1s i-frame window post-hit, directional red band on the
   side the hit came from, knockback shove
 
@@ -107,6 +114,12 @@ See [audio.md](audio.md).
 - Pure `merge-run` fn (testable) wrapping the IO writer
 
 See [scores.md](scores.md).
+
+## Difficulty
+
+- `--difficulty=easy|normal|hard|nightmare` (`-d`) at launch. Per-mode
+  multipliers scale enemy chase speed, per-enemy HP, and per-level
+  enemy count. HUD strip tags the active mode (skipped for normal).
 
 ## Misc
 

@@ -11,18 +11,27 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Three weapons on 1/2/3: pistol (snappy, 1 dmg), shotgun (slow, 3 dmg), chaingun (spray, 1 dmg). Per-weapon mag + reserve persist across switches.
-- Ammo loop (closes #5): finite reserve, scaled ammo-box pickups (L1 2 → L5 8), 1.2s reload animation, layered cues (LOW AMMO pulse, periodic press-R reminder, dry-fire CLICK).
-- Per-level enemy HP (1→5). Wounded body shades darker; yellow HP digit above the head 1.2s post-hit. Every kill rolls a loot drop (ammo > armor > heart, 50% nothing).
-- HUD reshuffle: game-info top-left under hearts (shows active weapon); pos/angle/fps moved into the F3 overlay; pause menu lists every key.
-- Shoot recoils the pistol sprite up 2 rows (no more screen tilt).
-- Responsive UI: minimap ≤ 1/3 vw on narrow terminals; death + victory boxes auto-size 22–36 cols and drop the best-scores block on short rows.
+**Weapons + combat**
+- 3-slot loadout (1/2/3): pistol, shotgun (3 dmg), chaingun (spray). Per-weapon mag + reserve persist across switches.
+- Finite ammo (closes #5): reserve + scaled box pickups + 1.2s reload animation + layered reload cues (LOW AMMO pulse, periodic press-R, dry-fire CLICK).
+- Per-level enemy HP 1→5; wounded body shades darker, yellow HP digit above head 1.2s post-hit. Kill rolls loot drop (ammo > armor > heart, 50% nothing).
+- Pistol sprite recoils up 2 rows on shoot (no more screen tilt).
+
+**Powerups + pickups**
+- Berserk sphere — 20s × 2 damage.
+- Invulnerability sphere — 10s damage immunity.
+- Backpack (L2+, one-shot) — doubles every weapon's reserve cap for the rest of the run.
+- Keycards + locked exit on L4 (blue) and L5 (red). Walk over the matching `⌷` to unlock.
 - Armor caps at 3.
-- Berserk sphere pickup (rare, ~25% per level). Step on it for 20s of 2× damage on every weapon; rage state shows as a pulsing centred `BERSERK Ns` banner and a red `B` on the minimap.
-- Invulnerability sphere pickup (rarer, ~16% per level). 10s of damage immunity (contact hits are skipped while `:invuln-secs > 0`). Pulsing centred `INVULN Ns` banner on row 4 + cyan `I` on the minimap.
-- Backpack pickup (L2+, ~30% per qualifying level). One-shot that doubles every weapon's effective reserve cap for the rest of the run; persists across level cuts. HUD strip gains a `+pack` indicator; minimap shows yellow `P`.
-- `--difficulty=easy|normal|hard|nightmare` (`-d`) CLI option. Multipliers scale enemy chase speed, per-enemy HP, and per-level enemy count. easy: 0.7× speed/enemies, hp ×1.0. hard: 1.3× across the board. nightmare: 1.8× speed, 1.5× hp + count. HUD strip surfaces the active mode (`[easy]` / `[hard]` / `[nightmare]`); normal is unlabelled.
-- Keycards + locked doors. L4 (barons) gates the exit with a **blue** lock; L5 (cyberdemons) gates with a **red** lock. Walk over the matching `⌷` keycard pickup to add it to `:held-keys`; physics blocks the locked door until you do. Minimap colour-codes both door (`▌`) and keycard (`k`); HUD strip shows a small `⌷` for every key held.
+
+**Map + HUD**
+- Minimap auto-scales to ≤ 1/3 vw on narrow terminals.
+- HUD top-left strip shows level / kills / active weapon / ammo / `+pack` / held keys / difficulty tag.
+- Death + victory boxes auto-size 22–36 cols and drop best-scores on short rows.
+- Pos / angle / fps moved into F3 debug overlay. Pause menu lists every key binding.
+
+**CLI**
+- `--difficulty=easy|normal|hard|nightmare` (`-d`) scales chase speed, enemy HP, enemy count. Default `normal`.
 
 ## [0.2.0] - 2026-05-22
 

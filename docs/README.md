@@ -41,9 +41,11 @@ src/modules/core/                      ; pure logic, no IO
   map.phel         grid + random arena gen
   engine.phel      raycaster (cast-frame, cast-ray)
   physics.phel     player movement + counter decay
-  combat.phel      hitscan + damage + heat/jam + knockback
+  combat.phel      hitscan + damage + heat/jam + knockback + berserk/invuln timers
   enemy.phel       chase AI + shoot resolution + respawn
-  level.phel       5-level config catalog + build-world
+  level.phel       5-level config catalog + build-world (pickups, keycards, lock)
+  weapons.phel     3-weapon catalogue + per-weapon ammo state + switch
+  difficulty.phel  easy/normal/hard/nightmare multipliers
 src/modules/io/                        ; side effects only
   input.phel       stty raw mode + kitty protocol opt-in
   render.phel      frame->string + paint-* overlays + ANSI

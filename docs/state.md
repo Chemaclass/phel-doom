@@ -19,7 +19,19 @@ Pure data shapes that every other module operates on. `src/modules/core/state.ph
  :hearts     <vector of {:x :y}>
  :armors     <vector of {:x :y}>
  :ammo-boxes <vector of {:x :y}>
- :armor      <int, hits absorbed before lives drop>
+ :berserks   <vector of {:x :y}>           ; rage spheres
+ :invulns    <vector of {:x :y}>           ; immunity spheres
+ :backpacks  <vector of {:x :y}>           ; one-shot reserve doubler
+ :keycards   <vector of {:x :y :colour}>   ; :blue / :red keycards
+ :held-keys  <set of colour kws>           ; #{:blue :red}
+ :armor      <int 0..max-armor, hits absorbed before lives drop>
+ :backpack?  <bool, persists across level cuts>
+ :berserk-secs <float seconds>             ; while > 0: 2x weapon damage
+ :invuln-secs  <float seconds>             ; while > 0: contact hits skipped
+ :difficulty <kw :easy|:normal|:hard|:nightmare>
+ :door-lock  <kw :blue|:red|nil>           ; lock colour on this level's exit
+ :weapon     <kw :pistol|:shotgun|:chaingun>  ; active weapon
+ :weapon-state {<kw> {:mag :reserve}}      ; per-weapon ammo bookkeeping
  :kills      <int>
  :lives      <int, 0..max-lives>
  :iframes    <float seconds>  ; post-hit invulnerability

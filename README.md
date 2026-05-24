@@ -33,14 +33,24 @@ make play
 | `e`            | About-face (snap 180°)       |
 | `space`        | Fire                         |
 | `r`            | Reload (draws from spare reserve, ~1.2s anim) |
+| `1` / `2` / `3` | Switch weapon (pistol / shotgun / chaingun) |
 | `m`            | Toggle minimap               |
 | `n`            | Toggle sound                 |
 | `p`            | Pause (full controls reference) |
 | `F3`           | Toggle perf + technical overlay |
 | `q`            | Quit                         |
 
-Walk into a door to advance. Walk over a heart for `+1` life, an armor pickup for one absorbed hit, an ammo box for `+10` rounds in the reserve.
-Press any key on the start menu to play (`q` exits).
+Walk into a door to advance. Walk over pickups to collect:
+
+- **Heart** `+1` life
+- **Armor** absorbs one contact hit (capped at 3)
+- **Ammo box** `+N` rounds to the active weapon's reserve
+- **Berserk sphere** 20s of `×2` weapon damage
+- **Invulnerability sphere** 10s of damage immunity
+- **Backpack** doubles every weapon's reserve cap for the run
+- **Keycard** `⌷` unlocks matching coloured exit on L4 / L5
+
+Launch with `--difficulty=easy|normal|hard|nightmare` (`-d`) to scale enemy speed, HP, and count. Press any key on the start menu to play (`q` exits).
 
 For instant-release movement (kitty keyboard protocol, tmux setup,
 terminal compatibility): see [docs/input.md](docs/input.md).

@@ -26,6 +26,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Changed
 
+- Phel/Clojure idiom pass across `src/` (behaviour-preserving). `(php/=== x nil)` → `(nil? x)`, `(php/=== x 0)` → `(zero? x)`, `(php/> x 0)` → `(pos? x)`, `(if (php/=== x false) false true)` → `(boolean x)`, etc. Tightened: combat, controls, difficulty, enemy, level, map, play.phel, scores, sound, weapons. Hot-path files (`render.phel`, `engine.phel`, `physics.phel`'s `apply-physics` loop) deliberately untouched.
 - Enemy catalog extracted to `core/enemies.phel`. Levels are now slim data: `{:size :walls :enemy :imp :enemies 4 :chase 0.8}`. Visuals (head/body/legs/face/glyph) live in `enemy-types` keyed by kw (`:imp :demon :caco :baron :cyber` + 5 stubs ready for L6-L10: `:spectre :revenant :archvile :mancubus :pinky`). Adding a new room = one map literal in `levels`; adding a new monster = one map literal in `enemy-types`.
 - `:enemies` accepts either an `int` (single-type, uses level's `:enemy`) OR a vector of mixed specs `[{:type :imp :count 4 :lives 1} {:type :baron :count 2}]`. Each enemy carries `:type` so render reads visuals per-sprite — enables mixed-monster rooms + boss arenas.
 - Level entry can opt in to a hand-authored `:layout` (vector of ASCII strings parsed via `map/parse-layout` — `#` wall, `.` floor, `@` spawn, `D`/`B`/`R` doors) that bypasses `random-grid` + `seed-doors`. Random procgen remains the default.

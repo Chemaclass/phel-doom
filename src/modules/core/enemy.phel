@@ -78,19 +78,19 @@
    enemy slides around obstacles via pick-step's offset cascade
    instead of bumping forever."
   [enemy grid target-x target-y dt speed]
-  (let [ex (:x enemy)
-        ey (:y enemy)]
-    (let [dx   (php/- target-x ex)
-          dy   (php/- target-y ey)
-          dist (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
-      (if (php/<= dist stop-dist)
-        enemy
-        (let [hit (pick-step grid ex ey
-                             (php/* speed dt)
-                             (php/atan2 dy dx))]
-          (if hit
-            (assoc enemy :x (first hit) :y (second hit))
-            enemy))))))
+  (let [ex   (:x enemy)
+        ey   (:y enemy)
+        dx   (php/- target-x ex)
+        dy   (php/- target-y ey)
+        dist (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
+    (if (php/<= dist stop-dist)
+      enemy
+      (let [hit (pick-step grid ex ey
+                           (php/* speed dt)
+                           (php/atan2 dy dx))]
+        (if hit
+          (assoc enemy :x (first hit) :y (second hit))
+          enemy)))))
 
 (defn shoot
   "Fire a hitscan from the player along their facing. Returns
@@ -109,7 +109,7 @@
                        best-i -1
                        best-d max-r
                        es     es']
-                  (if (php/=== es nil)
+                  (if (nil? es)
                     best-i
                     (let [e (first es)]
                       (let [along (when (and e (:alive e))
@@ -126,7 +126,7 @@
                         (if along
                           (recur (php/+ i 1) i along (next es))
                           (recur (php/+ i 1) best-i best-d (next es)))))))]
-       (if (php/=== best -1)
+       (if (= best -1)
          [es' false nil -1]
         ;; Decrement lives; flip :alive only when the shot empties the
         ;; HP pool. Default-1 enemies still die in one hit because the
@@ -195,12 +195,12 @@
   (loop [es    enemies
          total 0]
     (cond
-      (php/=== es nil)       total
-      (php/=== (count es) 0) total
+      (nil? es)          total
+      (zero? (count es)) total
       :else
       (let [e (first es)]
         (recur (next es)
-               (if (and (:alive e) (php/=== (:type e) t))
+               (if (and (:alive e) (= (:type e) t))
                  (php/+ total 1)
                  total))))))
 
@@ -216,10 +216,10 @@
    L10 boss room cap minion pressure at 1 alive at a time."
   [e grid player-x player-y ^float dt ^float speed all-enemies]
   (cond
-    (:alive e)                       (let [stepped (step-toward e grid player-x player-y dt speed)
-                                           flash'  (php/max 0.0 (php/- (or (:hit-flash-secs e) 0.0) dt))]
-                                       (assoc stepped :hit-flash-secs flash'))
-    (php/=== (:respawn-after e) nil) e
+    (:alive e)                (let [stepped (step-toward e grid player-x player-y dt speed)
+                                    flash'  (php/max 0.0 (php/- (or (:hit-flash-secs e) 0.0) dt))]
+                                (assoc stepped :hit-flash-secs flash'))
+    (nil? (:respawn-after e)) e
     :else
     (let [t (php/- (:respawn-after e) dt)]
       (if (php/> t 0.0)
@@ -366,8 +366,8 @@
           attempts  0
           remaining n-need]
      (cond
-       (php/=== remaining 0) acc
-       (php/> attempts 200)  acc
+       (zero? remaining)    acc
+       (php/> attempts 200) acc
        :else
        (let [[ex ey] (random-spawn g)
              d2      (let [dx (php/- ex px)
@@ -392,8 +392,8 @@
   (loop [remaining specs
          acc       []]
     (cond
-      (php/=== remaining nil)       acc
-      (php/=== (count remaining) 0) acc
+      (nil? remaining)          acc
+      (zero? (count remaining)) acc
       :else
       (let [spec  (first remaining)
             t     (:type spec)
@@ -405,4 +405,4 @@
                     raw
                     (apply vector
                            (map (fn [e] (assoc e :max-concurrent cap)) raw)))]
-        (recur (next remaining) (apply vector (concat acc batch)))))))
+        (recur (next remaining) (into acc batch))))))

@@ -19,6 +19,34 @@ make play
 
 `composer install` / `composer play` also work.
 
+<details>
+<summary><strong>No PHP locally? Run it in Docker</strong></summary>
+
+The repo ships a `Dockerfile` bundling PHP 8.4 CLI + Composer + the project deps. No host install required — `docker` is the only prerequisite.
+
+```bash
+docker build -t phel-doom .
+docker run --rm -it phel-doom
+```
+
+- `-it` keeps the terminal in raw mode so ANSI render + key input work the same as a host run.
+- Override the entrypoint to run a different command:
+
+  ```bash
+  docker run --rm -it phel-doom test                       # run the phel test suite
+  docker run --rm -it phel-doom run phel-doom.main play --god
+  ```
+
+- Bind-mount the source for live edits (skip rebuilding on every change):
+
+  ```bash
+  docker run --rm -it -v "$PWD:/app" phel-doom
+  ```
+
+Rebuild after editing `composer.json` so the deps layer refreshes.
+
+</details>
+
 ## Controls
 
 | Key            | Action                       |

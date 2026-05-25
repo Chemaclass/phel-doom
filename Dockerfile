@@ -2,11 +2,11 @@
 # locally. Build:    docker build -t phel-doom .
 # Run:              docker run --rm -it phel-doom
 #
-# The image bundles PHP 8.4 CLI, Composer, and a `composer install`
+# The image bundles PHP 8.5 CLI, Composer, and a `composer install`
 # of phel-lang + symfony/console. `make play` is the default CMD;
 # `-it` keeps the terminal in raw mode so ANSI render + key input
 # work the same as a host run.
-FROM php:8.4-cli-alpine
+FROM php:8.5-cli-alpine
 
 RUN apk add --no-cache git unzip bash && \
     curl -sS https://getcomposer.org/installer | php -- \

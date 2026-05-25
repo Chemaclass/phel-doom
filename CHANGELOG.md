@@ -9,6 +9,16 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Added
+
+- Help panel (H or ESC) adapts to terminal size: interior width clamps to vw on narrow terminals; COMPASS HINT and CONTROLS sections drop greedily when vh can't fit them, keeping RUN / PLAYER / WEAPONS always visible.
+
+### Changed
+
+- 2D minimap now OFF by default on a fresh run; press `M` to toggle it back on.
+- `ESC` is now aliased to `H` — both open / close the info panel (pause-coupled).
+- Removed cheat shortcuts (`make play-dev`, `play-armory`, `play-boss`, `play-level`) from the Makefile. `--god` / `--armory` / `--level=N` flags still work on `play` directly for dev use.
+
 ## [0.4.1] - 2026-05-25
 
 ### Added

@@ -15,6 +15,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Enemy AI state machine. Real-game spawns start `:dormant` — they hold position + deal no contact damage until they get line-of-sight to the player OR take a hit. Bosses + minions can be peeked / planned around instead of homing through walls.
 - `:hunting` state. Aware enemies that lose line-of-sight stop chasing the player's live position; they walk to the last-known cell instead, doing no contact damage along the way. Arrive at the breadcrumb without re-acquiring LOS → drop back to `:dormant`. Player can break contact by ducking around a corner / behind a door.
 - Sound-wake. Pulling the trigger flood-fills sound from the player's cell up to 3 floor cells; alive enemies in the close-by area go into `:hunting` with the fire origin as their `:lkp`. Walls + all door variants block the BFS so the wake stays nearby — matches DOOM's per-sector noise rule, just tighter than the original 6-cell radius (less "the whole room aggros every shot").
+- Pain stagger. Each non-killing hit rolls against the target's per-type pain chance (imp 0.35, baron 0.15, cyber 0.05, …). A successful roll flips the enemy into `:pain` for ~0.3s — frozen, no contact damage, no chase. Combat reads as reactive: you can see hits register and break the wall-of-bodies feel by chaining staggers on a tight crowd.
 
 ### Performance
 

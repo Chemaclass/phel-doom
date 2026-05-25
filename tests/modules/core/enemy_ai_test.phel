@@ -4,7 +4,10 @@
                                                     target-pos
                                                     noise-wake noise-wake-radius
                                                     state-spec default-state
-                                                    lkp-arrival-dist]))
+                                                    lkp-arrival-dist
+                                                    apply-pain tick-pain pain-chance-of
+                                                    pain-stagger-secs default-pain-chance
+                                                    type-pain-chance]))
 
 ;; Open chamber grid mirroring engine-test fixtures: 1 = wall, 0 = floor.
 ;; PHP-array form so cast-ray (which expects :pgrid) can read it.
@@ -41,6 +44,14 @@
   ;; refactor doesn't silently swap them.
   (is (= true  (get-in state-spec [:hunting :moves?])))
   (is (= false (get-in state-spec [:hunting :attacks?]))))
+
+(deftest test-state-spec-has-pain
+  ;; Pain is the hit-stagger flinch: frozen for `pain-stagger-secs`,
+  ;; doesn't move, doesn't deal contact damage. Both flags false so
+  ;; tick-one + enemies-touching? naturally skip a painted enemy
+  ;; without any extra state check.
+  (is (= false (get-in state-spec [:pain :moves?])))
+  (is (= false (get-in state-spec [:pain :attacks?]))))
 
 (deftest test-default-state-is-aware
   ;; Legacy enemies built via new-enemy carry no :state. Default
@@ -307,3 +318,62 @@
 (deftest test-lkp-arrival-dist-is-above-stop-dist
   ;; stop-dist is 0.6 in enemy.phel — arrival must sit above it.
   (is (php/> lkp-arrival-dist 0.6)))
+
+;; ---------------------------------------------------------------------
+;; Pain stagger: each non-killing hit rolls against per-type pain
+;; chance. A successful roll flips the enemy into `:pain` with
+;; `:pain-secs` armed; tick-pain decays the timer + reverts the
+;; state to :aware on expiry. The state-spec flags ensure the
+;; staggered enemy doesn't chase or deal contact damage while frozen.
+;; ---------------------------------------------------------------------
+
+(deftest test-pain-chance-of-uses-type-table
+  (is (= 0.35 (pain-chance-of {:type :imp})))
+  (is (= 0.05 (pain-chance-of {:type :cyber}))))
+
+(deftest test-pain-chance-of-falls-back-to-default
+  ;; Type missing from the table → default chance applies.
+  (is (= default-pain-chance (pain-chance-of {:type :unknown})))
+  (is (= default-pain-chance (pain-chance-of {}))))
+
+(deftest test-apply-pain-stamps-state-and-timer-on-low-roll
+  ;; Roll below pain-chance triggers the stagger. Imp = 0.35 chance,
+  ;; roll = 0.1 → flinch.
+  (let [e  (apply-pain {:type :imp :state :aware} 0.1)]
+    (is (= :pain (:state e)))
+    (is (= pain-stagger-secs (:pain-secs e)))))
+
+(deftest test-apply-pain-leaves-enemy-untouched-on-high-roll
+  ;; Roll above pain-chance → no stagger. Imp 0.35, roll 0.9.
+  (let [e  (apply-pain {:type :imp :state :aware} 0.9)]
+    (is (= :aware (:state e)))
+    (is (nil? (:pain-secs e)))))
+
+(deftest test-apply-pain-respects-per-type-chance
+  ;; Cyber's pain-chance is 0.05 — a roll of 0.1 misses the stagger
+  ;; even though it would stagger an imp.
+  (let [e (apply-pain {:type :cyber :state :aware} 0.1)]
+    (is (= :aware (:state e)))))
+
+(deftest test-tick-pain-noop-without-timer
+  ;; No pain in flight → enemy returned untouched.
+  (let [e  {:state :aware}
+        e' (tick-pain e 0.016)]
+    (is (= :aware (:state e')))
+    (is (nil? (:pain-secs e')))))
+
+(deftest test-tick-pain-decrements-timer
+  ;; Mid-stagger: pain-secs decays by dt, state stays :pain.
+  (let [e  {:state :pain :pain-secs 0.3}
+        e' (tick-pain e 0.1)]
+    (is (= :pain (:state e')))
+    (is (< (php/abs (php/- (:pain-secs e') 0.2)) 0.0001))))
+
+(deftest test-tick-pain-expires-and-reverts-to-aware
+  ;; Timer <= dt → expiry. State flips to :aware so the next observe
+  ;; pass routes the freshly-woken enemy back through the normal LOS
+  ;; chain (no permanent stagger state).
+  (let [e  {:state :pain :pain-secs 0.05}
+        e' (tick-pain e 0.1)]
+    (is (= :aware (:state e')))
+    (is (= 0.0 (:pain-secs e')))))

@@ -12,6 +12,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 ### Added
 
 - Responsive help panel (`H` / `ESC`) — adapts width + drops optional sections on small terminals.
+- Enemy AI state machine. Real-game spawns start `:dormant` — they hold position + deal no contact damage until they get line-of-sight to the player OR take a hit. Once aware, sticky (DOOM "wake once, stay awake"). Bosses + minions can be peeked / planned around instead of homing through walls.
 
 ### Performance
 

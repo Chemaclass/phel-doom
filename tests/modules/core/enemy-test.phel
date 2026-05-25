@@ -167,6 +167,86 @@
     (is (> (:x e) 5.0))))
 
 ;; ---------------------------------------------------------------------
+;; AI state integration: LOS-gated wake. The 8-arity advance with pgrid
+;; routes each alive enemy through enemy-ai/observe. Dormant enemies
+;; with LOS to the player flip to :aware and start chasing this frame;
+;; dormant enemies WITHOUT LOS hold position. Enemies without a :state
+;; (legacy fixtures, default :aware) chase regardless.
+;; ---------------------------------------------------------------------
+
+(def open-pgrid
+  (php/array
+   (php/array 1 1 1 1 1 1 1 1 1 1)
+   (php/array 1 0 0 0 0 0 0 0 0 1)
+   (php/array 1 0 0 0 0 0 0 0 0 1)
+   (php/array 1 0 0 0 0 0 0 0 0 1)
+   (php/array 1 0 0 0 0 0 0 0 0 1)
+   (php/array 1 0 0 0 0 0 0 0 0 1)
+   (php/array 1 0 0 0 0 0 0 0 0 1)
+   (php/array 1 0 0 0 0 0 0 0 0 1)
+   (php/array 1 0 0 0 0 0 0 0 0 1)
+   (php/array 1 1 1 1 1 1 1 1 1 1)))
+
+(def wall-between-pgrid
+  ;; x=4 wall column splits the chamber. Enemy on the left, player on
+  ;; the right — no LOS.
+  (php/array
+   (php/array 1 1 1 1 1 1 1 1 1 1)
+   (php/array 1 0 0 0 1 0 0 0 0 1)
+   (php/array 1 0 0 0 1 0 0 0 0 1)
+   (php/array 1 0 0 0 1 0 0 0 0 1)
+   (php/array 1 0 0 0 1 0 0 0 0 1)
+   (php/array 1 0 0 0 1 0 0 0 0 1)
+   (php/array 1 0 0 0 1 0 0 0 0 1)
+   (php/array 1 0 0 0 1 0 0 0 0 1)
+   (php/array 1 0 0 0 1 0 0 0 0 1)
+   (php/array 1 1 1 1 1 1 1 1 1 1)))
+
+(deftest test-advance-with-pgrid-wakes-dormant-on-los
+  ;; Dormant enemy at (2.5, 2.5), player at (5.5, 2.5), open chamber.
+  ;; LOS clear → observe flips state to :aware AND the chase step runs
+  ;; this same frame, so the enemy both wakes and moves.
+  (let [start (assoc (new-enemy 2.5 2.5) :state :dormant)
+        es'   (advance [start] open-grid open-pgrid 5.5 2.5 0.5 0.75 true)
+        e     (first es')]
+    (is (= :aware (:state e)))
+    (is (> (:x e) 2.5))))
+
+(deftest test-advance-with-pgrid-keeps-dormant-behind-wall
+  ;; Same setup but with a wall column between enemy and player.
+  ;; observe sees no LOS → state stays :dormant → no chase step.
+  (let [start (assoc (new-enemy 2.5 4.5) :state :dormant)
+        es'   (advance [start] open-grid wall-between-pgrid 6.5 4.5 0.5 0.75 true)
+        e     (first es')]
+    (is (= :dormant (:state e)))
+    (is (= 2.5 (:x e)))
+    (is (= 4.5 (:y e)))))
+
+(deftest test-advance-without-pgrid-skips-observation
+  ;; 6-arity legacy form (no pgrid) doesn't run observe. Enemies keep
+  ;; whatever state they have; default :aware → they chase as before.
+  ;; This pins backward-compat for unit tests that build enemies via
+  ;; new-enemy without going through spawn-enemies.
+  (let [es' (advance [(new-enemy 5.0 5.0)] open-grid 8.0 5.0 0.5 0.75)
+        e   (first es')]
+    (is (> (:x e) 5.0))))
+
+(deftest test-shoot-wakes-target
+  ;; Dormant imp gets hit by a pistol round → state forced to :aware
+  ;; so they react to being shot regardless of prior dormancy.
+  (let [start      [(assoc (new-enemy 3.5 1.5 3) :state :dormant)]
+        [es' hit?] (shoot start 1.5 1.5 0.0 10.0 0.5 12.0)]
+    (is (= true hit?))
+    (is (= :aware (:state (first es'))))))
+
+(deftest test-spawn-enemies-stamps-dormant
+  ;; Real-game spawns start :dormant — player can sneak through a
+  ;; room until they're seen / shot. Pin so a refactor doesn't
+  ;; silently swap the default and undo the LOS-gate behaviour.
+  (let [es (spawn-enemies open-grid 3 0.0 5.0 5.0 1)]
+    (is (every? (fn [e] (= :dormant (:state e))) es))))
+
+;; ---------------------------------------------------------------------
 ;; tick-scare: fires the wide-eyed beat ONLY on the inbound crossing
 ;; past scare-trigger-dist (3.5). Tracks last frame's nearest enemy so
 ;; sitting inside the band doesn't keep refiring.

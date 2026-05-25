@@ -1,0 +1,111 @@
+(ns phel-doom-tests.modules.core.enemy-ai-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.modules.core.enemy-ai :refer [moves? attacks? sees-player? next-state observe
+                                                    state-spec default-state]))
+
+;; Open chamber grid mirroring engine-test fixtures: 1 = wall, 0 = floor.
+;; PHP-array form so cast-ray (which expects :pgrid) can read it.
+(def open-pgrid
+  (php/array
+   (php/array 1 1 1 1 1 1 1)
+   (php/array 1 0 0 0 0 0 1)
+   (php/array 1 0 0 0 0 0 1)
+   (php/array 1 0 0 0 0 0 1)
+   (php/array 1 0 0 0 0 0 1)
+   (php/array 1 0 0 0 0 0 1)
+   (php/array 1 1 1 1 1 1 1)))
+
+;; Same chamber with a solid wall column at x=3 splitting it in half.
+(def wall-between-pgrid
+  (php/array
+   (php/array 1 1 1 1 1 1 1)
+   (php/array 1 0 0 1 0 0 1)
+   (php/array 1 0 0 1 0 0 1)
+   (php/array 1 0 0 1 0 0 1)
+   (php/array 1 0 0 1 0 0 1)
+   (php/array 1 0 0 1 0 0 1)
+   (php/array 1 1 1 1 1 1 1)))
+
+(deftest test-state-spec-has-dormant-and-aware
+  (is (= false (get-in state-spec [:dormant :moves?])))
+  (is (= false (get-in state-spec [:dormant :attacks?])))
+  (is (= true  (get-in state-spec [:aware :moves?])))
+  (is (= true  (get-in state-spec [:aware :attacks?]))))
+
+(deftest test-default-state-is-aware
+  ;; Legacy enemies built via new-enemy carry no :state. Default
+  ;; falls through to :aware so prior 'always chase' tests stay green.
+  (is (= :aware default-state)))
+
+(deftest test-moves-on-aware
+  (is (= true (moves? {:state :aware}))))
+
+(deftest test-moves-on-dormant
+  (is (= false (moves? {:state :dormant}))))
+
+(deftest test-moves-on-missing-state
+  ;; Missing :state → default-state (:aware) → moves.
+  (is (= true (moves? {}))))
+
+(deftest test-attacks-on-aware
+  (is (= true (attacks? {:state :aware}))))
+
+(deftest test-attacks-on-dormant
+  (is (= false (attacks? {:state :dormant}))))
+
+(deftest test-sees-player-open-chamber
+  ;; Enemy at (1.5, 1.5), player at (5.5, 5.5). Straight diagonal
+  ;; through open floor — clear LOS.
+  (is (= true (sees-player? open-pgrid 1.5 1.5 5.5 5.5))))
+
+(deftest test-sees-player-wall-blocks
+  ;; Enemy at (1.5, 3.5) on the left half, player at (5.5, 3.5) on
+  ;; the right half. The x=3 wall column sits between them — no LOS.
+  (is (= false (sees-player? wall-between-pgrid 1.5 3.5 5.5 3.5))))
+
+(deftest test-sees-player-far-distance-no-los
+  ;; Beyond max-depth (12 units) returns false even with no wall in
+  ;; the way — matches the engine's sight cap. Place enemy + player
+  ;; on a grid that's effectively unbounded for the assertion.
+  (let [huge-pgrid (php/array (php/array 0 0 0 0 0)
+                              (php/array 0 0 0 0 0)
+                              (php/array 0 0 0 0 0))]
+    (is (= false (sees-player? huge-pgrid 0.5 0.5 100.5 100.5)))))
+
+(deftest test-next-state-dormant-stays-dormant-without-los
+  (is (= :dormant (next-state {:state :dormant} false))))
+
+(deftest test-next-state-dormant-flips-aware-on-los
+  (is (= :aware (next-state {:state :dormant} true))))
+
+(deftest test-next-state-aware-is-sticky
+  ;; Once aware, no LOS check loses it. Matches DOOM's wake-once
+  ;; behaviour for most monsters.
+  (is (= :aware (next-state {:state :aware} false)))
+  (is (= :aware (next-state {:state :aware} true))))
+
+(deftest test-next-state-missing-defaults-to-aware
+  ;; Enemies without an explicit state observe in as :aware so
+  ;; legacy code paths stay backward compatible.
+  (is (= :aware (next-state {} false)))
+  (is (= :aware (next-state {} true))))
+
+(deftest test-observe-wakes-dormant-on-los
+  ;; Dormant enemy at (1.5, 1.5), player at (5.5, 5.5), open chamber.
+  ;; observe should flip the state to :aware.
+  (let [e  {:x 1.5 :y 1.5 :state :dormant}
+        e' (observe e open-pgrid 5.5 5.5)]
+    (is (= :aware (:state e')))))
+
+(deftest test-observe-keeps-dormant-behind-wall
+  ;; Enemy at (1.5, 3.5), player at (5.5, 3.5), wall column between.
+  ;; observe should leave state at :dormant.
+  (let [e  {:x 1.5 :y 3.5 :state :dormant}
+        e' (observe e wall-between-pgrid 5.5 3.5)]
+    (is (= :dormant (:state e')))))
+
+(deftest test-observe-aware-stays-aware-everywhere
+  ;; Sticky aware: even with no LOS the state holds.
+  (let [e  {:x 1.5 :y 3.5 :state :aware}
+        e' (observe e wall-between-pgrid 5.5 3.5)]
+    (is (= :aware (:state e')))))

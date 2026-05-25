@@ -1,5 +1,6 @@
 (ns phel-doom.modules.core.enemy
-  (:require phel-doom.modules.core.map :refer [random-spawn wall?]))
+  (:require phel-doom.modules.core.map      :refer [random-spawn wall?])
+  (:require phel-doom.modules.core.enemy-ai :refer [observe moves?]))
 
 (def default-chase-speed
   "Fallback chase speed (units/sec) used by the single-arity advance
@@ -144,7 +145,13 @@
                prev-lives (or (:lives hit-enemy) 1)
                new-lives  (php/max 0 (php/- prev-lives damage))
                hit-vec    (apply vector es')
-               wounded    (assoc-in hit-vec [best :lives] new-lives)]
+               ;; Any hit wakes the target — being shot is the
+               ;; loudest possible "I see you" signal, and a dormant
+               ;; enemy that takes a bullet without reacting would
+               ;; read as broken AI. Mirrors DOOM where damage forces
+               ;; the target into chase regardless of prior state.
+               woken      (assoc-in hit-vec [best :state] :aware)
+               wounded    (assoc-in woken [best :lives] new-lives)]
            (if (php/<= new-lives 0)
              (let [delay   (php/+ respawn-delay-min
                                   (php/* (php// (php/mt_rand) (php/mt_getrandmax))
@@ -212,23 +219,36 @@
                  total))))))
 
 (defn- tick-one
-  "One frame of update for a single enemy. Alive → walk toward the
-   player. Dead WITH a respawn timer → decrement; on expiry revive at
-   a random open cell at least respawn-min-dist away. Dead WITHOUT a
-   timer (e.g. spawned that way in a test) stays untouched.
+  "One frame of update for a single enemy. Alive → run the AI
+   observation pass (state machine in enemy-ai) then walk toward the
+   player if the resulting state allows it. Dormant enemies hold
+   position; aware enemies chase. Dead WITH a respawn timer →
+   decrement; on expiry revive at a random open cell at least
+   respawn-min-dist away. Dead WITHOUT a timer (e.g. spawned that way
+   in a test) stays untouched.
 
    Revival respects `:max-concurrent` when set on the enemy spec — if
    the live count of the same `:type` is already at the cap, the
    timer is bumped back so the next attempt fires in 0.5s. Lets the
    L10 boss room cap minion pressure at 1 alive at a time.
 
+   `pgrid` is the PHP-array grid mirror the AI needs for line-of-sight
+   raycasts. nil pgrid skips the observation pass — tests that don't
+   carry a pgrid fall through with the enemy's existing :state, which
+   defaults to :aware (`enemy-ai/default-state`) so their existing
+   chase expectations still hold.
+
    `revive?` false suspends every dead enemy's timer (boss dead on L10
    → no more respawns of boss OR minions, the run is winding down)."
-  [e grid player-x player-y ^float dt ^float speed all-enemies revive?]
+  [e grid pgrid ^float player-x ^float player-y ^float dt ^float speed all-enemies revive?]
   (cond
-    (:alive e)                (let [mul     (or (get type-speed-mul (:type e)) 1.0)
-                                    stepped (step-toward e grid player-x player-y dt (php/* speed mul))
-                                    flash'  (php/max 0.0 (php/- (or (:hit-flash-secs e) 0.0) dt))]
+    (:alive e)                (let [observed (if pgrid (observe e pgrid player-x player-y) e)
+                                    chase?   (moves? observed)
+                                    mul      (or (get type-speed-mul (:type observed)) 1.0)
+                                    stepped  (if chase?
+                                               (step-toward observed grid player-x player-y dt (php/* speed mul))
+                                               observed)
+                                    flash'   (php/max 0.0 (php/- (or (:hit-flash-secs observed) 0.0) dt))]
                                 (assoc stepped :hit-flash-secs flash'))
     (nil? (:respawn-after e)) e
     (not revive?)             e
@@ -257,19 +277,29 @@
             (assoc e :respawn-after 0.5)))))))
 
 (defn advance
-  "Per-frame update for every enemy: alive enemies chase the player at
-   `speed` units/sec; dead enemies tick their respawn timer and rejoin
-   the fight once it expires (unless their `:max-concurrent` cap is
-   already met — see tick-one).
+  "Per-frame update for every enemy: alive enemies run the AI
+   state machine (LOS-gated wake; see enemy-ai) then chase the
+   player at `speed` units/sec if their state allows it; dead enemies
+   tick their respawn timer and rejoin the fight once it expires
+   (unless their `:max-concurrent` cap is already met — see tick-one).
+
+   The optional `pgrid` slot is the PHP-array grid mirror the AI
+   uses for line-of-sight raycasts. Real game callers pass it from
+   the world (`:pgrid`); test callers may omit it (legacy 6/7-arity
+   forms below), in which case the AI observation pass is skipped
+   and enemies behave per their existing :state — default :aware →
+   they chase as before, so old tests don't churn.
 
    The 7-arity opt-in `revive?` flag, when false, freezes every dead
    enemy in place — used on L10 once the boss is down so neither the
    cyberdemon nor its capped minions ever come back."
   ([enemies grid player-x player-y dt speed]
-   (advance enemies grid player-x player-y dt speed true))
-  ([es g x y delta sp revive?]
+   (advance enemies grid nil player-x player-y dt speed true))
+  ([enemies grid player-x player-y dt speed revive?]
+   (advance enemies grid nil player-x player-y dt speed revive?))
+  ([es g pg x y delta sp revive?]
    (apply vector
-          (map (fn [e] (tick-one e g x y delta sp es revive?))
+          (map (fn [e] (tick-one e g pg x y delta sp es revive?))
                es))))
 
 (def scare-trigger-dist
@@ -393,7 +423,11 @@
                        (php/+ (php/* dx dx) (php/* dy dy)))]
          (if (php/< d2 (php/* min-d min-d))
            (recur acc (php/+ attempts 1) remaining)
-           (recur (conj acc (new-enemy ex ey max-lives type-kw))
+           ;; Real-game spawns start :dormant so the player can sneak
+           ;; / peek / plan; LOS or being shot wakes them. `new-enemy`
+           ;; itself stays :aware-default so unit tests built directly
+           ;; via the constructor don't need to be migrated.
+           (recur (conj acc (assoc (new-enemy ex ey max-lives type-kw) :state :dormant))
                   (php/+ attempts 1)
                   (php/- remaining 1))))))))
 

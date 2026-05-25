@@ -1,10 +1,11 @@
 (ns phel-doom.modules.core.combat
-  (:require phel-doom.modules.core.engine  :refer [cast-ray])
-  (:require phel-doom.modules.core.enemy   :refer [push-back-enemy shoot])
-  (:require phel-doom.modules.core.physics :refer [try-move])
-  (:require phel-doom.modules.core.state   :refer [max-lives])
-  (:require phel-doom.modules.core.weapons :refer [weapon-order weapon-spec weapons])
-  (:require phel-doom.modules.io.sound   :refer [play-sfx!]))
+  (:require phel-doom.modules.core.engine   :refer [cast-ray])
+  (:require phel-doom.modules.core.enemy    :refer [push-back-enemy shoot])
+  (:require phel-doom.modules.core.enemy-ai :refer [attacks?])
+  (:require phel-doom.modules.core.physics  :refer [try-move])
+  (:require phel-doom.modules.core.state    :refer [max-lives])
+  (:require phel-doom.modules.core.weapons  :refer [weapon-order weapon-spec weapons])
+  (:require phel-doom.modules.io.sound      :refer [play-sfx!]))
 
 (def shot-knockback-distance
   "World units an enemy is shoved AWAY from the player on every shot
@@ -180,7 +181,13 @@
         (nil? es) false
         :else
         (let [e (first es)]
-          (if (and e (:alive e) (php/<= (enemy-distance-sq e px py) threshold-sq))
+          ;; Dormant enemies don't deal contact damage — they're
+          ;; passive until something wakes them. enemy-ai/attacks?
+          ;; reads `:state` and falls back to the default-state
+          ;; (:aware) for legacy fixtures that don't carry one,
+          ;; so existing tests stay green.
+          (if (and e (:alive e) (attacks? e)
+                   (php/<= (enemy-distance-sq e px py) threshold-sq))
             true
             (recur (next es))))))))
 

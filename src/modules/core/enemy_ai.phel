@@ -1,0 +1,110 @@
+(ns phel-doom.modules.core.enemy-ai
+  (:require phel-doom.modules.core.engine :refer [cast-ray max-depth]))
+
+;; ---------------------------------------------------------------------
+;; Enemy AI state machine.
+;;
+;; Each enemy carries a `:state` keyword describing what it's currently
+;; doing. The state controls two orthogonal questions: does the enemy
+;; move this tick, and does it deal contact damage this tick. Both are
+;; data-driven via `state-spec` so adding a new state means appending
+;; one entry — call sites (`tick-one`, `enemies-touching?`) stay
+;; unchanged.
+;;
+;; Current states:
+;;   :dormant   passive, doesn't move or hurt. Wakes on LOS to player
+;;              or when shot (any hit auto-wakes the target enemy in
+;;              combat/shoot).
+;;   :aware     full chase + contact damage. Sticky in v1 — once an
+;;              enemy is aware it stays aware for the rest of the
+;;              level (matches DOOM's "wake once, stay awake" feel).
+;;
+;; Reserved slots (commented out) so future state additions slot in
+;; without renaming or restructuring:
+;;   :hunting   LOS lost, walking toward last-known-position
+;;   :pain      hit-staggered, frozen briefly, won't attack
+;;   :attacking inside attack window (projectile / hitscan windup)
+;; ---------------------------------------------------------------------
+
+(def state-spec
+  "Per-state behaviour flags. `tick-one` reads `:moves?` to gate the
+   chase step; `combat/enemies-touching?` reads `:attacks?` to gate
+   contact damage. Add a new entry here + add a transition clause in
+   `next-state` to introduce a new behavioural mode."
+  {:dormant   {:moves? false :attacks? false}
+   :aware     {:moves? true  :attacks? true}
+   ;; :hunting   {:moves? true  :attacks? false}
+   ;; :pain      {:moves? false :attacks? false}
+   ;; :attacking {:moves? false :attacks? true}
+})
+
+(def default-state
+  "Fallback when an enemy carries no `:state` key (legacy test
+   fixtures, ad-hoc constructions). Picking `:aware` keeps the old
+   'enemy always chases' behaviour for unit tests that haven't been
+   migrated to the new state machine."
+  :aware)
+
+(defn- state-of [enemy]
+  (or (:state enemy) default-state))
+
+(defn moves?
+  "True when the enemy's state allows it to chase / pathfind this
+   tick. Pure data lookup — no behaviour fork in the caller."
+  [enemy]
+  (boolean (get-in state-spec [(state-of enemy) :moves?])))
+
+(defn attacks?
+  "True when the enemy's state allows it to deal contact damage this
+   tick. Pure data lookup — same shape as `moves?`."
+  [enemy]
+  (boolean (get-in state-spec [(state-of enemy) :attacks?])))
+
+(defn sees-player?
+  "Line-of-sight test from enemy (ex, ey) to player (px, py) over
+   `pgrid`. Casts one ray at the enemy→player angle and compares the
+   ray's first-wall distance to the actual player distance. Player
+   closer than the wall hit → LOS clear.
+
+   Player beyond `max-depth` reads as no LOS (engine caps the cast
+   distance there anyway — outside that range we can't tell whether
+   a wall blocks, so treat as 'too far to see' which matches DOOM's
+   sight cutoff for very long sectors)."
+  [pgrid ^float ex ^float ey ^float px ^float py]
+  (let [dx       (php/- px ex)
+        dy       (php/- py ey)
+        player-d (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
+    (if (php/>= player-d max-depth)
+      false
+      (let [angle  (php/atan2 dy dx)
+            wall-d (cast-ray pgrid ex ey angle)]
+        (php/< player-d wall-d)))))
+
+(defn next-state
+  "Pure state-machine transition for one enemy on one tick. Inputs
+   are the current enemy and the observations gathered this frame
+   (currently just `sees-player?`; future params will land here:
+   `heard-noise?` for sound-wake, `taking-pain?` for stagger, etc).
+   Returns the new `:state` keyword.
+
+   v1 transitions:
+     :dormant + sees-player? → :aware
+     :dormant + !sees        → :dormant
+     :aware                  → :aware (sticky — wake once, stay awake)
+
+   Future clauses for :hunting / :pain / :attacking slot in alongside
+   these without disturbing existing behaviour."
+  [enemy sees?]
+  (case (state-of enemy)
+    :dormant (if sees? :aware :dormant)
+    :aware   :aware
+    (state-of enemy)))
+
+(defn observe
+  "One-shot transition wrapper: given an alive enemy, world grid,
+   and player position, compute LOS and return the enemy with its
+   `:state` updated. Pure — caller threads the result back into the
+   enemies vector."
+  [enemy pgrid ^float px ^float py]
+  (let [sees? (sees-player? pgrid (:x enemy) (:y enemy) px py)]
+    (assoc enemy :state (next-state enemy sees?))))

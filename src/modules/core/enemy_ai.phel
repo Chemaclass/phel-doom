@@ -40,7 +40,7 @@
   {:dormant {:moves? false :attacks? false}
    :aware   {:moves? true  :attacks? true}
    :hunting {:moves? true  :attacks? false}
-   ;; :pain      {:moves? false :attacks? false}
+   :pain    {:moves? false :attacks? false}
    ;; :attacking {:moves? false :attacks? true}
 })
 
@@ -74,6 +74,39 @@
    other modules, but Phel `def` doesn't carry a private marker so
    the convention is 'internal helpers live near their caller'."
   [[1 0] [-1 0] [0 1] [0 -1]])
+
+(def pain-stagger-secs
+  "Seconds a freshly-painted enemy stays frozen. ~0.3s reads as a
+   visible flinch on screen at 60fps (and double that at 30fps perf
+   mode) without making the enemy a soft target for the next 2-3
+   shots. Long enough that the player can capitalise + reload; short
+   enough that hits don't cancel into a stun-lock chain."
+  0.3)
+
+(def default-pain-chance
+  "Probability per hit that an enemy enters the `:pain` state. ~1-in-4
+   matches DOOM's mid-range pain chance for imps / barons — combat
+   stays reactive (you can see hits register) without making every
+   shot a free stagger."
+  0.25)
+
+(def type-pain-chance
+  "Per-type override on `default-pain-chance`. Heavier bosses ignore
+   most hits (cyberdemon is famously almost stagger-proof); fragile
+   monsters flinch on nearly every shot. Anything not listed falls
+   back to the default."
+  {:cyber    0.05
+   :baron    0.15
+   :mancubus 0.18
+   :imp      0.35
+   :pinky    0.20})
+
+(defn pain-chance-of
+  "Probability this enemy enters :pain on the next damage event. Pure
+   data lookup — `enemy/shoot` consults it on each hit before rolling
+   the RNG."
+  [enemy]
+  (or (get type-pain-chance (:type enemy)) default-pain-chance))
 
 (defn- state-of [enemy]
   (or (:state enemy) default-state))
@@ -184,6 +217,49 @@
         lkp'   (if sees? {:x px :y py} (:lkp enemy))
         state' (next-state enemy sees?)]
     (assoc enemy :state state' :lkp lkp')))
+
+(defn apply-pain
+  "Maybe stagger an enemy. Pre-rolled `roll` is a uniform 0..1 float
+   from the caller (kept out of the fn so tests stay deterministic).
+   `roll < pain-chance-of e` flips the enemy into :pain with the
+   stagger timer armed.
+
+   Pain freezes the enemy (`:moves?` + `:attacks?` both false) for
+   `pain-stagger-secs`, breaking the chase / damage rhythm. `tick-
+   pain` decays the timer per frame and reverts the state to :aware
+   on expiry; the next `observe` pass then routes it back into the
+   normal LOS-driven flow."
+  [enemy ^float roll]
+  (if (php/< roll (pain-chance-of enemy))
+    (assoc enemy
+           :state     :pain
+           :pain-secs pain-stagger-secs)
+    enemy))
+
+(defn tick-pain
+  "Decay the stagger timer one frame. Pure transformation:
+     - missing/zero :pain-secs              → no-op (clear field if
+       it was 0 to keep enemy records tidy)
+     - timer > dt                           → decrement
+     - timer <= dt                          → expire: clear field +
+       flip :state :aware so the next observe call can route the
+       freshly-woken enemy into the normal LOS chain.
+
+   Caller (`enemy/tick-one`) runs this BEFORE the LOS observe pass so
+   a staggered enemy doesn't get its state rewritten this frame."
+  [enemy ^float dt]
+  (let [t (or (:pain-secs enemy) 0.0)]
+    (cond
+      (php/<= t 0.0)
+      enemy
+
+      (php/> t dt)
+      (assoc enemy :pain-secs (php/- t dt))
+
+      :else
+      (assoc enemy
+             :state     :aware
+             :pain-secs 0.0))))
 
 (defn- bfs-cells
   "Pure flood-fill from `(ix0, iy0)` through `cell-floor` neighbours

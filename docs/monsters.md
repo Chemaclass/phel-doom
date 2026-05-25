@@ -38,7 +38,8 @@ Each enemy carries a `:state` keyword + an optional `:lkp` (last-known player po
 ```phel
 {:dormant {:moves? false :attacks? false}
  :aware   {:moves? true  :attacks? true}
- :hunting {:moves? true  :attacks? false}}
+ :hunting {:moves? true  :attacks? false}
+ :pain    {:moves? false :attacks? false}}
 ```
 
 `new-enemy` defaults to `:aware` (legacy test fixtures keep chasing). Real-game spawns (`spawn-enemies`, `spawn-enemies-mixed`) stamp `:state :dormant`, so the player can sneak / peek / plan until the room reacts.
@@ -48,6 +49,7 @@ Each enemy carries a `:state` keyword + an optional `:lkp` (last-known player po
 - **`:dormant`** — passive. Won't move, won't damage. Waiting for LOS or a close-by noise.
 - **`:aware`** — has LOS to the player right now. Full chase + contact damage. `:lkp` refreshes to the player's current cell every tick.
 - **`:hunting`** — lost LOS. Walks toward the frozen `:lkp` (whatever cell the player was in at the last LOS frame), but does NOT deal contact damage — searching, not engaged. Re-acquiring LOS → `:aware`. Arriving at `:lkp` without LOS → `:dormant` ("lost the scent", give up).
+- **`:pain`** — hit-stagger flinch. Frozen for `pain-stagger-secs` (~0.3s): no movement, no contact damage. `tick-pain` decays the `:pain-secs` timer per frame and flips the enemy back to `:aware` on expiry; the next `observe` pass routes it through the normal LOS flow. Pain chance rolls inside `enemy/shoot`: every non-killing hit pulls a uniform 0..1 from `mt_rand`, compares against `pain-chance-of enemy` (`type-pain-chance` table; `:imp` 0.35, `:cyber` 0.05, …). Heavier monsters ignore most hits; fragile ones flinch on nearly every shot.
 
 ### Wake / transition triggers
 

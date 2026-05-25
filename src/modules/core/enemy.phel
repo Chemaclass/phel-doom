@@ -1,6 +1,6 @@
 (ns phel-doom.modules.core.enemy
   (:require phel-doom.modules.core.map      :refer [random-spawn wall?])
-  (:require phel-doom.modules.core.enemy-ai :refer [observe moves? target-pos]))
+  (:require phel-doom.modules.core.enemy-ai :refer [apply-pain observe moves? target-pos tick-pain]))
 
 (def default-chase-speed
   "Fallback chase speed (units/sec) used by the single-arity advance
@@ -160,9 +160,15 @@
                                      [best :respawn-after] delay)]
                [killed' true hit-pos best])
             ;; Stamp the hit-flash timer so render can paint the
-            ;; remaining HP digit above the head for a beat.
-             (let [flashed (assoc-in wounded [best :hit-flash-secs] hit-flash-seconds)]
-               [flashed true hit-pos best]))))))))
+            ;; remaining HP digit above the head for a beat. Also
+            ;; roll the pain-chance: if it lands, apply-pain stamps
+            ;; :state :pain + the stagger timer, overriding the
+            ;; :aware wake above for the brief flinch window.
+             (let [flashed (assoc-in wounded [best :hit-flash-secs] hit-flash-seconds)
+                   roll    (php// (php/mt_rand) (php/mt_getrandmax))
+                   final   (assoc flashed best
+                                  (apply-pain (get flashed best) roll))]
+               [final true hit-pos best]))))))))
 
 (defn push-back-enemy
   "Shove the enemy at `idx` along `(cos-a, sin-a)` by `dist` world
@@ -242,10 +248,20 @@
    → no more respawns of boss OR minions, the run is winding down)."
   [e grid pgrid ^float player-x ^float player-y ^float dt ^float speed all-enemies revive?]
   (cond
-    (:alive e)                (let [observed (if pgrid (observe e pgrid player-x player-y) e)
+    (:alive e)                (let [;; Pain stagger ticks BEFORE the LOS observe
+                                    ;; pass so a staggered enemy keeps its :pain
+                                    ;; state until the timer expires; observe
+                                    ;; running on top would over-write the state
+                                    ;; back to whatever the LOS check decides.
+                                    pained   (tick-pain e dt)
+                                    in-pain? (php/=== :pain (:state pained))
+                                    observed (if (and pgrid (not in-pain?))
+                                               (observe pained pgrid player-x player-y)
+                                               pained)
                                     ;; Only compute the step target when the state
-                                    ;; actually moves — `:dormant` skips both the
-                                    ;; target-pos call and the chase step entirely.
+                                    ;; actually moves — `:dormant` / `:pain` skip
+                                    ;; both the target-pos call and the chase step
+                                    ;; entirely.
                                     stepped  (if (moves? observed)
                                                (let [target (target-pos observed player-x player-y)
                                                      mul    (or (get type-speed-mul (:type observed)) 1.0)]

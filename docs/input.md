@@ -108,6 +108,10 @@ Legacy fallback (hold-frames bridge): macOS Terminal.app, GNOME Terminal, xterm.
 
 Inside tmux: add `set -g extended-keys on` and `setw -g xterm-keys on` to pass kitty events through.
 
+## Help / Info menu (`h` or `ESC`)
+
+Both `h` and `ESC` are aliased to the same rising-edge toggle (`:toggle-help`) in the `key-states` / `rising-edges` logic. Pressing either opens the info panel + pauses the game. ESC is a convention shortcut; `h` is the explicit mnemonic. See `control.phel`'s `esc-pressed?` for how the escape byte is parsed.
+
 ## About-face (dedicated `e` key)
 
 `e` snaps the player 180°. Rises through `rising-edges` like the other one-shots (`:about-face`), handled in `handle-toggles` alongside pause/map/sound:

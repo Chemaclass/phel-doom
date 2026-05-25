@@ -89,10 +89,12 @@ If found, that enemy flips `:alive false` with `:respawn-after` (3-6s uniform). 
 ### on-shot-hit
 
 ```phel
-;; bump kills + light muzzle flash + push blood splatter
+;; bump kills + light muzzle flash + push blood splatter + distance-attenuated :hit sfx
 (let [scored (update world :kills inc)]
   (push-blood-fx (assoc scored :fire-anim fire-anim-seconds) hit-pos))
 ```
+
+The `play-shot-sfx` call in `fire-shot` (before on-shot-hit) emits the hit sound. For kills, `play-sfx! :kill` (distance-volume attenuated). Damage-only hits that don't kill emit `play-sfx! :wound` (distance-attenuated via `distance-volume` in `io/sound.phel`). Distance falloff keeps loud sfx from constant audio spam during crowded fights.
 
 Dead enemy stays in vector with respawn timer. `tick-enemies` counts down + revives. See [monsters.md](monsters.md).
 

@@ -12,7 +12,7 @@ Pure data shapes that every other module operates on. `src/modules/core/state.ph
  :width      <int>
  :height     <int>
  :player     <player map>
- :show-map   <bool>     ; minimap toggle
+ :show-map   <bool>     ; minimap toggle (default OFF, M toggles)
  :paused     <bool>     ; P toggle
  :sound-on   <bool>     ; N toggle
  :enemies    <vector of {:x :y :alive :lives :max-lives :type :hit-flash-secs [:respawn-after] [:max-concurrent]}>

@@ -33,8 +33,7 @@ make play
 | `1` / `2` / `3` | Switch weapon (pistol / shotgun / chaingun) |
 | `m` / `n`      | Toggle minimap / sound       |
 | `p`            | Pause                        |
-| `h`            | Info menu (stats, weapons table, controls) — also pauses |
-| `ESC`          | Close help / pause |
+| `h` / `ESC`    | Info menu (stats, weapons table, controls) — also pauses |
 | `F3`           | Debug overlay (fps, pos, perf) |
 | `q`            | Quit                         |
 

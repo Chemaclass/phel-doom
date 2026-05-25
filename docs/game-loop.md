@@ -98,9 +98,11 @@ Four lifecycle layers:
 
 `tick-world` calls no IO. Data in, data out. Lets the test suite drive entire frame sequences without touching the terminal.
 
-## Frame timing
+## Frame timing + adaptive FPS
 
-- `frame-us = 1000` (1ms `usleep`). Actual frame bounded by render time (~5ms at 180×40), not sleep. Sleep yields CPU.
+- **60 fps target** (16.667 ms) on standard terminals (< 200 cols OR area ≤ 12000 cells).
+- **30 fps** on big screens (≥ 200 cols OR area > 12000 cells) — perf-mode engagement via `core/perf.phel`.
+- `target-frame-us` reads terminal dimensions each loop and selects 16667 µs (60 fps) or 33333 µs (30 fps). Render time is the real bottleneck; sleep yields CPU.
 - `ms-since` computes wall-clock delta. Tagged `^float` on time params so Phel doesn't infer `int` from `* 1000` and trigger PHP 8.4+ implicit-conversion deprecation on microtime values.
 - `dt` is elapsed-seconds float used by every physics / AI / decay step. Same dt across sub-steps keeps simulation consistent inside a frame.
 

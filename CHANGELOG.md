@@ -11,32 +11,28 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Responsive help panel (`H` / `ESC`) — adapts width + drops optional sections on small terminals.
-- Enemy AI state machine. Real-game spawns start `:dormant` — they hold position + deal no contact damage until they get line-of-sight to the player OR take a hit. Bosses + minions can be peeked / planned around instead of homing through walls.
-- `:hunting` state. Aware enemies that lose line-of-sight stop chasing the player's live position; they walk to the last-known cell instead, doing no contact damage along the way. Arrive at the breadcrumb without re-acquiring LOS → drop back to `:dormant`. Player can break contact by ducking around a corner / behind a door.
-- Sound-wake. Pulling the trigger flood-fills sound from the player's cell up to 3 floor cells; alive enemies in the close-by area go into `:hunting` with the fire origin as their `:lkp`. Walls + all door variants block the BFS so the wake stays nearby — matches DOOM's per-sector noise rule, just tighter than the original 6-cell radius (less "the whole room aggros every shot").
-- Pain stagger. Each non-killing hit rolls against the target's per-type pain chance (imp 0.35, baron 0.15, cyber 0.05, …). A successful roll flips the enemy into `:pain` for ~0.3s — frozen, no contact damage, no chase. Combat reads as reactive: you can see hits register and break the wall-of-bodies feel by chaining staggers on a tight crowd.
-- Attack telegraph. Aware enemies inside their per-type `:attack-range` arm an `:attacking` state for `:windup` seconds (frozen, visible tell), then arm a `:cooldown` before the next strike. Contact damage stays touch-driven so the windup still hurts — but the rhythm is now visible: enemies stop to swing instead of mauling at full speed.
-- `:wander` patrol state. Opt-in `start-wander` flips a dormant enemy to `:wander` — random angle, paces in short bursts via `wander-step-secs` heading rolls. LOS / noise reacts as before (`:aware` / `:hunting`). Real-game spawns stay `:dormant` by default to preserve the sneak feel; the state machinery is in place for per-type / per-level opt-ins.
+- Enemy AI state machine — `:dormant :wander :aware :hunting :pain :attacking`. Spawns start dormant (sneak past unseen), wake on LOS / noise / hit, lose contact → walk to last-known position → revert dormant. Attack telegraphs with per-type windup + cooldown. Pain stagger per-type chance.
+- Sound-wake. Trigger pulls flood-fill 3 cells through floor; doors + walls block.
+- Responsive help panel (`H` / `ESC`). Adapts width + drops sections on small terminals.
 
 ### Performance
 
-- Bumped `phel-lang` to dev-main (0.40 release: call-site caching, match dispatch, arithmetic specialisation, hash-memo, transient in-place updates).
-- Type-hint pass on hot numeric fns in `enemy.phel` + `render.phel`.
-- Big-screen perf mode (auto at `cols >= 200` or `cols * rows > 12000`): 40-col minimap cap, 30fps cadence, 2× horizontal render-scale. Standard sizes untouched.
+- Bumped `phel-lang` to dev-main (0.40: call-site caching, arithmetic specialisation, hash-memo).
+- Type-hint pass on hot numeric fns.
+- Big-screen perf mode (auto at `cols >= 200` or `cols * rows > 12000`): 40-col minimap cap, 30fps cadence, 2× horizontal render-scale.
 
 ### Changed
 
 - 2D minimap OFF by default. `M` toggles.
-- `ESC` aliased to `H` (help panel toggle, pause-coupled).
-- Removed `make play-dev` / `play-armory` / `play-boss` / `play-level` cheat shortcuts. `--god` / `--armory` / `--level=N` flags still valid on `play`.
+- `ESC` aliased to `H`.
+- Cyberdemon chase 0.55× level speed.
+- Removed `make play-dev` / `play-armory` / `play-boss` / `play-level` shortcuts. `--god` / `--armory` / `--level=N` still valid on `play`.
 
 ### Fixed
 
-- `ESC` works under kitty CSI-u terminals (kitty / WezTerm / Ghostty / iTerm2).
-- Help panel `keys:` / `buffs:` right border no longer gray (cleared sticky dim SGR).
-- Player-pain `:hit` sfx attenuates with attacker distance.
-- Cyberdemon chase slowed to 0.55× the level's chase speed.
+- `ESC` works under kitty CSI-u terminals.
+- Gray borders on help panel + start menu rows that used dim SGR (sticky `\e[2m` not cleared).
+- `:hit` sfx attenuates with attacker distance.
 
 ## [0.4.1] - 2026-05-25
 

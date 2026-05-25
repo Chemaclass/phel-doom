@@ -129,6 +129,14 @@ Consecutive cells with the same ANSI escape coalesce into one paint + N spaces:
 
 Cuts output 5-10× on same-colour rows. In-line state machine tracks `prev` + `run`, flushes on colour change.
 
+## Render-scale on big screens
+
+Perf mode (terminals ≥ 200 cols or > 12,000 cell area) engages `render-scale = 2`: each ray is cast once and horizontally replicated into 2 columns. Wall data + distance fade remain accurate (per original ray). Horizontally-stretched but not distorted.
+
+## Responsive help panel
+
+The `h` / `ESC` info menu overlays a panel with margins based on available width + height. On tight screens (< 60 cols) the COMPASS HINT section collapses; on very tight (< 40 cols) CONTROLS section stacks vertically. Content never obscures the viewport entirely.
+
 ## Why so many overlay passes
 
 Walls/sky/floor/enemies go into one string via the inner row loop, top-to-bottom left-to-right. HUD, minimap, crosshair, pause menu use absolute cursor positioning escapes (`\e[r;cH`) to jump anywhere. Painted in any order; each knows where it goes.

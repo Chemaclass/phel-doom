@@ -1,6 +1,20 @@
 # Performance
 
-`frame->string` at 180×40 runs in ~5ms. Inner loop is ~7200 iterations per frame (180 cols × 40 rows). Tricks that got it from "tens of ms" to "single-digit ms":
+`frame->string` at 180×40 runs in ~5ms. Inner loop is ~7200 iterations per frame (180 cols × 40 rows). Tricks that got it from "tens of ms" to "single-digit ms".
+
+## Big-screen perf mode
+
+Terminals ≥ 200 cols OR area > 12,000 cells automatically engage perf-mode: 30 fps cadence + 2× horizontal virtual-width (render-scale). Each cast ray is cast once and replicated into 2 adjacent columns; minimap caps at 40 cols. Physics + input tick once per loop frame, gameplay stays responsive.
+
+```phel
+(def perf-width-threshold  200)
+(def perf-area-threshold   12000)
+(defn perf-mode? [cols rows] (or (>= cols 200) (> (* cols rows) 12000)))
+(defn target-frame-us [cols rows] (if (perf-mode? cols rows) 33333 16667))  ; µs
+(defn render-scale [cols rows] (if (perf-mode? cols rows) 2 1))
+```
+
+Auto-engages with zero config; large terminals now hit the frame budget cleanly without manual window resizing.
 
 ## Direct PHP ops in the hot loop
 

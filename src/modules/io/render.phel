@@ -2821,16 +2821,19 @@
   "Right-pad `text` with spaces so its visible width (ignoring ANSI
    escapes, counting wide chars correctly) hits `width`.
 
-   Items typically end with an internal `\\e[0m` that resets every SGR
-   attribute, including the menu's dark BG. Re-apply `\\e[40;97m`
-   before the padding so trailing spaces stay on the menu's dark
-   wash; otherwise the gap between the item and the right `│` shows
-   through as default terminal BG."
+   Items typically end with an internal `\\e[40;97m` (or `\\e[0m`)
+   that resets BG + FG. The `22` in the trailing reset also clears
+   any sticky intensity attribute — `\\e[2;97m` (dim) sets bit `2`
+   which `\\e[40;97m` alone does NOT cancel, so without the `22` the
+   trailing pad spaces and the closing `│` border inherit the dim
+   wash and read as gray. Re-applies `\\e[40;97m` (with `22` for
+   intensity-normal) before the padding so trailing spaces stay on
+   the menu's dark BG at full brightness."
   [text width]
   (let [stripped (php/preg_replace "/\\x1b\\[[0-9;]*[a-zA-Z]/" "" text)
         visible  (php/mb_strwidth stripped)
         pad      (php/str_repeat " " (php/max 0 (php/- width visible)))]
-    (str text "\e[40;97m" pad)))
+    (str text "\e[22;40;97m" pad)))
 
 (defn- start-menu-rows
   "Interior strings for the start-menu box. `:sep` markers between

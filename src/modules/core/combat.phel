@@ -287,17 +287,34 @@
    eye reads it as a jolt, short enough not to mask the next frame."
   0.05)
 
+(defn- distance-volume
+  "Map a world-units distance to a 0-1 sound volume. 1.0 at the player,
+   ~0.1 floor at shot-max-range so a far kill / hit is still audible.
+   Used by both `take-damage` (player pain) and `play-shot-sfx`
+   (enemy kill / wound)."
+  [^float dist]
+  (php/max 0.1 (php/- 1.0 (php/min 1.0 (php// dist shot-max-range)))))
+
 (defn- take-damage [world]
-  (when (:sound-on world) (play-sfx! :hit))
   (let [p       (:player world)
         att     (closest-attacker (:enemies world) (:x p) (:y p))
         armor   (or (:armor world) 0)
+        ;; Distance-attenuate the player-pain sfx the same way `:kill`
+        ;; / `:wound` are scaled: a far enemy chipping a life off
+        ;; should sound as quiet as the final hit that drops a far
+        ;; enemy, not blast at full volume from across the map.
+        ;; closest-attacker already cached squared distance, no extra
+        ;; pass over the enemies vector.
+        vol     (if att
+                  (distance-volume (php/sqrt (or (:d2 att) 0.0)))
+                  1.0)
         ;; Armor absorbs the hit: drop the unit instead of a life. Still
         ;; trigger i-frames + the visual flash so the player sees the
         ;; armor consumed.
         damaged (if (php/> armor 0)
                   (assoc world :armor (php/- armor 1))
                   (update world :lives (fn [l] (php/max 0 (php/- l 1)))))]
+    (when (:sound-on world) (play-sfx! :hit vol))
     ;; Knockback first, then stamp the timers + hurt-side on the
     ;; shoved world so render reads the new player position next
     ;; frame.
@@ -458,12 +475,6 @@
 
 (defn- on-shot-miss [world]
   (assoc world :fire-anim fire-anim-seconds))
-
-(defn- distance-volume
-  "Map a world-units distance to a 0-1 sound volume. 1.0 at the player,
-   ~0.1 floor at shot-max-range so a far kill is still audible."
-  [^float dist]
-  (php/max 0.1 (php/- 1.0 (php/min 1.0 (php// dist shot-max-range)))))
 
 (defn- play-shot-sfx [world hit? killed? hit-pos]
   (when (:sound-on world)

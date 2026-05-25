@@ -1,0 +1,645 @@
+(ns phel-doom.core.combat
+  (:require phel-doom.core.engine   :refer [cast-ray])
+  (:require phel-doom.core.enemy    :refer [push-back-enemy shoot])
+  (:require phel-doom.core.enemy-ai :refer [attacks? noise-wake])
+  (:require phel-doom.core.physics  :refer [try-move])
+  (:require phel-doom.core.state    :refer [max-lives])
+  (:require phel-doom.core.weapons  :refer [weapon-order weapon-spec weapons])
+  (:require phel-doom.io.sound      :refer [play-sfx!]))
+
+(def shot-knockback-distance
+  "World units an enemy is shoved AWAY from the player on every shot
+   that connects. ~1 cell. Wall-clamped (falls back to 0.5 / 0.25 if
+   the full distance lands in geometry) so the push never punts an
+   enemy through a wall. Bigger enemies (more HP) feel weighty as
+   they walk back into range; small enemies get knocked clear of the
+   muzzle giving the player a beat to reload."
+  1.0)
+
+(def armory-reserve
+  "Reserve cap stamped onto every weapon when --armory is on. Picked
+   big enough to read as 'infinite' in the HUD chip even after long
+   chaingun sprays, small enough to render as 4 digits."
+  9999)
+
+;; ---------------------------------------------------------------------
+;; Combat: the hitscan trigger pull (fire-shot) and the damage / i-frame
+;; ticking (damage-step). Both consume and produce a world; only
+;; play-sfx! side-effects, gated by (:sound-on world).
+;; ---------------------------------------------------------------------
+
+;; =====================================================================
+;; § Tunables
+;; =====================================================================
+
+(def shot-hit-radius
+  "Off-axis tolerance for a hitscan — half an enemy 'cell'."
+  0.5)
+
+(def shot-max-range
+  "Maximum hitscan range in world units."
+  12.0)
+
+(def touch-damage-dist
+  "If an alive enemy is closer than this in world units, the player
+   loses a life."
+  0.7)
+
+(def iframe-seconds
+  "Seconds of post-hit invulnerability so one touch doesn't drain
+   multiple lives across consecutive frames."
+  1.0)
+
+(def fire-anim-seconds
+  "Visibility duration of the muzzle flash + tracer after a shot."
+  0.09)
+
+(def fx-ttl-seconds
+  "Initial life of a blood splatter. Render slices this lifetime into
+   stages (kill flash → slump → collapse → blood gradient) so the
+   enemy reads as dying in pieces instead of vanishing instantly."
+  0.7)
+
+(def streak-window-seconds
+  "Time after a kill during which the next kill chains the streak.
+   Counter resets to 1 if the player waits longer without a kill."
+  4.0)
+
+;; Per-weapon cadence / capacity now lives in weapons/spec. These
+;; constants stay as the pistol defaults — every test fixture that
+;; didn't carry a :weapon used the pistol numbers, so falling back to
+;; them via `w-spec` keeps old tests green.
+
+(def fire-cooldown-seconds
+  "Default minimum interval between shots (pistol cadence). Per-weapon
+   override in weapons/weapons :fire-cooldown."
+  0.12)
+
+(def mag-size
+  "Default magazine capacity (pistol). Per-weapon override in
+   weapons/weapons :mag-size."
+  10)
+
+(def max-reserve
+  "Default cap on the spare ammo pool (pistol). Per-weapon override
+   in weapons/weapons :reserve-cap."
+  50)
+
+(def ammo-per-box
+  "Default rounds added to the active weapon's reserve per pickup
+   (pistol). Per-weapon override in weapons/weapons :ammo-per-box."
+  10)
+
+(def reload-cooldown-seconds
+  "Default reload animation + firing lockout (pistol). Per-weapon
+   override in weapons/weapons :reload-duration."
+  1.2)
+
+(defn- w-spec
+  "Active-weapon spec with hard-coded pistol fallbacks so a bare test
+   fixture (no :weapon set) still gets sensible numbers. Fallback
+   inherits the pistol's `:overheats? true` so legacy fixtures
+   keep exercising the heat / jam path."
+  [world]
+  (or (weapon-spec world)
+      {:mag-size        mag-size
+       :fire-cooldown   fire-cooldown-seconds
+       :reload-duration reload-cooldown-seconds
+       :damage          1
+       :reserve-cap     max-reserve
+       :ammo-per-box    ammo-per-box
+       :overheats?      true}))
+
+(def empty-click-seconds
+  "How long the 'dry-fire click' visual + audio cue lingers after the
+   player pulled the trigger on an empty mag. Long enough that the
+   prompt is readable; short enough that holding the trigger doesn't
+   leave it pinned forever."
+  0.8)
+
+(def berserk-seconds
+  "Active window of the berserk powerup. While > 0 the player's
+   weapon damage is multiplied by `berserk-damage-mul` and render
+   paints a red rage tint on the viewport."
+  20.0)
+
+(def berserk-damage-mul
+  "Damage multiplier applied to every shot while berserk-secs > 0."
+  2)
+
+(defn berserk?
+  "True while the player's berserk timer is still ticking down."
+  [world]
+  (pos? (or (:berserk-secs world) 0.0)))
+
+(def invuln-seconds
+  "Active window of the invulnerability sphere. While > 0 the
+   damage-step skips touch hits and render paints a blue tint."
+  10.0)
+
+(defn invuln?
+  "True while the player's invulnerability timer is still ticking."
+  [world]
+  (pos? (or (:invuln-secs world) 0.0)))
+
+(def heat-per-shot
+  "Heat added on each shot. Heat decays continuously; when it crosses
+   1.0 the pistol jams. 0.30 = ~4 shots cold-mashed before jam, ~6
+   sustained with the cool-rate bleed-off."
+  0.30)
+
+(def heat-cool-rate
+  "Heat units shed per second when not firing."
+  0.7)
+
+(def jam-seconds
+  "How long the pistol stays jammed (locked-out + visual indicator)
+   after overheat."
+  0.7)
+
+(def knockback-distance
+  "World units the player gets shoved AWAY from the attacker on each
+   hit. ~1 cell; try-move clamps against walls so the player can't be
+   pushed through geometry."
+  0.9)
+
+;; =====================================================================
+;; § Damage step (timer decay + touch collision)
+;; =====================================================================
+
+(defn- enemy-distance-sq
+  [enemy ^float px ^float py]
+  (let [dx (php/- (:x enemy) px)
+        dy (php/- (:y enemy) py)]
+    (php/+ (php/* dx dx) (php/* dy dy))))
+
+(defn- enemies-touching?
+  [enemies ^float px ^float py]
+  (let [threshold-sq (php/* touch-damage-dist touch-damage-dist)]
+    (loop [es enemies]
+      (cond
+        (nil? es) false
+        :else
+        (let [e (first es)]
+          ;; Dormant enemies don't deal contact damage — they're
+          ;; passive until something wakes them. enemy-ai/attacks?
+          ;; reads `:state` and falls back to the default-state
+          ;; (:aware) for legacy fixtures that don't carry one,
+          ;; so existing tests stay green.
+          (if (and e (:alive e) (attacks? e)
+                   (php/<= (enemy-distance-sq e px py) threshold-sq))
+            true
+            (recur (next es))))))))
+
+(defn- decay-fx [fx ^float dt]
+  (apply vector
+         (filter (fn [e] (php/> (:ttl e) 0.0))
+                 (map (fn [e] (assoc e :ttl (php/- (:ttl e) dt)))
+                      (or fx [])))))
+
+(defn- decay-timers [world ^float dt]
+  (let [iframes      (php/max 0.0 (php/- (:iframes world) dt))
+        fire-anim    (php/max 0.0 (php/- (or (:fire-anim world) 0.0) dt))
+        intro-secs   (php/max 0.0 (php/- (or (:intro-secs world) 0.0) dt))
+        flash-secs   (php/max 0.0 (php/- (or (:flash-secs world) 0.0) dt))
+        streak-secs' (php/max 0.0 (php/- (or (:streak-secs world) 0.0) dt))
+        cooldown'    (php/max 0.0 (php/- (or (:fire-cooldown world) 0.0) dt))
+        reload-cd'   (php/max 0.0 (php/- (or (:reload-cooldown world) 0.0) dt))
+        click-secs'  (php/max 0.0 (php/- (or (:empty-click-secs world) 0.0) dt))
+        berserk'     (php/max 0.0 (php/- (or (:berserk-secs world) 0.0) dt))
+        invuln'      (php/max 0.0 (php/- (or (:invuln-secs world) 0.0) dt))
+        heat'        (php/max 0.0 (php/- (or (:heat world) 0.0) (php/* heat-cool-rate dt)))
+        jam-secs'    (php/max 0.0 (php/- (or (:jam-secs world) 0.0) dt))
+        locked-bump' (php/max 0.0 (php/- (or (:locked-door-bump-secs world) 0.0) dt))]
+    (assoc world
+           :iframes         iframes
+           :fire-anim       fire-anim
+           :intro-secs      intro-secs
+           :flash-secs      flash-secs
+           :streak-secs     streak-secs'
+           :fire-cooldown   cooldown'
+           :reload-cooldown reload-cd'
+           :empty-click-secs click-secs'
+           :berserk-secs    berserk'
+           :invuln-secs     invuln'
+           :heat            heat'
+           :jam-secs        jam-secs'
+           :locked-door-bump-secs locked-bump'
+           ;; Window expired: streak counter goes back to 0 so the HUD
+           ;; stops showing it.
+           :streak        (if (php/<= streak-secs' 0.0) 0 (or (:streak world) 0))
+           :fx            (decay-fx (:fx world) dt))))
+
+(defn- vulnerable? [world]
+  (and (php/<= (:iframes world) 0.0)
+       (php/<= (or (:invuln-secs world) 0.0) 0.0)
+       ;; Dev god mode (--god): contact damage is
+       ;; suppressed entirely so the player can roam every room
+       ;; without dying. Reload + ammo + AI all still run so the
+       ;; rest of the loop is exercised normally.
+       (not (:god? world))
+       (enemies-touching? (:enemies world)
+                          (:x (:player world))
+                          (:y (:player world)))))
+
+(defn closest-attacker
+  "Nearest alive enemy {:x :y :d2} to (px, py), or nil. One pass over
+   the enemies vector, called once per damage event. Exported so the
+   selection rule can be pinned by unit tests."
+  [enemies ^float px ^float py]
+  (loop [es enemies best-d 1.0e9 best nil]
+    (cond
+      (nil? es) best
+      :else
+      (let [e (first es)]
+        (if (and e (:alive e))
+          (let [dx (php/- (:x e) px)
+                dy (php/- (:y e) py)
+                d2 (php/+ (php/* dx dx) (php/* dy dy))]
+            (if (php/< d2 best-d)
+              (recur (next es) d2 {:x (:x e) :y (:y e) :d2 d2})
+              (recur (next es) best-d best)))
+          (recur (next es) best-d best))))))
+
+(defn attacker-side
+  "Map an attacker position to `:left` / `:right` relative to player
+   facing (atan2 convention). nil if attacker is nil. Exported for
+   the directional-hit-vignette behaviour to be testable."
+  [att ^float px ^float py ^float pangle]
+  (when att
+    (let [rel (php/- (php/atan2 (php/- (:y att) py) (php/- (:x att) px)) pangle)]
+      (if (php/> (php/sin rel) 0.0) :right :left))))
+
+(defn knockback
+  "Shove the player one knockback-distance step AWAY from `att`.
+   Uses try-move so walls clamp the displacement. Returns the world
+   unchanged if att is nil or the player and attacker share a cell.
+   Exported so the shove-away rule can be unit tested."
+  [world att]
+  (if (nil? att)
+    world
+    (let [p   (:player world)
+          dx  (php/- (:x p) (:x att))
+          dy  (php/- (:y p) (:y att))
+          len (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
+      (if (php/<= len 0.0001)
+        world
+        (try-move world
+                  (php/* (php// dx len) knockback-distance)
+                  (php/* (php// dy len) knockback-distance))))))
+
+(def flash-seconds
+  "How long the all-white impact flash holds before the red i-frame
+   wash takes over. About one frame at 60fps — long enough that the
+   eye reads it as a jolt, short enough not to mask the next frame."
+  0.05)
+
+(defn- distance-volume
+  "Map a world-units distance to a 0-1 sound volume. 1.0 at the player,
+   ~0.1 floor at shot-max-range so a far kill / hit is still audible.
+   Used by both `take-damage` (player pain) and `play-shot-sfx`
+   (enemy kill / wound)."
+  [^float dist]
+  (php/max 0.1 (php/- 1.0 (php/min 1.0 (php// dist shot-max-range)))))
+
+(defn- take-damage [world]
+  (let [p       (:player world)
+        att     (closest-attacker (:enemies world) (:x p) (:y p))
+        armor   (or (:armor world) 0)
+        ;; Distance-attenuate the player-pain sfx the same way `:kill`
+        ;; / `:wound` are scaled: a far enemy chipping a life off
+        ;; should sound as quiet as the final hit that drops a far
+        ;; enemy, not blast at full volume from across the map.
+        ;; closest-attacker already cached squared distance, no extra
+        ;; pass over the enemies vector.
+        vol     (if att
+                  (distance-volume (php/sqrt (or (:d2 att) 0.0)))
+                  1.0)
+        ;; Armor absorbs the hit: drop the unit instead of a life. Still
+        ;; trigger i-frames + the visual flash so the player sees the
+        ;; armor consumed.
+        damaged (if (php/> armor 0)
+                  (assoc world :armor (php/- armor 1))
+                  (update world :lives (fn [l] (php/max 0 (php/- l 1)))))]
+    (when (:sound-on world) (play-sfx! :hit vol))
+    ;; Knockback first, then stamp the timers + hurt-side on the
+    ;; shoved world so render reads the new player position next
+    ;; frame.
+    (assoc (knockback damaged att)
+           :iframes    iframe-seconds
+           :flash-secs flash-seconds
+           :hurt-side  (attacker-side att (:x p) (:y p) (:angle p)))))
+
+(defn damage-step
+  "Per-frame: decay every timer, then apply a touch hit if i-frames
+   have elapsed and an enemy is in range."
+  [world ^float dt]
+  (let [w (decay-timers world dt)]
+    (if (vulnerable? w) (take-damage w) w)))
+
+;; =====================================================================
+;; § Shooting (one trigger pull → world update)
+;; =====================================================================
+
+(defn- cast-wall-distance [world]
+  (let [p (:player world)]
+    (cast-ray (:pgrid world) (:x p) (:y p) (:angle p))))
+
+(defn- resolve-shot [world]
+  (let [p        (:player world)
+        base-dmg (or (:damage (w-spec world)) 1)
+        dmg      (if (berserk? world) (php/* base-dmg berserk-damage-mul) base-dmg)]
+    (shoot (:enemies world) (:x p) (:y p) (:angle p)
+           (cast-wall-distance world)
+           shot-hit-radius shot-max-range dmg)))
+
+(defn- push-blood-fx [world hit-pos]
+  (update world :fx
+          (fn [fx]
+            (conj (or fx [])
+                  {:x (:x hit-pos) :y (:y hit-pos) :ttl fx-ttl-seconds}))))
+
+(def loot-drop-chance
+  "Probability cutoffs for a kill drop, layered on a single uniform roll
+   in [0, 1). Tuned DOWN after the v0.3 playtesting reported too much
+   loot — ~75% of kills now drop nothing so the floor doesn't fill
+   with pickups. Ammo dominates; armor mid; heart is rare AND only
+   rolls when it would actually heal (lives < cap)."
+  {:ammo  0.15          ; 0.00 .. 0.15
+   :armor 0.22          ; 0.15 .. 0.22
+   :heart 0.25})        ; 0.22 .. 0.25 (gated by lives < max-lives)
+
+(defn roll-loot-kind
+  "Decide which pickup (if any) drops on the current kill. nil = no
+   drop. `roll` is a uniform float in [0, 1) supplied by the caller
+   so tests can pin the outcome."
+  [world ^float roll]
+  (cond
+    (php/< roll (:ammo  loot-drop-chance)) :ammo
+    (php/< roll (:armor loot-drop-chance)) :armor
+    (and (php/< roll (:heart loot-drop-chance))
+         (php/< (or (:lives world) 0) max-lives)) :heart
+    :else nil))
+
+(defn- push-pickup [world key hit-pos]
+  (update world key
+          (fn [xs] (conj (or xs []) {:x (:x hit-pos) :y (:y hit-pos)}))))
+
+(defn- push-ammo-loot [world hit-pos weapon-kw]
+  ;; Tagged ammo box — pickup-ammos in commands/play.phel reads
+  ;; `:weapon` to top up that specific weapon's reserve. Boxes
+  ;; without `:weapon` (level-spawn) refill the active weapon.
+  (update world :ammo-boxes
+          (fn [xs]
+            (conj (or xs []) {:x (:x hit-pos) :y (:y hit-pos) :weapon weapon-kw}))))
+
+(defn pick-loot-weapon
+  "Choose a random weapon from `:owned-weapons` for a kill-loot ammo
+   drop. Uniform over the owned set MINUS the pistol — the player
+   always starts with the pistol AND its reserve refills via
+   level-spawned ammo boxes, so kill-loot biases toward the scarce
+   weapons (shotgun, chaingun) that the player had to hunt for on
+   the map. Pure given `roll` (uniform float in [0, 1)) so tests
+   can pin the outcome. Falls back to :pistol only when nothing
+   else is owned (fresh-run / defensive fixture)."
+  [world ^float roll]
+  (let [owned     (or (:owned-weapons world) #{:pistol})
+        non-basic (apply vector
+                         (sort (filter (fn [kw] (php/!== kw :pistol)) owned)))
+        n         (count non-basic)]
+    (if (zero? n)
+      :pistol
+      (get non-basic (php/min (php/- n 1)
+                              (php/intval (php/* roll n)))))))
+
+(defn- push-kill-loot
+  "Possibly drop a pickup at the enemy's death position. Two RNG rolls:
+   one for kind (ammo/armor/heart/nil), one to pick which owned
+   weapon an ammo drop refills. Tests pin both via roll-loot-kind /
+   pick-loot-weapon directly."
+  [world hit-pos]
+  (let [roll-kind (php// (php/mt_rand) (php/mt_getrandmax))
+        kind      (roll-loot-kind world roll-kind)]
+    (cond
+      (= kind :ammo)
+      (let [roll-wpn (php// (php/mt_rand) (php/mt_getrandmax))
+            weapon   (pick-loot-weapon world roll-wpn)]
+        (push-ammo-loot world hit-pos weapon))
+      (= kind :armor) (push-pickup world :armors hit-pos)
+      (= kind :heart) (push-pickup world :hearts hit-pos)
+      :else           world)))
+
+(defn- maybe-unlock-boss-door
+  "On a `:door-lock :boss` level, killing a `:cyber` enemy grants the
+   synthetic `:boss` keycard so the exit door becomes passable. No
+   physical card spawns for boss locks — this hook is the unlock."
+  [world killed-enemy]
+  (if (and (= (:door-lock world) :boss)
+           (= (:type killed-enemy) :cyber))
+    (assoc world :held-keys
+           (conj (or (:held-keys world) #{}) :boss))
+    world))
+
+(defn- on-shot-hit
+  "World update on a successful hit. enemy/shoot has already decremented
+   `:lives` and (when the pool emptied) flipped `:alive false` and
+   stamped a respawn timer; on-shot-hit only has to decide whether this
+   was a wound or a kill, and update the score / streak / blood-fx
+   accordingly. A blood splatter fires on every hit so the player sees
+   the wound, but `:kills` and `:streak` only advance on the final
+   shot that drops the enemy. Streak chains while `:streak-secs` is
+   still ticking from the previous kill; otherwise it restarts at 1.
+   When the killed enemy is the L10 boss the exit door unlocks via
+   `maybe-unlock-boss-door`."
+  [world enemies-after hit-pos idx]
+  (let [killed?   (false? (:alive (get enemies-after idx)))
+        killed-e  (get enemies-after idx)
+        chain?    (pos? (or (:streak-secs world) 0.0))
+        streak'   (if chain? (php/+ (or (:streak world) 0) 1) 1)
+        ;; Shot-direction knockback: shove wounded enemies one cell
+        ;; back along the player's facing so heavy targets visibly
+        ;; recoil per hit. Skip on the killing blow so the corpse +
+        ;; loot drop stay on the death cell.
+        pushed-es (if killed?
+                    enemies-after
+                    (let [a     (:angle (:player world))
+                          cos-a (php/cos a)
+                          sin-a (php/sin a)]
+                      (push-back-enemy enemies-after (:grid world)
+                                       idx cos-a sin-a
+                                       shot-knockback-distance)))
+        scored    (if killed?
+                    (assoc (update (assoc world :enemies pushed-es)
+                                   :kills (fn [k] (php/+ k 1)))
+                           :streak      streak'
+                           :streak-secs streak-window-seconds)
+                    (assoc world :enemies pushed-es))
+        unlocked  (if killed? (maybe-unlock-boss-door scored killed-e) scored)
+        ;; Kill drops a random pickup at the corpse's cell. Wounds
+        ;; don't drop — the kill is the reward trigger.
+        with-loot (if killed? (push-kill-loot unlocked hit-pos) unlocked)]
+    (push-blood-fx (assoc with-loot :fire-anim fire-anim-seconds) hit-pos)))
+
+(defn- on-shot-miss [world]
+  (assoc world :fire-anim fire-anim-seconds))
+
+(defn- play-shot-sfx [world hit? killed? hit-pos]
+  (when (:sound-on world)
+    (cond
+      killed? (let [p  (:player world)
+                    dx (php/- (:x hit-pos) (:x p))
+                    dy (php/- (:y hit-pos) (:y p))
+                    d  (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
+                (play-sfx! :kill (distance-volume d)))
+      ;; Wounded but alive: distinct `:wound` event so the player can
+      ;; tell a shot landed without mistaking it for the `:hit` sound
+      ;; that `take-damage` uses when the PLAYER is the one struck.
+      ;; Lower vol (0.4) keeps it as a soft 'thud' under the kill +
+      ;; shoot sfx; the floating HP digit is the primary signal.
+      hit?    (play-sfx! :wound 0.4)
+      :else   (play-sfx! :shoot 1.0))))
+
+(defn can-fire?
+  "True when the pistol is ready: cooldown elapsed, not jammed, no
+   reload in progress, AND the magazine still has rounds. Empty mags
+   fall through to tick-shooting's dry-fire path which arms the
+   `:empty-click-secs` timer and plays the deny sfx so the player
+   sees they need to press R."
+  [world]
+  (and (php/<= (or (:fire-cooldown world) 0.0) 0.0)
+       (php/<= (or (:jam-secs world) 0.0) 0.0)
+       (php/<= (or (:reload-cooldown world) 0.0) 0.0)
+       (pos? (or (:mag world) 0))))
+
+(defn apply-heat
+  "After a shot lands, bump heat + arm the per-weapon fire-cooldown,
+   and burn one round from the magazine. Heat / jam math only runs
+   for weapons whose spec has `:overheats? true` (pistol only); on
+   other weapons heat stays at 0 and the jam timer is never set.
+   Chaingun would otherwise hit jam in under half a second of
+   auto-fire (0.30 heat-per-shot × 20 shots/s) — that's
+   anti-feature for a 'sustained spray' weapon."
+  [world]
+  (let [sp        (w-spec world)
+        overheat? (boolean (:overheats? sp))
+        heat'     (if overheat?
+                    (php/+ (or (:heat world) 0.0) heat-per-shot)
+                    0.0)
+        jam?      (and overheat? (php/>= heat' 1.0))
+        mag'      (php/max 0 (php/- (or (:mag world) (:mag-size sp)) 1))]
+    (assoc world
+           :fire-cooldown (:fire-cooldown sp)
+           :heat          (if jam? 0.0 heat')
+           :jam-secs      (if jam? jam-seconds (or (:jam-secs world) 0.0))
+           :mag           mag')))
+
+(defn reloading?
+  "True when the player COULD reload the active weapon right now."
+  [world]
+  (let [sp (w-spec world)]
+    (and (php/<= (or (:reload-cooldown world) 0.0) 0.0)
+         (php/< (or (:mag world) 0) (:mag-size sp))
+         (pos? (or (:ammo-reserve world) 0)))))
+
+(defn reload
+  "Top the magazine back up from the spare reserve and arm a short
+   reload cooldown so trigger-mashing can't fire on the same frame
+   as pressing R. Three no-op cases that all keep the world identity
+   stable so callers can compare cheaply:
+     - reload already in progress (don't reset the lockout)
+     - mag already full        (don't waste reserve)
+     - reserve empty           (let the player keep pressing R)
+   Otherwise: draw `min(needed, reserve)` rounds from `:ammo-reserve`
+   into `:mag` and arm the cooldown."
+  [world]
+  (let [sp      (w-spec world)
+        mag     (or (:mag world) 0)
+        reserve (or (:ammo-reserve world) 0)
+        needed  (php/- (:mag-size sp) mag)]
+    (cond
+      (php/> (or (:reload-cooldown world) 0.0) 0.0) world
+      (php/<= needed 0)                             world
+      (php/<= reserve 0)                            world
+      :else
+      (let [drawn (php/min needed reserve)]
+        (assoc world
+               :mag             (php/+ mag drawn)
+               :ammo-reserve    (php/- reserve drawn)
+               :reload-cooldown (:reload-duration sp))))))
+
+(defn fire-shot
+  "Resolve one trigger pull end-to-end. After the hitscan, run a
+   flood-fill sound-wake from the player's cell so dormant enemies
+   in the same room hear the shot and switch to :aware. Doors block
+   the BFS so the wake stays local — same per-sector noise rule
+   DOOM uses."
+  [world]
+  (let [[enemies' hit? hit-pos idx] (resolve-shot world)
+        p                           (:player world)
+        woken                       (noise-wake enemies' (:grid world) (:x p) (:y p))
+        killed?                     (and hit?
+                                         (false? (:alive (get woken idx))))]
+    (play-shot-sfx world hit? killed? hit-pos)
+    (apply-heat (if hit?
+                  (on-shot-hit world woken hit-pos idx)
+                  (on-shot-miss (assoc world :enemies woken))))))
+
+(defn- empty-trigger-pull
+  "Trigger pulled while mag = 0 AND no cooldown / jam in the way. Arm
+   the empty-click timer and play the dry-fire sfx so render can
+   surface the 'press R to reload' prompt this frame. Cooldown / jam
+   pulls stay silent — the player gets visual feedback from those
+   states already (jam label / fire-anim) so doubling up would be
+   noisy."
+  [world]
+  (when (:sound-on world) (play-sfx! :click 0.6))
+  (assoc world :empty-click-secs empty-click-seconds))
+
+(defn tick-shooting
+  "Resolve a shot when the trigger is active this frame AND the
+   active weapon is ready (not on cooldown, not jammed).
+
+   Trigger semantics depend on the weapon's `:auto-fire?` flag:
+     - auto-fire (pistol, chaingun): fires every frame the trigger
+       is held once `:fire-cooldown` elapses. Holding space sprays.
+     - single-action (shotgun): each shell requires a fresh rising
+       edge — holding space does not re-fire after the first shot.
+
+   Trigger pulls during a jam / fire-cooldown / mid-reload are
+   dropped silently. Pulls on an empty mag arm a dry-fire click +
+   'R to reload' prompt instead. Two-arity kept for legacy callers
+   (e.g. tests) that pre-date :fire-held."
+  ([world fire?] (tick-shooting world fire? false))
+  ([w fire-edge? fire-held?]
+   (let [auto?        (boolean (:auto-fire? (weapon-spec w)))
+         should-fire? (or fire-edge? (and auto? fire-held?))]
+     (cond
+       (not should-fire?) w
+       (can-fire? w)      (fire-shot w)
+       (and (zero? (or (:mag w) 0))
+            (php/<= (or (:fire-cooldown w) 0.0) 0.0)
+            (php/<= (or (:jam-secs w) 0.0) 0.0)
+            (php/<= (or (:reload-cooldown w) 0.0) 0.0)) (empty-trigger-pull w)
+       :else              w))))
+
+(defn tick-armory
+  "Dev cheat: when `:armory?` is set, refill every weapon's mag to
+   capacity and reserve to `armory-reserve` each tick + clear the
+   reload cooldown. Net effect is effectively-infinite ammo with no
+   reload pauses, so the player can test every weapon's hit feel
+   without grinding for boxes. No-op when `:armory?` is falsy."
+  [world]
+  (if (not (:armory? world))
+    world
+    (let [active  (or (:weapon world) :pistol)
+          stash   (reduce (fn [acc kw]
+                            (let [s (get weapons kw)]
+                              (assoc acc kw {:mag     (:mag-size s)
+                                             :reserve armory-reserve})))
+                          {} weapon-order)
+          mag-cap (:mag-size (get weapons active))]
+      (assoc world
+             :weapon-state    stash
+             :mag             mag-cap
+             :ammo-reserve    armory-reserve
+             :reload-cooldown 0.0))))

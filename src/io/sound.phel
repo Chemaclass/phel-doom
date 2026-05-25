@@ -1,0 +1,144 @@
+(ns phel-doom.io.sound)
+
+;; ---------------------------------------------------------------------
+;; Sound effects via OS shell-out.
+;;
+;; Strategy:
+;;   1. Try a real audio file via the first audio player on PATH
+;;      (afplay/paplay/aplay/play). Use built-in system sound files so
+;;      we don't have to ship audio assets. macOS has a stable set
+;;      under /System/Library/Sounds; Linux distros vary too much to
+;;      hardcode, so the bell is the fallback there.
+;;   2. If no player is on PATH or the file doesn't exist, fall back
+;;      to writing \a to STDOUT (terminal bell).
+;;
+;; Cost per event: one fork+exec via system(), fired in the background
+;; with & so the game loop never blocks. ext-ffi + miniaudio would be
+;; cheaper and bundled, but it's a heavy native binding; keeping the
+;; public surface here (play-sfx!) lets that swap happen later without
+;; touching callers.
+;; ---------------------------------------------------------------------
+
+(def player-binaries
+  "Audio players we'll try in order. First one present on PATH wins."
+  ["afplay" "paplay" "aplay" "play"])
+
+(def macos-sounds
+  "macOS ships these .aiff files in every install. Map game events to
+   short, distinctive ones. One kill sound for all monsters: makes
+   the death beat read the same across the run."
+  {:shoot     "/System/Library/Sounds/Pop.aiff"
+   :kill      "/System/Library/Sounds/Pop.aiff"
+   :hit       "/System/Library/Sounds/Sosumi.aiff"
+   :wound     "/System/Library/Sounds/Submarine.aiff"
+   :reload    "/System/Library/Sounds/Funk.aiff"
+   :click     "/System/Library/Sounds/Basso.aiff"
+   :door      "/System/Library/Sounds/Tink.aiff"
+   :heartbeat "/System/Library/Sounds/Bottle.aiff"})
+
+(def state
+  "Memoised session state: the resolved player binary and per-event
+   sound files for this host. nil entries mean 'not yet resolved'."
+  (atom {:player nil :sounds nil :probed false}))
+
+(defn- which
+  "Return the path of `bin` if it's on PATH, else nil."
+  [bin]
+  (let [out (php/array)]
+    (php/exec (str "command -v " bin " 2>/dev/null") out)
+    (let [line (php/aget out 0)]
+      (if (or (nil? line) (= line ""))
+        nil
+        line))))
+
+(defn- resolve-player []
+  (loop [bins player-binaries]
+    (if (empty? bins)
+      nil
+      (if (which (first bins))
+        (first bins)
+        (recur (rest bins))))))
+
+(defn- resolve-sounds
+  "Pick a per-event sound map appropriate for this OS. Returns nil if
+   the OS doesn't ship usable defaults."
+  []
+  (let [os (php/strtolower (php/php_uname "s"))]
+    (if (php/str_contains os "darwin")
+      macos-sounds
+      nil)))
+
+(defn- ensure-probed! []
+  (let [s @state]
+    (when (not (:probed s))
+      (reset! state {:player (resolve-player)
+                     :sounds (resolve-sounds)
+                     :probed true}))))
+
+(defn- play-file-async!
+  "Fire-and-forget shell-out to the resolved audio player. Optional
+   `volume` in [0.0, 1.0] is wired through afplay's `-v` flag (other
+   players ignore it). Always backgrounded so the game loop never
+   blocks."
+  ([player path]                (play-file-async! player path 1.0))
+  ([bin audio-path ^float vol] (let [v   (php/max 0.0 (php/min 1.0 vol))
+                                     arg (if (php/=== bin "afplay")
+                                           (str " -v " (php/number_format v 3))
+                                           "")]
+                                 (php/exec (str bin arg " "
+                                                (php/escapeshellarg audio-path)
+                                                " > /dev/null 2>&1 &")))))
+
+(defn- bell! []
+  (php/fwrite php/STDOUT "\a")
+  (php/fflush php/STDOUT))
+
+(defn- muted?
+  "Test gate: when the PHEL_DOOM_SILENT env var is set to \"1\",
+   play-sfx! short-circuits and returns nil without shelling out OR
+   ringing the bell. Composer's `test` script sets this so phel
+   tests can never trigger real audio. Game runtime sets it nowhere,
+   so the default behaviour is unchanged."
+  []
+  (php/=== "1" (php/getenv "PHEL_DOOM_SILENT")))
+
+(defn mute-for!
+  "Stamp an absolute mute-until timestamp on the sound state atom so
+   play-sfx! short-circuits for the next `seconds`. Stacks against an
+   existing mute: never shortens. No-op when PHEL_DOOM_SILENT is set
+   (tests stay deterministic)."
+  [^float seconds]
+  (when (not (muted?))
+    (let [until (php/+ (php/microtime true) seconds)
+          cur   (or (:mute-until @state) 0.0)]
+      (swap! state assoc :mute-until (php/max cur until)))))
+
+(defn- session-muted?
+  "True while the wall-clock has not yet caught up to :mute-until on
+   the state atom. Driven by mute-for! from the horror layer."
+  []
+  (let [until (or (:mute-until @state) 0.0)]
+    (php/> until (php/microtime true))))
+
+(defn play-sfx!
+  "Play the sound effect tagged `event` (:shoot, :hit, :door,
+   :heartbeat, :kill). Falls through to the terminal bell when no
+   native player + file is available, so the game still gives
+   feedback on bare/headless systems. Heartbeat skips the bell
+   fallback so silent terminals don't get spammed by the bell once a
+   second when the player is low on lives."
+  ([event]                  (play-sfx! event 1.0))
+  ([evt ^float volume]      (when (and (not (muted?)) (not (session-muted?)))
+                              (ensure-probed!)
+                              (let [s    @state
+                                    p    (:player s)
+                                    path (and (:sounds s) (get (:sounds s) evt))]
+                                (cond
+                                  (and p path (php/file_exists path))
+                                  (play-file-async! p path volume)
+
+                                  (= evt :heartbeat)
+                                  nil
+
+                                  :else
+                                  (bell!))))))

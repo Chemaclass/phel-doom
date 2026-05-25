@@ -7,10 +7,10 @@ Terminal raycaster DOOM-lite, written in pure Phel (Lisp on PHP). ANSI render, p
 ```
 src/main.phel                → CLI bootstrap (symfony/console via phel.cli)
 src/commands/play.phel       → game loop (cast → step → render)
-src/modules/core/            → pure logic: engine, combat, enemy, level, map, physics, state
-src/modules/glue/            → wiring: controls, input, scores, sound, wad
-src/modules/io/              → side effects: render (ANSI), audio
-tests/modules/<layer>/       → phel.test deftest files, mirror src layout (`-test` suffix)
+src/core/            → pure logic: engine, combat, enemy, level, map, physics, state
+src/glue/            → wiring: controls, input, scores, sound, wad
+src/io/              → side effects: render (ANSI), audio
+tests/<layer>/       → phel.test deftest files, mirror src layout (`-test` suffix)
 tests/commands/              → top-level command tests
 docs/<topic>.md              → architecture, perf, render, raycaster, state, etc.
 out/main.php                 → `composer build` artifact (do NOT edit by hand)
@@ -53,7 +53,7 @@ Spawn via Agent tool. Prefer parallel where independent. For codebase search use
 - Phel: kebab-case, `defn-` for private, `;` line comments, `conj` over `put`. Namespaces use **dot** (`phel.test`, never `phel\test`).
 - `docs/` is part of the codebase — drift = same-commit fix.
 - `feat:` / `fix:` / `perf:` commits update `CHANGELOG.md` under `## Unreleased`.
-- Side effects only in `src/modules/io/`. `core/` and `glue/` stay pure.
+- Side effects only in `src/io/`. `core/` and `glue/` stay pure.
 - PR label by branch prefix: `fix/` → `bug`, `feat/` → `enhancement`, `perf/` → `performance`, `docs/` → `documentation`, `ref/` → `refactoring`.
 - GH issues: do NOT auto-assign on create. Assignment = WIP signal.
 

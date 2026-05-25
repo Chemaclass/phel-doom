@@ -20,12 +20,12 @@ allowed_tools:
 | Phel compile error, namespace not found | build/loader | `phel-config.php`, `src/main.phel`, `vendor/bin/phel build --no-cache` |
 | `Cannot resolve symbol X` | analyzer | check `:require` in offending ns, fn name typo |
 | Crash mid-frame, stack trace into PHP | runtime | trace from frame: `play.phel` → `core/` fn → `io/render`? |
-| Wall renders wrong distance / fisheye | raycaster | `src/modules/core/engine.phel:cast-ray`, `cast-ray-hit` |
-| Walls render but ordering off, sprites bleed through | render order | `src/modules/io/render.phel` (z handling, `:dists`) |
-| Enemy shoots through walls | collision/LOS | `src/modules/core/combat.phel`, `physics.phel` |
-| Input lag or stuck key | input pipeline | `src/modules/glue/input.phel`, `controls.phel` |
+| Wall renders wrong distance / fisheye | raycaster | `src/core/engine.phel:cast-ray`, `cast-ray-hit` |
+| Walls render but ordering off, sprites bleed through | render order | `src/io/render.phel` (z handling, `:dists`) |
+| Enemy shoots through walls | collision/LOS | `src/core/combat.phel`, `physics.phel` |
+| Input lag or stuck key | input pipeline | `src/glue/input.phel`, `controls.phel` |
 | Pause doesn't freeze | tick-gated effect | grep for animation timers not gated on `:paused?` |
-| Audio plays at wrong time | audio queue | `src/modules/glue/sound.phel`, `src/modules/io/audio.phel` |
+| Audio plays at wrong time | audio queue | `src/glue/sound.phel`, `src/io/audio.phel` |
 | FPS regressed | hot path | run `/perf-bench`, see `docs/performance.md` |
 
 ## Diagnostic steps

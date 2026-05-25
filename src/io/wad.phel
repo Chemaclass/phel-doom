@@ -1,0 +1,110 @@
+(ns phel-doom.io.wad)
+
+;; ---------------------------------------------------------------------
+;; WAD (Where's All the Data) file-format parser.
+;;
+;; Real DOOM levels are stored as BSP trees of linedefs + sectors. A
+;; faithful in-game renderer for them needs portal rendering, slopes,
+;; etc. — a different engine from this raycaster. What this module
+;; provides is the *parser*: it reads the WAD's 12-byte header, the
+;; 16-bytes-per-entry lump directory, and decodes the two main map
+;; geometry lumps (VERTEXES + LINEDEFS) into Phel data structures.
+;;
+;; That's enough to inspect a real shareware doom.wad from a REPL,
+;; build tooling on top, or wire into a future BSP renderer.
+;; ---------------------------------------------------------------------
+
+(def header-len 12)
+(def lump-entry-len 16)
+
+(defn- read-bytes
+  "Slurp the whole WAD file as a binary string. Throws if the path
+   doesn't exist or isn't readable."
+  [path]
+  (let [contents (php/file_get_contents path)]
+    (if (php/=== contents false)
+      (throw (php/new \RuntimeException (str "Could not read WAD: " path)))
+      contents)))
+
+(defn- u32-at [s offset]
+  (php/aget (php/unpack "V" (php/substr s offset 4)) 1))
+
+(defn- i16-at [s offset]
+  (let [n (php/aget (php/unpack "v" (php/substr s offset 2)) 1)]
+    (if (php/> n 32767) (php/- n 65536) n)))
+
+(defn- string-at
+  "Read up to 8 ASCII bytes starting at `offset`, trimmed of \\0
+   padding. WAD lump names are an exact 8-byte slot."
+  [s offset]
+  (php/rtrim (php/substr s offset 8) "\0"))
+
+(defn parse-header
+  "Decode the WAD header bytes into {:id :num-lumps :dir-offset}. `id`
+   is either \"IWAD\" (an internal WAD shipped with the game) or
+   \"PWAD\" (a patch WAD provided by a mod)."
+  [bytes]
+  {:id         (php/rtrim (php/substr bytes 0 4) "\0")
+   :num-lumps  (u32-at bytes 4)
+   :dir-offset (u32-at bytes 8)})
+
+(defn parse-directory
+  "Decode the lump directory into a PHP-indexed list of
+   {:offset :size :name} entries, one per lump. The directory starts
+   at (:dir-offset header) and runs for (:num-lumps header) slots of
+   16 bytes each."
+  [bytes header]
+  (let [num  (:num-lumps header)
+        base (:dir-offset header)
+        out  (php/array)]
+    (loop [i 0]
+      (when (php/< i num)
+        (let [base-i (php/+ base (php/* i lump-entry-len))]
+          (php/aset out i
+                    {:offset (u32-at bytes base-i)
+                     :size   (u32-at bytes (php/+ base-i 4))
+                     :name   (string-at bytes (php/+ base-i 8))})
+          (recur (php/+ i 1)))))
+    out))
+
+(defn find-lump
+  "Return the first directory entry named `name`, or nil. Lump names
+   are right-padded with \\0; this normalises both sides before
+   comparing."
+  [dir name]
+  (let [n (php/count dir)]
+    (loop [i 0]
+      (cond
+        (php/>= i n)                      nil
+        (= name (:name (php/aget dir i))) (php/aget dir i)
+        :else                             (recur (php/+ i 1))))))
+
+(defn read-vertexes
+  "Decode a VERTEXES lump into a PHP-indexed list of {:x :y} (signed
+   16-bit map-unit coords)."
+  [bytes entry]
+  (let [base (:offset entry)
+        n    (php/intdiv (:size entry) 4)
+        out  (php/array)]
+    (loop [i 0]
+      (when (php/< i n)
+        (php/aset out i {:x (i16-at bytes (php/+ base (php/* i 4)))
+                         :y (i16-at bytes (php/+ base (php/* i 4) 2))})
+        (recur (php/+ i 1))))
+    out))
+
+(defn read-linedefs
+  "Decode a LINEDEFS lump into a PHP-indexed list of {:a :b} pairs of
+   vertex indices. Each linedef is 14 bytes — we only pull the two
+   endpoints; flags, types, sectors are skipped (a future BSP-style
+   renderer would consume them)."
+  [bytes entry]
+  (let [base (:offset entry)
+        n    (php/intdiv (:size entry) 14)
+        out  (php/array)]
+    (loop [i 0]
+      (when (php/< i n)
+        (php/aset out i {:a (i16-at bytes (php/+ base (php/* i 14)))
+                         :b (i16-at bytes (php/+ base (php/* i 14) 2))})
+        (recur (php/+ i 1))))
+    out))

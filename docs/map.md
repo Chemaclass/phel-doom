@@ -1,6 +1,6 @@
 # Map / grid
 
-`src/modules/core/map.phel`. Grid data shape, cell semantics, random-map generation, lookup helpers.
+`src/core/map.phel`. Grid data shape, cell semantics, random-map generation, lookup helpers.
 
 ## Cells
 

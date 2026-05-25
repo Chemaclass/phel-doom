@@ -15,7 +15,7 @@ allowed_tools:
 
 # Render Expert
 
-Owns `src/modules/io/render.phel`. ~80 KB hot module. Touch with care.
+Owns `src/io/render.phel`. ~80 KB hot module. Touch with care.
 
 ## Required reading
 

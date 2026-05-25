@@ -1,8 +1,8 @@
 # Monsters
 
-- `src/modules/core/enemies.phel` — type catalog (visuals + default HP)
-- `src/modules/core/enemy.phel` — record + spawn + chase step
-- `src/modules/core/enemy_ai.phel` — AI state machine (LOS-gated wake)
+- `src/core/enemies.phel` — type catalog (visuals + default HP)
+- `src/core/enemy.phel` — record + spawn + chase step
+- `src/core/enemy_ai.phel` — AI state machine (LOS-gated wake)
 - Visual rendering in `io/render.phel` (per-enemy `:type` lookup).
 
 ## Catalog (`enemy-types`)

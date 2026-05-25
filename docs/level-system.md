@@ -1,6 +1,6 @@
 # Level system
 
-10-level progression catalog + `build-world` factory. `src/modules/core/level.phel`.
+10-level progression catalog + `build-world` factory. `src/core/level.phel`.
 
 ## Levels at a glance
 

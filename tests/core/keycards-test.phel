@@ -1,0 +1,111 @@
+(ns phel-doom-tests.core.keycards-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.map :refer [cell-door-boss door-lock door? find-door-cell missing-key-for parse-layout passable? wall?]))
+
+(def grid-with-doors
+  ;; Row 1: wall, cell-door, cell-door-blue, cell-door-red, wall.
+  [[1 1 1 1 1]
+   [1 2 3 4 1]
+   [1 0 0 0 1]
+   [1 1 1 1 1]])
+
+(deftest test-door-predicate-matches-every-door-variant
+  (is (= true  (door? grid-with-doors 1 1)))
+  (is (= true  (door? grid-with-doors 2 1)))
+  (is (= true  (door? grid-with-doors 3 1)))
+  (is (= false (door? grid-with-doors 0 1)))
+  (is (= false (door? grid-with-doors 1 2))))
+
+(deftest test-door-lock-returns-colour-or-nil
+  (is (= nil   (door-lock grid-with-doors 1 1)))   ; unlocked
+  (is (= :blue (door-lock grid-with-doors 2 1)))
+  (is (= :red  (door-lock grid-with-doors 3 1)))
+  (is (= nil   (door-lock grid-with-doors 1 2))))  ; floor
+
+(deftest test-passable-blocks-walls
+  (is (= false (passable? grid-with-doors #{} 0 1))))
+
+(deftest test-passable-allows-floors
+  (is (= true (passable? grid-with-doors #{} 1 2))))
+
+(deftest test-passable-allows-unlocked-door
+  (is (= true (passable? grid-with-doors #{} 1 1))))
+
+(deftest test-passable-blocks-locked-door-without-key
+  (is (= false (passable? grid-with-doors #{} 2 1)))
+  (is (= false (passable? grid-with-doors #{:red} 2 1)))) ; wrong key
+
+(deftest test-passable-allows-locked-door-with-matching-key
+  (is (= true (passable? grid-with-doors #{:blue} 2 1)))
+  (is (= true (passable? grid-with-doors #{:red}  3 1))))
+
+(deftest test-wall-predicate-still-only-true-for-walls
+  ;; Sanity: existing wall? semantics unchanged.
+  (is (= true  (wall? grid-with-doors 0 1)))
+  (is (= false (wall? grid-with-doors 1 1)))
+  (is (= false (wall? grid-with-doors 2 1)))   ; locked door is NOT a wall
+  (is (= false (wall? grid-with-doors 1 2))))
+
+(deftest test-find-door-cell-returns-coords-of-first-door
+  ;; Unlocked door at (1, 1) — first match wins, blue/red doors
+  ;; on the same row don't shadow it.
+  (is (= [1 1] (find-door-cell grid-with-doors))))
+
+(deftest test-find-door-cell-finds-locked-doors
+  ;; Grid with only a blue-locked door — predicate still matches.
+  (let [g [[1 1 1]
+           [1 0 3]
+           [1 1 1]]]
+    (is (= [2 1] (find-door-cell g)))))
+
+(deftest test-find-door-cell-nil-when-no-door
+  (let [g [[1 1 1]
+           [1 0 1]
+           [1 1 1]]]
+    (is (php/=== nil (find-door-cell g)))))
+
+(deftest test-missing-key-for-only-reports-locked-door-block
+  ;; Wall, floor, unlocked door, locked-with-key → nil. Locked
+  ;; without key → the matching colour kw.
+  (is (= nil   (missing-key-for grid-with-doors #{} 0 1)))    ; wall
+  (is (= nil   (missing-key-for grid-with-doors #{} 1 2)))    ; floor
+  (is (= nil   (missing-key-for grid-with-doors #{} 1 1)))    ; unlocked door
+  (is (= :blue (missing-key-for grid-with-doors #{} 2 1)))    ; blue locked, no key
+  (is (= :red  (missing-key-for grid-with-doors #{:blue} 3 1))) ; red locked, only have blue
+  (is (= nil   (missing-key-for grid-with-doors #{:blue} 2 1)))) ; blue locked, have blue
+
+;; ---------------------------------------------------------------------
+;; Boss-locked door (cell-door-boss = 5). No physical keycard ever
+;; spawns for it; combat conj's `:boss` into :held-keys when the boss
+;; dies. The standard passable? / missing-key-for / door? machinery
+;; then unlocks it via the same flow as :blue / :red.
+;; ---------------------------------------------------------------------
+
+(def grid-with-boss-door
+  [[1 1 1 1 1]
+   [1 0 0 0 5]   ; cell-door-boss at (4, 1)
+   [1 1 1 1 1]])
+
+(deftest test-boss-door-is-a-door
+  (is (= true (door? grid-with-boss-door 4 1))))
+
+(deftest test-boss-door-lock-returns-boss-kw
+  (is (= :boss (door-lock grid-with-boss-door 4 1))))
+
+(deftest test-boss-door-blocks-without-key
+  (is (= false (passable? grid-with-boss-door #{} 4 1)))
+  (is (= false (passable? grid-with-boss-door #{:blue :red} 4 1))))
+
+(deftest test-boss-door-opens-with-boss-key
+  (is (= true (passable? grid-with-boss-door #{:boss} 4 1))))
+
+(deftest test-missing-key-for-boss-door
+  (is (= :boss (missing-key-for grid-with-boss-door #{} 4 1)))
+  (is (= nil   (missing-key-for grid-with-boss-door #{:boss} 4 1))))
+
+(deftest test-parse-layout-x-char-produces-boss-door
+  (let [out (parse-layout ["#####"
+                           "#.@.X"
+                           "#####"])
+        g   (:grid out)]
+    (is (= cell-door-boss (get-in g [1 4])))))

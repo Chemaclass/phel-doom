@@ -1,0 +1,287 @@
+(ns phel-doom.core.map)
+
+;; ---------------------------------------------------------------------
+;; Map / grid layer.
+;;
+;; A grid is a Phel vector-of-vectors of cell values. Every cell holds
+;; one of the small set of cell-* constants below. The raycaster and the
+;; player-collision code interpret them; nothing else in the codebase
+;; should write magic 0/1/2/3 literals — use the named constants.
+;; ---------------------------------------------------------------------
+
+(def cell-floor
+  "Walkable empty cell."
+  0)
+(def cell-wall
+  "Solid wall: blocks player movement and the raycaster."
+  1)
+(def cell-door
+  "Unlocked door: blocks the raycaster, passable by the player. Stepping
+   in advances the run to the next level."
+  2)
+
+(def cell-door-blue
+  "Blue-keyed door: same render + level-advance behaviour as cell-door,
+   but try-move blocks until the player holds the matching key."
+  3)
+
+(def cell-door-red
+  "Red-keyed door — see cell-door-blue."
+  4)
+
+(def cell-door-boss
+  "Boss-locked door: passable only after the boss enemy is killed.
+   Combat conj's `:boss` to `:held-keys` when the boss dies on a
+   `:door-lock :boss` level, which then unlocks via the standard
+   `passable?` / `held-keys` machinery."
+  5)
+
+(def lock-colours
+  "Map from locked-door cell value back to the matching keycard kw.
+   Drives door-lock + passable? + render door tint. `:boss` is a
+   synthetic 'colour' — no keycard ever spawns for it; the kw is
+   granted automatically by combat when the boss dies."
+  {3 :blue
+   4 :red
+   5 :boss})
+
+(def default-grid
+  "16×16 starter map kept around for deterministic tests."
+  [[1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1]
+   [1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1]
+   [1 0 1 1 0 0 0 0 0 0 0 0 1 1 0 1]
+   [1 0 1 0 0 0 0 0 0 0 0 0 0 1 0 1]
+   [1 0 1 0 0 0 1 1 1 1 0 0 0 1 0 1]
+   [1 0 0 0 0 0 1 0 0 1 0 0 0 0 0 1]
+   [1 0 0 0 0 0 1 0 0 1 0 0 0 0 0 1]
+   [1 0 0 0 0 0 1 1 0 1 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1]
+   [1 0 1 1 0 0 0 0 0 0 0 0 1 1 0 1]
+   [1 0 1 0 0 0 0 0 0 0 0 0 0 1 0 1]
+   [1 0 1 0 0 0 0 0 0 0 0 0 0 1 0 1]
+   [1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1]
+   [1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1]])
+
+(defn cell
+  "Read map cell at integer (x, y). Out-of-bounds reads return cell-wall
+   so the raycaster never escapes off the map."
+  [grid x y]
+  (if (or (< x 0) (< y 0))
+    cell-wall
+    (let [row (get grid y)]
+      (if (nil? row)
+        cell-wall
+        (or (get row x) cell-wall)))))
+
+(defn wall?
+  "True when (x, y) blocks player movement. Only solid walls do —
+   doors are passable triggers."
+  [grid x y]
+  (= cell-wall (cell grid x y)))
+
+(defn door?
+  "True when (x, y) holds ANY door variant (unlocked + locked).
+   Walking onto a door triggers a level transition (after the lock
+   check resolves)."
+  [grid x y]
+  (let [c (cell grid x y)]
+    (or (= cell-door c) (contains? lock-colours c))))
+
+(defn door-lock
+  "Keycard colour required to pass this cell, or nil for an unlocked
+   door (or any non-door cell)."
+  [grid x y]
+  (get lock-colours (cell grid x y)))
+
+(defn passable?
+  "True when the player CAN walk into (x, y) given their held keys.
+   Walls always block; locked doors block until the matching key is
+   held. Unlocked doors + floors pass freely."
+  [grid held-keys x y]
+  (let [c (cell grid x y)]
+    (cond
+      (= cell-wall c)            false
+      (contains? lock-colours c) (contains? (or held-keys #{}) (get lock-colours c))
+      :else                      true)))
+
+(defn find-door-cell
+  "Scan `grid` for the first door cell (any variant: unlocked /
+   blue-locked / red-locked) and return its `[x y]`. nil when no
+   door is present — never happens for a valid level, but the
+   defensive path keeps the renderer crash-safe on test fixtures
+   that skip seed-doors."
+  [grid]
+  (let [h (count grid)]
+    (loop [y 0]
+      (if (php/>= y h)
+        nil
+        (let [row (get grid y)
+              w   (count row)
+              hit (loop [x 0]
+                    (cond
+                      (php/>= x w)     nil
+                      (door? grid x y) [x y]
+                      :else            (recur (php/+ x 1))))]
+          (if (nil? hit)
+            (recur (php/+ y 1))
+            hit))))))
+
+(defn missing-key-for
+  "Lock colour kw that's blocking the player at (x, y), or nil. Used
+   by physics/try-move to differentiate a 'bounced off a wall' bump
+   from a 'bounced off a locked door' bump so the HUD can paint a
+   NEED <COLOUR> KEY hint instead of staying silent."
+  [grid held-keys x y]
+  (let [c    (cell grid x y)
+        lock (get lock-colours c)]
+    (if (and lock (not (contains? (or held-keys #{}) lock)))
+      lock
+      nil)))
+
+(defn- has-floor-neighbour?
+  "True when at least one of the four orthogonal neighbours of (x, y) is
+   walkable floor. Used by seed-doors to avoid placing an unreachable
+   door inside a wall blob."
+  [grid x y]
+  (or (= cell-floor (cell grid (- x 1) y))
+      (= cell-floor (cell grid (+ x 1) y))
+      (= cell-floor (cell grid x (- y 1)))
+      (= cell-floor (cell grid x (+ y 1)))))
+
+(defn seed-doors
+  "Convert `n` random interior wall cells into closed doors. A
+   candidate cell must (a) currently be a wall and (b) sit next to at
+   least one floor cell so the player can actually touch the door —
+   without that check a door can get hidden inside a 2×2 wall blob
+   and the room becomes inescapable. Gives up quietly after 400
+   attempts when the interior runs out of candidates."
+  [grid n]
+  (let [w (count (first grid))
+        h (count grid)]
+    (loop [g grid placed 0 attempts 0]
+      (cond
+        (>= placed n)     g
+        (>= attempts 400) g
+        :else
+        (let [x (+ 2 (rand-int (- w 4)))
+              y (+ 2 (rand-int (- h 4)))]
+          (if (and (= cell-wall (cell g x y))
+                   (has-floor-neighbour? g x y))
+            (recur (assoc-in g [y x] cell-door) (+ placed 1) (+ attempts 1))
+            (recur g placed (+ attempts 1))))))))
+
+(defn- border-row [w]
+  (apply vector (map (fn [_] cell-wall) (range 0 w))))
+
+(defn- interior-row [w]
+  (apply vector
+         (concat [cell-wall]
+                 (map (fn [_] cell-floor) (range 0 (- w 2)))
+                 [cell-wall])))
+
+(defn- place-block [grid w h x y bw bh]
+  (loop [yy 0 g grid]
+    (if (>= yy bh)
+      g
+      (recur (+ yy 1)
+             (loop [xx 0 gg g]
+               (if (>= xx bw)
+                 gg
+                 (let [px (+ x xx)
+                       py (+ y yy)]
+                   (if (and (< px (- w 1)) (< py (- h 1)) (> px 0) (> py 0))
+                     (recur (+ xx 1) (assoc-in gg [py px] cell-wall))
+                     (recur (+ xx 1) gg)))))))))
+
+(defn random-grid
+  "Build a w×h grid with a solid border and `n-blocks` random 1×1–2×2
+   wall blobs. Caller controls the wall count so changing the map size
+   doesn't drag obstacle density with it."
+  [w h n-blocks]
+  (let [base (apply vector
+                    (concat
+                     [(border-row w)]
+                     (map (fn [_] (interior-row w)) (range 0 (- h 2)))
+                     [(border-row w)]))]
+    (loop [grid base i 0]
+      (if (>= i n-blocks)
+        grid
+        (recur (place-block grid w h
+                            (+ 2 (rand-int (- w 5)))
+                            (+ 2 (rand-int (- h 5)))
+                            (+ 1 (rand-int 2))
+                            (+ 1 (rand-int 2)))
+               (+ i 1))))))
+
+(defn random-spawn
+  "Return [x y] floats at the centre of a random open cell. The
+   bordered grid guarantees at least one floor cell so the loop
+   terminates."
+  [grid]
+  (let [h (count grid)
+        w (count (first grid))]
+    (loop []
+      (let [x (+ 1 (rand-int (- w 2)))
+            y (+ 1 (rand-int (- h 2)))]
+        (if (= cell-floor (get (get grid y) x))
+          [(+ 0.5 x) (+ 0.5 y)]
+          (recur))))))
+
+;; ---------------------------------------------------------------------
+;; Hand-authored layouts.
+;;
+;; A layout is a vector of equal-length strings — one per row, top-down.
+;; Char map:
+;;   '#' wall            '.' floor
+;;   'D' unlocked door   'B' blue-locked door   'R' red-locked door
+;;   'X' boss-locked door (unlocks when boss is killed)
+;;   '@' floor + records [x y] as the player spawn (cell centre)
+;;
+;; parse-layout returns {:grid <vec-of-vec> :spawn [x y]} when the
+;; layout is well-formed, nil when no '@' is found. Used by level.phel
+;; when a level entry carries :layout to bypass the random-grid path.
+;; ---------------------------------------------------------------------
+
+(def ^:private layout-char->cell
+  {"#" cell-wall
+   "." cell-floor
+   "@" cell-floor
+   "D" cell-door
+   "B" cell-door-blue
+   "R" cell-door-red
+   "X" cell-door-boss})
+
+(defn- parse-row
+  "Convert one layout string into [row-vec maybe-spawn-x]. Returns
+   nil for spawn-x when the row doesn't contain '@'. Unknown chars
+   fall back to floor so a typo doesn't crash."
+  [s y]
+  (let [w (php/strlen s)]
+    (loop [x       0
+           row     []
+           spawn-x nil]
+      (if (php/>= x w)
+        [row spawn-x]
+        (let [ch    (php/substr s x 1)
+              cell  (or (get layout-char->cell ch) cell-floor)
+              spawn (if (= ch "@") x spawn-x)]
+          (recur (php/+ x 1) (conj row cell) spawn))))))
+
+(defn parse-layout
+  "Parse a hand-authored ASCII grid into `{:grid :spawn}`. Returns
+   nil when the layout has no '@' (no player spawn)."
+  [rows]
+  (let [h (count rows)]
+    (loop [y     0
+           grid  []
+           spawn nil]
+      (if (php/>= y h)
+        (when (some? spawn)
+          {:grid grid :spawn spawn})
+        (let [[row sx] (parse-row (get rows y) y)
+              spawn'   (if (and (nil? spawn) (some? sx))
+                         [(+ 0.5 sx) (+ 0.5 y)]
+                         spawn)]
+          (recur (php/+ y 1) (conj grid row) spawn'))))))

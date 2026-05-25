@@ -1,0 +1,43 @@
+(ns phel-doom-tests.core.difficulty-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.difficulty :refer [normalise scale-cfg spec-for]))
+
+(deftest test-normalise-defaults-to-normal-on-nil
+  (is (= :normal (normalise nil))))
+
+(deftest test-normalise-passes-known-kw-through
+  (is (= :hard      (normalise :hard)))
+  (is (= :nightmare (normalise :nightmare))))
+
+(deftest test-normalise-string-input-coerces-to-kw
+  (is (= :easy (normalise "easy")))
+  (is (= :hard (normalise "HARD"))))
+
+(deftest test-normalise-unknown-input-falls-back-to-normal
+  (is (= :normal (normalise :ultra-violence)))
+  (is (= :normal (normalise "garbage"))))
+
+(deftest test-scale-cfg-easy-shrinks-everything
+  (let [cfg (scale-cfg {:chase 1.0 :enemy-lives 3 :enemies 6} :easy)]
+    ;; speed/hp scaled, enemy count rounded up via ceil
+    (is (< (:chase cfg) 1.0))
+    (is (= 3 (:enemy-lives cfg)))  ; 3 * 1.0 = 3
+    (is (= 5 (:enemies cfg)))))    ; ceil(6 * 0.7) = 5
+
+(deftest test-scale-cfg-nightmare-amplifies-everything
+  (let [cfg (scale-cfg {:chase 1.0 :enemy-lives 3 :enemies 6} :nightmare)]
+    (is (> (:chase cfg) 1.0))
+    (is (>= (:enemy-lives cfg) 5))    ; ceil(3 * 1.5)
+    (is (>= (:enemies cfg) 9))))      ; ceil(6 * 1.5)
+
+(deftest test-scale-cfg-normal-leaves-cfg-as-is
+  (let [cfg (scale-cfg {:chase 1.0 :enemy-lives 3 :enemies 6} :normal)]
+    (is (= 1.0 (:chase cfg)))
+    (is (= 3   (:enemy-lives cfg)))
+    (is (= 6   (:enemies cfg)))))
+
+(deftest test-scale-cfg-floors-at-one-on-tiny-inputs
+  ;; Easy mode on a 1-enemy 1-HP level shouldn't empty it.
+  (let [cfg (scale-cfg {:chase 1.0 :enemy-lives 1 :enemies 1} :easy)]
+    (is (= 1 (:enemies cfg)))
+    (is (= 1 (:enemy-lives cfg)))))

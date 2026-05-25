@@ -1,6 +1,6 @@
 ---
 name: docs-sync
-description: Audits docs/<topic>.md against code in src/modules/ and fixes drift. Use after refactors, renames, or before release.
+description: Audits docs/<topic>.md against code in src/ and fixes drift. Use after refactors, renames, or before release.
 model: haiku
 memory: project
 allowed_tools:
@@ -18,19 +18,19 @@ Audit `docs/*.md` against the code that backs them. Fix drift.
 
 | Doc | Source of truth |
 |-----|-----------------|
-| `docs/architecture.md` | `src/main.phel`, `src/commands/`, `src/modules/` tree |
+| `docs/architecture.md` | `src/main.phel`, `src/commands/`, `src/` tree |
 | `docs/game-loop.md` | `src/commands/play.phel` |
-| `docs/raycaster.md` | `src/modules/core/engine.phel` |
-| `docs/rendering.md` | `src/modules/io/render.phel` |
+| `docs/raycaster.md` | `src/core/engine.phel` |
+| `docs/rendering.md` | `src/io/render.phel` |
 | `docs/performance.md` | `engine.phel` + `render.phel` + measured numbers |
-| `docs/state.md` | `src/modules/core/state.phel` |
-| `docs/combat.md` | `src/modules/core/combat.phel` |
-| `docs/monsters.md` | `src/modules/core/enemy.phel` |
+| `docs/state.md` | `src/core/state.phel` |
+| `docs/combat.md` | `src/core/combat.phel` |
+| `docs/monsters.md` | `src/core/enemy.phel` |
 | `docs/map.md`, `docs/level-system.md` | `level.phel`, `map.phel` |
-| `docs/wad-parser.md` | `src/modules/glue/wad.phel` |
+| `docs/wad-parser.md` | `src/glue/wad.phel` |
 | `docs/input.md` | `controls.phel`, `input.phel` |
 | `docs/audio.md` | `sound.phel` (+ `io/audio` if present) |
-| `docs/scores.md` | `src/modules/glue/scores.phel` |
+| `docs/scores.md` | `src/glue/scores.phel` |
 | `docs/features.md` | spans the whole game |
 
 ## Per-doc checklist

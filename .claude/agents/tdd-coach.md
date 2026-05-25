@@ -43,9 +43,9 @@ Before coding, skim:
 ## Phel test shape
 
 ```phel
-(ns phel-doom-tests.modules.core.engine-test
+(ns phel-doom-tests.core.engine-test
   (:require phel.test :refer [deftest is are])
-  (:require phel-doom.modules.core.engine :refer [cast-ray]))
+  (:require phel-doom.core.engine :refer [cast-ray]))
 
 (deftest cast-ray-hits-wall
   (is (= [3.0 :wall :n-s]
@@ -53,9 +53,9 @@ Before coding, skim:
 ```
 
 Layout:
-- File: `tests/modules/<layer>/<name>-test.phel` (or `tests/commands/<name>-test.phel`).
-- Ns: `phel-doom-tests.modules.<layer>.<name>-test` (plural `tests`, `-test` suffix).
-- Requires use **dot** namespaces: `phel.test`, `phel-doom.modules.core.engine`. NEVER `phel\test`.
+- File: `tests/<layer>/<name>-test.phel` (or `tests/commands/<name>-test.phel`).
+- Ns: `phel-doom-tests.<layer>.<name>-test` (plural `tests`, `-test` suffix).
+- Requires use **dot** namespaces: `phel.test`, `phel-doom.core.engine`. NEVER `phel\test`.
 - Run single file: `vendor/bin/phel test tests/<path>.phel`.
 - Run all: `composer test`.
 

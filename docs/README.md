@@ -36,7 +36,7 @@ One doc per subsystem. Each points to its source files + functions.
 ```
 src/main.phel                          ; CLI entrypoint
 src/commands/play.phel                 ; tick-world + run-levels lifecycle
-src/modules/core/                      ; pure logic, no IO
+src/core/                      ; pure logic, no IO
   state.phel       world data model
   map.phel         grid + random arena gen
   engine.phel      raycaster (cast-frame, cast-ray)
@@ -47,13 +47,13 @@ src/modules/core/                      ; pure logic, no IO
   enemies.phel     enemy-types catalog (visuals + default HP per kw)
   weapons.phel     3-weapon catalogue + per-weapon ammo state + switch
   difficulty.phel  easy/normal/hard/nightmare multipliers
-src/modules/io/                        ; side effects only
+src/io/                        ; side effects only
   input.phel       stty raw mode + kitty protocol opt-in
   render.phel      frame->string + paint-* overlays + ANSI
   sound.phel       afplay/paplay/aplay shell-out
   scores.phel      $HOME/.phel-doom-scores.json
   wad.phel         WAD lump-directory parser
-src/modules/glue/                      ; wires core + io
+src/glue/                      ; wires core + io
   controls.phel    bytes -> :moves counters + rising-edges
 tests/                                 ; mirrors src/
 ```

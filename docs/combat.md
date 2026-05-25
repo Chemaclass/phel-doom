@@ -1,6 +1,6 @@
 # Combat
 
-Hitscan + damage timing + i-frames. `src/modules/core/combat.phel`. Only side effect is `play-sfx!`, gated by `(:sound-on world)`.
+Hitscan + damage timing + i-frames. `src/core/combat.phel`. Only side effect is `play-sfx!`, gated by `(:sound-on world)`.
 
 ## Tunables
 

@@ -1,6 +1,6 @@
 # WAD parser
 
-`src/modules/io/wad.phel`. Parses the DOOM .wad format. Not yet wired into gameplay (active renderer uses procedurally-generated grids). Kept for future BSP-renderer experiments.
+`src/io/wad.phel`. Parses the DOOM .wad format. Not yet wired into gameplay (active renderer uses procedurally-generated grids). Kept for future BSP-renderer experiments.
 
 ## WAD format primer
 
@@ -51,7 +51,7 @@ Parser operates on the in-memory file string for random access. WAD files are ty
 
 ## Tests
 
-`tests/modules/io/wad-test.phel` covers header parse, directory walk, and the two lump decoders. Fixture is a hand-rolled minimal WAD constructed inline, so tests don't depend on shipping a real WAD.
+`tests/io/wad-test.phel` covers header parse, directory walk, and the two lump decoders. Fixture is a hand-rolled minimal WAD constructed inline, so tests don't depend on shipping a real WAD.
 
 ## Why it exists
 

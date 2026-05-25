@@ -1,0 +1,116 @@
+(ns phel-doom-tests.core.engine-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.map    :refer [default-grid])
+  (:require phel-doom.core.state  :refer [new-world new-player])
+  (:require phel-doom.core.engine :refer [cast-ray cast-frame max-depth]))
+
+(def pgrid (to-php-array (map to-php-array default-grid)))
+
+(deftest test-ray-hits-wall-eventually
+  (let [d (cast-ray pgrid 8.0 8.0 0.0)]
+    (is (> d 0))
+    (is (< d max-depth))))
+
+(deftest test-ray-into-open-space-bounded-by-max-depth
+  ;; from (8, 8) facing south-east through long open corridor
+  (let [d (cast-ray pgrid 8.0 8.0 (/ php/M_PI 4.0))]
+    (is (<= d max-depth))))
+
+(deftest test-ray-near-wall-short-distance
+  ;; from (1.5, 1.5) facing north (-y), wall at y=1 → distance ~0.5
+  (let [d (cast-ray pgrid 1.5 1.5 (- 0 (/ php/M_PI 2.0)))]
+    (is (< d 1.0))))
+
+;; ---------------------------------------------------------------------
+;; DDA correctness (issue #2): pin the hit details cast-frame surfaces
+;; to render so the texture / side-shading pipeline keeps working.
+;; A 5×5 chamber: player at the centre, walls all around at x=0/4 and
+;; y=0/4. Distance to each wall = 1.5 cells from (2.5, 2.5).
+;; ---------------------------------------------------------------------
+
+(def chamber-grid
+  [[1 1 1 1 1]
+   [1 0 0 0 1]
+   [1 0 0 0 1]
+   [1 0 0 0 1]
+   [1 1 1 1 1]])
+
+(defn- one-ray-frame [world angle]
+  ;; A single-column cast-frame so we can read column 0 directly.
+  (let [w' (assoc world :player (new-player 2.5 2.5 angle))
+        c  (cast-frame w' 1)]
+    {:dist (php/aget (:dists c) 0)
+     :hit  (php/aget (:hits c)  0)
+     :side (php/aget (:sides c) 0)
+     :hx   (php/aget (:hxs c)   0)
+     :hy   (php/aget (:hys c)   0)}))
+
+(deftest test-cast-frame-east-ray-hits-x-axis-wall
+  ;; Centre-column ray pointing east: hits the wall at x=4 first, so
+  ;; the last boundary crossed is an x-line. side = 0 (vertical face).
+  (let [w (new-world chamber-grid (new-player 2.5 2.5 0.0))
+        r (one-ray-frame w 0.0)]
+    (is (= 1 (:hit r)))
+    (is (= 0 (:side r)))
+    (is (= 4 (:hx r)))
+    (is (< (php/abs (php/- (:dist r) 1.5)) 0.01))))
+
+(deftest test-cast-frame-south-ray-hits-y-axis-wall
+  ;; Pointing south (+y): last boundary is a y-line. side = 1
+  ;; (horizontal face). hy = 4.
+  (let [w (new-world chamber-grid (new-player 2.5 2.5 0.0))
+        r (one-ray-frame w (/ php/M_PI 2.0))]
+    (is (= 1 (:hit r)))
+    (is (= 1 (:side r)))
+    (is (= 4 (:hy r)))
+    (is (< (php/abs (php/- (:dist r) 1.5)) 0.01))))
+
+(deftest test-cast-frame-arrays-are-parallel
+  ;; Render destructures `{:keys [dists hits sides hxs hys]}` from
+  ;; cast-frame and walks them by column index. Pin that they all
+  ;; have the same length so a column-major loop stays safe.
+  (let [w (new-world chamber-grid (new-player 2.5 2.5 0.0))
+        c (cast-frame w 8)]
+    (is (= 8 (php/count (:dists c))))
+    (is (= 8 (php/count (:hits c))))
+    (is (= 8 (php/count (:sides c))))
+    (is (= 8 (php/count (:hxs c))))
+    (is (= 8 (php/count (:hys c))))))
+
+(deftest test-cast-frame-scale-2-fills-vw-from-half-rays
+  ;; Perf-mode path: cast every 2nd column, replicate into the next.
+  ;; Output buffers still size to `width` so the row loop downstream
+  ;; doesn't need to know about scaling. Adjacent pairs hold the
+  ;; same sampled value (chunky 2-col look).
+  (let [w (new-world chamber-grid (new-player 2.5 2.5 0.0))
+        c (cast-frame w 8 2)]
+    (is (= 8 (php/count (:dists c))))
+    (is (= 8 (php/count (:hits c))))
+    ;; Pair 0+1 must agree; pair 2+3 must agree (different sample,
+    ;; possibly different value from pair 0+1).
+    (is (= (php/aget (:dists c) 0) (php/aget (:dists c) 1)))
+    (is (= (php/aget (:hits c)  0) (php/aget (:hits c)  1)))
+    (is (= (php/aget (:dists c) 2) (php/aget (:dists c) 3)))
+    (is (= (php/aget (:hits c)  2) (php/aget (:hits c)  3)))))
+
+(deftest test-cast-frame-scale-2-odd-width-leftover
+  ;; width=5 scale=2 → ray at cols 0, 2, 4. Col 4 has no neighbour
+  ;; to duplicate into; the inner replication loop must stop at width.
+  (let [w (new-world chamber-grid (new-player 2.5 2.5 0.0))
+        c (cast-frame w 5 2)]
+    (is (= 5 (php/count (:dists c))))
+    (is (= (php/aget (:dists c) 0) (php/aget (:dists c) 1)))
+    (is (= (php/aget (:dists c) 2) (php/aget (:dists c) 3)))
+    ;; Col 4 stands alone — just needs to be populated (not nil).
+    (is (php/!== nil (php/aget (:dists c) 4)))))
+
+(deftest test-cast-frame-scale-1-matches-default-arity
+  ;; Explicit scale=1 must behave identically to the 2-arity call.
+  (let [w (new-world chamber-grid (new-player 2.5 2.5 0.0))
+        a (cast-frame w 6)
+        b (cast-frame w 6 1)]
+    (loop [i 0]
+      (when (php/< i 6)
+        (is (= (php/aget (:dists a) i) (php/aget (:dists b) i)))
+        (is (= (php/aget (:hits  a) i) (php/aget (:hits  b) i)))
+        (recur (php/+ i 1))))))

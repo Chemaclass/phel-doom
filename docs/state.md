@@ -1,6 +1,6 @@
 # World + player state
 
-Pure data shapes that every other module operates on. `src/modules/core/state.phel`.
+Pure data shapes that every other module operates on. `src/core/state.phel`.
 
 ## The world map
 

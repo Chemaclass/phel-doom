@@ -1,0 +1,177 @@
+(ns phel-doom.core.state
+  (:require phel-doom.core.weapons :refer [initial-weapon-state]))
+
+(defn new-player
+  "Create a player record with floating-point position and angle in radians."
+  [x y angle]
+  {:x x :y y :angle angle})
+
+(def max-lives
+  "Hard cap on the player's life total. Heart pickups don't go above
+   this; new runs start here."
+  5)
+
+(def max-armor
+  "Hard cap on stacked armor pickups. Each absorbs one contact-damage
+   hit (combat/take-damage). Picked-up armor beyond this is silently
+   ignored so the player can't farm an indestructible buffer."
+  5)
+
+(def max-stamina
+  "Hard cap on the sprint stamina pool. Fresh runs start at this value
+   so the player has a full burst available the moment they spawn.
+   Physics drains it while sprinting and regenerates it (after a short
+   cooldown) while not."
+  100.0)
+
+(defn new-world
+  "Bundle map grid and player into the world state. Stores a PHP-native
+   copy of the grid under :pgrid so the raycast hot loop can read cells
+   via aget instead of going through Phel's persistent-vector dispatch."
+  [grid player]
+  {:grid      grid
+   :pgrid     (to-php-array (map to-php-array grid))
+   :width     (count (first grid))
+   :height    (count grid)
+   :player    player
+   :show-map  false
+   :paused    false
+   :help?     false
+   :debug?    false
+   :sound-on  true
+   :enemies   []
+   :hearts    []
+   :armors    []
+   :ammo-boxes []
+   :armor     0
+   :kills     0
+   :streak    0
+   :streak-secs 0.0
+   :lives     max-lives
+   :iframes     0.0
+   :fire-anim   0.0
+   :intro-secs  0.0
+   :flash-secs  0.0
+   :fire-cooldown 0.0
+   :reload-cooldown 0.0
+   :empty-click-secs 0.0
+   ;; Powerup timers. Decayed each frame in combat/decay-timers.
+   ;; While > 0 the buff is active; render samples them for the
+   ;; full-screen tint, combat reads them for damage / vulnerability
+   ;; mods.
+   :berserk-secs    0.0
+   :berserks        []
+   :invuln-secs     0.0
+   :invulns         []
+   :backpack?       false
+   :backpacks       []
+   ;; Keycards. :held-keys is a set of collected colour kws
+   ;; (e.g. #{:blue}). :keycards is the per-level pickup vector.
+   :held-keys       #{}
+   :keycards        []
+   ;; Transient HUD cue: armed by physics/try-move when the player
+   ;; bumps a locked door without the matching keycard. Render
+   ;; paints 'NEED <COLOUR> KEY' centred over the 3D view while
+   ;; the timer is > 0; combat/decay-timers ticks it down.
+   :locked-door-bump-secs    0.0
+   :locked-door-bump-colour  nil
+   ;; Weapons. :weapon is the active slot. :weapon-state is the
+   ;; per-weapon mag/reserve table (catalogue lives in weapons.phel).
+   ;; :mag and :ammo-reserve mirror the active weapon's live state so
+   ;; combat / render / HUD code can read them without an extra hop;
+   ;; weapons/switch keeps the mirror in sync.
+   :weapon         :pistol
+   ;; Fresh runs only own the pistol. Shotgun + chaingun must be
+   ;; found on the map (level.phel/maybe-spawn-weapon-pickup).
+   :owned-weapons  #{:pistol}
+   :weapon-state   (initial-weapon-state)
+   :mag           10
+   :ammo-reserve  30
+   :heat        0.0
+   :jam-secs    0.0
+   :heartbeat-phase 0.0
+   :heartbeat-tick? false
+   :flicker-cooldown    20.0
+   :flicker-active-secs 0.0
+   :door-face-cooldown    10.0
+   :door-face-active-secs 0.0
+   :blood-drops         []
+   :prev-min-enemy-dist 1.0e9
+   :scare-secs          0.0
+   :fx          []
+   :game-time   0.0
+   ;; Sprint pool + latches. :stamina decays while sprinting (and
+   ;; moving), regenerates while not. :sprint-cooldown-secs holds
+   ;; regen back for a short window after the player lets go so a
+   ;; tap-shift-tap-shift player can't hide the drain. :sprint-blocked?
+   ;; latches true when stamina hits 0 mid-sprint and unlatches when
+   ;; stamina recovers past sprint-engage-threshold — prevents
+   ;; stutter-sprint at empty.
+   :stamina                  max-stamina
+   :sprint-cooldown-secs     0.0
+   :sprint-blocked?          false
+   :moves      {:fwd          0
+                :back         0
+                :strafe-left  0
+                :strafe-right 0
+                :turn-left    0
+                :turn-right   0
+                :sprint       0}})
+
+(defn gain-life
+  "Add one life to the player, capped at max-lives."
+  [world]
+  (update world :lives (fn [l] (php/min max-lives (php/+ l 1)))))
+
+(defn with-enemies
+  "Attach an enemies vector to the world. Kept as a separate step so
+   new-world stays pure / deterministic for tests."
+  [world enemies]
+  (assoc world :enemies enemies))
+
+(defn toggle-map
+  "Flip the :show-map flag that switches the renderer between overlay
+   minimap (false) and side-by-side big map (true)."
+  [world]
+  (update world :show-map not))
+
+(defn toggle-pause
+  "Flip the :paused flag. While true, the game loop skips physics, AI,
+   shot resolution, and i-frame decay; render still runs so the pause
+   overlay stays visible."
+  [world]
+  (update world :paused not))
+
+(defn advance-game-time
+  "Advance the pause-aware game clock by `dt` seconds. This is the
+   time source render uses for blinks, pulses, and walk-cycle phases
+   — freezing it on pause freezes every visual animation derived
+   from it (door blink, behind-warning, enemy face/body cycle, etc.)."
+  [world ^float dt]
+  (update world :game-time (fn [t] (php/+ (or t 0.0) dt))))
+
+(defn toggle-sound
+  "Flip the :sound-on flag. While false, every sfx call resolves to a
+   no-op."
+  [world]
+  (update world :sound-on not))
+
+(defn toggle-debug
+  "Flip the :debug? flag that controls the perf overlay (F3). When on,
+   the renderer paints an extra HUD row with frame timing, byte count,
+   RLE effectiveness, and PHP memory; when off, none of the
+   instrumentation runs so the off-state pays zero overhead."
+  [world]
+  (update world :debug? not))
+
+(defn move-player
+  "Translate the player by (dx, dy) — no collision check here."
+  [world dx dy]
+  (let [{:keys [x y]} (:player world)]
+    (update world :player merge {:x (+ x dx) :y (+ y dy)})))
+
+(defn turn-player
+  "Rotate the player by dtheta radians."
+  [world dtheta]
+  (let [a (:angle (:player world))]
+    (update world :player merge {:angle (+ a dtheta)})))

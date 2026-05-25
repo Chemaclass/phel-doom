@@ -6,25 +6,26 @@ Pure `core/` (deterministic logic) → composition `glue/` (pure wiring) → eff
 src/
 ├── main.phel                        ; phel.cli wiring, CLI entrypoint
 ├── commands/play.phel               ; outer orchestration (game-loop, run-levels)
-└── modules/
-    ├── core/                        ; pure, deterministic, no IO
-    │   ├── state.phel               ; world + player maps, gain-life, max-lives
-    │   ├── map.phel                 ; grid generators, cell constants, wall? / door?
-    │   ├── engine.phel              ; raycaster (cast-ray, cast-frame)
-    │   ├── physics.phel             ; player rotation + translation + counter decay
-    │   ├── combat.phel              ; fire-shot + damage-step + tunables
-    │   ├── enemy.phel               ; spawn-enemies, advance, shoot, respawn timer
-    │   ├── level.phel               ; per-level catalog + build-world factory
-    │   ├── weapons.phel             ; per-weapon stat catalog + switch/reload
-    │   └── difficulty.phel          ; per-difficulty scaling (speed, HP, count)
-    ├── io/                          ; effects, touch the OS
-    │   ├── input.phel               ; raw STDIN, alt screen buffer
-    │   ├── render.phel              ; ANSI escape composition + flush
-    │   ├── sound.phel               ; afplay/paplay/aplay shell-out
-    │   ├── scores.phel              ; JSON in $HOME
-    │   └── wad.phel                 ; .wad file format parser
-    └── glue/                        ; composition, needs both halves
-        └── controls.phel            ; key bytes -> world state mutations
+├── core/                            ; pure, deterministic, no IO
+│   ├── state.phel                   ; world + player maps, gain-life, max-lives
+│   ├── map.phel                     ; grid generators, cell constants, wall? / door?
+│   ├── engine.phel                  ; raycaster (cast-ray, cast-frame)
+│   ├── physics.phel                 ; player rotation + translation + counter decay
+│   ├── combat.phel                  ; fire-shot + damage-step + tunables
+│   ├── enemy.phel                   ; spawn-enemies, advance, shoot, respawn timer
+│   ├── enemy_ai.phel                ; AI state machine (dormant/wander/aware/hunting/pain/attacking)
+│   ├── level.phel                   ; per-level catalog + build-world factory
+│   ├── perf.phel                    ; big-screen perf-mode predicates
+│   ├── weapons.phel                 ; per-weapon stat catalog + switch/reload
+│   └── difficulty.phel              ; per-difficulty scaling (speed, HP, count)
+├── glue/                            ; composition, needs both halves
+│   └── controls.phel                ; key bytes -> world state mutations
+└── io/                              ; effects, touch the OS
+    ├── input.phel                   ; raw STDIN, alt screen buffer
+    ├── render.phel                  ; ANSI escape composition + flush
+    ├── sound.phel                   ; afplay/paplay/aplay shell-out
+    ├── scores.phel                  ; JSON in $HOME
+    └── wad.phel                     ; .wad file format parser
 ```
 
 ## Dependency rules

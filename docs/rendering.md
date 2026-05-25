@@ -1,6 +1,6 @@
 # Rendering
 
-`src/modules/io/render.phel`. Composes one ANSI string per frame and writes to stdout. Side-effecting, hence `io/`.
+`src/io/render.phel`. Composes one ANSI string per frame and writes to stdout. Side-effecting, hence `io/`.
 
 ## Entry point
 

@@ -1,0 +1,43 @@
+(ns phel-doom-tests.io.render-blood-cols-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.io.render :refer [build-blood-cols]))
+
+;; Behavioural pin for the directional blood-overlay mask used during
+;; i-frames. Tests describe WHAT the mask should look like, not how
+;; it's computed, so the falloff curve or width can be retuned freely
+;; as long as these invariants hold.
+
+(deftest test-blood-cols-not-bloody-is-all-zero
+  (let [m (build-blood-cols 60 false :left)]
+    (is (= 0.0 (php/aget m 0)))
+    (is (= 0.0 (php/aget m 30)))
+    (is (= 0.0 (php/aget m 59)))))
+
+(deftest test-blood-cols-no-side-is-all-zero
+  (let [m (build-blood-cols 60 true nil)]
+    (is (= 0.0 (php/aget m 0)))
+    (is (= 0.0 (php/aget m 59)))))
+
+(deftest test-blood-cols-left-peaks-at-left-edge
+  (let [m (build-blood-cols 60 true :left)]
+    ;; Left edge fully red.
+    (is (= 1.0 (php/aget m 0)))
+    ;; Centre column fully clear.
+    (is (= 0.0 (php/aget m 30)))
+    ;; Right edge clear too — only the affected side bleeds red.
+    (is (= 0.0 (php/aget m 59)))))
+
+(deftest test-blood-cols-right-peaks-at-right-edge
+  (let [m (build-blood-cols 60 true :right)]
+    (is (= 0.0 (php/aget m 0)))
+    (is (= 0.0 (php/aget m 30)))
+    (is (= 1.0 (php/aget m 59)))))
+
+(deftest test-blood-cols-monotonic-falloff
+  ;; Intensity must decrease monotonically from the affected edge
+  ;; toward the centre. Falloff curve can change; this invariant
+  ;; must hold.
+  (let [m (build-blood-cols 90 true :left)]
+    (is (>= (php/aget m 0) (php/aget m 5)))
+    (is (>= (php/aget m 5) (php/aget m 10)))
+    (is (>= (php/aget m 10) (php/aget m 20)))))

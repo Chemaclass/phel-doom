@@ -10,9 +10,9 @@ globs: src/**,tests/**,*.phel
 Target: **cast + render < 5 ms** per frame at 120×30. Hard ceiling: 16 ms (60 fps).
 
 Hot paths (do NOT regress without justification):
-- `src/modules/core/engine.phel` — `cast-ray`, `cast-frame`
-- `src/modules/io/render.phel` — `render!`, RLE emit, shade strings
-- `src/modules/core/physics.phel` — `step-world`
+- `src/core/engine.phel` — `cast-ray`, `cast-frame`
+- `src/io/render.phel` — `render!`, RLE emit, shade strings
+- `src/core/physics.phel` — `step-world`
 
 Before optimizing: read `docs/performance.md`. Before claiming a win: bench (see `/perf-bench`).
 
@@ -20,7 +20,7 @@ Before optimizing: read `docs/performance.md`. Before claiming a win: bench (see
 
 - `world` is an immutable map threaded through the loop. **Never mutate.**
 - Pure transforms in `core/` and `glue/`. No `php/print`, no `php/echo`, no global atom mutation.
-- Side effects only in `src/modules/io/`. See [io-boundaries.md](io-boundaries.md).
+- Side effects only in `src/io/`. See [io-boundaries.md](io-boundaries.md).
 - Random numbers: thread RNG seed through `world`. No `php/rand` in `core/`.
 
 ## Loop shape
@@ -31,7 +31,7 @@ Each frame produces a new `world`. Old `world` discarded. No back-references.
 
 ## Tests
 
-Pure modules MUST have unit tests under `tests/modules/<layer>/<name>-test.phel` (and `tests/commands/` for play loop). Side-effecting code may have smoke tests but covered primarily by `/play`.
+Pure modules MUST have unit tests under `tests/<layer>/<name>-test.phel` (and `tests/commands/` for play loop). Side-effecting code may have smoke tests but covered primarily by `/play`.
 
 Run `composer test` before any commit that touches `core/` or `glue/`.
 

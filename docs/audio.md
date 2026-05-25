@@ -1,6 +1,6 @@
 # Audio
 
-`src/modules/io/sound.phel`. One-shot SFX via OS shell-out. No FFI, no PHP audio extensions.
+`src/io/sound.phel`. One-shot SFX via OS shell-out. No FFI, no PHP audio extensions.
 
 ## Why shell-out
 

@@ -1,6 +1,6 @@
 # Raycaster
 
-`src/modules/core/engine.phel`. Per-column wall distances via a grid-aligned DDA traversal.
+`src/core/engine.phel`. Per-column wall distances via a grid-aligned DDA traversal.
 
 ## What raycasting is
 
@@ -107,4 +107,4 @@ DDA averages ~5-8 cell crossings before hitting a wall on `default-grid` — dow
 
 ## Why the raycaster lives in `core/`
 
-Pure function: `(pgrid, x, y, angle) → distance`. No state, no IO, deterministic. `tests/modules/core/engine-test.phel` exercises with literal grids — distance accuracy, side bit, hit-cell coords, parallel-array lengths.
+Pure function: `(pgrid, x, y, angle) → distance`. No state, no IO, deterministic. `tests/core/engine-test.phel` exercises with literal grids — distance accuracy, side bit, hit-cell coords, parallel-array lengths.

@@ -1,0 +1,506 @@
+(ns phel-doom.core.enemy
+  (:require phel-doom.core.map      :refer [random-spawn wall?])
+  (:require phel-doom.core.enemy-ai :refer [apply-pain maybe-start-attack moves? observe target-pos tick-attack tick-pain tick-wander]))
+
+(def default-chase-speed
+  "Fallback chase speed (units/sec) used by the single-arity advance
+   call so existing tests / callers that don't pass a per-level speed
+   still work. The level table in play.phel overrides this per room."
+  0.75)
+
+(def type-speed-mul
+  "Per-enemy-type multiplier applied on top of the level's `:chase`
+   speed. Bosses are heavy and should feel ponderous — the cyberdemon
+   reads as cheating when it sprints at the imp/baron tempo. Anything
+   not listed defaults to 1.0 (use the level chase value as-is)."
+  {:cyber 0.55})
+(def stop-dist
+  "Enemies stop closing in once this close, so they don't pile up
+   inside the player's cell."
+  0.6)
+(def respawn-delay-min
+  "Lower bound (seconds) on the respawn cooldown that fires when an
+   enemy is killed. A dead enemy sits invisible for this long before
+   reappearing — gives the player breathing room and a clear feedback
+   beat per kill."
+  3.0)
+(def respawn-delay-max
+  "Upper bound (seconds) on the respawn cooldown."
+  6.0)
+(def respawn-min-dist
+  "Minimum spawn distance from the player a revived enemy must claim,
+   so the next frame isn't an ambush."
+  3.0)
+
+(def hit-flash-seconds
+  "How long the floating HP digit lingers above a hit enemy's head.
+   Long enough to read mid-combat, short enough that a follow-up
+   shot's flash takes over cleanly."
+  1.2)
+
+(defn new-enemy
+  "Create an enemy record. `x` and `y` are world-space floats; `:alive`
+   flips to false when `:lives` hits zero. Default lives = 1 keeps the
+   one-shot-kill semantics for callers that don't care about HP. The
+   optional `type-kw` records which monster catalog entry (see
+   `enemies/enemy-types`) this enemy belongs to — render reads it
+   for per-enemy visuals, so mixed-type rooms (boss + minions) work
+   without world-level fields."
+  ([x y]                      (new-enemy x y 1 nil))
+  ([ex ey max-lives]          (new-enemy ex ey max-lives nil))
+  ([ex ey max-lives type-kw]  {:x ex :y ey :alive true :lives max-lives :max-lives max-lives
+                               :hit-flash-secs 0.0 :type type-kw}))
+
+(def chase-angle-offsets
+  "Angle deltas (radians) tried when an enemy can't walk straight at the
+   player. Ordered straight-ahead -> 45° -> 90° -> 135° on both sides,
+   so the chase first cuts corners, then slides along walls, then
+   backs out of dead ends."
+  (let [q (php/* 0.25 php/M_PI)
+        h (php/* 0.5 php/M_PI)
+        t (php/* 0.75 php/M_PI)]
+    [0.0 q (php/- 0.0 q) h (php/- 0.0 h) t (php/- 0.0 t)]))
+
+(defn- try-step
+  "Attempt to step `dist` units from (ex, ey) along `angle`. Returns
+   [nx ny] if the destination cell is open, nil otherwise."
+  [grid ^float ex ^float ey ^float dist ^float angle]
+  (let [nx (php/+ ex (php/* dist (php/cos angle)))
+        ny (php/+ ey (php/* dist (php/sin angle)))]
+    (if (wall? grid (php/intval nx) (php/intval ny))
+      nil
+      [nx ny])))
+
+(defn- pick-step
+  "Walk chase-angle-offsets in order and return the first [nx ny] whose
+   destination is open. nil if the enemy is sealed in."
+  [grid ^float ex ^float ey ^float step ^float desired]
+  (loop [offsets chase-angle-offsets]
+    (cond
+      (empty? offsets) nil
+      :else            (let [hit (try-step grid ex ey step (php/+ desired (first offsets)))]
+                         (if hit hit (recur (rest offsets)))))))
+
+(defn- step-toward
+  "Walk one frame of `speed` * dt toward (target-x, target-y). The
+   enemy slides around obstacles via pick-step's offset cascade
+   instead of bumping forever."
+  [enemy grid ^float target-x ^float target-y ^float dt ^float speed]
+  (let [ex   (:x enemy)
+        ey   (:y enemy)
+        dx   (php/- target-x ex)
+        dy   (php/- target-y ey)
+        dist (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
+    (if (php/<= dist stop-dist)
+      enemy
+      (let [hit (pick-step grid ex ey
+                           (php/* speed dt)
+                           (php/atan2 dy dx))]
+        (if hit
+          (assoc enemy :x (first hit) :y (second hit))
+          enemy)))))
+
+(defn shoot
+  "Fire a hitscan from the player along their facing. Returns
+   `[new-enemies hit? hit-pos idx]`: the nearest alive enemy in
+   range with its `:lives` decremented by `damage`. `:alive` only
+   flips to false once `:lives` hits zero, so a 1-damage pistol
+   round just wounds a 3-HP cacodemon while a 3-damage shotgun
+   shell drops it. `damage` defaults to 1 for callers that don't
+   carry a weapon spec (older tests, etc)."
+  ([enemies ^float px ^float py ^float angle ^float wall-dist ^float hit-radius ^float max-range]
+   (shoot enemies px py angle wall-dist hit-radius max-range 1))
+  ([es' ^float x' ^float y' ^float a' ^float wd' ^float hr ^float max-r ^int damage]
+   (let [cos-a (php/cos a')
+         sin-a (php/sin a')]
+     (let [best (loop [i      0
+                       best-i -1
+                       best-d max-r
+                       es     es']
+                  (if (nil? es)
+                    best-i
+                    (let [e (first es)]
+                      (let [along (when (and e (:alive e))
+                                    (let [dx (php/- (:x e) x')
+                                          dy (php/- (:y e) y')]
+                                      (let [proj (php/+ (php/* dx cos-a) (php/* dy sin-a))]
+                                        (when (and (php/> proj 0.0) (php/< proj best-d)
+                                                   (php/< proj wd'))
+                                          (let [perp-x (php/- dx (php/* proj cos-a))
+                                                perp-y (php/- dy (php/* proj sin-a))]
+                                            (let [perp2 (php/+ (php/* perp-x perp-x) (php/* perp-y perp-y))]
+                                              (when (php/<= perp2 (php/* hr hr))
+                                                proj)))))))]
+                        (if along
+                          (recur (php/+ i 1) i along (next es))
+                          (recur (php/+ i 1) best-i best-d (next es)))))))]
+       (if (= best -1)
+         [es' false nil -1]
+        ;; Decrement lives; flip :alive only when the shot empties the
+        ;; HP pool. Default-1 enemies still die in one hit because the
+        ;; subtract takes them to 0. Multi-life enemies stay :alive true
+        ;; with a lower :lives, which render shades darker as a tell.
+         (let [hit-enemy  (get es' best)
+               hit-pos    {:x (:x hit-enemy) :y (:y hit-enemy)}
+               prev-lives (or (:lives hit-enemy) 1)
+               new-lives  (php/max 0 (php/- prev-lives damage))
+               hit-vec    (apply vector es')
+               ;; Any hit wakes the target — being shot is the
+               ;; loudest possible "I see you" signal, and a dormant
+               ;; enemy that takes a bullet without reacting would
+               ;; read as broken AI. Mirrors DOOM where damage forces
+               ;; the target into chase regardless of prior state.
+               woken      (assoc-in hit-vec [best :state] :aware)
+               wounded    (assoc-in woken [best :lives] new-lives)]
+           (if (php/<= new-lives 0)
+             (let [delay   (php/+ respawn-delay-min
+                                  (php/* (php// (php/mt_rand) (php/mt_getrandmax))
+                                         (php/- respawn-delay-max respawn-delay-min)))
+                   killed' (assoc-in (assoc-in wounded [best :alive] false)
+                                     [best :respawn-after] delay)]
+               [killed' true hit-pos best])
+            ;; Stamp the hit-flash timer so render can paint the
+            ;; remaining HP digit above the head for a beat. Also
+            ;; roll the pain-chance: if it lands, apply-pain stamps
+            ;; :state :pain + the stagger timer, overriding the
+            ;; :aware wake above for the brief flinch window.
+             (let [flashed (assoc-in wounded [best :hit-flash-secs] hit-flash-seconds)
+                   roll    (php// (php/mt_rand) (php/mt_getrandmax))
+                   final   (assoc flashed best
+                                  (apply-pain (get flashed best) roll))]
+               [final true hit-pos best]))))))))
+
+(defn push-back-enemy
+  "Shove the enemy at `idx` along `(cos-a, sin-a)` by `dist` world
+   units; on wall collision try a half then a quarter step before
+   giving up. Returns the enemies vector with the moved enemy in
+   place, or unchanged when no fraction clears. Used by combat to
+   knock enemies back along the shot direction — bigger enemies
+   visibly recoil, giving the player time to reload + reposition."
+  [enemies grid idx ^float cos-a ^float sin-a ^float dist]
+  (let [e        (get enemies idx)
+        ex       (:x e)
+        ey       (:y e)
+        try-push (fn [k]
+                   (let [nx (php/+ ex (php/* dist k cos-a))
+                         ny (php/+ ey (php/* dist k sin-a))]
+                     (if (wall? grid (php/intval nx) (php/intval ny))
+                       nil
+                       [nx ny])))
+        pos      (or (try-push 1.0) (try-push 0.5) (try-push 0.25))]
+    (if pos
+      (assoc enemies idx (assoc e :x (first pos) :y (second pos)))
+      enemies)))
+
+(defn- random-spawn-far-from
+  "Random open cell at least min-dist from (px, py). Falls back to nil
+   after a few attempts so the caller can keep the enemy dead another
+   frame instead of forcing an ambush spawn."
+  [grid min-dist px py]
+  (loop [attempts 8]
+    (if (php/<= attempts 0)
+      nil
+      (let [[ex ey] (random-spawn grid)
+            dx      (php/- ex px)
+            dy      (php/- ey py)]
+        (if (php/< (php/+ (php/* dx dx) (php/* dy dy))
+                   (php/* min-dist min-dist))
+          (recur (php/- attempts 1))
+          [ex ey])))))
+
+(defn- alive-count-of-type
+  "How many enemies in `enemies` are currently alive AND carry `:type`
+   matching `t`. Used to enforce :max-concurrent on respawn."
+  [enemies t]
+  (loop [es    enemies
+         total 0]
+    (cond
+      (nil? es)          total
+      (zero? (count es)) total
+      :else
+      (let [e (first es)]
+        (recur (next es)
+               (if (and (:alive e) (= (:type e) t))
+                 (php/+ total 1)
+                 total))))))
+
+(defn- tick-one
+  "One frame of update for a single enemy. Alive → run the AI
+   observation pass (state machine in enemy-ai) then walk toward the
+   player if the resulting state allows it. Dormant enemies hold
+   position; aware enemies chase. Dead WITH a respawn timer →
+   decrement; on expiry revive at a random open cell at least
+   respawn-min-dist away. Dead WITHOUT a timer (e.g. spawned that way
+   in a test) stays untouched.
+
+   Revival respects `:max-concurrent` when set on the enemy spec — if
+   the live count of the same `:type` is already at the cap, the
+   timer is bumped back so the next attempt fires in 0.5s. Lets the
+   L10 boss room cap minion pressure at 1 alive at a time.
+
+   `pgrid` is the PHP-array grid mirror the AI needs for line-of-sight
+   raycasts. nil pgrid skips the observation pass — tests that don't
+   carry a pgrid fall through with the enemy's existing :state, which
+   defaults to :aware (`enemy-ai/default-state`) so their existing
+   chase expectations still hold.
+
+   `revive?` false suspends every dead enemy's timer (boss dead on L10
+   → no more respawns of boss OR minions, the run is winding down)."
+  [e grid pgrid ^float player-x ^float player-y ^float dt ^float speed all-enemies revive?]
+  (cond
+    (:alive e)                (let [;; Per-frame AI pipeline. Order matters:
+                                    ;;
+                                    ;;  1. Pain stagger ticks FIRST so a staggered
+                                    ;;     enemy's :pain state isn't overwritten
+                                    ;;     by anything below. The timer drives
+                                    ;;     :pain → :aware on expiry.
+                                    ;;
+                                    ;;  2. LOS observe runs ONLY when the enemy
+                                    ;;     isn't already committed to a frame-
+                                    ;;     locked state (:pain or :attacking).
+                                    ;;     During an attack windup the enemy
+                                    ;;     telegraphs the strike — observe would
+                                    ;;     yank them back to :hunting on losing
+                                    ;;     LOS mid-windup, defeating the visible
+                                    ;;     attack rhythm.
+                                    ;;
+                                    ;;  3. maybe-start-attack arms a fresh
+                                    ;;     :attacking window when :aware + in
+                                    ;;     range + cooldown done.
+                                    ;;
+                                    ;;  4. tick-attack decays windup + cooldown,
+                                    ;;     reverts :attacking → :aware on
+                                    ;;     windup expiry.
+                                    ;;
+                                    ;;  5. step-toward runs only when the final
+                                    ;;     state allows movement (state-spec
+                                    ;;     :moves?).
+                                    pained      (tick-pain e dt)
+                                    frame-lock? (or (php/=== :pain (:state pained))
+                                                    (php/=== :attacking (:state pained)))
+                                    observed    (if (and pgrid (not frame-lock?))
+                                                  (observe pained pgrid player-x player-y)
+                                                  pained)
+                                    armed       (maybe-start-attack observed player-x player-y)
+                                    ticked      (tick-attack armed dt)
+                                    ;; tick-wander refreshes the :wander-angle
+                                    ;; timer + rolls a new heading when it
+                                    ;; expires. No-op outside :wander.
+                                    wandered    (tick-wander ticked dt)
+                                    stepped     (if (moves? wandered)
+                                                  (let [target (target-pos wandered player-x player-y)
+                                                        mul    (or (get type-speed-mul (:type wandered)) 1.0)]
+                                                    (if target
+                                                      (step-toward wandered grid (:x target) (:y target) dt (php/* speed mul))
+                                                      wandered))
+                                                  wandered)
+                                    flash'      (php/max 0.0 (php/- (or (:hit-flash-secs wandered) 0.0) dt))]
+                                (assoc stepped :hit-flash-secs flash'))
+    (nil? (:respawn-after e)) e
+    (not revive?)             e
+    :else
+    (let [t (php/- (:respawn-after e) dt)]
+      (if (php/> t 0.0)
+        (assoc e :respawn-after t)
+        (let [cap     (:max-concurrent e)
+              type-kw (:type e)
+              capped? (and cap (php/>= (alive-count-of-type all-enemies type-kw) cap))
+              pos     (when (not capped?)
+                        (random-spawn-far-from grid respawn-min-dist player-x player-y))]
+          (if pos
+            ;; Carry :max-lives, :type, :max-concurrent across the
+            ;; respawn so a revived baron is still a baron and the
+            ;; mixed-room cap keeps holding. Refill :lives to full
+            ;; and clear the timer. Older fixtures without :max-lives
+            ;; fall back to 1.
+            (let [mx (or (:max-lives e) 1)]
+              (merge e
+                     {:x         (first pos)
+                      :y         (second pos)
+                      :alive     true
+                      :lives     mx
+                      :max-lives mx}))
+            (assoc e :respawn-after 0.5)))))))
+
+(defn advance
+  "Per-frame update for every enemy: alive enemies run the AI
+   state machine (LOS-gated wake; see enemy-ai) then chase the
+   player at `speed` units/sec if their state allows it; dead enemies
+   tick their respawn timer and rejoin the fight once it expires
+   (unless their `:max-concurrent` cap is already met — see tick-one).
+
+   The optional `pgrid` slot is the PHP-array grid mirror the AI
+   uses for line-of-sight raycasts. Real game callers pass it from
+   the world (`:pgrid`); test callers may omit it (legacy 6/7-arity
+   forms below), in which case the AI observation pass is skipped
+   and enemies behave per their existing :state — default :aware →
+   they chase as before, so old tests don't churn.
+
+   The 7-arity opt-in `revive?` flag, when false, freezes every dead
+   enemy in place — used on L10 once the boss is down so neither the
+   cyberdemon nor its capped minions ever come back."
+  ([enemies grid player-x player-y dt speed]
+   (advance enemies grid nil player-x player-y dt speed true))
+  ([enemies grid player-x player-y dt speed revive?]
+   (advance enemies grid nil player-x player-y dt speed revive?))
+  ([es g pg x y delta sp revive?]
+   (apply vector
+          (map (fn [e] (tick-one e g pg x y delta sp es revive?))
+               es))))
+
+(def scare-trigger-dist
+  "World-units. When the nearest alive enemy crosses inbound under this
+   threshold the render flips to a wide-eyed face for scare-duration.
+   Set well outside aggro-distance (1.8) so the scare lands a beat
+   BEFORE the actual attack telegraph."
+  3.5)
+
+(def silence-trigger-dist
+  "World-units. Tighter than scare-trigger-dist — the moment an enemy
+   crosses inbound under this, the IO layer mutes all sfx for a brief
+   beat so the impending strike lands in silence."
+  1.5)
+
+(def scare-duration
+  "Seconds the jump-scare face stays on after a fresh crossing. Long
+   enough (>0.5s) for the player to register the change at any frame
+   rate — 250ms was easy to miss in fast play."
+  0.6)
+
+(defn- min-alive-dist
+  "Distance from (px, py) to the nearest alive enemy. 1.0e9 when the
+   enemy list is empty / all dead — large enough to never read as
+   'close' to the scare trigger."
+  [enemies ^float px ^float py]
+  (loop [es   enemies
+         best 1.0e9]
+    (cond
+      (empty? es) best
+      :else
+      (let [e (first es)]
+        (if (:alive e)
+          (let [dx (php/- (:x e) px)
+                dy (php/- (:y e) py)
+                d  (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
+            (recur (rest es) (php/min best d)))
+          (recur (rest es) best))))))
+
+(defn tick-scare
+  "Detect inbound crossings of the nearest enemy past two thresholds:
+     - scare-trigger-dist (3.5) → one-shot wide-eyed face for
+       scare-duration. :prev-min-enemy-dist remembers last frame's
+       nearest-enemy distance so the scare fires only on the
+       transition (far → near), not while a monster sits in the band.
+     - silence-trigger-dist (1.5) → :silence-tick? one-frame flag so
+       the IO layer can mute sfx briefly before the imminent strike.
+   :scare-secs counts down while the wide-eyed face is held."
+  [world ^float dt]
+  (let [p              (:player world)
+        cur            (min-alive-dist (:enemies world) (:x p) (:y p))
+        prev           (or (:prev-min-enemy-dist world) 1.0e9)
+        active         (or (:scare-secs world) 0.0)
+        active'        (php/max 0.0 (php/- active dt))
+        scare-cross?   (and (php/>= prev scare-trigger-dist)
+                            (php/< cur scare-trigger-dist)
+                            (php/<= active' 0.0))
+        silence-cross? (and (php/>= prev silence-trigger-dist)
+                            (php/< cur silence-trigger-dist))]
+    (assoc world
+           :prev-min-enemy-dist cur
+           :scare-secs          (if scare-cross? scare-duration active')
+           :silence-tick?       silence-cross?)))
+
+(def rear-arc-half-width
+  "Angle (radians) past facing that counts as 'behind'. 3π/4 = 135°
+   from facing covers the player's back 90° wedge — the part of the
+   world they literally can't see."
+  (php/* 0.75 php/M_PI))
+
+(def rear-warn-max-dist
+  "World-units beyond which a rear enemy is too far to register on
+   the breathing-behind-you cue."
+  5.0)
+
+(defn rear-attacker?
+  "True when at least one alive enemy sits in the rear arc AND within
+   rear-warn-max-dist of the player. Pure: one pass; bails on first
+   match. Exported so render + tests share the same rule."
+  [enemies ^float px ^float py ^float pangle]
+  (let [max-d2 (php/* rear-warn-max-dist rear-warn-max-dist)]
+    (loop [es enemies]
+      (cond
+        (empty? es) false
+        :else
+        (let [e (first es)]
+          (if (:alive e)
+            (let [dx    (php/- (:x e) px)
+                  dy    (php/- (:y e) py)
+                  d2    (php/+ (php/* dx dx) (php/* dy dy))
+                  delta (php/- (php/atan2 dy dx) pangle)
+                  norm  (php/abs (php/atan2 (php/sin delta) (php/cos delta)))]
+              (if (and (php/<= d2 max-d2)
+                       (php/>= norm rear-arc-half-width))
+                true
+                (recur (rest es))))
+            (recur (rest es))))))))
+
+(defn spawn-enemies
+  "Place `n` enemies on random open cells of `grid`, well away from the
+   player's spawn so the first frame isn't an ambush. `max-lives`
+   stamps the per-level HP onto every fresh enemy; default 1 keeps
+   the older one-shot-kill callers working. The 7-arity variant
+   also stamps `:type` so the renderer can pick the right visuals
+   per enemy (mixed-type rooms)."
+  ([grid n min-dist-from player-x player-y]
+   (spawn-enemies grid n min-dist-from player-x player-y 1 nil))
+  ([g n-need min-d px py max-lives]
+   (spawn-enemies g n-need min-d px py max-lives nil))
+  ([g n-need min-d px py max-lives type-kw]
+   (loop [acc       []
+          attempts  0
+          remaining n-need]
+     (cond
+       (zero? remaining)    acc
+       (php/> attempts 200) acc
+       :else
+       (let [[ex ey] (random-spawn g)
+             d2      (let [dx (php/- ex px)
+                           dy (php/- ey py)]
+                       (php/+ (php/* dx dx) (php/* dy dy)))]
+         (if (php/< d2 (php/* min-d min-d))
+           (recur acc (php/+ attempts 1) remaining)
+           ;; Real-game spawns start :dormant so the player can sneak
+           ;; / peek / plan; LOS or being shot wakes them. `new-enemy`
+           ;; itself stays :aware-default so unit tests built directly
+           ;; via the constructor don't need to be migrated.
+           (recur (conj acc (assoc (new-enemy ex ey max-lives type-kw) :state :dormant))
+                  (php/+ attempts 1)
+                  (php/- remaining 1))))))))
+
+(defn spawn-enemies-mixed
+  "Spawn from a vector of `{:type kw :count N [:lives M] [:max-concurrent K]}`
+   specs. Each spec emits `:count` enemies of `:type` with `:lives` HP
+   (falls back to 1 if missing). Optional `:max-concurrent` caps how
+   many enemies of that type can be alive at once — when set, the
+   advance/respawn step blocks revival past the cap so e.g. the boss
+   room's 2 imps can have at most 1 alive at a time. Returns one flat
+   vector of enemies, each carrying `:type` (and `:max-concurrent` when
+   the spec sets it) for render + AI lookup."
+  [grid specs min-d px py]
+  (loop [remaining specs
+         acc       []]
+    (cond
+      (nil? remaining)          acc
+      (zero? (count remaining)) acc
+      :else
+      (let [spec  (first remaining)
+            t     (:type spec)
+            n     (or (:count spec) 0)
+            lives (or (:lives spec) 1)
+            cap   (:max-concurrent spec)
+            raw   (spawn-enemies grid n min-d px py lives t)
+            batch (if (nil? cap)
+                    raw
+                    (apply vector
+                           (map (fn [e] (assoc e :max-concurrent cap)) raw)))]
+        (recur (next remaining) (into acc batch))))))

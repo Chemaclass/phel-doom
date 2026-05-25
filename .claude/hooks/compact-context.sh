@@ -5,7 +5,7 @@ cat <<'EOF'
 
 **phel-doom** — terminal raycaster in pure Phel. PHP 8.4+. Composer scripts drive everything.
 
-- Layout: `src/commands/` (loop), `src/modules/core/` (pure), `src/modules/glue/` (wiring), `src/modules/io/` (side effects).
+- Layout: `src/commands/` (loop), `src/core/` (pure), `src/glue/` (wiring), `src/io/` (side effects).
 - Tests: `composer test` (all) or `vendor/bin/phel test tests/<file>` (one).
 - CI: `composer ci` = format-check + lint + test + build. Run before commit.
 - Frame budget: cast + render < 5 ms target (see `docs/performance.md`).

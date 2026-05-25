@@ -1,0 +1,188 @@
+(ns phel-doom.core.weapons)
+
+;; ---------------------------------------------------------------------
+;; Weapon catalogue + per-weapon ammo bookkeeping.
+;;
+;; DOOM-classic roster (DPS-balanced: each weapon owns a distinct
+;; niche rather than monotonic upgrades — picking up a chaingun
+;; does NOT obsolete the shotgun, it just shifts you from burst to
+;; sustained):
+;;   :pistol   damage 1, snappy 0.12s cd  → 8  dps  (starting fallback)
+;;   :shotgun  damage 3, slow   0.6s  cd  → 5  dps  (burst killer, big hit per pull)
+;;   :chaingun damage 1, blazing 0.05s cd → 20 dps  (sustained spray, ammo hog)
+;; HP scaling: shotgun 1-shots L1-L3 enemies, 2-shots the L5 baron.
+;; Chaingun burns ~0.15s on a 3-HP demon, ~0.25s on the baron.
+;;
+;; Per-weapon stats (mag-size, fire-cooldown, reload-duration, damage,
+;; reserve cap, ammo-per-box) live in `weapons`. Per-weapon ammo state
+;; (current mag count, current reserve) lives on the world under
+;; :weapon-state — a map keyed by the same weapon keyword.
+;;
+;; combat.phel reads the *spec* via `spec` and the *current weapon's
+;; live state* via `mag`/`reserve` helpers; both mirror up to the
+;; top-level :mag / :ammo-reserve fields so existing tests + the
+;; render HUD keep working without rewrites.
+;; ---------------------------------------------------------------------
+
+(def weapons
+  "Per-weapon stat table. `:palette` carries the 6 SGR strings render
+   uses to colour the pistol-shaped sprite per weapon — same
+   silhouette, distinct read at a glance."
+  {:pistol   {:name            "pistol"
+              :mag-size        10
+              :reserve-start   30
+              :reserve-cap     50
+              :ammo-per-box    10
+              :fire-cooldown   0.12
+              :reload-duration 1.2
+              :damage          1
+              :auto-fire?      true
+              ;; Pistol is the only overheating weapon. Trade-off
+              ;; for its 0.12s cd + auto-fire: hold space too long
+              ;; and the slide jams for jam-seconds. Chaingun has
+              ;; its own constraint (mag burns at 20/s), shotgun
+              ;; has its 0.6s cd, so neither needs overheat.
+              :overheats?      true
+              :palette         {:muzzle    "\e[1;38;5;250m"
+                                :slide     "\e[1;38;5;233m"
+                                :slide-dim "\e[1;38;5;232m"
+                                :frame     "\e[1;38;5;232m"
+                                :grip-hi   "\e[1;38;5;166m"
+                                :grip-lo   "\e[1;38;5;130m"}}
+   :shotgun  {:name            "shotgun"
+              :mag-size        4
+              :reserve-start   8
+              :reserve-cap     24
+              :ammo-per-box    4
+              :fire-cooldown   0.6
+              :reload-duration 2.0
+              :damage          3
+              ;; Shotgun is single-action: each space press = one
+              ;; shell. Holding the trigger does NOT auto-fire — the
+              ;; player has to re-pull for every shot. Matches DOOM2's
+              ;; pump action + reinforces the burst-killer niche.
+              :auto-fire?      false
+              ;; Wood stock (warm brown) + steel barrel (cool grey)
+              ;; reads as a hunting shotgun. Muzzle slightly brighter
+              ;; than the pistol's so the wider barrel pops.
+              :palette         {:muzzle    "\e[1;38;5;253m"
+                                :slide     "\e[1;38;5;240m"
+                                :slide-dim "\e[1;38;5;238m"
+                                :frame     "\e[1;38;5;236m"
+                                :grip-hi   "\e[1;38;5;94m"
+                                :grip-lo   "\e[1;38;5;58m"}}
+   :chaingun {:name            "chaingun"
+              :mag-size        30
+              :reserve-start   0
+              :reserve-cap     90
+              :ammo-per-box    20
+              :fire-cooldown   0.05
+              :reload-duration 1.8
+              :damage          1
+              ;; Auto-fire: holding space sprays at the 0.05s cd
+              ;; until mag empties or trigger releases. This is what
+              ;; makes the 20 dps niche real — without it the player
+              ;; can only fire as fast as they can tap.
+              :auto-fire?      true
+              ;; Gun-metal grey + green LED accent grip — reads as
+              ;; industrial heavy weapon. Brighter muzzle for the
+              ;; multi-barrel flash.
+              :palette         {:muzzle    "\e[1;38;5;255m"
+                                :slide     "\e[1;38;5;245m"
+                                :slide-dim "\e[1;38;5;242m"
+                                :frame     "\e[1;38;5;238m"
+                                :grip-hi   "\e[1;38;5;40m"
+                                :grip-lo   "\e[1;38;5;22m"}}})
+
+(def weapon-order
+  "Slot order keyed by 1/2/3."
+  [:pistol :shotgun :chaingun])
+
+(defn current-weapon
+  "Active weapon keyword for `world`. Defaults to :pistol so fresh test
+   worlds (which don't set :weapon) keep behaving like single-pistol
+   runs from before this PR."
+  [world]
+  (or (:weapon world) :pistol))
+
+(defn weapon-spec
+  "Static catalogue entry for the active weapon."
+  [world]
+  (get weapons (current-weapon world)))
+
+(defn effective-reserve-cap
+  "Active weapon's reserve cap, doubled when the player owns the
+   backpack pickup. Callers should use this in place of raw
+   `:reserve-cap` so the backpack buff propagates everywhere ammo
+   gets bumped (level pickups, kill drops, swap restores)."
+  [world]
+  (let [base (or (:reserve-cap (weapon-spec world)) 0)]
+    (if (:backpack? world) (php/* 2 base) base)))
+
+(defn initial-weapon-state
+  "Per-weapon ammo state for a brand-new run: starting mag full,
+   reserve at :reserve-start."
+  []
+  (let [build (fn [acc kw]
+                (let [s (get weapons kw)]
+                  (assoc acc kw {:mag     (:mag-size s)
+                                 :reserve (:reserve-start s)})))]
+    (reduce build {} weapon-order)))
+
+(defn owns?
+  "True when the player has picked up weapon `kw`. Pistol is always
+   owned (fresh-run default). Other weapons require a map pickup."
+  [world kw]
+  (contains? (or (:owned-weapons world) #{:pistol}) kw))
+
+(defn switch-weapon
+  "Snap to weapon `to`. Persists the current weapon's mag + reserve
+   back into `:weapon-state`, then loads `to`'s saved state into the
+   mirrored top-level `:mag` / `:ammo-reserve` fields. No-op when:
+     - the target weapon doesn't exist
+     - the player hasn't picked it up yet (must find on the map)
+     - the player is mid-reload (no hot-swap to dodge the lockout)"
+  [world to]
+  (cond
+    (nil? (get weapons to))                  world
+    (not (owns? world to))                   world
+    (pos? (or (:reload-cooldown world) 0.0)) world
+    :else
+    (let [from   (current-weapon world)
+          saved  (assoc (or (:weapon-state world) {})
+                        from {:mag     (or (:mag world) 0)
+                              :reserve (or (:ammo-reserve world) 0)})
+          loaded (get saved to {:mag (:mag-size (get weapons to))
+                                :reserve (:reserve-start (get weapons to))})]
+      (assoc world
+             :weapon        to
+             :weapon-state  saved
+             :mag           (:mag loaded)
+             :ammo-reserve  (:reserve loaded)))))
+
+(defn give-weapon
+  "Add `kw` to `:owned-weapons` AND snap to it (DOOM-style auto-switch
+   on first pickup). Refills the weapon's mag+reserve to its starting
+   values so the player can immediately fire the new weapon. No-op
+   if the weapon is unknown OR already owned (skip the auto-switch
+   so the player doesn't get yanked off their current weapon by a
+   redundant pickup)."
+  [world kw]
+  (cond
+    (nil? (get weapons kw)) world
+    (owns? world kw)        world
+    :else
+    (let [owned (conj (or (:owned-weapons world) #{:pistol}) kw)
+          sp    (get weapons kw)
+          ;; Stash current weapon's state then load the new one fresh.
+          from  (current-weapon world)
+          saved (assoc (or (:weapon-state world) {})
+                       from {:mag     (or (:mag world) 0)
+                             :reserve (or (:ammo-reserve world) 0)})
+          fresh {:mag (:mag-size sp) :reserve (:reserve-start sp)}]
+      (assoc world
+             :owned-weapons owned
+             :weapon        kw
+             :weapon-state  (assoc saved kw fresh)
+             :mag           (:mag fresh)
+             :ammo-reserve  (:reserve fresh)))))

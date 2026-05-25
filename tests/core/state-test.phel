@@ -1,0 +1,79 @@
+(ns phel-doom-tests.core.state-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.state :refer [new-player new-world move-player turn-player
+                                         toggle-map toggle-pause toggle-debug with-enemies
+                                         advance-game-time gain-life max-lives]))
+
+(def grid [[1 1 1] [1 0 1] [1 1 1]])
+
+(deftest test-new-player-records-position-and-angle
+  (let [p (new-player 1.0 2.0 0.5)]
+    (is (= 1.0 (:x p)))
+    (is (= 2.0 (:y p)))
+    (is (= 0.5 (:angle p)))))
+
+(deftest test-new-world-records-dimensions
+  (let [w (new-world grid (new-player 1.0 1.0 0.0))]
+    (is (= 3 (:width w)))
+    (is (= 3 (:height w)))))
+
+(deftest test-move-player-translates
+  (let [w2 (move-player (new-world grid (new-player 1.0 1.0 0.0)) 0.3 0.4)]
+    (is (= 1.3 (:x (:player w2))))
+    (is (= 1.4 (:y (:player w2))))))
+
+(deftest test-turn-player-rotates
+  (let [w2 (turn-player (new-world grid (new-player 1.0 1.0 0.0)) 0.5)]
+    (is (= 0.5 (:angle (:player w2))))))
+
+(deftest test-new-world-game-defaults
+  ;; Lives, kills, pause, minimap, enemies, fx all start in a known state
+  ;; so a fresh run is always the same shape.
+  (let [w (new-world grid (new-player 1.0 1.0 0.0))]
+    (is (= 5 (:lives w)))
+    (is (= 0 (:kills w)))
+    (is (= false (:paused w)))
+    (is (= false (:show-map w)))
+    (is (= [] (:enemies w)))
+    (is (= [] (:fx w)))))
+
+(deftest test-toggle-map-flips
+  (let [w' (toggle-map (new-world grid (new-player 1.0 1.0 0.0)))]
+    (is (= true (:show-map w')))
+    (is (= false (:show-map (toggle-map w'))))))
+
+(deftest test-toggle-pause-flips
+  (let [w' (toggle-pause (new-world grid (new-player 1.0 1.0 0.0)))]
+    (is (= true (:paused w')))
+    (is (= false (:paused (toggle-pause w'))))))
+
+(deftest test-max-lives-is-five
+  (is (= 5 max-lives)))
+
+(deftest test-gain-life-increments-but-caps-at-max
+  (let [w (assoc (new-world grid (new-player 1.0 1.0 0.0)) :lives 2)]
+    (is (= 3 (:lives (gain-life w))))
+    (is (= 5 (:lives (gain-life (assoc w :lives 5))))) ;; clamps
+    (is (= 5 (:lives (gain-life (assoc w :lives 4)))))))
+
+(deftest test-with-enemies-replaces-list
+  (let [w (with-enemies (new-world grid (new-player 1.0 1.0 0.0))
+                        [{:x 1.0 :y 1.0 :alive true}])]
+    (is (= 1 (count (:enemies w))))
+    (is (= 1.0 (:x (first (:enemies w)))))))
+
+(deftest test-new-world-game-time-starts-zero
+  (is (= 0.0 (:game-time (new-world grid (new-player 1.0 1.0 0.0))))))
+
+(deftest test-advance-game-time-accumulates
+  (let [w  (new-world grid (new-player 1.0 1.0 0.0))
+        w' (advance-game-time (advance-game-time w 0.25) 0.1)]
+    (is (= 0.35 (:game-time w')))))
+
+(deftest test-debug-flag-default-off
+  (is (= false (:debug? (new-world grid (new-player 1.0 1.0 0.0))))))
+
+(deftest test-toggle-debug-flips
+  (let [w (new-world grid (new-player 1.0 1.0 0.0))]
+    (is (= true  (:debug? (toggle-debug w))))
+    (is (= false (:debug? (toggle-debug (toggle-debug w)))))))

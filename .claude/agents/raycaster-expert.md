@@ -14,7 +14,7 @@ allowed_tools:
 
 # Raycaster Expert
 
-Owns `src/modules/core/engine.phel` and the math contract it provides to `src/modules/io/render.phel`.
+Owns `src/core/engine.phel` and the math contract it provides to `src/io/render.phel`.
 
 ## Required reading
 
@@ -47,19 +47,19 @@ Owns `src/modules/core/engine.phel` and the math contract it provides to `src/mo
 
 ## Testing
 
-`tests/modules/core/engine-test.phel` — geometric fixtures (player at known pose, expected dists).
+`tests/core/engine-test.phel` — geometric fixtures (player at known pose, expected dists).
 
 ```phel
-(ns phel-doom-tests.modules.core.engine-test
+(ns phel-doom-tests.core.engine-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.modules.core.engine :refer [cast-ray]))
+  (:require phel-doom.core.engine :refer [cast-ray]))
 
 (deftest cast-ray-straight-N
   (is (= [2.0 :wall :n-s]
          (cast-ray simple-grid 1.5 1.5 (- (/ math/PI 2))))))
 ```
 
-Use **dot** namespaces (`phel.test`, `phel-doom.modules.core.engine`). Never `\`.
+Use **dot** namespaces (`phel.test`, `phel-doom.core.engine`). Never `\`.
 
 Always add a regression test for the bug you fix or the case you optimize.
 

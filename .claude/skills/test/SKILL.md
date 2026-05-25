@@ -13,9 +13,9 @@ Run the **minimum** scope for the changed files.
 
 | Changed | Command |
 |---------|---------|
-| `src/modules/core/**` or `src/modules/glue/**` | `composer test` |
-| `src/modules/io/**` (no test) | `composer play` for manual smoke (use `/play`) |
-| One file, one module | `vendor/bin/phel test tests/modules/<layer>/<name>-test.phel` |
+| `src/core/**` or `src/glue/**` | `composer test` |
+| `src/io/**` (no test) | `composer play` for manual smoke (use `/play`) |
+| One file, one module | `vendor/bin/phel test tests/<layer>/<name>-test.phel` |
 | Format/lint only | `composer format-check && composer lint` |
 | Everything (pre-commit) | `composer ci` |
 
@@ -54,8 +54,8 @@ composer doctor        # env check
 
 4. Looks like module name (e.g. `engine`):
    ```bash
-   vendor/bin/phel test tests/modules/core/$ARGUMENTS-test.phel 2>/dev/null \
-   || vendor/bin/phel test tests/modules/glue/$ARGUMENTS-test.phel 2>/dev/null \
+   vendor/bin/phel test tests/core/$ARGUMENTS-test.phel 2>/dev/null \
+   || vendor/bin/phel test tests/glue/$ARGUMENTS-test.phel 2>/dev/null \
    || vendor/bin/phel test tests/commands/$ARGUMENTS-test.phel
    ```
 

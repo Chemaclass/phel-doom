@@ -11,8 +11,8 @@ globs: src/**,tests/**,*.phel
 - `defn-` for private (not exported)
 - `?` suffix for predicates: `alive?`, `door?`
 - `!` suffix for side-effecting: `render!`, `play-sound!`
-- Namespaces match path with **dot** separator: `phel-doom.modules.core.engine`, `phel-doom.modules.io.render`, `phel.test`. NEVER backslash (`phel\test` is deprecated).
-- Test ns: `phel-doom-tests.modules.<layer>.<name>-test` (plural `tests`, `-test` suffix on file + ns).
+- Namespaces match path with **dot** separator: `phel-doom.core.engine`, `phel-doom.io.render`, `phel.test`. NEVER backslash (`phel\test` is deprecated).
+- Test ns: `phel-doom-tests.<layer>.<name>-test` (plural `tests`, `-test` suffix on file + ns).
 
 ## Docstrings
 

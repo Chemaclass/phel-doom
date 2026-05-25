@@ -1,6 +1,6 @@
 # High scores
 
-`src/modules/io/scores.phel`. Persists three running bests to a JSON file in `$HOME`.
+`src/io/scores.phel`. Persists three running bests to a JSON file in `$HOME`.
 
 ## File
 

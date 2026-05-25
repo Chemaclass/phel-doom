@@ -55,14 +55,14 @@ Tests mirror `src/`: each `*-test.phel` covers the matching module.
 - **No real audio.** `composer test` sets `PHEL_DOOM_SILENT=1` which
   short-circuits `play-sfx!` in `sound.phel`. Running
   `vendor/bin/phel test` directly bypasses the gate; always use the
-  composer script. `tests/modules/io/sound-test.phel` asserts the
+  composer script. `tests/io/sound-test.phel` asserts the
   env var is set during the suite, so this can't silently regress.
 - **No real filesystem.** `merge-run` in `scores.phel` is the pure
   half of `update-scores!` and is what gets tested. The IO wrapper
   (touching `$HOME/.phel-doom-scores.json`) is not.
 - **No fakes / mocks under `core/`.** Anything pure is tested
   against literal data: hand-built worlds, grids, enemy vectors.
-  See `tests/modules/core/physics-test.phel` for the pattern.
+  See `tests/core/physics-test.phel` for the pattern.
 
 When adding a feature, add tests in the matching module before the
 implementation if you can, or right after. Test count is in
@@ -108,7 +108,7 @@ of `arr`. The caller's binding sees no change. Two ways out:
    (let [a (build-arr)] ...)   ; works
    ```
 
-The render-overlay paint chain in `src/modules/io/render.phel` uses
+The render-overlay paint chain in `src/io/render.phel` uses
 pattern 2 and threads the returned `parts` through a sequential
 `let` so every overlay's pushes accumulate. Read that for an
 example.
@@ -169,7 +169,7 @@ hide the call shape behind tiny macros that expand at compile time
 to the underlying `php/*` op:
 
 ```phel
-;; src/modules/io/render.phel — defined once, used everywhere
+;; src/io/render.phel — defined once, used everywhere
 (defmacro buf-mk  []          `(php/array))
 (defmacro buf-set [b i v]     `(php/aset ~b ~i ~v))
 (defmacro buf-get [b i]       `(php/aget ~b ~i))
@@ -194,7 +194,7 @@ Phel-native data: maps, vectors, keywords. Game world, player,
 enemy maps, level configs, scores, and the `:moves` counter
 table are all Phel-native.
 
-`tests/modules/core/engine-test.phel` exercises the cast-frame loop
+`tests/core/engine-test.phel` exercises the cast-frame loop
 with literal grids if you want to benchmark.
 
 ### Choose raw `php/*` ops deliberately in hot loops
@@ -222,7 +222,7 @@ needs that fast path explicitly:
 
 Say you want a kill-counter banner at top-right.
 
-1. Write a `paint-kill-counter` in `src/modules/io/render.phel`:
+1. Write a `paint-kill-counter` in `src/io/render.phel`:
 
    ```phel
    (defn- paint-kill-counter
@@ -246,7 +246,7 @@ Say you want a kill-counter banner at top-right.
    ```
 
 3. Add a behavioural test in
-   `tests/modules/io/render-overlay-test.phel` if the logic is
+   `tests/io/render-overlay-test.phel` if the logic is
    non-trivial (most overlays don't need one — they're just paint).
 
 4. `composer ci` to validate. Commit. Done.
@@ -256,7 +256,7 @@ Say you want a kill-counter banner at top-right.
 Say you want a stamina meter that drains while sprinting.
 
 1. Add `:stamina 1.0` to `new-world` in
-   `src/modules/core/state.phel`.
+   `src/core/state.phel`.
 
 2. Add a `tick-stamina` pure fn in `core/physics.phel`:
 
@@ -279,7 +279,7 @@ Say you want a stamina meter that drains while sprinting.
 
 4. Forward `:stamina` through `frame-stats` so render sees it.
 
-5. Tests in `tests/modules/core/physics-test.phel`:
+5. Tests in `tests/core/physics-test.phel`:
 
    ```phel
    (deftest test-tick-stamina-drains-while-sprinting

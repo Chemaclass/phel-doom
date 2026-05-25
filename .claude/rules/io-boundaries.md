@@ -7,18 +7,18 @@ globs: src/**,*.phel
 
 Three layers. Direction of dependency: `io/` → `glue/` → `core/`. Never the reverse.
 
-## `src/modules/core/`
+## `src/core/`
 
 **Pure logic.** Same input → same output, no observable effect.
 
 - Accepts and returns plain data (maps, vectors, structs).
 - May NOT: print, read terminal, query time, `rand`, mutate atoms, call `php/exit`, hit filesystem, sleep.
 - MAY: do math, return new maps, throw on invalid input.
-- Test target: 1:1 deterministic unit tests in `tests/modules/core/`.
+- Test target: 1:1 deterministic unit tests in `tests/core/`.
 
 Modules: `engine`, `combat`, `enemy`, `level`, `map`, `physics`, `state`.
 
-## `src/modules/glue/`
+## `src/glue/`
 
 **Pure wiring.** Composes core/ pieces. Stays deterministic.
 
@@ -28,7 +28,7 @@ Modules: `engine`, `combat`, `enemy`, `level`, `map`, `physics`, `state`.
 
 Modules: `controls`, `input`, `scores`, `sound` (the data-prep parts), `wad`.
 
-## `src/modules/io/`
+## `src/io/`
 
 **Side effects allowed.** Single layer that touches the world.
 

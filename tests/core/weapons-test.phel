@@ -1,0 +1,110 @@
+(ns phel-doom-tests.core.weapons-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.state :refer [new-player new-world])
+  (:require phel-doom.core.weapons :refer [current-weapon give-weapon initial-weapon-state owns? switch-weapon weapon-spec weapons]))
+
+(def empty-grid [[1 1 1] [1 0 1] [1 1 1]])
+
+(defn fresh-world []
+  (new-world empty-grid (new-player 1.5 1.5 0.0)))
+
+(deftest test-current-weapon-defaults-to-pistol
+  (is (= :pistol (current-weapon {})))
+  (is (= :pistol (current-weapon (fresh-world))))
+  (is (= :shotgun (current-weapon {:weapon :shotgun}))))
+
+(deftest test-weapon-spec-returns-catalogue-entry
+  (let [w (assoc (fresh-world) :weapon :shotgun)]
+    (is (= 4   (:mag-size  (weapon-spec w))))
+    (is (= 3   (:damage    (weapon-spec w))))
+    (is (= 0.6 (:fire-cooldown (weapon-spec w))))))
+
+(deftest test-weapon-damage-niche-not-linear
+  ;; Each weapon owns a niche, not a strict tier. Shotgun = burst
+  ;; (high dmg per pull, slow cd, tiny mag); chaingun = sustained
+  ;; (low dmg per pull, blazing cd, big mag); pistol = balanced
+  ;; fallback. Per-shot damage does NOT increase monotonically.
+  (is (= 1 (:damage (get weapons :pistol))))
+  (is (= 3 (:damage (get weapons :shotgun))))
+  (is (= 1 (:damage (get weapons :chaingun)))))
+
+(deftest test-initial-weapon-state-has-every-weapon-at-spec-defaults
+  (let [s (initial-weapon-state)]
+    (is (= 10 (get-in s [:pistol   :mag])))
+    (is (= 4  (get-in s [:shotgun  :mag])))
+    (is (= 30 (get-in s [:chaingun :mag])))
+    (is (= 30 (get-in s [:pistol   :reserve])))
+    (is (= 8  (get-in s [:shotgun  :reserve])))
+    (is (= 0  (get-in s [:chaingun :reserve])))))
+
+(deftest test-fresh-run-owns-only-pistol
+  (let [w (fresh-world)]
+    (is (= true  (owns? w :pistol)))
+    (is (= false (owns? w :shotgun)))
+    (is (= false (owns? w :chaingun)))))
+
+(deftest test-switch-weapon-noop-when-not-owned
+  ;; Player pressing 2 with only the pistol in inventory: no swap.
+  (let [w (switch-weapon (fresh-world) :shotgun)]
+    (is (= :pistol (:weapon w)))))
+
+(deftest test-switch-weapon-saves-current-and-loads-target-when-owned
+  ;; Player burns 3 pistol rounds (mag 7), picks up shotgun first,
+  ;; then explicitly swaps. give-weapon already auto-switched, so
+  ;; verify a manual swap back round-trips state.
+  (let [w0 (assoc (fresh-world)
+                  :mag 7 :ammo-reserve 25
+                  :owned-weapons #{:pistol :shotgun})
+        w1 (switch-weapon w0 :shotgun)]
+    (is (= :shotgun (:weapon w1)))
+    (is (= 4 (:mag w1)))           ; shotgun mag-size fresh
+    (is (= 8 (:ammo-reserve w1)))  ; shotgun reserve-start
+    ;; Pistol's mid-mag count survived in :weapon-state.
+    (is (= 7  (get-in w1 [:weapon-state :pistol :mag])))
+    (is (= 25 (get-in w1 [:weapon-state :pistol :reserve])))))
+
+(deftest test-switch-weapon-is-noop-mid-reload
+  (let [w0 (assoc (fresh-world)
+                  :owned-weapons #{:pistol :shotgun}
+                  :reload-cooldown 0.5)
+        w1 (switch-weapon w0 :shotgun)]
+    (is (= :pistol (:weapon w1)))))
+
+(deftest test-switch-weapon-unknown-target-is-noop
+  (let [w0 (fresh-world)
+        w1 (switch-weapon w0 :rocket-launcher)]
+    (is (= :pistol (:weapon w1)))))
+
+(deftest test-switch-weapon-round-trip-preserves-state
+  ;; Pistol mag 7, owned both, swap to shotgun, swap back -> pistol
+  ;; still mag 7.
+  (let [w0 (assoc (fresh-world)
+                  :mag 7 :ammo-reserve 25
+                  :owned-weapons #{:pistol :shotgun})
+        w1 (switch-weapon w0 :shotgun)
+        w2 (switch-weapon w1 :pistol)]
+    (is (= :pistol (:weapon w2)))
+    (is (= 7  (:mag w2)))
+    (is (= 25 (:ammo-reserve w2)))))
+
+(deftest test-give-weapon-adds-to-owned-and-autoswitches
+  ;; First-time pickup snaps to the new weapon DOOM-style.
+  (let [w0 (assoc (fresh-world) :mag 7 :ammo-reserve 25)
+        w1 (give-weapon w0 :shotgun)]
+    (is (= true (owns? w1 :shotgun)))
+    (is (= :shotgun (:weapon w1)))
+    (is (= 4 (:mag w1)))                  ; shotgun mag-size
+    (is (= 8 (:ammo-reserve w1)))         ; shotgun reserve-start
+    ;; Pistol's mid-mag count stashed for the eventual swap back.
+    (is (= 7  (get-in w1 [:weapon-state :pistol :mag])))))
+
+(deftest test-give-weapon-second-pickup-is-noop
+  ;; Picking up a duplicate weapon shouldn't yank the player back to it.
+  (let [w0 (give-weapon (fresh-world) :shotgun)
+        w1 (give-weapon w0 :shotgun)]
+    (is (= :shotgun (:weapon w1)))))      ; unchanged
+
+(deftest test-give-weapon-unknown-is-noop
+  (let [w (give-weapon (fresh-world) :rocket-launcher)]
+    (is (= :pistol (:weapon w)))
+    (is (= false (owns? w :rocket-launcher)))))

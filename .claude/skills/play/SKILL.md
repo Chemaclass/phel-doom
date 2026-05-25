@@ -11,7 +11,7 @@ Launch phel-doom to verify a change end-to-end.
 
 ## When to use
 
-- Any change in `src/modules/io/render.phel` or `src/commands/play.phel`.
+- Any change in `src/io/render.phel` or `src/commands/play.phel`.
 - New key binding or input behavior (`controls.phel`, `input.phel`).
 - Audio change (`sound.phel`).
 - HUD or pause overlay change.

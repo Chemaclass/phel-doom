@@ -26,7 +26,7 @@ Evaluate ad-hoc Phel expressions. Use to confirm syntax, fn shape, or quick math
    ```bash
    cat > /tmp/phel-doom-repl.phel <<'EOF'
    (ns phel-doom-repl
-     (:require phel-doom.modules.core.engine :as engine))
+     (:require phel-doom.core.engine :as engine))
    (println (engine/cast-ray ...))
    EOF
    timeout 10 vendor/bin/phel run /tmp/phel-doom-repl.phel

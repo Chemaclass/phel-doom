@@ -2,8 +2,8 @@
 
 Raw stdin to world state. Two modules:
 
-- `src/modules/io/input.phel`: terminal-mode setup + non-blocking byte reads
-- `src/modules/glue/controls.phel`: byte interpretation into game actions
+- `src/io/input.phel`: terminal-mode setup + non-blocking byte reads
+- `src/glue/controls.phel`: byte interpretation into game actions
 
 ## Terminal setup
 

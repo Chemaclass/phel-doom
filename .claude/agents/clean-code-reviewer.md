@@ -37,7 +37,7 @@ Review staged diff (`git diff --cached`), unstaged (`git diff`), or branch (`git
 
 ## IO boundary checks
 
-- `src/modules/core/` and `src/modules/glue/` may NOT call `php/print`, `php/echo`, read time, hit filesystem, mutate atoms.
+- `src/core/` and `src/glue/` may NOT call `php/print`, `php/echo`, read time, hit filesystem, mutate atoms.
 - `io/` functions SHOULD end in `!`.
 - Math that decides what to draw belongs in `core/` or `glue/`, not `io/`.
 

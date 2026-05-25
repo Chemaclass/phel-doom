@@ -22,7 +22,7 @@ make play
 <details>
 <summary><strong>No PHP locally? Run it in Docker</strong></summary>
 
-The repo ships a `Dockerfile` bundling PHP 8.4 CLI + Composer + the project deps. No host install required — `docker` is the only prerequisite.
+The repo ships a `Dockerfile` bundling PHP 8.4 CLI + Composer + the project deps. No host install required - `docker` is the only prerequisite.
 
 ```bash
 make docker-build      # builds the image (~195MB)
@@ -34,7 +34,7 @@ make docker-clean      # removes the local image
 
 Behind the scenes each target is a one-line `docker run --rm` wrapper. Use `DOCKER_IMG=...` to point at a custom tag.
 
-The host-PHP targets (`make play`, `make test`, …) remain the inner-loop default — Docker per-command adds ~1s of container startup overhead, which adds up across a fast TDD cycle. Use Docker when you don't have PHP / Composer locally OR when you want a reproducible build env.
+The host-PHP targets (`make play`, `make test`, …) remain the inner-loop default - Docker per-command adds ~1s of container startup overhead, which adds up across a fast TDD cycle. Use Docker when you don't have PHP / Composer locally OR when you want a reproducible build env.
 
 For custom invocations (e.g. dev flags), bypass the wrappers:
 
@@ -61,21 +61,21 @@ Rebuild after editing `composer.json` so the deps layer refreshes.
 | `1` / `2` / `3` | Switch weapon (pistol / shotgun / chaingun) |
 | `m` / `n`      | Toggle minimap / sound       |
 | `p`            | Pause                        |
-| `h` / `ESC`    | Info menu (stats, weapons table, controls) — also pauses |
+| `h` / `ESC`    | Info menu (stats, weapons table, controls) - also pauses |
 | `F3`           | Debug overlay (fps, pos, perf) |
 | `q`            | Quit                         |
 
 Walk into a door to advance. Walk over pickups:
 
-- **♥ heart** — `+1` life
-- **◆ armor** — absorbs one hit (cap 5)
-- **ammo box** — `+N` to a weapon's reserve. Kill-loot tags a random non-pistol weapon you own (pistol always has a refill path via floor boxes)
-- **berserk** — 20s of `×2` damage
-- **invuln** — 10s damage immunity
-- **backpack** — doubles every weapon's reserve cap
-- **⚿ keycard** — unlocks matching exit on L4 (blue) / L5 (red)
+- **♥ heart** - `+1` life
+- **◆ armor** - absorbs one hit (cap 5)
+- **ammo box** - `+N` to a weapon's reserve. Kill-loot tags a random non-pistol weapon you own (pistol always has a refill path via floor boxes)
+- **berserk** - 20s of `×2` damage
+- **invuln** - 10s damage immunity
+- **backpack** - doubles every weapon's reserve cap
+- **⚿ keycard** - unlocks matching exit on L4 (blue) / L5 (red)
 
-Compass top-centre tints one cardinal letter (E/S/W/N) toward your next target — **orange** = exit door, **blue / red** = keycard you still need. Built so you can play in 3D without checking the 2D map.
+Compass top-centre tints one cardinal letter (E/S/W/N) toward your next target - **orange** = exit door, **blue / red** = keycard you still need. Built so you can play in 3D without checking the 2D map.
 
 Weapons (DPS-balanced niches, find on map):
 
@@ -88,7 +88,7 @@ Weapons (DPS-balanced niches, find on map):
 Hold space to spray with the pistol/chaingun. Shotgun needs a fresh pull per shell.
 
 CLI:
-- `--difficulty=easy|normal|hard|nightmare` (`-d`) — scales enemy speed, HP, count
+- `--difficulty=easy|normal|hard|nightmare` (`-d`) - scales enemy speed, HP, count
 
 Terminal quirks (kitty keyboard, tmux): see [docs/input.md](docs/input.md).
 
@@ -96,16 +96,16 @@ Terminal quirks (kitty keyboard, tmux): see [docs/input.md](docs/input.md).
 
 Per-subsystem write-ups in [docs/](docs/README.md):
 
-- [features](docs/features.md) — what the game does
-- [architecture](docs/architecture.md) — module layout + dependency rules
-- [game-loop](docs/game-loop.md) — per-frame state transition
-- [raycaster](docs/raycaster.md) + [rendering](docs/rendering.md) — pixels on screen
-- [monsters](docs/monsters.md) + [combat](docs/combat.md) — AI, damage, knockback
-- [level-system](docs/level-system.md) + [map](docs/map.md) — progression + procgen
+- [features](docs/features.md) - what the game does
+- [architecture](docs/architecture.md) - module layout + dependency rules
+- [game-loop](docs/game-loop.md) - per-frame state transition
+- [raycaster](docs/raycaster.md) + [rendering](docs/rendering.md) - pixels on screen
+- [monsters](docs/monsters.md) + [combat](docs/combat.md) - AI, damage, knockback
+- [level-system](docs/level-system.md) + [map](docs/map.md) - progression + procgen
 - [input](docs/input.md) + [audio](docs/audio.md) + [scores](docs/scores.md)
-- [wad-parser](docs/wad-parser.md) — DOOM .wad reader
-- [performance](docs/performance.md) — hot-loop optimisations
-- [contributing](docs/contributing.md) — dev workflow + Phel quirks
+- [wad-parser](docs/wad-parser.md) - DOOM .wad reader
+- [performance](docs/performance.md) - hot-loop optimisations
+- [contributing](docs/contributing.md) - dev workflow + Phel quirks
 
 ## License
 

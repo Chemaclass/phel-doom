@@ -42,7 +42,7 @@ Key state per ray:
   ...)
 ```
 
-`dda-inf` is a finite sentinel (1e9) used when one axis of `dir` is exactly zero — keeps the comparisons clean without dragging in PHP's `INF`.
+`dda-inf` is a finite sentinel (1e9) used when one axis of `dir` is exactly zero - keeps the comparisons clean without dragging in PHP's `INF`.
 
 ## `cast-ray-hit`: one ray
 
@@ -103,8 +103,8 @@ Without this, walls bow outward at the edges (fish-eye). One multiply per column
 
 ## Per-ray cost
 
-DDA averages ~5-8 cell crossings before hitting a wall on `default-grid` — down from ~35 fixed steps. At 180 columns the cast phase clocks ~1.55 ms (was ~2.04 ms before DDA, ~24% faster). Hot enough that the loop still uses direct PHP ops (`php/+`, `php/<`, `php/aget`) and the cell lookup goes through `:pgrid` (a PHP-native nested array) instead of Phel persistent vectors.
+DDA averages ~5-8 cell crossings before hitting a wall on `default-grid` - down from ~35 fixed steps. At 180 columns the cast phase clocks ~1.55 ms (was ~2.04 ms before DDA, ~24% faster). Hot enough that the loop still uses direct PHP ops (`php/+`, `php/<`, `php/aget`) and the cell lookup goes through `:pgrid` (a PHP-native nested array) instead of Phel persistent vectors.
 
 ## Why the raycaster lives in `core/`
 
-Pure function: `(pgrid, x, y, angle) → distance`. No state, no IO, deterministic. `tests/core/engine-test.phel` exercises with literal grids — distance accuracy, side bit, hit-cell coords, parallel-array lengths.
+Pure function: `(pgrid, x, y, angle) → distance`. No state, no IO, deterministic. `tests/core/engine-test.phel` exercises with literal grids - distance accuracy, side bit, hit-cell coords, parallel-array lengths.

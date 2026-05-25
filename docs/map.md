@@ -20,7 +20,7 @@ Every cell is one of these ints. Constants exported so no module uses raw `0/1/2
 {3 :blue   4 :red   5 :boss}
 ```
 
-`:boss` is a synthetic "colour" — no physical keycard item ever spawns for it; the kw is granted automatically by `combat/maybe-unlock-boss-door` when the boss is killed on a `:door-lock :boss` level.
+`:boss` is a synthetic "colour" - no physical keycard item ever spawns for it; the kw is granted automatically by `combat/maybe-unlock-boss-door` when the boss is killed on a `:door-lock :boss` level.
 
 ## Lookup helpers
 

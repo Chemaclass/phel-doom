@@ -38,7 +38,7 @@
   │     - else wall: top-edge / bot-edge / normal by row vs tops/bots
   │     - sky / floor for rows outside [tops, bots)
   ├── overlay layers via absolute cursor positioning:
-  │     - bottom HUD line (hud-line — dim tagline)
+  │     - bottom HUD line (hud-line - dim tagline)
   │     - F3 debug row (hud-debug-line, when :debug? is on)
   │     - minimap (top-right rows, auto-scaled to ≤ 1/3 vw)
   │     - face glyphs (per enemy, occluded by walls)
@@ -103,7 +103,7 @@ Each visible enemy projects to centre column + half-width (`collect-enemy-projs`
 3. Body embeds `:body-glyph` (e.g. `▒`) in a darker FG so each monster has a distinct material pattern.
 4. Writes into per-column arrays `eheads` / `ebodys` / `elegss`.
 
-`project-enemy` carries a `:scale` factor (1.0 default, 2.0 for `:cyber`). Painter multiplies both `:half-width` and projected sprite height `h` by `:scale` so cyberdemons render twice as wide AND tall — proportional, not stretched. Centred vertically so feet hover one half-sprite below the player's horizon at full scale.
+`project-enemy` carries a `:scale` factor (1.0 default, 2.0 for `:cyber`). Painter multiplies both `:half-width` and projected sprite height `h` by `:scale` so cyberdemons render twice as wide AND tall - proportional, not stretched. Centred vertically so feet hover one half-sprite below the player's horizon at full scale.
 5. Records `tops` / `bots` / `mids` / `lowers` so the inner row loop picks head/body/legs per row.
 
 Aggro branch swaps in a blink-attributed cell within `aggro-distance` (1.8 world units).

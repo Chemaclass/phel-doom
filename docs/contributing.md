@@ -76,7 +76,7 @@ down so the next person doesn't repeat the same incidents.
 ### PHP arrays are pass-by-value across fn boundaries
 
 ```phel
-;; BROKEN — mutation lost
+;; BROKEN - mutation lost
 (defn- paint-into! [arr]
   (php/aset arr 0 99))
 
@@ -93,7 +93,7 @@ of `arr`. The caller's binding sees no change. Two ways out:
    ```phel
    (let [a (php/array)]
      (loop [...] (php/aset a ...))
-     (php/aget a 0))   ; works — same lexical scope
+     (php/aget a 0))   ; works - same lexical scope
    ```
 
 2. **Helper owns creation + returns the array** so the caller can
@@ -169,14 +169,14 @@ hide the call shape behind tiny macros that expand at compile time
 to the underlying `php/*` op:
 
 ```phel
-;; src/io/render.phel — defined once, used everywhere
+;; src/io/render.phel - defined once, used everywhere
 (defmacro buf-mk  []          `(php/array))
 (defmacro buf-set [b i v]     `(php/aset ~b ~i ~v))
 (defmacro buf-get [b i]       `(php/aget ~b ~i))
 (defmacro buf-push [b v]      `(php/array_push ~b ~v))
 ```
 
-Call sites read at the Phel level — `(buf-set tops col top)` —
+Call sites read at the Phel level - `(buf-set tops col top)` -
 while compiling to `\Phel\Lang\…::aset($tops, $col, $top)` with zero
 runtime overhead.
 
@@ -186,7 +186,7 @@ Two caveats:
   similar; use them only at direct call sites.
 - PHP arrays still pass by value at fn boundaries, so a helper that
   builds a buffer must RETURN it (see `compute-wall-shades`). The
-  macros don't change that — they only fix the *call-site* DX.
+  macros don't change that - they only fix the *call-site* DX.
 
 Outside `render.phel` (and the math-only `php/sqrt`, `php/atan2`,
 `php/intval`, etc. used everywhere for raw arithmetic), prefer
@@ -247,7 +247,7 @@ Say you want a kill-counter banner at top-right.
 
 3. Add a behavioural test in
    `tests/io/render-overlay-test.phel` if the logic is
-   non-trivial (most overlays don't need one — they're just paint).
+   non-trivial (most overlays don't need one - they're just paint).
 
 4. `composer ci` to validate. Commit. Done.
 

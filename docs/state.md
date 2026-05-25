@@ -108,7 +108,7 @@ Seven time-limited counters drive directional motion + sprint intent:
 
 Each input byte from `glue/controls.phel` refreshes the matching counter. Each frame `core/physics.phel` consumes whatever is non-zero (scaled by `dt`) and decays every counter by 1. Counter hits 0 = direction stops.
 
-`:sprint` is intent only — the actual speed boost is gated by `:stamina > 0` AND `not :sprint-blocked?`. See `physics.phel`'s `tick-stamina` + `sprinting?`.
+`:sprint` is intent only - the actual speed boost is gated by `:stamina > 0` AND `not :sprint-blocked?`. See `physics.phel`'s `tick-stamina` + `sprinting?`.
 
 Hold-frame size is the only "feel" knob: shorter = snappier stop, longer = smoother sustained-hold (bridges OS auto-repeat gaps). Current: `move-hold-frames=12`, `turn-hold-frames=3`.
 
@@ -131,7 +131,7 @@ Float-seconds countdowns on the world, decayed by `decay-timers` in `core/combat
 
 `:fx` is a vector of blood splatters with their own `:ttl` ticked by `decay-fx`.
 
-### `:game-time` — the pause-aware clock
+### `:game-time` - the pause-aware clock
 
 `advance-game-time` adds `dt` to `:game-time` on every non-paused frame; on a paused frame `tick-world` returns early so the value is left untouched. Render samples this clock for every blink/pulse (door, behind warning, jam, pickup throb, enemy face/body cycle, screen-shake) so pressing `p` freezes every visual animation that was driven by the wall clock before. Resume picks up exactly where the freeze caught it.
 

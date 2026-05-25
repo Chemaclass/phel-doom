@@ -1,8 +1,8 @@
 # Monsters
 
-- `src/core/enemies.phel` — type catalog (visuals + default HP)
-- `src/core/enemy.phel` — record + spawn + chase step
-- `src/core/enemy_ai.phel` — AI state machine (LOS-gated wake)
+- `src/core/enemies.phel` - type catalog (visuals + default HP)
+- `src/core/enemy.phel` - record + spawn + chase step
+- `src/core/enemy_ai.phel` - AI state machine (LOS-gated wake)
 - Visual rendering in `io/render.phel` (per-enemy `:type` lookup).
 
 ## Catalog (`enemy-types`)
@@ -24,12 +24,12 @@ Each entry has: `:name :default-lives :head-code :body-code :legs-code :body-gly
 
 Adding a new type = append one entry to `enemy-types`. Adding a level that uses it = one entry in `levels` (see [level-system.md](level-system.md)).
 
-Each enemy carries `:lives` / `:max-lives` / `:type`. `enemy/shoot` drops `:lives` per hit; only flips `:alive false` and arms respawn when 0. `damage-ratio = 1 - lives/max-lives` darkens the body shade — wounded enemies read as "bloodied" from across the room without a HUD bar. Non-killing hits also stamp `:hit-flash-secs 1.2` so a yellow HP digit floats above the head.
+Each enemy carries `:lives` / `:max-lives` / `:type`. `enemy/shoot` drops `:lives` per hit; only flips `:alive false` and arms respawn when 0. `damage-ratio = 1 - lives/max-lives` darkens the body shade - wounded enemies read as "bloodied" from across the room without a HUD bar. Non-killing hits also stamp `:hit-flash-secs 1.2` so a yellow HP digit floats above the head.
 
 ## Spawning
 
-- `spawn-enemies grid n min-dist px py [max-lives [type-kw]]` — single-type rooms.
-- `spawn-enemies-mixed grid specs min-dist px py` — multi-type. Spec shape: `{:type :count [:lives N] [:max-concurrent K]}`. Each enemy carries `:type` for render lookup and optional `:max-concurrent` cap. Used by `build-world` whenever a level's `:enemies` field is a vector (and for the L10 boss arena where `{:type :cyber :count 1 :lives 50}` + `{:type :imp :count 2 :max-concurrent 1}` paints one boss with 2 minions but only 1 alive at a time).
+- `spawn-enemies grid n min-dist px py [max-lives [type-kw]]` - single-type rooms.
+- `spawn-enemies-mixed grid specs min-dist px py` - multi-type. Spec shape: `{:type :count [:lives N] [:max-concurrent K]}`. Each enemy carries `:type` for render lookup and optional `:max-concurrent` cap. Used by `build-world` whenever a level's `:enemies` field is a vector (and for the L10 boss arena where `{:type :cyber :count 1 :lives 50}` + `{:type :imp :count 2 :max-concurrent 1}` paints one boss with 2 minions but only 1 alive at a time).
 
 ## AI state machine
 
@@ -48,18 +48,18 @@ Each enemy carries a `:state` keyword + an optional `:lkp` (last-known player po
 
 ### State meanings
 
-- **`:dormant`** — passive. Won't move, won't damage. Waiting for LOS or a close-by noise.
-- **`:aware`** — has LOS to the player right now. Full chase + contact damage. `:lkp` refreshes to the player's current cell every tick.
-- **`:hunting`** — lost LOS. Walks toward the frozen `:lkp` (whatever cell the player was in at the last LOS frame), but does NOT deal contact damage — searching, not engaged. Re-acquiring LOS → `:aware`. Arriving at `:lkp` without LOS → `:dormant` ("lost the scent", give up).
-- **`:pain`** — hit-stagger flinch. Frozen for `pain-stagger-secs` (~0.3s): no movement, no contact damage. `tick-pain` decays the `:pain-secs` timer per frame and flips the enemy back to `:aware` on expiry; the next `observe` pass routes it through the normal LOS flow. Pain chance rolls inside `enemy/shoot`: every non-killing hit pulls a uniform 0..1 from `mt_rand`, compares against `pain-chance-of enemy` (`type-pain-chance` table; `:imp` 0.35, `:cyber` 0.05, …). Heavier monsters ignore most hits; fragile ones flinch on nearly every shot.
-- **`:attacking`** — telegraphed strike window. When an `:aware` enemy is inside its per-type `attack-spec` `:range` AND its `:attack-cooldown-secs` has fully decayed, `maybe-start-attack` flips state to `:attacking` and arms `:attack-windup-secs`. While `:attacking` the enemy stops moving (visible telegraph) but `:attacks?` stays true so contact damage still applies. `tick-attack` decays the windup; on expiry state reverts to `:aware` and the per-type `:cooldown` arms so the enemy chases for at least one cooldown window before the next telegraphed strike. Cooldown ticks every frame regardless of state so a brief `:pain` interrupt doesn't leave a stale cooldown armed.
-- **`:wander`** — opt-in random patrol. `start-wander` promotes a `:dormant` enemy to `:wander` with a fresh random `:wander-angle` and `:wander-secs` timer. `target-pos` projects `wander-step-dist` units ahead in the current angle so `step-toward` walks the enemy in that direction. `tick-wander` rolls a new angle every `wander-step-secs`. `:wander` reacts to LOS / noise the same way `:dormant` does (LOS → `:aware`, noise → `:hunting`). Real-game spawns stay `:dormant` by default to preserve the sneak feel; levels / types opt in by mapping `start-wander` over fresh batches.
+- **`:dormant`** - passive. Won't move, won't damage. Waiting for LOS or a close-by noise.
+- **`:aware`** - has LOS to the player right now. Full chase + contact damage. `:lkp` refreshes to the player's current cell every tick.
+- **`:hunting`** - lost LOS. Walks toward the frozen `:lkp` (whatever cell the player was in at the last LOS frame), but does NOT deal contact damage - searching, not engaged. Re-acquiring LOS → `:aware`. Arriving at `:lkp` without LOS → `:dormant` ("lost the scent", give up).
+- **`:pain`** - hit-stagger flinch. Frozen for `pain-stagger-secs` (~0.3s): no movement, no contact damage. `tick-pain` decays the `:pain-secs` timer per frame and flips the enemy back to `:aware` on expiry; the next `observe` pass routes it through the normal LOS flow. Pain chance rolls inside `enemy/shoot`: every non-killing hit pulls a uniform 0..1 from `mt_rand`, compares against `pain-chance-of enemy` (`type-pain-chance` table; `:imp` 0.35, `:cyber` 0.05, …). Heavier monsters ignore most hits; fragile ones flinch on nearly every shot.
+- **`:attacking`** - telegraphed strike window. When an `:aware` enemy is inside its per-type `attack-spec` `:range` AND its `:attack-cooldown-secs` has fully decayed, `maybe-start-attack` flips state to `:attacking` and arms `:attack-windup-secs`. While `:attacking` the enemy stops moving (visible telegraph) but `:attacks?` stays true so contact damage still applies. `tick-attack` decays the windup; on expiry state reverts to `:aware` and the per-type `:cooldown` arms so the enemy chases for at least one cooldown window before the next telegraphed strike. Cooldown ticks every frame regardless of state so a brief `:pain` interrupt doesn't leave a stale cooldown armed.
+- **`:wander`** - opt-in random patrol. `start-wander` promotes a `:dormant` enemy to `:wander` with a fresh random `:wander-angle` and `:wander-secs` timer. `target-pos` projects `wander-step-dist` units ahead in the current angle so `step-toward` walks the enemy in that direction. `tick-wander` rolls a new angle every `wander-step-secs`. `:wander` reacts to LOS / noise the same way `:dormant` does (LOS → `:aware`, noise → `:hunting`). Real-game spawns stay `:dormant` by default to preserve the sneak feel; levels / types opt in by mapping `start-wander` over fresh batches.
 
 ### Wake / transition triggers
 
-- **LOS** — every tick, `enemy-ai/observe` casts one ray from each alive enemy to the player via `engine/cast-ray`. Ray hits a wall before reaching the player cell → no LOS. Player closer than the wall → LOS clear. Capped at `max-depth` (12 units) — long sectors read as "too far to see" (DOOM sight cutoff).
-- **Pain (being shot)** — `enemy/shoot` stamps `:state :aware` on the hit target unconditionally.
-- **Noise (player fire)** — `combat/fire-shot` runs a 4-connected flood-fill from the player's cell up to `noise-wake-radius` (3 cells) through `cell-floor` neighbours only. Walls + all door variants block. Alive enemies inside the visited set go into the hunt: dormant → `:hunting` with `:lkp` stamped at the fire origin; existing hunters get their `:lkp` refreshed to the fresher noise. Already-aware enemies are unchanged (they're tracking visually, sound adds nothing).
+- **LOS** - every tick, `enemy-ai/observe` casts one ray from each alive enemy to the player via `engine/cast-ray`. Ray hits a wall before reaching the player cell → no LOS. Player closer than the wall → LOS clear. Capped at `max-depth` (12 units) - long sectors read as "too far to see" (DOOM sight cutoff).
+- **Pain (being shot)** - `enemy/shoot` stamps `:state :aware` on the hit target unconditionally.
+- **Noise (player fire)** - `combat/fire-shot` runs a 4-connected flood-fill from the player's cell up to `noise-wake-radius` (3 cells) through `cell-floor` neighbours only. Walls + all door variants block. Alive enemies inside the visited set go into the hunt: dormant → `:hunting` with `:lkp` stamped at the fire origin; existing hunters get their `:lkp` refreshed to the fresher noise. Already-aware enemies are unchanged (they're tracking visually, sound adds nothing).
 
 ### Transition table
 
@@ -123,7 +123,7 @@ Killed enemies stay in the vector with `:alive false` and `:respawn-after` set t
 
 Optional `:max-concurrent` cap on a spawned enemy type enforces a max-alive count. Revival checks the count of `:alive` enemies of the same `:type`; respawn is delayed until a sibling dies (up to respawn cap). `:type` is now preserved across respawn (bug fix: revived enemies previously dropped `:type`).
 
-The 7-arity `advance es g x y dt sp revive?` suspends the revive branch when `revive?` is false — dead enemies keep their `:respawn-after` value frozen instead of ticking down. Used on L10 once the cyberdemon dies: `play.phel`'s `boss-down?` predicate flips `revive?` to false, so the player's victory lap to the boss door isn't ambushed by a fresh boss spawn or a capped imp.
+The 7-arity `advance es g x y dt sp revive?` suspends the revive branch when `revive?` is false - dead enemies keep their `:respawn-after` value frozen instead of ticking down. Used on L10 once the cyberdemon dies: `play.phel`'s `boss-down?` predicate flips `revive?` to false, so the player's victory lap to the boss door isn't ambushed by a fresh boss spawn or a capped imp.
 
 ## Rendering: 3 zones + face overlay
 

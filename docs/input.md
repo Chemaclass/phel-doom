@@ -62,10 +62,10 @@ Each byte refreshes its slot's counter on `:moves`. Counter is the only thing ph
 
 ## Sprint
 
-Hold **SHIFT** (kitty terminals) or **`x`** (anywhere) to sprint. Sprint multiplies forward + strafe speed by `sprint-multiplier` (1.6×) and drains the `:stamina` pool (`max-stamina` 100, drain 30/s). Stamina regenerates at 20/s after a 0.5s post-sprint cooldown. Hitting empty latches `:sprint-blocked?` until stamina recovers to `sprint-engage-threshold` (20) — prevents stutter-sprint at zero.
+Hold **SHIFT** (kitty terminals) or **`x`** (anywhere) to sprint. Sprint multiplies forward + strafe speed by `sprint-multiplier` (1.6×) and drains the `:stamina` pool (`max-stamina` 100, drain 30/s). Stamina regenerates at 20/s after a 0.5s post-sprint cooldown. Hitting empty latches `:sprint-blocked?` until stamina recovers to `sprint-engage-threshold` (20) - prevents stutter-sprint at zero.
 
 Two input paths:
-- **Kitty path**: `apply-kitty-events` / `apply-kitty-arrow-events` parse the `mods` field of `\e[<code>;<mods>(:<event>)?u` / `\e[1;<mods>:<event><letter>`. Mods are encoded as `bits + 1`; bit 0 = SHIFT. Press/repeat events on a movement key (WASD or arrows) with the SHIFT bit set refresh the `:sprint` slot too — so holding SHIFT+W keeps the slot warm. Release events do NOT refresh sprint (player let go).
+- **Kitty path**: `apply-kitty-events` / `apply-kitty-arrow-events` parse the `mods` field of `\e[<code>;<mods>(:<event>)?u` / `\e[1;<mods>:<event><letter>`. Mods are encoded as `bits + 1`; bit 0 = SHIFT. Press/repeat events on a movement key (WASD or arrows) with the SHIFT bit set refresh the `:sprint` slot too - so holding SHIFT+W keeps the slot warm. Release events do NOT refresh sprint (player let go).
 - **Legacy path**: `key->slot` maps the plain `"x"` byte to `:sprint` so terminals without kitty (Terminal.app, basic xterm) get a working sprint key too. Under kitty, `"x"` arrives as `\e[120u` and resolves via `ascii->slot` to the same `:sprint` refresh.
 
 The `:sprint` slot decays alongside the other movement counters in `decay-move-counters`, so sprint intent naturally evaporates the frame the player lets go.
@@ -140,7 +140,7 @@ One-shot actions (toggles, modals, weapon switch, reload) need rising edges, not
    :f3  (f3-pressed? keys)          ; toggle debug overlay
    :r   (str/contains? keys "r")    ; reload
    :h   (str/contains? keys "h")    ; toggle help modal
-   :esc (str/contains? keys "\e")   ; alias of h — same toggle
+   :esc (str/contains? keys "\e")   ; alias of h - same toggle
    :k1  (str/contains? keys "1")    ; switch to pistol
    :k2  (str/contains? keys "2")    ; switch to shotgun
    :k3  (str/contains? keys "3")})  ; switch to chaingun
@@ -164,10 +164,10 @@ One-shot actions (toggles, modals, weapon switch, reload) need rising edges, not
 `game-loop` carries `prev-keys` across iterations; `rising-edges` runs each frame. `tick-world` consumes the edges map. Pure data.
 
 Consumed by:
-- `:fire` — `tick-shooting` (hitscan + ammo)
-- `:reload` — `reload` (mag refill)
-- `:toggle-*` — `handle-toggles` (flip flags)
-- `:switch-*` / `:about-face` / `:debug` / `:toggle-help` — also `handle-toggles`
+- `:fire` - `tick-shooting` (hitscan + ammo)
+- `:reload` - `reload` (mag refill)
+- `:toggle-*` - `handle-toggles` (flip flags)
+- `:switch-*` / `:about-face` / `:debug` / `:toggle-help` - also `handle-toggles`
 
 ## Why `glue/` not `io/`
 

@@ -13,9 +13,9 @@ Hitscan + damage timing + i-frames. `src/core/combat.phel`. Only side effect is 
 (def fire-anim-seconds 0.09)  ; muzzle flash visibility
 (def fx-ttl-seconds    0.45)  ; blood splatter lifetime
 (def flash-seconds     0.05)  ; 1-frame white impact jolt
-(def heat-per-shot     0.30)  ; pistol-only — see `:overheats?` flag
+(def heat-per-shot     0.30)  ; pistol-only - see `:overheats?` flag
 (def jam-seconds       1.4)   ; pistol-only lockout when heat ≥ 1
-;; Pistol fallback defaults — overridden per weapon in weapons.phel
+;; Pistol fallback defaults - overridden per weapon in weapons.phel
 ;; (`mag-size`, `fire-cooldown`, `reload-duration`, `reserve-cap`,
 ;; `ammo-per-box`, `damage`, `auto-fire?`, `overheats?`).
 (def mag-size 10)
@@ -49,7 +49,7 @@ Hitscan + damage timing + i-frames. `src/core/combat.phel`. Only side effect is 
 
 `apply-heat` decrements `:mag` by one on every shot, clamped at zero. `decay-timers` ticks `:reload-cooldown` down each frame so the next trigger pull can fire as soon as the brief lockout expires.
 
-A trigger pull on an empty mag with no other gate active routes through `empty-trigger-pull`: arms `:empty-click-secs` (`empty-click-seconds 0.8`) and plays the `:click` sfx. Render reads the timer and paints a centred `CLICK · press R to reload` prompt above the pistol — flips to `OUT OF AMMO` when `:ammo-reserve` is also 0.
+A trigger pull on an empty mag with no other gate active routes through `empty-trigger-pull`: arms `:empty-click-secs` (`empty-click-seconds 0.8`) and plays the `:click` sfx. Render reads the timer and paints a centred `CLICK · press R to reload` prompt above the pistol - flips to `OUT OF AMMO` when `:ammo-reserve` is also 0.
 
 Fresh runs start with `:ammo-reserve 30` (three full mags); the cap is `max-reserve` (50). Ammo-box pickups on the map top the reserve back up (see [`level-system.md`](level-system.md)).
 
@@ -59,8 +59,8 @@ On every kill `on-shot-hit` rolls a uniform float and routes through `roll-loot-
 
 | Band | Drop | Notes |
 |------|------|-------|
-| `[0.00, 0.15)` | `:ammo` | Most common — kill-loot ammo carries a `:weapon` tag picked uniformly from `:owned-weapons` MINUS the pistol (pistol has level-spawned boxes anyway). Fresh L1 / pistol-only fixtures fall back to pistol. |
-| `[0.15, 0.22)` | `:armor` (absorb one hit) | Mid — useful but not as scarce as health |
+| `[0.00, 0.15)` | `:ammo` | Most common - kill-loot ammo carries a `:weapon` tag picked uniformly from `:owned-weapons` MINUS the pistol (pistol has level-spawned boxes anyway). Fresh L1 / pistol-only fixtures fall back to pistol. |
+| `[0.15, 0.22)` | `:armor` (absorb one hit) | Mid - useful but not as scarce as health |
 | `[0.22, 0.25)` | `:heart` (`+1` life) | Rarest, AND suppressed when `lives = max-lives` so it never wastes |
 | `[0.25, 1.00)` | nothing | ~75% of kills drop nothing; keeps the floor uncluttered |
 

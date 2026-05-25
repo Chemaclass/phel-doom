@@ -34,7 +34,7 @@ Required fields:
 |---|---|
 | `:size`     | `[width height]` of grid in cells |
 | `:walls`    | Random wall blobs (procedural path only) |
-| `:enemy`    | Catalog kw — see [monsters.md](monsters.md) for the type list |
+| `:enemy`    | Catalog kw - see [monsters.md](monsters.md) for the type list |
 | `:enemies`  | Int (count of `:enemy`) OR vector of mixed specs (see below) |
 | `:chase`    | Chase AI speed (units/sec) |
 | `:name`     | HUD + intro-splash label |
@@ -44,8 +44,8 @@ Optional:
 | Field | Meaning |
 |---|---|
 | `:enemy-lives` | Override the catalog's `:default-lives` (single-type entries only) |
-| `:door-lock`   | `:blue` / `:red` — adds a matching keycard pickup and locks the exit |
-| `:layout`      | Hand-authored ASCII grid (vector of strings) — bypasses `random-grid` |
+| `:door-lock`   | `:blue` / `:red` - adds a matching keycard pickup and locks the exit |
+| `:layout`      | Hand-authored ASCII grid (vector of strings) - bypasses `random-grid` |
 
 ### Mixed-monster rooms
 
@@ -72,7 +72,7 @@ When `:enemies` is a vector, each spec spawns its own count + HP and the enemy c
 | `R` | red-locked door |
 | `X` | boss-locked door (synthetic keycard, no pickup) |
 
-`:layout` skips `random-grid`, `seed-doors`, and `lock-the-door` — the author placed everything explicitly. Enemy spawn (random / mixed-spec) still applies on top.
+`:layout` skips `random-grid`, `seed-doors`, and `lock-the-door` - the author placed everything explicitly. Enemy spawn (random / mixed-spec) still applies on top.
 
 ### Adding a new room
 

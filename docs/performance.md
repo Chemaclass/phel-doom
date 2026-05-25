@@ -117,7 +117,7 @@ Phel emits `float $t_then, float $t_now`. No implicit cast, no deprecation, no l
 
 ## Evaluated and shelved
 
-### Sprite occlusion z-buffer (issue #4 — closed without merge)
+### Sprite occlusion z-buffer (issue #4 - closed without merge)
 
 The proposal: introduce a per-column min-z so the enemy paint loop can early-exit on cells already taken by a closer sprite, instead of the current back-to-front overwrite + per-cell wall-distance check.
 
@@ -131,15 +131,15 @@ The proposal: introduce a per-column min-z so the enemy paint loop can early-exi
 | 8 | 13.3 ms | 23.3 ms | 44.5 ms |
 | 15 | 13.7 ms | 23.9 ms | 44.8 ms |
 
-(Absolute numbers are higher than the headline "<5 ms" because the bench measures the full `frame->string` on the larger level-1 map without the runtime's frame-budget sleep — relative deltas are what matters here.)
+(Absolute numbers are higher than the headline "<5 ms" because the bench measures the full `frame->string` on the larger level-1 map without the runtime's frame-budget sleep - relative deltas are what matters here.)
 
-Going from no enemies to 15 overlapping enemies adds **~0.8 ms at 80×24, ~0.8 ms at 120×30, ~0.3 ms at 180×40** — and that *includes* the projection trig and the per-column writes the z-buffer would not eliminate. A best-case z-buffer fast path would shave a small fraction of that already-tiny slice.
+Going from no enemies to 15 overlapping enemies adds **~0.8 ms at 80×24, ~0.8 ms at 120×30, ~0.3 ms at 180×40** - and that *includes* the projection trig and the per-column writes the z-buffer would not eliminate. A best-case z-buffer fast path would shave a small fraction of that already-tiny slice.
 
 Also: today's code already does most of what a z-buffer would do. `:dists` is consulted per cell to skip cells occluded by walls, `:edists` is consulted by the pickup paint to skip cells occluded by enemies, and `collect-enemy-projs` sorts enemies back-to-front so closer sprites overwrite further ones via the normal paint path. The "wasted writes" the z-buffer would avoid are bounded to dense overlap scenes, which already cost ~1 ms total.
 
 Verdict: **win is sub-millisecond, complexity adds another implicit invariant (paint order must match z-buffer fill order) plus extra state. Not justified.** Issue closed without merging.
 
-### Differential rendering (issue #3 — closed without merge)
+### Differential rendering (issue #3 - closed without merge)
 
 Per-row diff against the previous frame, emitting only changed rows. Same `default-grid`, two-frame diff, bytes-emitted measured (lower = better):
 
@@ -150,15 +150,15 @@ Per-row diff against the previous frame, emitting only changed rows. Same `defau
 | Moving forward | 180×40 | 15583 B | 15864 B | **+2 %** |
 | Turning | 180×40 | 15616 B | 15897 B | **+2 %** |
 
-The static-scene wins are real but rare — once the player moves OR turns, every row's wall column changes and the diff cost (cursor-positioning overhead + the per-row string compare) makes it net *more* expensive than a single cursor-home full repaint. With the existing run-length encoding already keeping frames under ~16 KB at 180×40 and the cast+render budget under 5 ms, the saved bytes don't move the needle in the case that actually matters (active gameplay).
+The static-scene wins are real but rare - once the player moves OR turns, every row's wall column changes and the diff cost (cursor-positioning overhead + the per-row string compare) makes it net *more* expensive than a single cursor-home full repaint. With the existing run-length encoding already keeping frames under ~16 KB at 180×40 and the cast+render budget under 5 ms, the saved bytes don't move the needle in the case that actually matters (active gameplay).
 
-Add to that: invalidation logic for resize, scene reset, alt-screen re-entry, pause-menu overlay, minimap toggle, transient effects — every one of those would need a forced full-repaint flag, and getting any of them wrong leaves stale cells on screen.
+Add to that: invalidation logic for resize, scene reset, alt-screen re-entry, pause-menu overlay, minimap toggle, transient effects - every one of those would need a forced full-repaint flag, and getting any of them wrong leaves stale cells on screen.
 
 Verdict: **complexity cost > realistic win**. Issue closed without merging.
 
 ## Measured numbers
 
-`cast-frame` only, 2000-iteration mean from `default-grid` at the player spawn — bench harness lives in [`/perf-bench`](../.claude/skills/perf-bench/SKILL.md):
+`cast-frame` only, 2000-iteration mean from `default-grid` at the player spawn - bench harness lives in [`/perf-bench`](../.claude/skills/perf-bench/SKILL.md):
 
 | Viewport | step-march (pre-#2) | DDA (post-#2) | Δ |
 |---|---|---|---|
@@ -168,16 +168,16 @@ Verdict: **complexity cost > realistic win**. Issue closed without merging.
 
 Cast time scales roughly linearly with column count; DDA's win grows with viewport width because each ray's traversal cost drops while the per-ray trig (cos/sin/atan) stays fixed.
 
-Whole-frame timing (cast + composition + ANSI emit) lands well under the 5 ms target at every viewport. Live perf numbers — including the cast/render split, bytes emitted, and PHP memory — are available in-game by pressing **F3** (issue #9). Game-loop overhead (`stty size`, `microtime`, `usleep`) adds ~2 ms; effective frame rate caps around 165 fps at 180×40.
+Whole-frame timing (cast + composition + ANSI emit) lands well under the 5 ms target at every viewport. Live perf numbers - including the cast/render split, bytes emitted, and PHP memory - are available in-game by pressing **F3** (issue #9). Game-loop overhead (`stty size`, `microtime`, `usleep`) adds ~2 ms; effective frame rate caps around 165 fps at 180×40.
 
 ### Reading these live: the F3 debug overlay
 
 Press **F3** in-game to toggle a per-frame perf row that paints above the standard HUD footer. It surfaces (last-frame snapshot):
 
-- `frame` — total frame time in ms (same source as the existing fps counter).
-- `cast` / `render` — split of the frame budget between `cast-frame` and everything else `render!` does. Should add up to `frame` within timing jitter.
-- `bytes` — `strlen` of the emitted ANSI frame string. Tracks the hypothesis behind the differential-rendering investigation (issue #3).
-- `rle` — average bytes per `\e[` SGR prefix in the frame, a proxy for how effectively run-length encoding is collapsing same-colour runs (higher = better).
-- `mem` — current / peak PHP memory (`memory_get_usage(true)`).
+- `frame` - total frame time in ms (same source as the existing fps counter).
+- `cast` / `render` - split of the frame budget between `cast-frame` and everything else `render!` does. Should add up to `frame` within timing jitter.
+- `bytes` - `strlen` of the emitted ANSI frame string. Tracks the hypothesis behind the differential-rendering investigation (issue #3).
+- `rle` - average bytes per `\e[` SGR prefix in the frame, a proxy for how effectively run-length encoding is collapsing same-colour runs (higher = better).
+- `mem` - current / peak PHP memory (`memory_get_usage(true)`).
 
-The overlay is **off by default and pays zero per-frame cost when off** — the instrumentation is fully gated behind the `:debug?` flag on the world, so production runs never call `microtime`, `strlen`, `substr_count`, or `memory_get_usage`. This is the canonical way to validate any future cast/render optimisation (issues #3, #4): toggle F3, read the numbers before and after.
+The overlay is **off by default and pays zero per-frame cost when off** - the instrumentation is fully gated behind the `:debug?` flag on the world, so production runs never call `microtime`, `strlen`, `substr_count`, or `memory_get_usage`. This is the canonical way to validate any future cast/render optimisation (issues #3, #4): toggle F3, read the numbers before and after.

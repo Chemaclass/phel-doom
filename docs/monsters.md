@@ -36,10 +36,12 @@ Each enemy carries `:lives` / `:max-lives` / `:type`. `enemy/shoot` drops `:live
 Each enemy carries a `:state` keyword + an optional `:lkp` (last-known player position). State decides whether it moves + deals contact damage this tick. Spec lives in `enemy_ai.phel`:
 
 ```phel
-{:dormant {:moves? false :attacks? false}
- :aware   {:moves? true  :attacks? true}
- :hunting {:moves? true  :attacks? false}
- :pain    {:moves? false :attacks? false}}
+{:dormant   {:moves? false :attacks? false}
+ :wander    {:moves? true  :attacks? false}
+ :aware     {:moves? true  :attacks? true}
+ :hunting   {:moves? true  :attacks? false}
+ :pain      {:moves? false :attacks? false}
+ :attacking {:moves? false :attacks? true}}
 ```
 
 `new-enemy` defaults to `:aware` (legacy test fixtures keep chasing). Real-game spawns (`spawn-enemies`, `spawn-enemies-mixed`) stamp `:state :dormant`, so the player can sneak / peek / plan until the room reacts.
@@ -50,6 +52,8 @@ Each enemy carries a `:state` keyword + an optional `:lkp` (last-known player po
 - **`:aware`** — has LOS to the player right now. Full chase + contact damage. `:lkp` refreshes to the player's current cell every tick.
 - **`:hunting`** — lost LOS. Walks toward the frozen `:lkp` (whatever cell the player was in at the last LOS frame), but does NOT deal contact damage — searching, not engaged. Re-acquiring LOS → `:aware`. Arriving at `:lkp` without LOS → `:dormant` ("lost the scent", give up).
 - **`:pain`** — hit-stagger flinch. Frozen for `pain-stagger-secs` (~0.3s): no movement, no contact damage. `tick-pain` decays the `:pain-secs` timer per frame and flips the enemy back to `:aware` on expiry; the next `observe` pass routes it through the normal LOS flow. Pain chance rolls inside `enemy/shoot`: every non-killing hit pulls a uniform 0..1 from `mt_rand`, compares against `pain-chance-of enemy` (`type-pain-chance` table; `:imp` 0.35, `:cyber` 0.05, …). Heavier monsters ignore most hits; fragile ones flinch on nearly every shot.
+- **`:attacking`** — telegraphed strike window. When an `:aware` enemy is inside its per-type `attack-spec` `:range` AND its `:attack-cooldown-secs` has fully decayed, `maybe-start-attack` flips state to `:attacking` and arms `:attack-windup-secs`. While `:attacking` the enemy stops moving (visible telegraph) but `:attacks?` stays true so contact damage still applies. `tick-attack` decays the windup; on expiry state reverts to `:aware` and the per-type `:cooldown` arms so the enemy chases for at least one cooldown window before the next telegraphed strike. Cooldown ticks every frame regardless of state so a brief `:pain` interrupt doesn't leave a stale cooldown armed.
+- **`:wander`** — opt-in random patrol. `start-wander` promotes a `:dormant` enemy to `:wander` with a fresh random `:wander-angle` and `:wander-secs` timer. `target-pos` projects `wander-step-dist` units ahead in the current angle so `step-toward` walks the enemy in that direction. `tick-wander` rolls a new angle every `wander-step-secs`. `:wander` reacts to LOS / noise the same way `:dormant` does (LOS → `:aware`, noise → `:hunting`). Real-game spawns stay `:dormant` by default to preserve the sneak feel; levels / types opt in by mapping `start-wander` over fresh batches.
 
 ### Wake / transition triggers
 

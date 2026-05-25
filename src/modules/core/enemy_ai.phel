@@ -37,12 +37,12 @@
    chase step; `combat/enemies-touching?` reads `:attacks?` to gate
    contact damage. Add a new entry here + add a transition clause in
    `next-state` to introduce a new behavioural mode."
-  {:dormant {:moves? false :attacks? false}
-   :aware   {:moves? true  :attacks? true}
-   :hunting {:moves? true  :attacks? false}
-   :pain    {:moves? false :attacks? false}
-   ;; :attacking {:moves? false :attacks? true}
-})
+  {:dormant   {:moves? false :attacks? false}
+   :wander    {:moves? true  :attacks? false}
+   :aware     {:moves? true  :attacks? true}
+   :hunting   {:moves? true  :attacks? false}
+   :pain      {:moves? false :attacks? false}
+   :attacking {:moves? false :attacks? true}})
 
 (def default-state
   "Fallback when an enemy carries no `:state` key (legacy test
@@ -166,16 +166,38 @@
         (php/<= (php/+ (php/* dx dx) (php/* dy dy))
                 (php/* lkp-arrival-dist lkp-arrival-dist))))))
 
+(def wander-step-dist
+  "Distance ahead of a wandering enemy the `target-pos` projects in
+   the current `:wander-angle`. Picked well above `stop-dist` so the
+   chase step actually walks toward it instead of immediately
+   stopping. Combined with a slow wander-step-secs cadence this
+   makes wanderers pace short stretches in random directions."
+  2.0)
+
+(def wander-step-secs
+  "Seconds between random heading picks for a wandering enemy.
+   `tick-wander` decrements `:wander-secs` per frame; on expiry a
+   fresh `:wander-angle` is rolled. Long enough that wanderers
+   commit to a direction; short enough that they don't get stuck
+   bouncing into the same wall indefinitely."
+  2.0)
+
 (defn target-pos
   "Where this enemy is walking toward THIS tick. Pure data lookup —
    `tick-one` reads this to pick the step-toward target without
-   forking on state. :aware → the live player position; :hunting →
-   the frozen `:lkp` (falls back to the player position if somehow
-   missing); anything else → nil (caller should not step)."
+   forking on state.
+
+     :aware    → live player position
+     :hunting  → frozen `:lkp` (falls back to player position if missing)
+     :wander   → `wander-step-dist` units ahead in `:wander-angle`
+     anything else → nil (caller should not step)"
   [enemy ^float px ^float py]
   (case (state-of enemy)
     :aware   {:x px :y py}
     :hunting (or (:lkp enemy) {:x px :y py})
+    :wander  (let [a (or (:wander-angle enemy) 0.0)]
+               {:x (php/+ (:x enemy) (php/* wander-step-dist (php/cos a)))
+                :y (php/+ (:y enemy) (php/* wander-step-dist (php/sin a)))})
     nil))
 
 (defn next-state
@@ -188,6 +210,8 @@
    Transitions:
      :dormant + sees?              → :aware
      :dormant + !sees?             → :dormant
+     :wander  + sees?              → :aware
+     :wander  + !sees?             → :wander  (keep pacing)
      :aware   + sees?              → :aware   (lkp refreshes in observe)
      :aware   + !sees?             → :hunting (start tracking lkp)
      :hunting + sees?              → :aware   (re-acquired)
@@ -200,6 +224,7 @@
   (let [s (state-of enemy)]
     (case s
       :dormant (if sees? :aware :dormant)
+      :wander  (if sees? :aware :wander)
       :aware   (if sees? :aware :hunting)
       :hunting (cond
                  sees?           :aware
@@ -270,6 +295,131 @@
              :state     :aware
              :pain-secs 0.0))))
 
+(defn- random-wander-angle []
+  (php/* 2.0 php/M_PI
+         (php// (php/mt_rand) (php/mt_getrandmax))))
+
+(defn start-wander
+  "Promote an idle enemy from `:dormant` to `:wander` with a freshly
+   rolled heading and timer. Caller (level builder / spawn fn) opts
+   in per-enemy — `spawn-enemies` keeps the default `:dormant` so the
+   sneak feel is preserved; wandering is a future per-type or
+   per-level switch."
+  [enemy]
+  (assoc enemy
+         :state        :wander
+         :wander-angle (random-wander-angle)
+         :wander-secs  wander-step-secs))
+
+(defn tick-wander
+  "One frame of wander-heading bookkeeping. No-op outside `:wander`.
+   Inside `:wander`, decrements `:wander-secs`; on expiry rolls a
+   fresh `:wander-angle` and resets the timer. `target-pos` then
+   projects a step in the new direction next frame."
+  [enemy ^float dt]
+  (if (php/!== :wander (state-of enemy))
+    enemy
+    (let [t  (or (:wander-secs enemy) 0.0)
+          t' (php/- t dt)]
+      (if (php/<= t' 0.0)
+        (assoc enemy
+               :wander-angle (random-wander-angle)
+               :wander-secs  wander-step-secs)
+        (assoc enemy :wander-secs t')))))
+
+;; ---------------------------------------------------------------------
+;; Attack window: aware enemies in range arm a brief windup (:state
+;; :attacking, no chase, still deals contact damage), release, then
+;; arm a cooldown before they can attack again. Gives combat a visible
+;; rhythm — enemies telegraph their hits instead of running through
+;; the player at full speed.
+;; ---------------------------------------------------------------------
+
+(def attack-spec
+  "Per-type attack profile: `:range` is the world-units distance
+   inside which an aware enemy commits to an attack; `:windup` is the
+   seconds spent in `:attacking` (frozen, telegraphing); `:cooldown`
+   is the seconds spent in :aware afterwards before the next attack
+   can arm. Bosses telegraph slower and rest longer; fragile fast
+   enemies (pinky) chain hits."
+  {:imp      {:range 1.4 :windup 0.4 :cooldown 1.0}
+   :baron    {:range 1.6 :windup 0.6 :cooldown 1.4}
+   :cyber    {:range 1.8 :windup 0.8 :cooldown 1.8}
+   :pinky    {:range 1.4 :windup 0.3 :cooldown 0.8}
+   :mancubus {:range 1.6 :windup 0.5 :cooldown 1.3}})
+
+(def default-attack-spec
+  "Fallback for enemies whose `:type` isn't listed in `attack-spec`.
+   Mid-range melee profile so any unknown / typeless monster still
+   participates in the attack-rhythm rather than mauling at zero
+   delay."
+  {:range 1.4 :windup 0.4 :cooldown 1.0})
+
+(defn attack-spec-of
+  "Pull the per-type spec or fall back to the default. Pure lookup —
+   `maybe-start-attack` + `tick-attack` consult it on every alive
+   enemy."
+  [enemy]
+  (or (get attack-spec (:type enemy)) default-attack-spec))
+
+(defn in-attack-range?
+  "True when the player is within this enemy's attack `:range`.
+   Squared-distance compare — no sqrt cost."
+  [enemy ^float px ^float py]
+  (let [dx (php/- px (:x enemy))
+        dy (php/- py (:y enemy))
+        r  (:range (attack-spec-of enemy))]
+    (php/<= (php/+ (php/* dx dx) (php/* dy dy))
+            (php/* r r))))
+
+(defn- attack-ready?
+  "True when the enemy's `:attack-cooldown-secs` has fully decayed
+   (or was never set). Missing field counts as ready so a fresh
+   enemy that just woke from :dormant can land its first attack
+   immediately on contact."
+  [enemy]
+  (php/<= (or (:attack-cooldown-secs enemy) 0.0) 0.0))
+
+(defn maybe-start-attack
+  "When an aware enemy is in attack range AND its cooldown is done,
+   flip to `:attacking` and arm the windup timer. Otherwise pass the
+   enemy through unchanged. Only :aware can start an attack: a
+   hunter / dormant / pained / already-attacking enemy doesn't
+   re-arm here (their own timers / observe loop drive them back to
+   :aware first)."
+  [enemy ^float px ^float py]
+  (if (and (php/=== :aware (or (:state enemy) :aware))
+           (in-attack-range? enemy px py)
+           (attack-ready? enemy))
+    (assoc enemy
+           :state              :attacking
+           :attack-windup-secs (:windup (attack-spec-of enemy)))
+    enemy))
+
+(defn tick-attack
+  "Decay the attack timers one frame. Cooldown ticks regardless of
+   state so a brief :pain interrupt doesn't leave a stale cooldown
+   armed forever. Windup ticks only inside :attacking: on expiry
+   the state flips back to :aware and the per-type `:cooldown` arms
+   so the enemy resumes chasing for at least one full cooldown
+   window before the next telegraphed strike."
+  [enemy ^float dt]
+  (let [cd  (or (:attack-cooldown-secs enemy) 0.0)
+        cd' (php/max 0.0 (php/- cd dt))]
+    (if (and (php/=== :attacking (state-of enemy))
+             (php/> (or (:attack-windup-secs enemy) 0.0) 0.0))
+      (let [w  (:attack-windup-secs enemy)
+            w' (php/- w dt)]
+        (if (php/<= w' 0.0)
+          (assoc enemy
+                 :state                :aware
+                 :attack-windup-secs   0.0
+                 :attack-cooldown-secs (:cooldown (attack-spec-of enemy)))
+          (assoc enemy
+                 :attack-windup-secs   w'
+                 :attack-cooldown-secs cd')))
+      (assoc enemy :attack-cooldown-secs cd'))))
+
 (defn- bfs-cells
   "Pure flood-fill from `(ix0, iy0)` through `cell-floor` neighbours
    only (4-connected, no diagonals — room shape, not a square). Stops
@@ -304,16 +454,19 @@
             (recur queue' visited')))))))
 
 (defn- wake-by-noise
-  "Single-enemy noise transition. Dormant + heard → :hunting toward
-   the fire origin (sound = breadcrumb, not visual confirmation; they
-   investigate, they don't aggro instantly). Hunting + heard refreshes
-   the lkp to the fresher origin so a second shot redirects them
-   without them having to walk back to the original lkp. Aware
+  "Single-enemy noise transition. Dormant / Wander + heard → :hunting
+   toward the fire origin (sound = breadcrumb, not visual confirmation;
+   they investigate, they don't aggro instantly). Hunting + heard
+   refreshes the lkp to the fresher origin so a second shot redirects
+   them without them having to walk back to the original lkp. Aware
    enemies ignore noise — they already see you, the gunshot adds no
    new information."
   [enemy ^float ox ^float oy]
   (case (state-of enemy)
     :dormant (-> enemy
+                 (assoc :state :hunting)
+                 (assoc :lkp   {:x ox :y oy}))
+    :wander  (-> enemy
                  (assoc :state :hunting)
                  (assoc :lkp   {:x ox :y oy}))
     :hunting (assoc enemy :lkp {:x ox :y oy})

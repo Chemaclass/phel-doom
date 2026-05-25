@@ -37,6 +37,13 @@
    straight into the next iteration with zero yield."
   1000)
 
+(def menu-frame-us
+  "Fixed ~60fps sleep for the static menu / end-screen loops (start,
+   death, victory). They don't measure render time + don't share the
+   game-loop's iteration timing, so a flat budget is fine — render
+   cost is tiny + uniform regardless of terminal size."
+  16000)
+
 ;; =====================================================================
 ;; § Terminal IO helpers
 ;; =====================================================================
@@ -554,9 +561,14 @@
    never less than min-yield-us. Budget comes from target-frame-us
    which doubles (~33ms) once the terminal crosses the perf-mode
    threshold — big screens deliberately render at 30fps so the
-   loop doesn't peg a core chasing 60fps it can't reach."
-  [^float iter-start-s ^int cols ^int rows]
-  (let [elapsed-us (php/intval (php/* (php/- (php/microtime true) iter-start-s) 1000000.0))
+   loop doesn't peg a core chasing 60fps it can't reach.
+
+   `render-start-s` is the microtime captured immediately before the
+   render call (NOT the start of the whole loop iteration); the
+   intent is to charge sleep against draw cost so input drain + tick
+   stay outside the budget window."
+  [^float render-start-s ^int cols ^int rows]
+  (let [elapsed-us (php/intval (php/* (php/- (php/microtime true) render-start-s) 1000000.0))
         budget     (target-frame-us cols rows)
         remaining  (php/- budget elapsed-us)]
     (php/usleep (php/max min-yield-us remaining))))
@@ -569,11 +581,11 @@
            fps       0
            prev-keys initial-key-snapshot
            dims      [0 0]]
-      (let [[rows cols] (term-size)
-            iter-start  (php/microtime true)]
+      (let [[rows cols] (term-size)]
         (redraw-if-resized dims rows cols)
-        (draw-frame world fps frame-ms rows cols)
-        (adaptive-sleep! iter-start cols rows)
+        (let [render-start (php/microtime true)]
+          (draw-frame world fps frame-ms rows cols)
+          (adaptive-sleep! render-start cols rows))
         (let [keys     (drain-keys)
               now      (php/microtime true)
               ms       (ms-since t-last now)
@@ -610,7 +622,7 @@
     (let [[rows cols] (term-size)]
       (redraw-if-resized dims rows cols)
       (render-fn cols rows)
-      (php/usleep 16000)
+      (php/usleep menu-frame-us)
       (let [keys (drain-keys)]
         (cond
           (str/contains? keys "q") :quit
@@ -771,7 +783,7 @@
     (let [[rows cols] (term-size)]
       (redraw-if-resized dims rows cols)
       (render-start-menu cols rows)
-      (php/usleep 16000)
+      (php/usleep menu-frame-us)
       (let [keys (drain-keys)]
         (if (= keys "")
           (recur [rows cols])

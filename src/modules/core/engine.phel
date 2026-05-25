@@ -141,19 +141,25 @@
          hys                 (php/array)]
      (loop [col 0]
        (when (php/< col width)
-         (let [offset (php/atan (php// (php/- col center) proj-dist))]
-           (let [[d h side hx hy] (cast-ray-hit pgrid x y (php/+ angle offset))
-                 d-corr           (php/* d (php/cos offset))]
-             ;; Replicate this sample across the next `scale` output
-             ;; columns. Inner loop bound by `width` so a non-divisible
-             ;; tail (e.g. width=401, scale=2) doesn't overshoot.
-             (loop [c col fill 0]
-               (when (and (php/< c width) (php/< fill scale))
-                 (php/aset dists c d-corr)
-                 (php/aset hits c h)
-                 (php/aset sides c side)
-                 (php/aset hxs c hx)
-                 (php/aset hys c hy)
-                 (recur (php/+ c 1) (php/+ fill 1)))))
+         (let [offset           (php/atan (php// (php/- col center) proj-dist))
+               [d h side hx hy] (cast-ray-hit pgrid x y (php/+ angle offset))
+               d-corr           (php/* d (php/cos offset))]
+           ;; Replicate this sample across the next `scale` output
+           ;; columns. Inner loop bound by `width` so a non-divisible
+           ;; tail (e.g. width=401, scale=2) doesn't overshoot. The
+           ;; fish-eye correction uses the SAMPLE column's `offset`
+           ;; for every neighbour cell — deliberate approximation:
+           ;; at scale=2 the two replicated cells share the same
+           ;; cos(offset), reading as slightly chunkier walls. The
+           ;; per-cell-accurate alternative would mean N atan + cos
+           ;; calls per sample, defeating the perf-mode win.
+           (loop [c col fill 0]
+             (when (and (php/< c width) (php/< fill scale))
+               (php/aset dists c d-corr)
+               (php/aset hits c h)
+               (php/aset sides c side)
+               (php/aset hxs c hx)
+               (php/aset hys c hy)
+               (recur (php/+ c 1) (php/+ fill 1))))
            (recur (php/+ col scale)))))
      {:dists dists :hits hits :sides sides :hxs hxs :hys hys})))

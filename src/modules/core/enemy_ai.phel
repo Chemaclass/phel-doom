@@ -67,6 +67,14 @@
    than the radius itself."
   3)
 
+(def bfs-steps
+  "Module-level constant for the 4-connected BFS neighbour offsets.
+   Lifted out of `bfs-cells`'s inner loop so the vector isn't
+   re-allocated on every queue iteration. Not intended for use from
+   other modules, but Phel `def` doesn't carry a private marker so
+   the convention is 'internal helpers live near their caller'."
+  [[1 0] [-1 0] [0 1] [0 -1]])
+
 (defn- state-of [enemy]
   (or (:state enemy) default-state))
 
@@ -129,55 +137,53 @@
     nil))
 
 (defn next-state
-  "Pure state-machine transition for one enemy on one tick. `obs` is
-   a map of this frame's observations:
-     :sees?   true when LOS to the player is clear right now
-     :at-lkp? true when the enemy has arrived at its `:lkp`
-   Returns the new `:state` keyword.
+  "Pure state-machine transition for one enemy on one tick. Takes
+   just `sees?` (LOS clear right now); at-lkp? is computed lazily
+   inside the `:hunting` branch only — every other state ignores it,
+   so paying for it up front would be wasted work on the per-enemy
+   per-frame path. Returns the new `:state` keyword.
 
    Transitions:
-     :dormant + sees?            → :aware
-     :dormant + !sees?           → :dormant
-     :aware   + sees?            → :aware  (lkp refreshes in observe)
-     :aware   + !sees?           → :hunting (start tracking lkp)
-     :hunting + sees?            → :aware   (re-acquired)
-     :hunting + at-lkp? + !sees? → :dormant (lost the scent)
-     :hunting + else             → :hunting (still walking to lkp)
+     :dormant + sees?              → :aware
+     :dormant + !sees?             → :dormant
+     :aware   + sees?              → :aware   (lkp refreshes in observe)
+     :aware   + !sees?             → :hunting (start tracking lkp)
+     :hunting + sees?              → :aware   (re-acquired)
+     :hunting + at-lkp? + !sees?   → :dormant (lost the scent)
+     :hunting + else               → :hunting (still walking to lkp)
 
    Adding a new state means one extra `case` clause; existing call
    sites don't change."
-  [enemy obs]
-  (let [sees?   (:sees? obs)
-        at-lkp? (:at-lkp? obs)]
-    (case (state-of enemy)
+  [enemy sees?]
+  (let [s (state-of enemy)]
+    (case s
       :dormant (if sees? :aware :dormant)
       :aware   (if sees? :aware :hunting)
       :hunting (cond
-                 sees?   :aware
-                 at-lkp? :dormant
-                 :else   :hunting)
-      (state-of enemy))))
+                 sees?           :aware
+                 (at-lkp? enemy) :dormant
+                 :else           :hunting)
+      s)))
 
 (defn observe
-  "One-shot AI tick for a single alive enemy. Computes line-of-sight
-   + arrival flag, transitions state, and refreshes `:lkp` to the
-   player's current cell whenever LOS is clear. The frozen lkp from
-   the last LOS frame is what :hunting walks toward — that's how a
-   player can break contact by ducking around a corner.
+  "One-shot AI tick for a single alive enemy. Computes line-of-sight,
+   transitions state, and refreshes `:lkp` to the player's current
+   cell whenever LOS is clear. The frozen lkp from the last LOS frame
+   is what :hunting walks toward — that's how a player can break
+   contact by ducking around a corner.
 
-   Pure: returns the updated enemy. Caller threads the result back
-   into the enemies vector."
+   Pure: returns the updated enemy as a single multi-key assoc so the
+   per-frame allocation cost on big enemy vectors stays at one map
+   write instead of two. Caller threads the result back into the
+   enemies vector."
   [enemy pgrid ^float px ^float py]
-  (let [sees?   (sees-player? pgrid (:x enemy) (:y enemy) px py)
-        arrived (at-lkp? enemy)
-        state'  (next-state enemy {:sees? sees? :at-lkp? arrived})
+  (let [sees?  (sees-player? pgrid (:x enemy) (:y enemy) px py)
         ;; Refresh lkp only while LOS is clear. Without LOS the
         ;; existing lkp must NOT move — it's the stale 'last seen
         ;; here' breadcrumb the hunter is following.
-        lkp'    (if sees? {:x px :y py} (:lkp enemy))]
-    (-> enemy
-        (assoc :state state')
-        (assoc :lkp lkp'))))
+        lkp'   (if sees? {:x px :y py} (:lkp enemy))
+        state' (next-state enemy sees?)]
+    (assoc enemy :state state' :lkp lkp')))
 
 (defn- bfs-cells
   "Pure flood-fill from `(ix0, iy0)` through `cell-floor` neighbours
@@ -197,10 +203,9 @@
             tail    (rest queue)]
         (if (php/>= d radius)
           (recur tail visited)
-          (let [steps      [[1 0] [-1 0] [0 1] [0 -1]]
-                neighbours (apply vector
+          (let [neighbours (apply vector
                                   (map (fn [s] [(php/+ x (first s)) (php/+ y (second s))])
-                                       steps))
+                                       bfs-steps))
                 fresh      (apply vector
                                   (filter (fn [nb]
                                             (and (not (contains? visited nb))

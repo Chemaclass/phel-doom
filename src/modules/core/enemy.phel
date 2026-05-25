@@ -243,16 +243,15 @@
   [e grid pgrid ^float player-x ^float player-y ^float dt ^float speed all-enemies revive?]
   (cond
     (:alive e)                (let [observed (if pgrid (observe e pgrid player-x player-y) e)
-                                    chase?   (moves? observed)
-                                    target   (target-pos observed player-x player-y)
-                                    mul      (or (get type-speed-mul (:type observed)) 1.0)
-                                    ;; target may be nil for states that don't move
-                                    ;; (:dormant); the `chase?` gate already covers
-                                    ;; that case, but keep a defensive guard for
-                                    ;; future states that move but don't pick a
-                                    ;; target.
-                                    stepped  (if (and chase? target)
-                                               (step-toward observed grid (:x target) (:y target) dt (php/* speed mul))
+                                    ;; Only compute the step target when the state
+                                    ;; actually moves — `:dormant` skips both the
+                                    ;; target-pos call and the chase step entirely.
+                                    stepped  (if (moves? observed)
+                                               (let [target (target-pos observed player-x player-y)
+                                                     mul    (or (get type-speed-mul (:type observed)) 1.0)]
+                                                 (if target
+                                                   (step-toward observed grid (:x target) (:y target) dt (php/* speed mul))
+                                                   observed))
                                                observed)
                                     flash'   (php/max 0.0 (php/- (or (:hit-flash-secs observed) 0.0) dt))]
                                 (assoc stepped :hit-flash-secs flash'))

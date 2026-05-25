@@ -83,37 +83,43 @@
     (is (= false (sees-player? huge-pgrid 0.5 0.5 100.5 100.5)))))
 
 (deftest test-next-state-dormant-stays-dormant-without-los
-  (is (= :dormant (next-state {:state :dormant} {:sees? false :at-lkp? false}))))
+  (is (= :dormant (next-state {:state :dormant} false))))
 
 (deftest test-next-state-dormant-flips-aware-on-los
-  (is (= :aware (next-state {:state :dormant} {:sees? true :at-lkp? false}))))
+  (is (= :aware (next-state {:state :dormant} true))))
 
 (deftest test-next-state-aware-with-los-stays-aware
-  (is (= :aware (next-state {:state :aware} {:sees? true :at-lkp? false}))))
+  (is (= :aware (next-state {:state :aware} true))))
 
 (deftest test-next-state-aware-without-los-drops-to-hunting
   ;; Losing sight while aware kicks off the search: walk toward the
   ;; last seen position (:lkp) until LOS returns or you arrive.
-  (is (= :hunting (next-state {:state :aware} {:sees? false :at-lkp? false}))))
+  (is (= :hunting (next-state {:state :aware} false))))
 
 (deftest test-next-state-hunting-sees-flips-aware
   ;; LOS re-acquired during the search — go back to full chase.
-  (is (= :aware (next-state {:state :hunting} {:sees? true :at-lkp? false}))))
+  (is (= :aware (next-state {:state :hunting} true))))
 
 (deftest test-next-state-hunting-arrives-without-los-drops-dormant
   ;; Hunter reached the breadcrumb cell but still no LOS — gives up
-  ;; the chase and goes idle. Player got away clean.
-  (is (= :dormant (next-state {:state :hunting} {:sees? false :at-lkp? true}))))
+  ;; the chase and goes idle. Player got away clean. At-lkp? is
+  ;; implicit via `:lkp` matching the enemy position (or missing).
+  (is (= :dormant (next-state {:state :hunting :x 1.5 :y 1.5
+                               :lkp {:x 1.5 :y 1.5}}
+                              false))))
 
 (deftest test-next-state-hunting-still-searching-stays-hunting
-  (is (= :hunting (next-state {:state :hunting} {:sees? false :at-lkp? false}))))
+  ;; LKP is far from the enemy — still walking.
+  (is (= :hunting (next-state {:state :hunting :x 1.0 :y 1.0
+                               :lkp {:x 10.0 :y 10.0}}
+                              false))))
 
 (deftest test-next-state-missing-defaults-to-aware
   ;; Enemies without an explicit state observe in as :aware so
   ;; legacy code paths stay backward compatible. From :aware they
   ;; either chase (sees?) or fall into :hunting (!sees?).
-  (is (= :aware   (next-state {} {:sees? true  :at-lkp? false})))
-  (is (= :hunting (next-state {} {:sees? false :at-lkp? false}))))
+  (is (= :aware   (next-state {} true)))
+  (is (= :hunting (next-state {} false))))
 
 (deftest test-observe-wakes-dormant-on-los
   ;; Dormant enemy at (1.5, 1.5), player at (5.5, 5.5), open chamber.

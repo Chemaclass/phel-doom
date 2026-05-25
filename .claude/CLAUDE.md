@@ -52,6 +52,7 @@ Spawn via Agent tool. Prefer parallel where independent. For codebase search use
 - Branch prefixes match commit type: `feat/` `fix/` `ref/` `docs/` `perf/`.
 - Phel: kebab-case, `defn-` for private, `;` line comments, `conj` over `put`. Namespaces use **dot** (`phel.test`, never `phel\test`).
 - `docs/` is part of the codebase — drift = same-commit fix.
+- NEVER use the em-dash character `—` in `README.md` or `docs/*.md`. Use ASCII hyphen `-`, colon, or split into separate sentences instead. (CLAUDE.md + commit messages + code comments are exempt.)
 - `feat:` / `fix:` / `perf:` commits update `CHANGELOG.md` under `## Unreleased`.
 - Side effects only in `src/io/`. `core/` and `glue/` stay pure.
 - PR label by branch prefix: `fix/` → `bug`, `feat/` → `enhancement`, `perf/` → `performance`, `docs/` → `documentation`, `ref/` → `refactoring`.

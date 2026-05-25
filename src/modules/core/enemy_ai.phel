@@ -5,26 +5,31 @@
 ;; ---------------------------------------------------------------------
 ;; Enemy AI state machine.
 ;;
-;; Each enemy carries a `:state` keyword describing what it's currently
-;; doing. The state controls two orthogonal questions: does the enemy
-;; move this tick, and does it deal contact damage this tick. Both are
-;; data-driven via `state-spec` so adding a new state means appending
-;; one entry — call sites (`tick-one`, `enemies-touching?`) stay
-;; unchanged.
+;; Each enemy carries a `:state` keyword + an optional `:lkp` slot
+;; (last-known player position). State controls two orthogonal
+;; questions: does the enemy move this tick, and does it deal contact
+;; damage. Both are data-driven via `state-spec` so adding a new state
+;; means appending one entry — call sites (`tick-one`,
+;; `enemies-touching?`) stay unchanged.
 ;;
-;; Current states:
-;;   :dormant   passive, doesn't move or hurt. Wakes on LOS to player
-;;              or when shot (any hit auto-wakes the target enemy in
-;;              combat/shoot).
-;;   :aware     full chase + contact damage. Sticky in v1 — once an
-;;              enemy is aware it stays aware for the rest of the
-;;              level (matches DOOM's "wake once, stay awake" feel).
+;; States:
+;;   :dormant   passive. No move, no damage. Waits for LOS or noise.
+;;   :aware     full chase + contact damage. LOS to the player right
+;;              now; lkp is being refreshed every frame.
+;;   :hunting   lost LOS while aware. Walks toward the last refreshed
+;;              `:lkp` but does NOT deal contact damage — they're
+;;              searching, not engaged. Re-acquiring LOS → :aware.
+;;              Arriving at lkp without LOS → :dormant (give up,
+;;              "lost the scent"). Lets the player break contact by
+;;              ducking around a corner / behind a door.
 ;;
-;; Reserved slots (commented out) so future state additions slot in
-;; without renaming or restructuring:
-;;   :hunting   LOS lost, walking toward last-known-position
+;; Reserved slots for future state additions:
 ;;   :pain      hit-staggered, frozen briefly, won't attack
 ;;   :attacking inside attack window (projectile / hitscan windup)
+;;
+;; LKP discipline: `observe` refreshes `:lkp` to the player's CURRENT
+;; position only while LOS is clear. Once LOS drops, lkp freezes at
+;; whatever it was last frame — that's the cell the hunter walks to.
 ;; ---------------------------------------------------------------------
 
 (def state-spec
@@ -32,9 +37,9 @@
    chase step; `combat/enemies-touching?` reads `:attacks?` to gate
    contact damage. Add a new entry here + add a transition clause in
    `next-state` to introduce a new behavioural mode."
-  {:dormant   {:moves? false :attacks? false}
-   :aware     {:moves? true  :attacks? true}
-   ;; :hunting   {:moves? true  :attacks? false}
+  {:dormant {:moves? false :attacks? false}
+   :aware   {:moves? true  :attacks? true}
+   :hunting {:moves? true  :attacks? false}
    ;; :pain      {:moves? false :attacks? false}
    ;; :attacking {:moves? false :attacks? true}
 })
@@ -45,6 +50,30 @@
    'enemy always chases' behaviour for unit tests that haven't been
    migrated to the new state machine."
   :aware)
+
+(def lkp-arrival-dist
+  "World-units threshold for 'arrived at last-known-position'. Once
+   the hunter is this close to its `:lkp` cell and LOS is still
+   blank, it gives up and reverts to :dormant. Slightly above
+   `stop-dist` so a hunter never gets stuck oscillating between
+   'arrived' and 'one step short'."
+  0.9)
+
+(def noise-wake-radius
+  "BFS cell radius around the player's fire origin. 3 cells matches
+   the 'close-by' feel: shooting only wakes enemies in the immediate
+   surroundings (same small room), not the whole sector. Walls and
+   every door variant block propagation, so the BFS often dies sooner
+   than the radius itself."
+  3)
+
+(def bfs-steps
+  "Module-level constant for the 4-connected BFS neighbour offsets.
+   Lifted out of `bfs-cells`'s inner loop so the vector isn't
+   re-allocated on every queue iteration. Not intended for use from
+   other modules, but Phel `def` doesn't carry a private marker so
+   the convention is 'internal helpers live near their caller'."
+  [[1 0] [-1 0] [0 1] [0 -1]])
 
 (defn- state-of [enemy]
   (or (:state enemy) default-state))
@@ -81,42 +110,80 @@
             wall-d (cast-ray pgrid ex ey angle)]
         (php/< player-d wall-d)))))
 
-(defn next-state
-  "Pure state-machine transition for one enemy on one tick. Inputs
-   are the current enemy and the observations gathered this frame
-   (currently just `sees-player?`; future params will land here:
-   `heard-noise?` for sound-wake, `taking-pain?` for stagger, etc).
-   Returns the new `:state` keyword.
+(defn- at-lkp?
+  "True when the enemy is within `lkp-arrival-dist` of its `:lkp`.
+   Missing lkp counts as arrived — a state machine that lands in
+   :hunting without one would otherwise wander forever; instead the
+   next transition tips it straight back to :dormant."
+  [enemy]
+  (let [lkp (:lkp enemy)]
+    (if (nil? lkp)
+      true
+      (let [dx (php/- (:x lkp) (:x enemy))
+            dy (php/- (:y lkp) (:y enemy))]
+        (php/<= (php/+ (php/* dx dx) (php/* dy dy))
+                (php/* lkp-arrival-dist lkp-arrival-dist))))))
 
-   v1 transitions:
-     :dormant + sees-player? → :aware
-     :dormant + !sees        → :dormant
-     :aware                  → :aware (sticky — wake once, stay awake)
-
-   Future clauses for :hunting / :pain / :attacking slot in alongside
-   these without disturbing existing behaviour."
-  [enemy sees?]
+(defn target-pos
+  "Where this enemy is walking toward THIS tick. Pure data lookup —
+   `tick-one` reads this to pick the step-toward target without
+   forking on state. :aware → the live player position; :hunting →
+   the frozen `:lkp` (falls back to the player position if somehow
+   missing); anything else → nil (caller should not step)."
+  [enemy ^float px ^float py]
   (case (state-of enemy)
-    :dormant (if sees? :aware :dormant)
-    :aware   :aware
-    (state-of enemy)))
+    :aware   {:x px :y py}
+    :hunting (or (:lkp enemy) {:x px :y py})
+    nil))
+
+(defn next-state
+  "Pure state-machine transition for one enemy on one tick. Takes
+   just `sees?` (LOS clear right now); at-lkp? is computed lazily
+   inside the `:hunting` branch only — every other state ignores it,
+   so paying for it up front would be wasted work on the per-enemy
+   per-frame path. Returns the new `:state` keyword.
+
+   Transitions:
+     :dormant + sees?              → :aware
+     :dormant + !sees?             → :dormant
+     :aware   + sees?              → :aware   (lkp refreshes in observe)
+     :aware   + !sees?             → :hunting (start tracking lkp)
+     :hunting + sees?              → :aware   (re-acquired)
+     :hunting + at-lkp? + !sees?   → :dormant (lost the scent)
+     :hunting + else               → :hunting (still walking to lkp)
+
+   Adding a new state means one extra `case` clause; existing call
+   sites don't change."
+  [enemy sees?]
+  (let [s (state-of enemy)]
+    (case s
+      :dormant (if sees? :aware :dormant)
+      :aware   (if sees? :aware :hunting)
+      :hunting (cond
+                 sees?           :aware
+                 (at-lkp? enemy) :dormant
+                 :else           :hunting)
+      s)))
 
 (defn observe
-  "One-shot transition wrapper: given an alive enemy, world grid,
-   and player position, compute LOS and return the enemy with its
-   `:state` updated. Pure — caller threads the result back into the
+  "One-shot AI tick for a single alive enemy. Computes line-of-sight,
+   transitions state, and refreshes `:lkp` to the player's current
+   cell whenever LOS is clear. The frozen lkp from the last LOS frame
+   is what :hunting walks toward — that's how a player can break
+   contact by ducking around a corner.
+
+   Pure: returns the updated enemy as a single multi-key assoc so the
+   per-frame allocation cost on big enemy vectors stays at one map
+   write instead of two. Caller threads the result back into the
    enemies vector."
   [enemy pgrid ^float px ^float py]
-  (let [sees? (sees-player? pgrid (:x enemy) (:y enemy) px py)]
-    (assoc enemy :state (next-state enemy sees?))))
-
-(def noise-wake-radius
-  "BFS cell radius around the player's fire origin. 6 covers a
-   medium-sized room without leaking through to the next one — sound
-   dies at any non-floor cell (walls + every door variant block
-   propagation), matching DOOM's per-sector noise rule. Bump higher
-   for shotgun / chaingun if you want louder weapons to wake further."
-  6)
+  (let [sees?  (sees-player? pgrid (:x enemy) (:y enemy) px py)
+        ;; Refresh lkp only while LOS is clear. Without LOS the
+        ;; existing lkp must NOT move — it's the stale 'last seen
+        ;; here' breadcrumb the hunter is following.
+        lkp'   (if sees? {:x px :y py} (:lkp enemy))
+        state' (next-state enemy sees?)]
+    (assoc enemy :state state' :lkp lkp')))
 
 (defn- bfs-cells
   "Pure flood-fill from `(ix0, iy0)` through `cell-floor` neighbours
@@ -126,7 +193,7 @@
 
    Walls and ALL door variants block: doors carrying lock colours
    make rooms acoustically isolated by default, which is the
-   point — one shot wakes the room you're in, not the level."
+   point — one shot wakes the cells you're standing in."
   [grid ^int ix0 ^int iy0 ^int radius]
   (loop [queue   [[ix0 iy0 0]]
          visited #{[ix0 iy0]}]
@@ -136,10 +203,9 @@
             tail    (rest queue)]
         (if (php/>= d radius)
           (recur tail visited)
-          (let [steps      [[1 0] [-1 0] [0 1] [0 -1]]
-                neighbours (apply vector
+          (let [neighbours (apply vector
                                   (map (fn [s] [(php/+ x (first s)) (php/+ y (second s))])
-                                       steps))
+                                       bfs-steps))
                 fresh      (apply vector
                                   (filter (fn [nb]
                                             (and (not (contains? visited nb))
@@ -152,23 +218,40 @@
                                       fresh))]
             (recur queue' visited')))))))
 
+(defn- wake-by-noise
+  "Single-enemy noise transition. Dormant + heard → :hunting toward
+   the fire origin (sound = breadcrumb, not visual confirmation; they
+   investigate, they don't aggro instantly). Hunting + heard refreshes
+   the lkp to the fresher origin so a second shot redirects them
+   without them having to walk back to the original lkp. Aware
+   enemies ignore noise — they already see you, the gunshot adds no
+   new information."
+  [enemy ^float ox ^float oy]
+  (case (state-of enemy)
+    :dormant (-> enemy
+                 (assoc :state :hunting)
+                 (assoc :lkp   {:x ox :y oy}))
+    :hunting (assoc enemy :lkp {:x ox :y oy})
+    enemy))
+
 (defn noise-wake
   "Player-fire driven flood-wake. BFS from the fire origin (player
    cell) up to `noise-wake-radius` floor cells; every ALIVE enemy
-   whose integer cell sits inside that visited set flips to
-   `:state :aware`. Dead enemies are passed through unchanged so
-   respawn timers + carried `:max-lives` etc. survive.
+   whose integer cell sits inside that visited set hears the shot
+   and switches into the hunt — `:state :hunting`, `:lkp` set to
+   the fire origin. Dead / aware enemies pass through unchanged
+   (respawn timers + 'already engaged' state survive).
 
    Cheap because doors block: the fill rarely escapes the current
    room. Caller should fire this once per shot (rising edge of the
    fire button), not every frame the trigger is held — see
-   combat/resolve-shot for the wiring."
+   combat/fire-shot for the wiring."
   [enemies grid ^float ox ^float oy]
   (let [visited (bfs-cells grid (php/intval ox) (php/intval oy) noise-wake-radius)]
     (apply vector
            (map (fn [e]
                   (if (and (:alive e)
                            (contains? visited [(php/intval (:x e)) (php/intval (:y e))]))
-                    (assoc e :state :aware)
+                    (wake-by-noise e ox oy)
                     e))
                 enemies))))

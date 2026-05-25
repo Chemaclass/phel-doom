@@ -33,32 +33,65 @@ Each enemy carries `:lives` / `:max-lives` / `:type`. `enemy/shoot` drops `:live
 
 ## AI state machine
 
-Each enemy carries a `:state` keyword that decides whether it moves + deals contact damage this tick. Spec lives in `enemy_ai.phel`:
+Each enemy carries a `:state` keyword + an optional `:lkp` (last-known player position). State decides whether it moves + deals contact damage this tick. Spec lives in `enemy_ai.phel`:
 
 ```phel
 {:dormant {:moves? false :attacks? false}
- :aware   {:moves? true  :attacks? true}}
+ :aware   {:moves? true  :attacks? true}
+ :hunting {:moves? true  :attacks? false}}
 ```
 
 `new-enemy` defaults to `:aware` (legacy test fixtures keep chasing). Real-game spawns (`spawn-enemies`, `spawn-enemies-mixed`) stamp `:state :dormant`, so the player can sneak / peek / plan until the room reacts.
 
-### Wake triggers
+### State meanings
 
-- **Line-of-sight (LOS)** — every tick, `enemy-ai/observe` casts one ray from each alive enemy to the player. Ray hits a wall before reaching the player cell → no LOS, stays dormant. Reaches the player → flips to `:aware`. Reuses `engine/cast-ray`; capped at `max-depth` (12 units), so very long sectors read as "too far to see" — matches DOOM's sight cutoff.
-- **Pain (being shot)** — `enemy/shoot` stamps `:state :aware` on the hit target unconditionally. A dormant enemy that took a bullet without reacting would read as broken AI.
-- **Noise (player fire)** — `combat/fire-shot` runs a flood-fill BFS from the player's cell up to `noise-wake-radius` (6 cells) through `cell-floor` neighbours only. Walls and ALL door variants block, so sound dies at the room boundary — matches DOOM's per-sector noise rule. Every alive enemy whose integer cell sits inside the visited set flips to `:aware`, including those without LOS. One shot wakes the room you're in, not the level.
+- **`:dormant`** — passive. Won't move, won't damage. Waiting for LOS or a close-by noise.
+- **`:aware`** — has LOS to the player right now. Full chase + contact damage. `:lkp` refreshes to the player's current cell every tick.
+- **`:hunting`** — lost LOS. Walks toward the frozen `:lkp` (whatever cell the player was in at the last LOS frame), but does NOT deal contact damage — searching, not engaged. Re-acquiring LOS → `:aware`. Arriving at `:lkp` without LOS → `:dormant` ("lost the scent", give up).
 
-Once aware the state is sticky (DOOM "wake once, stay awake"). Future state transitions (`:hunting` for LOS-lost-then-chase-to-LKP, `:pain` for stagger, `:attacking` for ranged windup) slot into the same `state-spec` map + `next-state` cond — call sites don't change.
+### Wake / transition triggers
 
-### Chase step
+- **LOS** — every tick, `enemy-ai/observe` casts one ray from each alive enemy to the player via `engine/cast-ray`. Ray hits a wall before reaching the player cell → no LOS. Player closer than the wall → LOS clear. Capped at `max-depth` (12 units) — long sectors read as "too far to see" (DOOM sight cutoff).
+- **Pain (being shot)** — `enemy/shoot` stamps `:state :aware` on the hit target unconditionally.
+- **Noise (player fire)** — `combat/fire-shot` runs a 4-connected flood-fill from the player's cell up to `noise-wake-radius` (3 cells) through `cell-floor` neighbours only. Walls + all door variants block. Alive enemies inside the visited set go into the hunt: dormant → `:hunting` with `:lkp` stamped at the fire origin; existing hunters get their `:lkp` refreshed to the fresher noise. Already-aware enemies are unchanged (they're tracking visually, sound adds nothing).
 
-Aware enemies route through `step-toward`:
+### Transition table
 
-1. Desired heading (atan2 enemy → player).
+| From      | Trigger                       | To         |
+|-----------|-------------------------------|------------|
+| `:dormant` | LOS to player                 | `:aware`   |
+| `:dormant` | Noise within radius           | `:hunting` (lkp = fire origin) |
+| `:dormant` | Hit                           | `:aware`   |
+| `:aware`   | LOS                           | `:aware` (lkp refreshes) |
+| `:aware`   | No LOS                        | `:hunting` (lkp frozen) |
+| `:hunting` | LOS regained                  | `:aware`   |
+| `:hunting` | Reached `:lkp`, still no LOS  | `:dormant` |
+| `:hunting` | Still moving, no LOS          | `:hunting` |
+
+### Chase step + target selection
+
+`tick-one` calls `enemy-ai/target-pos` per alive enemy to pick where to walk:
+- `:aware` → live player position
+- `:hunting` → frozen `:lkp` (falls back to player position if somehow missing)
+- `:dormant` → `nil` (skip the step entirely)
+
+`step-toward` then runs the standard chase:
+
+1. Desired heading (atan2 enemy → target).
 2. Try stepping `speed * dt` units along that heading.
 3. If destination is inside a wall, try angle offsets ±45°, ±90°, ±135°. Slides around corners, walks out of dead ends.
 
-Stop distance: enemies don't close past `stop-dist = 0.6` to avoid piling up inside the player's cell. Dormant enemies skip the chase step entirely.
+Stop distance: `stop-dist = 0.6` so enemies don't pile up inside the target cell. `lkp-arrival-dist = 0.9` (slightly above `stop-dist`) is the "I've arrived at the lkp" threshold the state machine uses to flip `:hunting → :dormant`.
+
+### Hiding from enemies
+
+Player can break contact by ducking around a corner / behind a door while an aware enemy chases. Sequence:
+1. Aware enemy chases, `:lkp` refreshing every frame.
+2. Player ducks behind a wall. LOS drops → state flips to `:hunting`, `:lkp` freezes at the player's last-seen cell.
+3. Hunter walks to the frozen `:lkp`. Player keeps running.
+4. Hunter arrives at `:lkp`. Still no LOS → `:dormant`. Player got away.
+
+Future improvements left as `next-state` clause extensions (no call-site churn): `:pain` (hit stagger), `:attacking` (ranged windup), `:wander` (random patrol while dormant).
 
 ## Respawn cooldown + max-concurrent cap
 

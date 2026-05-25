@@ -437,11 +437,12 @@
     (is (= 3 (:mag w1)))))
 
 (deftest test-fire-shot-wakes-dormant-enemy-in-room
-  ;; Sound-wake integration: a dormant imp in the same open room as
-  ;; the player flips to :aware on the trigger pull, even when the
-  ;; shot itself misses (no enemy along the player's facing). 1.5/1.5
-  ;; player is locked inside a closed 1-cell box in ready-world, so
-  ;; expand to a 5×5 chamber and place the imp inside.
+  ;; Sound-wake integration: a dormant imp within `noise-wake-radius`
+  ;; (3 cells via floor) flips to :hunting on the trigger pull, with
+  ;; `:lkp` stamped at the player's cell — even when the shot itself
+  ;; misses (no enemy along the player's facing). Imp at (2.5, 3.5)
+  ;; sits 3 BFS steps from the player's (1, 1) cell — at the edge of
+  ;; the radius but reachable.
   (let [grid    [[1 1 1 1 1]
                  [1 0 0 0 1]
                  [1 0 0 0 1]
@@ -449,7 +450,7 @@
                  [1 1 1 1 1]]
         player  (new-player 1.5 1.5 0.0)
         base    (new-world grid player)
-        dormant (assoc {:x 3.5 :y 3.5 :alive true :lives 1 :max-lives 1
+        dormant (assoc {:x 2.5 :y 3.5 :alive true :lives 1 :max-lives 1
                         :hit-flash-secs 0.0}
                        :state :dormant)
         world   (assoc base
@@ -463,8 +464,11 @@
                        :iframes         0.0
                        :sound-on        false
                        :enemies         [dormant])
-        w'      (tick-shooting world true)]
-    (is (= :aware (:state (first (:enemies w')))))))
+        w'      (tick-shooting world true)
+        e       (first (:enemies w'))]
+    (is (= :hunting (:state e)))
+    (is (= 1.5 (:x (:lkp e))))
+    (is (= 1.5 (:y (:lkp e))))))
 
 (deftest test-tick-shooting-legacy-arity-still-works
   ;; Old 2-arity (pre-:fire-held) callers must keep working. Fire

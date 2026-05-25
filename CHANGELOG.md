@@ -12,8 +12,9 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 ### Added
 
 - Responsive help panel (`H` / `ESC`) — adapts width + drops optional sections on small terminals.
-- Enemy AI state machine. Real-game spawns start `:dormant` — they hold position + deal no contact damage until they get line-of-sight to the player OR take a hit. Once aware, sticky (DOOM "wake once, stay awake"). Bosses + minions can be peeked / planned around instead of homing through walls.
-- Sound-wake. Pulling the trigger flood-fills sound from the player's cell up to 6 floor cells; every alive enemy in the same sector wakes. Walls + all door variants block the BFS so the wake stays in your room — matches DOOM's per-sector noise rule. One shot wakes the room, not the level.
+- Enemy AI state machine. Real-game spawns start `:dormant` — they hold position + deal no contact damage until they get line-of-sight to the player OR take a hit. Bosses + minions can be peeked / planned around instead of homing through walls.
+- `:hunting` state. Aware enemies that lose line-of-sight stop chasing the player's live position; they walk to the last-known cell instead, doing no contact damage along the way. Arrive at the breadcrumb without re-acquiring LOS → drop back to `:dormant`. Player can break contact by ducking around a corner / behind a door.
+- Sound-wake. Pulling the trigger flood-fills sound from the player's cell up to 3 floor cells; alive enemies in the close-by area go into `:hunting` with the fire origin as their `:lkp`. Walls + all door variants block the BFS so the wake stays nearby — matches DOOM's per-sector noise rule, just tighter than the original 6-cell radius (less "the whole room aggros every shot").
 
 ### Performance
 

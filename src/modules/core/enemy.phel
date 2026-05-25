@@ -1,6 +1,6 @@
 (ns phel-doom.modules.core.enemy
   (:require phel-doom.modules.core.map      :refer [random-spawn wall?])
-  (:require phel-doom.modules.core.enemy-ai :refer [observe moves?]))
+  (:require phel-doom.modules.core.enemy-ai :refer [observe moves? target-pos]))
 
 (def default-chase-speed
   "Fallback chase speed (units/sec) used by the single-arity advance
@@ -243,10 +243,15 @@
   [e grid pgrid ^float player-x ^float player-y ^float dt ^float speed all-enemies revive?]
   (cond
     (:alive e)                (let [observed (if pgrid (observe e pgrid player-x player-y) e)
-                                    chase?   (moves? observed)
-                                    mul      (or (get type-speed-mul (:type observed)) 1.0)
-                                    stepped  (if chase?
-                                               (step-toward observed grid player-x player-y dt (php/* speed mul))
+                                    ;; Only compute the step target when the state
+                                    ;; actually moves — `:dormant` skips both the
+                                    ;; target-pos call and the chase step entirely.
+                                    stepped  (if (moves? observed)
+                                               (let [target (target-pos observed player-x player-y)
+                                                     mul    (or (get type-speed-mul (:type observed)) 1.0)]
+                                                 (if target
+                                                   (step-toward observed grid (:x target) (:y target) dt (php/* speed mul))
+                                                   observed))
                                                observed)
                                     flash'   (php/max 0.0 (php/- (or (:hit-flash-secs observed) 0.0) dt))]
                                 (assoc stepped :hit-flash-secs flash'))

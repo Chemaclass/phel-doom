@@ -1,8 +1,10 @@
 (ns phel-doom-tests.modules.core.enemy-ai-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.modules.core.enemy-ai :refer [moves? attacks? sees-player? next-state observe
+                                                    target-pos
                                                     noise-wake noise-wake-radius
-                                                    state-spec default-state]))
+                                                    state-spec default-state
+                                                    lkp-arrival-dist]))
 
 ;; Open chamber grid mirroring engine-test fixtures: 1 = wall, 0 = floor.
 ;; PHP-array form so cast-ray (which expects :pgrid) can read it.
@@ -32,6 +34,13 @@
   (is (= false (get-in state-spec [:dormant :attacks?])))
   (is (= true  (get-in state-spec [:aware :moves?])))
   (is (= true  (get-in state-spec [:aware :attacks?]))))
+
+(deftest test-state-spec-has-hunting
+  ;; Hunting moves toward :lkp but does NOT deal contact damage —
+  ;; they're searching, not engaged. Pin the asymmetric flags so a
+  ;; refactor doesn't silently swap them.
+  (is (= true  (get-in state-spec [:hunting :moves?])))
+  (is (= false (get-in state-spec [:hunting :attacks?]))))
 
 (deftest test-default-state-is-aware
   ;; Legacy enemies built via new-enemy carry no :state. Default
@@ -74,22 +83,37 @@
     (is (= false (sees-player? huge-pgrid 0.5 0.5 100.5 100.5)))))
 
 (deftest test-next-state-dormant-stays-dormant-without-los
-  (is (= :dormant (next-state {:state :dormant} false))))
+  (is (= :dormant (next-state {:state :dormant} {:sees? false :at-lkp? false}))))
 
 (deftest test-next-state-dormant-flips-aware-on-los
-  (is (= :aware (next-state {:state :dormant} true))))
+  (is (= :aware (next-state {:state :dormant} {:sees? true :at-lkp? false}))))
 
-(deftest test-next-state-aware-is-sticky
-  ;; Once aware, no LOS check loses it. Matches DOOM's wake-once
-  ;; behaviour for most monsters.
-  (is (= :aware (next-state {:state :aware} false)))
-  (is (= :aware (next-state {:state :aware} true))))
+(deftest test-next-state-aware-with-los-stays-aware
+  (is (= :aware (next-state {:state :aware} {:sees? true :at-lkp? false}))))
+
+(deftest test-next-state-aware-without-los-drops-to-hunting
+  ;; Losing sight while aware kicks off the search: walk toward the
+  ;; last seen position (:lkp) until LOS returns or you arrive.
+  (is (= :hunting (next-state {:state :aware} {:sees? false :at-lkp? false}))))
+
+(deftest test-next-state-hunting-sees-flips-aware
+  ;; LOS re-acquired during the search — go back to full chase.
+  (is (= :aware (next-state {:state :hunting} {:sees? true :at-lkp? false}))))
+
+(deftest test-next-state-hunting-arrives-without-los-drops-dormant
+  ;; Hunter reached the breadcrumb cell but still no LOS — gives up
+  ;; the chase and goes idle. Player got away clean.
+  (is (= :dormant (next-state {:state :hunting} {:sees? false :at-lkp? true}))))
+
+(deftest test-next-state-hunting-still-searching-stays-hunting
+  (is (= :hunting (next-state {:state :hunting} {:sees? false :at-lkp? false}))))
 
 (deftest test-next-state-missing-defaults-to-aware
   ;; Enemies without an explicit state observe in as :aware so
-  ;; legacy code paths stay backward compatible.
-  (is (= :aware (next-state {} false)))
-  (is (= :aware (next-state {} true))))
+  ;; legacy code paths stay backward compatible. From :aware they
+  ;; either chase (sees?) or fall into :hunting (!sees?).
+  (is (= :aware   (next-state {} {:sees? true  :at-lkp? false})))
+  (is (= :hunting (next-state {} {:sees? false :at-lkp? false}))))
 
 (deftest test-observe-wakes-dormant-on-los
   ;; Dormant enemy at (1.5, 1.5), player at (5.5, 5.5), open chamber.
@@ -105,11 +129,36 @@
         e' (observe e wall-between-pgrid 5.5 3.5)]
     (is (= :dormant (:state e')))))
 
-(deftest test-observe-aware-stays-aware-everywhere
-  ;; Sticky aware: even with no LOS the state holds.
-  (let [e  {:x 1.5 :y 3.5 :state :aware}
+(deftest test-observe-aware-loses-los-and-starts-hunting
+  ;; Player was in sight, now ducked behind a wall. observe transitions
+  ;; aware → hunting. The hunter will track toward :lkp on subsequent
+  ;; ticks (separate target-pos test).
+  (let [e  {:x 1.5 :y 3.5 :state :aware :lkp {:x 5.5 :y 3.5}}
         e' (observe e wall-between-pgrid 5.5 3.5)]
-    (is (= :aware (:state e')))))
+    (is (= :hunting (:state e')))))
+
+(deftest test-observe-refreshes-lkp-on-los
+  ;; Aware enemy with stale lkp; player visible at a new spot.
+  ;; observe must overwrite :lkp to the player's current cell.
+  (let [e  {:x 1.5 :y 1.5 :state :aware :lkp {:x 99.0 :y 99.0}}
+        e' (observe e open-pgrid 5.5 5.5)]
+    (is (= 5.5 (:x (:lkp e'))))
+    (is (= 5.5 (:y (:lkp e'))))))
+
+(deftest test-observe-freezes-lkp-without-los
+  ;; Hunter has a stale lkp; LOS still blocked. observe must NOT
+  ;; touch :lkp — that frozen breadcrumb IS the navigation target.
+  (let [e  {:x 1.5 :y 3.5 :state :hunting :lkp {:x 6.0 :y 3.5}}
+        e' (observe e wall-between-pgrid 5.5 3.5)]
+    (is (= 6.0 (:x (:lkp e'))))
+    (is (= 3.5 (:y (:lkp e'))))))
+
+(deftest test-observe-hunting-arrives-no-los-becomes-dormant
+  ;; Hunter standing right on top of its :lkp with no LOS gives up.
+  ;; Pin so the at-lkp? threshold logic doesn't silently drift.
+  (let [e  {:x 1.5 :y 3.5 :state :hunting :lkp {:x 1.5 :y 3.5}}
+        e' (observe e wall-between-pgrid 5.5 3.5)]
+    (is (= :dormant (:state e')))))
 
 ;; ---------------------------------------------------------------------
 ;; noise-wake: player fire flood-fills through floor cells. Dormant
@@ -153,12 +202,17 @@
    [1 0 0 0 2 0 0 1]
    [1 1 1 1 1 1 1 1]])
 
-(deftest test-noise-wake-flips-dormant-in-same-room
-  ;; Player at (2.5, 2.5), dormant imp at (5.5, 5.5). Open room, BFS
-  ;; reaches the imp's cell within radius → wakes.
-  (let [es  [(assoc {:x 5.5 :y 5.5 :alive true} :state :dormant)]
-        es' (noise-wake es open-room 2.5 2.5)]
-    (is (= :aware (:state (first es'))))))
+(deftest test-noise-wake-flips-dormant-to-hunting-in-same-room
+  ;; Player at (2.5, 2.5), dormant imp at (3.5, 3.5) — within 3-cell
+  ;; BFS. Imp HEARS but doesn't see, so it transitions to :hunting
+  ;; with `:lkp` stamped at the fire origin. Doesn't go straight to
+  ;; :aware: sound is a breadcrumb, not visual confirmation.
+  (let [es  [(assoc {:x 3.5 :y 3.5 :alive true} :state :dormant)]
+        es' (noise-wake es open-room 2.5 2.5)
+        e   (first es')]
+    (is (= :hunting (:state e)))
+    (is (= 2.5 (:x (:lkp e))))
+    (is (= 2.5 (:y (:lkp e))))))
 
 (deftest test-noise-wake-keeps-dormant-behind-wall
   ;; Wall column at x=4. Player on the left, imp on the right →
@@ -204,8 +258,46 @@
     (is (= :dormant (:state (php/aget es' 0))))
     (is (= :dormant (:state (php/aget es' 1))))))
 
-(deftest test-noise-wake-radius-default-is-reasonable
+(deftest test-noise-wake-radius-default-is-close-by
   ;; Pin the default radius so a future bump (e.g. louder shotgun)
-  ;; doesn't silently break test fixtures that assume room-sized
-  ;; coverage.
-  (is (= 6 noise-wake-radius)))
+  ;; doesn't silently flip the "close-by" feel back into "the whole
+  ;; sector". 3 cells = enemies directly adjacent / in the same small
+  ;; room hear the shot; further-away enemies stay dormant.
+  (is (= 3 noise-wake-radius)))
+
+;; ---------------------------------------------------------------------
+;; target-pos: where the chase step walks toward this tick. :aware
+;; targets the live player position; :hunting targets the frozen
+;; :lkp; :dormant returns nil so tick-one skips the step entirely.
+;; ---------------------------------------------------------------------
+
+(deftest test-target-pos-aware-tracks-player
+  (let [t (target-pos {:state :aware} 5.5 7.5)]
+    (is (= 5.5 (:x t)))
+    (is (= 7.5 (:y t)))))
+
+(deftest test-target-pos-hunting-tracks-lkp
+  (let [t (target-pos {:state :hunting :lkp {:x 3.0 :y 4.0}} 5.5 7.5)]
+    (is (= 3.0 (:x t)))
+    (is (= 4.0 (:y t)))))
+
+(deftest test-target-pos-hunting-without-lkp-falls-back-to-player
+  ;; Defensive: a hunter without lkp shouldn't wander the void. Fall
+  ;; back to player position so any movement-state stays harmless;
+  ;; the next observe tick will fix the state via at-lkp? = true.
+  (let [t (target-pos {:state :hunting} 5.5 7.5)]
+    (is (= 5.5 (:x t)))
+    (is (= 7.5 (:y t)))))
+
+(deftest test-target-pos-dormant-returns-nil
+  (is (= nil (target-pos {:state :dormant} 5.5 7.5))))
+
+;; ---------------------------------------------------------------------
+;; lkp-arrival-dist: tweakable threshold for "arrived at last known
+;; position". Pin so a refactor doesn't drift it down below stop-dist
+;; (which would leave hunters stuck oscillating).
+;; ---------------------------------------------------------------------
+
+(deftest test-lkp-arrival-dist-is-above-stop-dist
+  ;; stop-dist is 0.6 in enemy.phel — arrival must sit above it.
+  (is (php/> lkp-arrival-dist 0.6)))

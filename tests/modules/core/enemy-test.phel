@@ -246,6 +246,23 @@
   (let [es (spawn-enemies open-grid 3 0.0 5.0 5.0 1)]
     (is (every? (fn [e] (= :dormant (:state e))) es))))
 
+(deftest test-advance-hunting-walks-toward-lkp-not-player
+  ;; Hunter at (2.5, 2.5) with :lkp at (2.5, 5.5). Player has moved
+  ;; out of sight to (8.0, 2.5). The hunter must follow the lkp
+  ;; (south, +y) NOT the player's current position (east, +x).
+  ;; wall-between-pgrid puts a column at x=4 so LOS to the player at
+  ;; x=8 is blocked — observe doesn't override the hunting state on
+  ;; this tick.
+  (let [hunter [(assoc (new-enemy 2.5 2.5)
+                       :state :hunting
+                       :lkp   {:x 2.5 :y 5.5})]
+        es'    (advance hunter open-grid wall-between-pgrid 8.0 2.5 0.5 0.75 true)
+        e      (first es')]
+    (is (= :hunting (:state e)))
+    ;; Moved south (toward lkp), x unchanged.
+    (is (> (:y e) 2.5))
+    (is (= 2.5 (:x e)))))
+
 ;; ---------------------------------------------------------------------
 ;; tick-scare: fires the wide-eyed beat ONLY on the inbound crossing
 ;; past scare-trigger-dist (3.5). Tracks last frame's nearest enemy so

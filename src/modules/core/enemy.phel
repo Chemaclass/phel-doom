@@ -1,6 +1,6 @@
 (ns phel-doom.modules.core.enemy
   (:require phel-doom.modules.core.map      :refer [random-spawn wall?])
-  (:require phel-doom.modules.core.enemy-ai :refer [observe moves?]))
+  (:require phel-doom.modules.core.enemy-ai :refer [observe moves? target-pos]))
 
 (def default-chase-speed
   "Fallback chase speed (units/sec) used by the single-arity advance
@@ -244,9 +244,15 @@
   (cond
     (:alive e)                (let [observed (if pgrid (observe e pgrid player-x player-y) e)
                                     chase?   (moves? observed)
+                                    target   (target-pos observed player-x player-y)
                                     mul      (or (get type-speed-mul (:type observed)) 1.0)
-                                    stepped  (if chase?
-                                               (step-toward observed grid player-x player-y dt (php/* speed mul))
+                                    ;; target may be nil for states that don't move
+                                    ;; (:dormant); the `chase?` gate already covers
+                                    ;; that case, but keep a defensive guard for
+                                    ;; future states that move but don't pick a
+                                    ;; target.
+                                    stepped  (if (and chase? target)
+                                               (step-toward observed grid (:x target) (:y target) dt (php/* speed mul))
                                                observed)
                                     flash'   (php/max 0.0 (php/- (or (:hit-flash-secs observed) 0.0) dt))]
                                 (assoc stepped :hit-flash-secs flash'))

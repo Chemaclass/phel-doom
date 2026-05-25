@@ -11,26 +11,29 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Enemy AI state machine — `:dormant :wander :aware :hunting :pain :attacking`. Spawns start dormant (sneak past unseen), wake on LOS / noise / hit, lose contact → walk to last-known position → revert dormant. Attack telegraphs with per-type windup + cooldown. Pain stagger per-type chance.
-- Sound-wake. Trigger pulls flood-fill 3 cells through floor; doors + walls block.
-- Responsive help panel (`H` / `ESC`). Adapts width + drops sections on small terminals.
+- Enemy AI state machine: `:dormant :wander :aware :hunting :pain :attacking`. Spawns start dormant (sneak past unseen). Wake on LOS / noise / hit. Lose contact: walk to last-known position, give up if not re-acquired. Attack telegraphs with per-type windup + cooldown. Pain stagger rolls against per-type chance (imp 0.35, cyber 0.05).
+- Sound-wake. Trigger pulls flood-fill 3 cells through floor. Doors + walls block.
+- Responsive help panel (`H` / `ESC`). Adapts width + drops optional sections on small terminals.
+- Docker support: root `Dockerfile` (PHP 8.5 CLI alpine + Composer + deps) and `make docker-build` / `docker-play` / `docker-test` / `docker-shell` / `docker-clean` targets. No host PHP required.
 
 ### Performance
 
 - Bumped `phel-lang` to dev-main (0.40: call-site caching, arithmetic specialisation, hash-memo).
 - Type-hint pass on hot numeric fns.
-- Big-screen perf mode (auto at `cols >= 200` or `cols * rows > 12000`): 40-col minimap cap, 30fps cadence, 2× horizontal render-scale.
+- Big-screen perf mode (auto at `cols >= 200` or `cols * rows > 12000`): 40-col minimap cap, 30fps cadence, 2x horizontal render-scale.
 
 ### Changed
 
 - 2D minimap OFF by default. `M` toggles.
 - `ESC` aliased to `H`.
-- Cyberdemon chase 0.55× level speed.
+- Cyberdemon chase 0.55x level speed.
 - Removed `make play-dev` / `play-armory` / `play-boss` / `play-level` shortcuts. `--god` / `--armory` / `--level=N` still valid on `play`.
+- Source layout flattened: `src/modules/{core,glue,io}/` to `src/{core,glue,io}/`. Namespaces drop the `modules` segment. Tests mirror the change.
+- Removed obsolete `build/Dockerfile` + `docker-compose.yml` (superseded by the new root Dockerfile + make targets).
 
 ### Fixed
 
-- `ESC` works under kitty CSI-u terminals.
+- `ESC` works under kitty CSI-u terminals (kitty / WezTerm / Ghostty / iTerm2).
 - Gray borders on help panel + start menu rows that used dim SGR (sticky `\e[2m` not cleared).
 - `:hit` sfx attenuates with attacker distance.
 

@@ -1,6 +1,7 @@
 (ns phel-doom.modules.io.render
   (:require phel-doom.modules.core.enemies :refer [enemy-types])
   (:require phel-doom.modules.core.engine  :refer [cast-frame max-depth proj-dist])
+  (:require phel-doom.modules.core.perf    :refer [render-scale])
   (:require phel-doom.modules.core.map     :refer [find-door-cell])
   (:require phel-doom.modules.core.weapons :refer [weapon-order weapons]))
 
@@ -1057,9 +1058,15 @@
    On narrow terminals the minimap auto-scales so it never claims
    more than roughly a third of the screen width: `:map-step` is
    the grid:minimap block size (1 = 1:1, 2 = every 2nd cell, etc.)
-   and `:map-mw` is the resulting on-screen minimap width in cols."
+   and `:map-mw` is the resulting on-screen minimap width in cols.
+
+   At ultra-wide terminals (vw >> 120) a raw `cols/3` minimap would
+   bloat to >40 cols and dominate the screen / chew emit cycles
+   without adding readability — cap the upper bound at 40 cols so
+   the map stays a compact corner overlay. Standard 80×24 / 120×30
+   layouts already sit at or below 40 so this is a no-op for them."
   [cols rows grid-w stats]
-  (let [max-mw  (php/max 8 (php/intdiv cols 3))
+  (let [max-mw  (php/max 8 (php/min 40 (php/intdiv cols 3)))
         step    (php/max 1 (php/intval (php/ceil (php// grid-w max-mw))))
         mini-mw (php/intval (php/ceil (php// grid-w step)))]
     {:vw       cols
@@ -2177,8 +2184,13 @@
         ;; off path — a single `(get stats :debug?)` check per frame.
         debug?                             (get stats :debug?)
         t-cast-start                       (if debug? (php/microtime true) 0.0)
+        ;; render-scale = 2 on perf-mode terminals: one ray per pair
+        ;; of output columns, each sample replicated across the pair.
+        ;; Halves cast + wall-shade work with a chunky-per-2-cols
+        ;; look. Standard sizes return 1 → identical to before.
+        scale                              (render-scale vw vh)
         {:keys [dists hits sides hxs hys]}
-        (cast-frame world vw)
+        (cast-frame world vw scale)
         _                                  (when debug?
                                              (record-cast-ms!
                                               (php/* (php/- (php/microtime true) t-cast-start) 1000.0)))

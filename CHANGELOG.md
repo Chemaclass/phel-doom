@@ -11,25 +11,26 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Help panel (H or ESC) adapts to terminal size: interior width clamps to vw on narrow terminals; COMPASS HINT and CONTROLS sections drop greedily when vh can't fit them, keeping RUN / PLAYER / WEAPONS always visible.
+- Responsive help panel (`H` / `ESC`) — adapts width + drops optional sections on small terminals.
 
 ### Performance
 
-- Bumped `phel-lang/phel-lang` to the latest dev-main to pick up the 0.40 release: cached global fn call sites, multi-arity `match` dispatch, constant-folding of pure arithmetic, type-driven call specialisation (`+ - * < <= > >= =` to native PHP ops when args are tagged), `(:k m)` / `(get m k)` direct accessors on `^PersistentMapInterface` / `^PersistentVectorInterface`, hash-memo `null` sentinel on persistent collections, and `TransientVector::update` in-place trie walk.
-- Tagged hot-path numeric params with `^float` / `^int` in `enemy.phel` (`try-step`, `pick-step`, `step-toward`, `shoot`) and `render.phel` (`project-enemy`, `boss-col-paint`) so 0.40's two-arg arithmetic specialisation kicks in on the per-enemy and per-column loops.
+- Bumped `phel-lang` to dev-main (0.40 release: call-site caching, match dispatch, arithmetic specialisation, hash-memo, transient in-place updates).
+- Type-hint pass on hot numeric fns in `enemy.phel` + `render.phel`.
+- Big-screen perf mode (auto at `cols >= 200` or `cols * rows > 12000`): 40-col minimap cap, 30fps cadence, 2× horizontal render-scale. Standard sizes untouched.
 
 ### Changed
 
-- 2D minimap now OFF by default on a fresh run; press `M` to toggle it back on.
-- `ESC` is now aliased to `H` — both open / close the info panel (pause-coupled).
-- Removed cheat shortcuts (`make play-dev`, `play-armory`, `play-boss`, `play-level`) from the Makefile. `--god` / `--armory` / `--level=N` flags still work on `play` directly for dev use.
+- 2D minimap OFF by default. `M` toggles.
+- `ESC` aliased to `H` (help panel toggle, pause-coupled).
+- Removed `make play-dev` / `play-armory` / `play-boss` / `play-level` cheat shortcuts. `--god` / `--armory` / `--level=N` flags still valid on `play`.
 
 ### Fixed
 
-- `ESC` now opens / closes the help panel under kitty CSI-u terminals (kitty, WezTerm, Ghostty, iTerm2/Alacritty with the flag). The bare-ESC detector was stripping the wrapped `\e[27u` sequence before the press could register.
-- Right border on the help panel's `keys:` / `buffs:` rows is no longer gray — clears the sticky dim/bold SGR attribute that was bleeding past the closing `│`.
-- Player-pain `:hit` sfx now attenuates with attacker distance (same curve as `:kill` / `:wound`) — a far enemy chipping a life off no longer blasts at full volume.
-- Cyberdemon chase slowed to 0.55× the level's chase speed (L10 1.5 → ~0.82, L5 2.0 → 1.1). The boss read as cheating when it kept pace with imps; minions keep the full level speed.
+- `ESC` works under kitty CSI-u terminals (kitty / WezTerm / Ghostty / iTerm2).
+- Help panel `keys:` / `buffs:` right border no longer gray (cleared sticky dim SGR).
+- Player-pain `:hit` sfx attenuates with attacker distance.
+- Cyberdemon chase slowed to 0.55× the level's chase speed.
 
 ## [0.4.1] - 2026-05-25
 

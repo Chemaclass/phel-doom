@@ -12,6 +12,7 @@
   (:require phel-doom.modules.core.weapons  :refer [effective-reserve-cap give-weapon switch-weapon weapon-spec weapon-order weapons])
   (:require phel-doom.modules.io.sound    :refer [play-sfx! mute-for!])
   (:require phel-doom.modules.core.level    :refer [build-world num-levels])
+  (:require phel-doom.modules.core.perf     :refer [target-frame-us])
   (:require phel-doom.modules.io.scores   :refer [update-scores!])
   (:require phel-doom.modules.io.render   :refer [render! clear-screen
                                                   read-perf-snapshot
@@ -29,10 +30,19 @@
 ;; modules; this file is the orchestration layer.
 ;; ---------------------------------------------------------------------
 
-(def frame-us
-  "Microseconds to usleep at the end of each frame. Render time is the
-   real throttle; this just yields the CPU."
+(def min-yield-us
+  "Floor on the per-iteration usleep so the loop always yields the
+   CPU at least briefly, even when the render path already burned
+   the full frame budget. Without this a heavy frame would spin
+   straight into the next iteration with zero yield."
   1000)
+
+(def menu-frame-us
+  "Fixed ~60fps sleep for the static menu / end-screen loops (start,
+   death, victory). They don't measure render time + don't share the
+   game-loop's iteration timing, so a flat budget is fine — render
+   cost is tiny + uniform regardless of terminal size."
+  16000)
 
 ;; =====================================================================
 ;; § Terminal IO helpers
@@ -544,8 +554,24 @@
   (when (not= [rows cols] dims) (clear-screen)))
 
 (defn- draw-frame [world fps frame-ms rows cols]
-  (render! world (frame-stats world fps frame-ms) cols rows)
-  (php/usleep frame-us))
+  (render! world (frame-stats world fps frame-ms) cols rows))
+
+(defn- adaptive-sleep!
+  "Yield the CPU for whatever's left of the per-iteration budget,
+   never less than min-yield-us. Budget comes from target-frame-us
+   which doubles (~33ms) once the terminal crosses the perf-mode
+   threshold — big screens deliberately render at 30fps so the
+   loop doesn't peg a core chasing 60fps it can't reach.
+
+   `render-start-s` is the microtime captured immediately before the
+   render call (NOT the start of the whole loop iteration); the
+   intent is to charge sleep against draw cost so input drain + tick
+   stay outside the budget window."
+  [^float render-start-s ^int cols ^int rows]
+  (let [elapsed-us (php/intval (php/* (php/- (php/microtime true) render-start-s) 1000000.0))
+        budget     (target-frame-us cols rows)
+        remaining  (php/- budget elapsed-us)]
+    (php/usleep (php/max min-yield-us remaining))))
 
 (defn- game-loop [world0]
   (let [t-start (php/microtime true)]
@@ -557,7 +583,9 @@
            dims      [0 0]]
       (let [[rows cols] (term-size)]
         (redraw-if-resized dims rows cols)
-        (draw-frame world fps frame-ms rows cols)
+        (let [render-start (php/microtime true)]
+          (draw-frame world fps frame-ms rows cols)
+          (adaptive-sleep! render-start cols rows))
         (let [keys     (drain-keys)
               now      (php/microtime true)
               ms       (ms-since t-last now)
@@ -594,7 +622,7 @@
     (let [[rows cols] (term-size)]
       (redraw-if-resized dims rows cols)
       (render-fn cols rows)
-      (php/usleep 16000)
+      (php/usleep menu-frame-us)
       (let [keys (drain-keys)]
         (cond
           (str/contains? keys "q") :quit
@@ -755,7 +783,7 @@
     (let [[rows cols] (term-size)]
       (redraw-if-resized dims rows cols)
       (render-start-menu cols rows)
-      (php/usleep 16000)
+      (php/usleep menu-frame-us)
       (let [keys (drain-keys)]
         (if (= keys "")
           (recur [rows cols])

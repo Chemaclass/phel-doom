@@ -121,7 +121,7 @@ Decrements `:iframes`, `:fire-anim`, `:intro-secs`, `:flash-secs` by `dt`. Also 
 ```phel
 (and (php/<= (:iframes world) 0.0)
      (php/<= (or (:invuln-secs world) 0.0) 0.0)
-     (not (:god? world))                ; --god / make play-dev
+     (not (:god? world))                ; --god
      (enemies-touching? (:enemies world) px py))
 ```
 

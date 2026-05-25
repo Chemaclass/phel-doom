@@ -1,4 +1,4 @@
-.PHONY: help install d dev t test f format fc fix b build r repl doctor clean p play play-dev play-boss play-level play-armory
+.PHONY: help install d dev t test f format fc fix b build r repl doctor clean p play
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -13,18 +13,6 @@ dev: ## run CLI from sources (pass args: make dev ARGS="play")
 p: play
 play: ## start the DOOM showcase
 	vendor/bin/phel run phel-doom.main play
-
-play-dev: ## god mode: no damage, GOD badge in HUD — for testing rooms / weapons end-to-end
-	vendor/bin/phel run phel-doom.main play --god
-
-play-boss: ## god + armory + L10 boss arena straight away
-	vendor/bin/phel run phel-doom.main play --god --armory --level=10
-
-play-level: ## god + armory + start at level N: `make play-level LV=8`
-	vendor/bin/phel run phel-doom.main play --god --armory --level=$(or $(LV),1)
-
-play-armory: ## god + armory (every weapon, infinite ammo); start at L1
-	vendor/bin/phel run phel-doom.main play --god --armory
 
 t: test
 test: ## run phel tests

@@ -24,6 +24,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `ESC` now opens / closes the help panel under kitty CSI-u terminals (kitty, WezTerm, Ghostty, iTerm2/Alacritty with the flag). The bare-ESC detector was stripping the wrapped `\e[27u` sequence before the press could register.
 - Right border on the help panel's `keys:` / `buffs:` rows is no longer gray — clears the sticky dim/bold SGR attribute that was bleeding past the closing `│`.
 - Player-pain `:hit` sfx now attenuates with attacker distance (same curve as `:kill` / `:wound`) — a far enemy chipping a life off no longer blasts at full volume.
+- Cyberdemon chase slowed to 0.55× the level's chase speed (L10 1.5 → ~0.82, L5 2.0 → 1.1). The boss read as cheating when it kept pace with imps; minions keep the full level speed.
 
 ## [0.4.1] - 2026-05-25
 

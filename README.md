@@ -25,23 +25,23 @@ make play
 The repo ships a `Dockerfile` bundling PHP 8.4 CLI + Composer + the project deps. No host install required — `docker` is the only prerequisite.
 
 ```bash
-docker build -t phel-doom .
-docker run --rm -it phel-doom
+make docker-build      # builds the image (~195MB)
+make docker-play       # launches the game with raw TTY pass-through
+make docker-test       # runs the phel test suite headless
+make docker-shell      # drops you into a bash shell inside the image
+make docker-clean      # removes the local image
 ```
 
-- `-it` keeps the terminal in raw mode so ANSI render + key input work the same as a host run.
-- Override the entrypoint to run a different command:
+Behind the scenes each target is a one-line `docker run --rm` wrapper. Use `DOCKER_IMG=...` to point at a custom tag.
 
-  ```bash
-  docker run --rm -it phel-doom test                       # run the phel test suite
-  docker run --rm -it phel-doom run phel-doom.main play --god
-  ```
+The host-PHP targets (`make play`, `make test`, …) remain the inner-loop default — Docker per-command adds ~1s of container startup overhead, which adds up across a fast TDD cycle. Use Docker when you don't have PHP / Composer locally OR when you want a reproducible build env.
 
-- Bind-mount the source for live edits (skip rebuilding on every change):
+For custom invocations (e.g. dev flags), bypass the wrappers:
 
-  ```bash
-  docker run --rm -it -v "$PWD:/app" phel-doom
-  ```
+```bash
+docker run --rm -it phel-doom run phel-doom.main play --god --level=10
+docker run --rm -it -v "$PWD:/app" phel-doom    # live-mount source for edits
+```
 
 Rebuild after editing `composer.json` so the deps layer refreshes.
 

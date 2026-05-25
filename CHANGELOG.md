@@ -9,6 +9,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-25
+
 ### Added
 
 - Enemy AI state machine: `:dormant :wander :aware :hunting :pain :attacking`. Spawns start dormant (sneak past unseen). Wake on LOS / noise / hit. Lose contact: walk to last-known position, give up if not re-acquired. Attack telegraphs with per-type windup + cooldown. Pain stagger rolls against per-type chance (imp 0.35, cyber 0.05).
@@ -147,7 +149,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `cast + render` under 5 ms per frame at 120×30.
 - Flat PHP arrays on hot paths; `:tag` types for OPcache JIT tracing.
 
-[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Chemaclass/phel-doom/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/Chemaclass/phel-doom/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Chemaclass/phel-doom/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Chemaclass/phel-doom/compare/v0.2.0...v0.3.0

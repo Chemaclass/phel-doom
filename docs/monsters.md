@@ -64,6 +64,8 @@ Killed enemies stay in the vector with `:alive false` and `:respawn-after` set t
 
 Optional `:max-concurrent` cap on a spawned enemy type enforces a max-alive count. Revival checks the count of `:alive` enemies of the same `:type`; respawn is delayed until a sibling dies (up to respawn cap). `:type` is now preserved across respawn (bug fix: revived enemies previously dropped `:type`).
 
+The 7-arity `advance es g x y dt sp revive?` suspends the revive branch when `revive?` is false — dead enemies keep their `:respawn-after` value frozen instead of ticking down. Used on L10 once the cyberdemon dies: `play.phel`'s `boss-down?` predicate flips `revive?` to false, so the player's victory lap to the boss door isn't ambushed by a fresh boss spawn or a capped imp.
+
 ## Rendering: 3 zones + face overlay
 
 Sprite column splits into three vertical zones by projected sprite height `h`:

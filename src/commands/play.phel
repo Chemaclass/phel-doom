@@ -97,13 +97,24 @@
                       :else                 after-help)]
     (if (:about-face edges) (about-face after-esc) after-esc)))
 
+(defn- boss-down?
+  "True on a boss-locked level once the cyberdemon is dead — combat
+   stamps `:boss` into `:held-keys` on the killing blow. Used to stop
+   every remaining enemy from respawning so the player's victory lap
+   to the exit door isn't ambushed by a fresh boss or revived imp."
+  [world]
+  (and (= (:door-lock world) :boss)
+       (contains? (or (:held-keys world) #{}) :boss)))
+
 (defn- tick-enemies
   "Step every alive enemy one dt-scaled frame toward the player, using
-   the world's per-level chase speed."
+   the world's per-level chase speed. Suspends respawns once the boss
+   is down on L10 (see boss-down?)."
   [world ^float dt]
   (let [p (:player world)]
     (update world :enemies advance (:grid world) (:x p) (:y p) dt
-            (or (:chase-speed world) 0.75))))
+            (or (:chase-speed world) 0.75)
+            (not (boss-down? world)))))
 
 (defn- heart-at-cell? [h px py]
   (and (= (php/intval (:x h)) px)

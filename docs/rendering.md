@@ -102,6 +102,8 @@ Each visible enemy projects to centre column + half-width (`collect-enemy-projs`
 2. Three fade-shaded ANSI strings (`fhead`, `fbody`, `flegs`) via `fade-256` on `:head-code` / `:body-code` / `:legs-code`.
 3. Body embeds `:body-glyph` (e.g. `▒`) in a darker FG so each monster has a distinct material pattern.
 4. Writes into per-column arrays `eheads` / `ebodys` / `elegss`.
+
+`project-enemy` carries a `:scale` factor (1.0 default, 2.0 for `:cyber`). Painter multiplies both `:half-width` and projected sprite height `h` by `:scale` so cyberdemons render twice as wide AND tall — proportional, not stretched. Centred vertically so feet hover one half-sprite below the player's horizon at full scale.
 5. Records `tops` / `bots` / `mids` / `lowers` so the inner row loop picks head/body/legs per row.
 
 Aggro branch swaps in a blink-attributed cell within `aggro-distance` (1.8 world units).

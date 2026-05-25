@@ -9,30 +9,34 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Added
+
+- L10 boss door visible in 3D + minimap (red/yellow palette).
+- Cyberdemon sprite 2× scale.
+
+### Fixed
+
+- L10 enemies stop respawning once the boss dies.
+
 ## [0.4.0] - 2026-05-24
 
 ### Added
 
-- L10 boss arena rebalanced: boss HP **20 → 50** (a real fight — ~17 shotgun shells or ~50 chaingun rounds). Imps trimmed **4 → 2** with `:max-concurrent 1` so the respawn step caps minion pressure at one alive at a time, letting the player focus on the boss instead of getting swamped. Mixed-spec rooms can now carry a `:max-concurrent N` field per spec; `spawn-enemies-mixed` stamps it on each enemy, `advance/tick-one` blocks revival past the cap. Respawn also now carries `:type` + `:max-concurrent` forward (previously dropped — revived enemies reverted to the level's default visuals).
-- **L10 boss door is now boss-locked.** The exit refuses to open until the cyberdemon dies — walking through the door BEFORE the kill pulses `☠ KILL THE BOSS ☠` over the upper third of the 3D view. Killing the cyberdemon auto-grants the synthetic `:boss` keycard (no physical card spawns) so the door becomes passable. Walking through after the kill triggers the victory screen. Intro splash shows a red `KILL THE BOSS TO ESCAPE` subtitle on entry. New `cell-door-boss` (cell value 5) + `X` char in `parse-layout` for hand-authored boss arenas.
-- **Shot knockback** on every wound: enemies are shoved ~1 cell away along the shot direction on each hit that doesn't kill. Wall-clamped (falls back to half / quarter steps so the push never punts an enemy through geometry). Heavy multi-HP enemies visibly recoil per shot, buying the player a beat to reload + reposition; the killing blow leaves the corpse on its death cell so the loot drop lands where you'd expect. New `combat/shot-knockback-distance` tunable + `enemy/push-back-enemy` helper.
-- `--armory` (`-a`) CLI flag — dev cheat: own every weapon at spawn + infinite ammo (per-frame mag + reserve refill). Pairs naturally with `--god` to test every mechanic end-to-end without grinding for pickups. New `make play-armory` shortcut; `make play-boss` / `make play-level` now imply `--armory` so dev shortcuts always start fully loaded.
-- `--level=N` (`-l`) CLI flag — start the run at level N (clamped to 1..num-levels). Pairs naturally with `--god` for dev testing: `make play-boss` drops straight into the L10 boss arena, `make play-level LV=8` starts at level 8. Death + retry still reset to L1; the flag only seeds the initial loop entry.
-- **5 new levels** taking the run from 5 to 10 rooms. L6-L9 mix multiple monster types per room for a chaotic late-game; L10 is a hand-authored boss arena.
-  - **L6 spectres** — 4 spectres (HP 3, agile) + 2 imps. Spectres debut.
-  - **L7 revenants** — 4 revenants (HP 4) + 2 demons.
-  - **L8 archvile court** — 2 archviles (HP 5) + 3 cacos + 2 mancubi. Three-way mix.
-  - **L9 the brood** — 3 pinkies (HP 2, very fast) + 3 barons + 2 mancubi. Chaos pace.
-  - **L10 the final** — open chamber with a central pillar for cover, one cyberdemon BOSS (HP 20) + 4 imps. Hand-authored via the new `:layout` field. Walk through the north door after clearing to win the run.
-- `difficulty/scale-cfg` now scales mixed-spec rooms correctly: applies `:hp-mul` to each spec's `:lives`, leaves counts alone (mixed entries are author-tuned by design).
+- 5 new levels (L6-L10). L6-L9 mix monster types per room; L10 hand-authored boss arena.
+- L10 boss arena: cyberdemon HP 50, 2 imps capped at 1 alive (`:max-concurrent`).
+- L10 boss door is boss-locked — kill the cyberdemon to unlock the exit + win.
+- Shot knockback: enemies shoved ~1 cell back per non-killing hit (wall-clamped).
+- `--armory` (`-a`): own every weapon + infinite ammo. Pairs with `--god`.
+- `--level=N` (`-l`): start run at level N. Pairs with `--god` for boss testing.
+- 5 new enemy stubs in catalog: `:spectre :revenant :archvile :mancubus :pinky`.
 
 ### Changed
 
-- Phel/Clojure idiom pass across `src/` (behaviour-preserving). `(php/=== x nil)` → `(nil? x)`, `(php/=== x 0)` → `(zero? x)`, `(php/> x 0)` → `(pos? x)`, `(if (php/=== x false) false true)` → `(boolean x)`, etc. Tightened: combat, controls, difficulty, enemy, level, map, play.phel, scores, sound, weapons. Hot-path files (`render.phel`, `engine.phel`, `physics.phel`'s `apply-physics` loop) deliberately untouched.
-- Enemy catalog extracted to `core/enemies.phel`. Levels are now slim data: `{:size :walls :enemy :imp :enemies 4 :chase 0.8}`. Visuals (head/body/legs/face/glyph) live in `enemy-types` keyed by kw (`:imp :demon :caco :baron :cyber` + 5 stubs ready for L6-L10: `:spectre :revenant :archvile :mancubus :pinky`). Adding a new room = one map literal in `levels`; adding a new monster = one map literal in `enemy-types`.
-- `:enemies` accepts either an `int` (single-type, uses level's `:enemy`) OR a vector of mixed specs `[{:type :imp :count 4 :lives 1} {:type :baron :count 2}]`. Each enemy carries `:type` so render reads visuals per-sprite — enables mixed-monster rooms + boss arenas.
-- Level entry can opt in to a hand-authored `:layout` (vector of ASCII strings parsed via `map/parse-layout` — `#` wall, `.` floor, `@` spawn, `D`/`B`/`R` doors) that bypasses `random-grid` + `seed-doors`. Random procgen remains the default.
-- World no longer stamps per-level enemy visual fields (`:enemy-head-code`, `:enemy-body-glyph`, `:enemy-face`, …). Render reads the catalog directly via the per-enemy `:type` kw with the level's primary `:enemy` as fallback.
+- Phel/Clojure idiom pass across `src/` (behaviour-preserving). Hot paths untouched.
+- Enemy catalog extracted to `core/enemies.phel`. Levels now slim one-line entries.
+- `:enemies` accepts int OR mixed-spec vector `[{:type :imp :count 4 :lives 1} ...]`.
+- Level entry can opt in to hand-authored `:layout` (ASCII grid) — bypasses procgen.
+- World drops per-level enemy visual fields; render reads catalog via per-enemy `:type`.
 
 ## [0.3.0] - 2026-05-24
 

@@ -213,13 +213,17 @@
    Revival respects `:max-concurrent` when set on the enemy spec — if
    the live count of the same `:type` is already at the cap, the
    timer is bumped back so the next attempt fires in 0.5s. Lets the
-   L10 boss room cap minion pressure at 1 alive at a time."
-  [e grid player-x player-y ^float dt ^float speed all-enemies]
+   L10 boss room cap minion pressure at 1 alive at a time.
+
+   `revive?` false suspends every dead enemy's timer (boss dead on L10
+   → no more respawns of boss OR minions, the run is winding down)."
+  [e grid player-x player-y ^float dt ^float speed all-enemies revive?]
   (cond
     (:alive e)                (let [stepped (step-toward e grid player-x player-y dt speed)
                                     flash'  (php/max 0.0 (php/- (or (:hit-flash-secs e) 0.0) dt))]
                                 (assoc stepped :hit-flash-secs flash'))
     (nil? (:respawn-after e)) e
+    (not revive?)             e
     :else
     (let [t (php/- (:respawn-after e) dt)]
       (if (php/> t 0.0)
@@ -248,11 +252,17 @@
   "Per-frame update for every enemy: alive enemies chase the player at
    `speed` units/sec; dead enemies tick their respawn timer and rejoin
    the fight once it expires (unless their `:max-concurrent` cap is
-   already met — see tick-one)."
-  [enemies grid player-x player-y dt speed]
-  (apply vector
-         (map (fn [e] (tick-one e grid player-x player-y dt speed enemies))
-              enemies)))
+   already met — see tick-one).
+
+   The 7-arity opt-in `revive?` flag, when false, freezes every dead
+   enemy in place — used on L10 once the boss is down so neither the
+   cyberdemon nor its capped minions ever come back."
+  ([enemies grid player-x player-y dt speed]
+   (advance enemies grid player-x player-y dt speed true))
+  ([es g x y delta sp revive?]
+   (apply vector
+          (map (fn [e] (tick-one e g x y delta sp es revive?))
+               es))))
 
 (def scare-trigger-dist
   "World-units. When the nearest alive enemy crosses inbound under this

@@ -73,6 +73,15 @@
    of door cells reads as a vertical metal frame rather than a flat
    orange band. Cheap: still one paint cell per column."
   "\e[48;5;94;38;5;214m▌")
+(def boss-door-shade
+  "Boss-locked door body cell. Same frame glyph as the standard
+   door but on a blood-red BG with bright yellow FG so the L10
+   exit reads at a glance as 'kill the boss to open this'."
+  "\e[48;5;88;38;5;226m▌")
+(def boss-door-marker
+  "Minimap glyph for the L10 boss-locked door — vivid red so the
+   exit reads as 'danger / locked' against the dim minimap floor."
+  "\e[40;91;1m▌\e[0m")
 
 ;; Color CODES used for half-block edge anti-aliasing. The outer
 ;; column loop composes 'top edge' and 'bottom edge' cells by
@@ -85,6 +94,7 @@
 (def sky-blood-code   "52")
 (def floor-blood-code "88")
 (def door-code        "172")
+(def boss-door-code   "196")
 (def kill-flash    "\e[48;5;231;38;5;226;1m✦")
 (def death-slump   "\e[48;5;124;38;5;232;1m▼")
 (def death-collapse "\e[48;5;88;38;5;52m▒")
@@ -537,6 +547,10 @@
                                         :else                                    (recur (php/+ dc 1))))) true
                                   :else (recur (php/+ dr 1)))))
         sample-cell         (fn [r0 c0]
+                              ;; Priority: wall (1) > any door (2/3/4/5) >
+                              ;; floor (0). Door variants flow through so
+                              ;; minimap-rows can paint blue/red/boss
+                              ;; markers distinct from the orange D.
                               (loop [dr 0 found 0]
                                 (if (php/>= dr step)
                                   found
@@ -546,13 +560,18 @@
                                                  acc
                                                  (let [cell (buf-get grow (php/+ c0 dc))]
                                                    (cond
-                                                     ;; Wall wins, short-circuit.
                                                      (php/=== cell 1) 1
-                                                     (php/=== cell 2) (recur (php/+ dc 1) 2)
+                                                     (or (php/=== cell 2)
+                                                         (php/=== cell 3)
+                                                         (php/=== cell 4)
+                                                         (php/=== cell 5)) (recur (php/+ dc 1) cell)
                                                      :else            (recur (php/+ dc 1) acc)))))]
                                     (cond
                                       (php/=== v 1) 1
-                                      (php/=== v 2) (recur (php/+ dr 1) 2)
+                                      (or (php/=== v 2)
+                                          (php/=== v 3)
+                                          (php/=== v 4)
+                                          (php/=== v 5)) (recur (php/+ dr 1) v)
                                       :else         (recur (php/+ dr 1) found))))))]
     (loop [row 0]
       (when (php/< row out-h)
@@ -570,6 +589,7 @@
                             (php/=== 2 cell)                              door-glyph
                             (php/=== 3 cell)                              door-blue-marker
                             (php/=== 4 cell)                              door-red-marker
+                            (php/=== 5 cell)                              boss-door-marker
                             (buf-get emap (php/+ (php/* row out-w) col))  enemy-marker
                             (buf-get hmap (php/+ (php/* row out-w) col))  heart-marker
                             (buf-get amap (php/+ (php/* row out-w) col))  ammo-marker
@@ -686,10 +706,17 @@
               dmg       (if (php/<= max-lives 1)
                           0.0
                           (php/max 0.0 (php/min 1.0
-                                                (php/- 1.0 (php// lives max-lives)))))]
+                                                (php/- 1.0 (php// lives max-lives)))))
+              ;; Boss scale: cyberdemons (final boss + L5 mob) tower
+              ;; 2× wider / taller than the standard catalog so the
+              ;; L10 fight reads as a real boss encounter. Other types
+              ;; render at native size (1.0).
+              scale     (if (php/=== (:type enemy) :cyber) 2.0 1.0)
+              hw-base   (php/max 1 (php/intval (php// proj-dist (php/* (php/max 0.5 dist) 3.0))))]
           {:col          (php/intval (php/+ (php/* 0.5 vw) (php/* (php/tan rel-norm) proj-dist)))
-           :half-width   (php/max 1 (php/intval (php// proj-dist (php/* (php/max 0.5 dist) 3.0))))
+           :half-width   (php/max 1 (php/intval (php/* hw-base scale)))
            :dist         dist
+           :scale        scale
            :damage-ratio dmg
            :type         (:type enemy)})))))
 
@@ -1846,7 +1873,8 @@
                 toward black. Doors are kept bright as a nav cue."
   [vw vh haze-shift cast palette blood-cols]
   (let [{:keys [dists hits sides hxs hys]}                             cast
-        {:keys [stbl ctbl sky-c floor-c door-shade-now door-code-now]} palette
+        {:keys [stbl ctbl sky-c floor-c door-shade-now door-code-now
+                boss-door-shade-now boss-door-code-now]}               palette
         tops                                                           (buf-mk)
         bots                                                           (buf-mk)
         normal                                                         (buf-mk)
@@ -1864,15 +1892,24 @@
               stbl-l    (if blood? shade-table-blood stbl)
               ctbl-l    (if blood? shade-code-table-blood ctbl)
               sky-c-l   (if blood? sky-blood-code sky-c)
-              floor-c-l (if blood? floor-blood-code floor-c)]
+              floor-c-l (if blood? floor-blood-code floor-c)
+              h         (buf-get hits col)]
           (buf-set tops col top)
           (buf-set bots col (php/+ top wall-h))
-          (if (let [h (buf-get hits col)] (or (php/=== 2 h) (php/=== 3 h) (php/=== 4 h)))
+          (cond
+            (php/=== 5 h)
+            (do (buf-set normal      col boss-door-shade-now)
+                (buf-set top-edge    col (str "\e[48;5;" boss-door-code-now ";38;5;" sky-c-l "m▀"))
+                (buf-set bot-edge    col (str "\e[48;5;" floor-c-l ";38;5;" boss-door-code-now "m▀"))
+                (buf-set top-shadow  col boss-door-shade-now)
+                (buf-set bot-shadow  col boss-door-shade-now))
+            (or (php/=== 2 h) (php/=== 3 h) (php/=== 4 h))
             (do (buf-set normal      col door-shade-now)
                 (buf-set top-edge    col (str "\e[48;5;" door-code-now ";38;5;" sky-c-l "m▀"))
                 (buf-set bot-edge    col (str "\e[48;5;" floor-c-l ";38;5;" door-code-now "m▀"))
                 (buf-set top-shadow  col door-shade-now)
                 (buf-set bot-shadow  col door-shade-now))
+            :else
             (let [idx-raw (php/max 0
                                    (php/min 23
                                             (php/+ (php/intval (php/* (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 23))
@@ -2095,6 +2132,12 @@
         door-bright?                       (pulse t 4.0)
         door-shade-now                     (if door-bright? "\e[48;5;130;38;5;226m▌" door-shade)
         door-code-now                      (if door-bright? "130" door-code)
+        ;; Boss door pulses on a faster, alarm-ish beat (5 rad/s) so
+        ;; the L10 exit reads as 'kill the boss to open' even at the
+        ;; far end of the arena.
+        boss-door-bright?                  (pulse t 5.0)
+        boss-door-shade-now                (if boss-door-bright? "\e[48;5;124;38;5;226;1m▌" boss-door-shade)
+        boss-door-code-now                 (if boss-door-bright? "124" boss-door-code)
         ;; Pickup pulse: systole/diastole BG + matching centre glyph
         ;; both swap on the same beat so the icon throbs in tempo.
         heart-bright?                      (pulse t 6.0)
@@ -2170,7 +2213,9 @@
                              {:stbl stbl :ctbl ctbl
                               :sky-c sky-c :floor-c floor-c
                               :door-shade-now door-shade-now
-                              :door-code-now  door-code-now}
+                              :door-code-now  door-code-now
+                              :boss-door-shade-now boss-door-shade-now
+                              :boss-door-code-now  boss-door-code-now}
                              blood-cols)
         ;; Enemy sprite zone boundaries (head/body/legs). For each
         ;; column carrying an enemy:
@@ -2213,11 +2258,16 @@
            (let [col (:col proj)
                  hw  (:half-width proj)
                  d   (:dist proj)
-                 dmg (or (:damage-ratio proj) 0.0)]
+                 dmg (or (:damage-ratio proj) 0.0)
+                 sc  (or (:scale proj) 1.0)]
              (let [c-from    (php/max 0 (php/- col hw))
                    c-to      (php/min (php/- vw 1) (php/+ col hw))
-                   h         (php/min vh (php/intval (php// proj-dist
-                                                            (php/* (php/max 0.5 d) char-aspect))))
+                   ;; `sc` scales the sprite vertically in lockstep with
+                   ;; :half-width so bosses (cyber, sc=2.0) stay
+                   ;; proportional instead of stretching wide-but-flat.
+                   h         (php/min vh (php/intval (php/* sc
+                                                            (php// proj-dist
+                                                                   (php/* (php/max 0.5 d) char-aspect)))))
                    ;; Distance-fade factor: 0 at the player's feet,
                    ;; ~0.85 at max-depth. Squared so things stay
                    ;; saturated up close and only really dim once

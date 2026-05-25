@@ -14,6 +14,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - L10 boss door visible in 3D + minimap (red/yellow palette).
 - Cyberdemon sprite 2× scale + carved silhouette (helmet, arms, 2 legs) instead of a giant rectangle.
 
+### Changed
+
+- Armor stack cap raised 3 → 5 (matches life cap; more breathing room on late levels).
+
 ### Fixed
 
 - L10 enemies stop respawning once the boss dies.

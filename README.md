@@ -41,7 +41,7 @@ make play
 Walk into a door to advance. Walk over pickups:
 
 - **♥ heart** — `+1` life
-- **◆ armor** — absorbs one hit (cap 3)
+- **◆ armor** — absorbs one hit (cap 5)
 - **ammo box** — `+N` to a weapon's reserve. Kill-loot tags a random non-pistol weapon you own (pistol always has a refill path via floor boxes)
 - **berserk** — 20s of `×2` damage
 - **invuln** — 10s damage immunity

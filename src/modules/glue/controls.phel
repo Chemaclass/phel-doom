@@ -274,14 +274,26 @@
       (str/contains? keys "\e[13~")))
 
 (defn- esc-pressed?
-  "True when a BARE ESC byte is in the buffer. Strip every CSI
-   (`\\e[…<final>`) and SS3 (`\\eO<letter>`) sequence first — those
-   are arrow keys, kitty events, F-keys, etc. and would otherwise
-   register as ESC presses on every directional input."
+  "True when ESC was pressed this frame. Two paths:
+
+   1. Legacy byte stream — terminals without kitty CSI-u send a bare
+      `\\x1b` for ESC. We strip every CSI (`\\e[…<final>`) and SS3
+      (`\\eO<letter>`) sequence first because arrow keys / F-keys
+      embed an ESC byte that must NOT count as an ESC press, then
+      check for a bare `\\e` in what's left.
+
+   2. Kitty CSI-u — supporting terminals (kitty, WezTerm, Ghostty,
+      iTerm2/Alacritty with the flag) report ESC as keycode 27 wrapped
+      `\\e[27u` (with optional `;mods[:event]`). The legacy strip
+      would erase that whole sequence, so we explicitly preg_match
+      kitty's press-only form first. Same `:1` / no-`:event` rule as
+      `key-pressed?` so repeats (`:2`) / releases (`:3`) don't fire."
   [keys]
-  (let [re       "/\\x1b(?:\\[[\\d;:<=>?]*[@-~]|O[A-Za-z])/"
-        stripped (php/preg_replace re "" keys)]
-    (str/contains? stripped "\e")))
+  (let [kitty-esc-re "/\\x1b\\[27(?:u|;\\d+(?::1)?u)/"
+        re           "/\\x1b(?:\\[[\\d;:<=>?]*[@-~]|O[A-Za-z])/"
+        stripped     (php/preg_replace re "" keys)]
+    (or (= 1 (php/preg_match kitty-esc-re keys))
+        (str/contains? stripped "\e"))))
 
 (defn- key-pressed?
   "True when the byte `plain` OR its kitty CSI-u PRESS code appears in

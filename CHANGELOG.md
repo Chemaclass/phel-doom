@@ -13,6 +13,11 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 - Help panel (H or ESC) adapts to terminal size: interior width clamps to vw on narrow terminals; COMPASS HINT and CONTROLS sections drop greedily when vh can't fit them, keeping RUN / PLAYER / WEAPONS always visible.
 
+### Performance
+
+- Bumped `phel-lang/phel-lang` to the latest dev-main to pick up the 0.40 release: cached global fn call sites, multi-arity `match` dispatch, constant-folding of pure arithmetic, type-driven call specialisation (`+ - * < <= > >= =` to native PHP ops when args are tagged), `(:k m)` / `(get m k)` direct accessors on `^PersistentMapInterface` / `^PersistentVectorInterface`, hash-memo `null` sentinel on persistent collections, and `TransientVector::update` in-place trie walk.
+- Tagged hot-path numeric params with `^float` / `^int` in `enemy.phel` (`try-step`, `pick-step`, `step-toward`, `shoot`) and `render.phel` (`project-enemy`, `boss-col-paint`) so 0.40's two-arg arithmetic specialisation kicks in on the per-enemy and per-column loops.
+
 ### Changed
 
 - 2D minimap now OFF by default on a fresh run; press `M` to toggle it back on.

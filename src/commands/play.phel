@@ -12,6 +12,7 @@
   (:require phel-doom.modules.core.weapons  :refer [effective-reserve-cap give-weapon switch-weapon weapon-spec weapon-order weapons])
   (:require phel-doom.modules.io.sound    :refer [play-sfx! mute-for!])
   (:require phel-doom.modules.core.level    :refer [build-world num-levels])
+  (:require phel-doom.modules.core.perf     :refer [target-frame-us])
   (:require phel-doom.modules.io.scores   :refer [update-scores!])
   (:require phel-doom.modules.io.render   :refer [render! clear-screen
                                                   read-perf-snapshot
@@ -29,9 +30,11 @@
 ;; modules; this file is the orchestration layer.
 ;; ---------------------------------------------------------------------
 
-(def frame-us
-  "Microseconds to usleep at the end of each frame. Render time is the
-   real throttle; this just yields the CPU."
+(def min-yield-us
+  "Floor on the per-iteration usleep so the loop always yields the
+   CPU at least briefly, even when the render path already burned
+   the full frame budget. Without this a heavy frame would spin
+   straight into the next iteration with zero yield."
   1000)
 
 ;; =====================================================================
@@ -544,8 +547,19 @@
   (when (not= [rows cols] dims) (clear-screen)))
 
 (defn- draw-frame [world fps frame-ms rows cols]
-  (render! world (frame-stats world fps frame-ms) cols rows)
-  (php/usleep frame-us))
+  (render! world (frame-stats world fps frame-ms) cols rows))
+
+(defn- adaptive-sleep!
+  "Yield the CPU for whatever's left of the per-iteration budget,
+   never less than min-yield-us. Budget comes from target-frame-us
+   which doubles (~33ms) once the terminal crosses the perf-mode
+   threshold — big screens deliberately render at 30fps so the
+   loop doesn't peg a core chasing 60fps it can't reach."
+  [^float iter-start-s ^int cols ^int rows]
+  (let [elapsed-us (php/intval (php/* (php/- (php/microtime true) iter-start-s) 1000000.0))
+        budget     (target-frame-us cols rows)
+        remaining  (php/- budget elapsed-us)]
+    (php/usleep (php/max min-yield-us remaining))))
 
 (defn- game-loop [world0]
   (let [t-start (php/microtime true)]
@@ -555,9 +569,11 @@
            fps       0
            prev-keys initial-key-snapshot
            dims      [0 0]]
-      (let [[rows cols] (term-size)]
+      (let [[rows cols] (term-size)
+            iter-start  (php/microtime true)]
         (redraw-if-resized dims rows cols)
         (draw-frame world fps frame-ms rows cols)
+        (adaptive-sleep! iter-start cols rows)
         (let [keys     (drain-keys)
               now      (php/microtime true)
               ms       (ms-since t-last now)

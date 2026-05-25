@@ -1,0 +1,43 @@
+(ns phel-doom-tests.modules.core.perf-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.modules.core.perf :refer [perf-mode? target-frame-us
+                                                perf-width-threshold
+                                                perf-area-threshold]))
+
+(deftest test-perf-mode-off-on-small-terminals
+  ;; Standard terminal sizes never engage perf mode — 1:1 60fps stays
+  ;; the default path so existing CI / dev workflows are unaffected.
+  (is (= false (perf-mode? 80 24)))
+  (is (= false (perf-mode? 120 30)))
+  (is (= false (perf-mode? 180 40))))
+
+(deftest test-perf-mode-on-by-width
+  ;; At or above the width threshold perf mode engages regardless of
+  ;; row count — wide ultrawides still strain the render path even
+  ;; when vh is modest.
+  (is (= true (perf-mode? perf-width-threshold 24)))
+  (is (= true (perf-mode? 400 30)))
+  (is (= true (perf-mode? 250 20))))
+
+(deftest test-perf-mode-on-by-area
+  ;; Tall-but-narrow terminals (120×60 = 7200 cells, below) stay on
+  ;; the standard path; once total cells cross `perf-area-threshold`
+  ;; the render walks become heavy enough to justify the drop to
+  ;; 30fps cadence.
+  (is (= false (perf-mode? 120 60)))
+  (is (= true  (perf-mode? 180 70)))                ; 12600 cells
+  (is (= true  (perf-mode? 150 (php/intval (php/ceil (php// (php/+ perf-area-threshold 1) 150)))))))
+
+(deftest test-target-frame-us-60fps-on-small
+  ;; Standard sizes target ~60fps (16.67ms cadence) so motion stays
+  ;; smooth at every supported terminal.
+  (is (= 16667 (target-frame-us 80 24)))
+  (is (= 16667 (target-frame-us 120 30))))
+
+(deftest test-target-frame-us-30fps-on-big
+  ;; Big terminals drop to ~30fps (33.33ms cadence). Doubling the
+  ;; budget lets render finish in time even when each frame is
+  ;; genuinely heavier than a small terminal's, instead of the loop
+  ;; pegging a core chasing an unreachable 60.
+  (is (= 33333 (target-frame-us 400 60)))
+  (is (= 33333 (target-frame-us 200 30))))

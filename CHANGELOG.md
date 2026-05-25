@@ -17,6 +17,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 - Bumped `phel-lang/phel-lang` to the latest dev-main to pick up the 0.40 release: cached global fn call sites, multi-arity `match` dispatch, constant-folding of pure arithmetic, type-driven call specialisation (`+ - * < <= > >= =` to native PHP ops when args are tagged), `(:k m)` / `(get m k)` direct accessors on `^PersistentMapInterface` / `^PersistentVectorInterface`, hash-memo `null` sentinel on persistent collections, and `TransientVector::update` in-place trie walk.
 - Tagged hot-path numeric params with `^float` / `^int` in `enemy.phel` (`try-step`, `pick-step`, `step-toward`, `shoot`) and `render.phel` (`project-enemy`, `boss-col-paint`) so 0.40's two-arg arithmetic specialisation kicks in on the per-enemy and per-column loops.
+- Big-screen perf mode (auto-engaged at `cols >= 200` OR `cols * rows > 12000`): minimap caps at 40 cols absolute, game loop drops to ~30fps cadence (33ms budget) instead of 60fps, and the renderer samples one ray per 2 output columns + replicates the result across the pair (chunky 2-col walls, full-vw sprites + HUD). Standard 80×24 / 120×30 / 180×40 stay on the exact 1:1 60fps path, untouched.
 
 ### Changed
 

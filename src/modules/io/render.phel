@@ -360,6 +360,34 @@
        ";38;5;" (fade-256 fg-code t)
        "m" glyph))
 
+(defn- boss-col-paint
+  "Per-column body / legs / head string overrides that carve a
+   boss-shaped silhouette out of the cyberdemon's 2× rectangle:
+
+     - head: visible only near centre (helmet); outer cols show wall.
+     - body: solid dense torso centre, lighter arms reach to the edges.
+     - legs: gap between two leg columns at the bottom — gap + outer
+       cols show wall (boss is in front of the chamber wall).
+
+   Returns `[head body legs]`. `rel-abs` is |col - centre| / max(1, hw)
+   so 0 = centre, 1 = edge. `fhead/fbody/flegs` are the default
+   per-zone strings the caller already computed; this helper just
+   selectively swaps them. `body-code` + `body-fade` reused so the
+   arm tint matches the torso. `wall-bg` is the per-col wall body
+   string (`shades-normal[c]`) so silhouette cut-outs show the
+   chamber wall behind the boss instead of a flat sky block."
+  [rel-abs fhead fbody flegs ^int body-code ^float body-fade wall-bg]
+  (let [arm  (enemy-textured-shade-string body-code body-fade "█" body-code)]
+    [(if (php/< rel-abs 0.4) fhead wall-bg)
+     (cond
+       (php/< rel-abs 0.55) fbody
+       (php/< rel-abs 0.95) arm
+       :else                wall-bg)
+     (cond
+       (php/< rel-abs 0.18) wall-bg
+       (php/< rel-abs 0.65) flegs
+       :else                wall-bg)]))
+
 (def aggro-distance
   "World-units threshold below which an enemy is considered 'close
    enough to hit you'. The head zone pulses (blink SGR) for these
@@ -2325,9 +2353,20 @@
                          (buf-set bots c e-bot)
                          (buf-set mids c e-mid)
                          (buf-set lowers c e-lower)
-                         (buf-set eheads c fhead)
-                         (buf-set ebodys c fbody)
-                         (buf-set elegss c flegs)
+                         ;; Cyberdemon: carve a boss silhouette out of
+                         ;; the rectangle so the form reads as helmet +
+                         ;; arms + 2 legs instead of a giant imp brick.
+                         (let [[ph pb pl] (if (and (php/=== (:type proj) :cyber)
+                                                   body-code)
+                                            (boss-col-paint
+                                             (php// (php/abs (php/- c col))
+                                                    (php/max 1 hw))
+                                             fhead fbody flegs body-code body-fade
+                                             (buf-get shades-normal c))
+                                            [fhead fbody flegs])]
+                           (buf-set eheads c ph)
+                           (buf-set ebodys c pb)
+                           (buf-set elegss c pl))
                          (buf-set emask c true)
                          ;; Track nearest enemy distance for this col so
                          ;; pickups behind it occlude properly. Multiple

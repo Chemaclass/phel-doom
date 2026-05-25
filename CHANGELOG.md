@@ -12,7 +12,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 ### Added
 
 - L10 boss door visible in 3D + minimap (red/yellow palette).
-- Cyberdemon sprite 2× scale.
+- Cyberdemon sprite 2× scale + carved silhouette (helmet, arms, 2 legs) instead of a giant rectangle.
 
 ### Fixed
 

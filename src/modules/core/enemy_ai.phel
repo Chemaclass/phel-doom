@@ -1,5 +1,6 @@
 (ns phel-doom.modules.core.enemy-ai
-  (:require phel-doom.modules.core.engine :refer [cast-ray max-depth]))
+  (:require phel-doom.modules.core.engine :refer [cast-ray max-depth])
+  (:require phel-doom.modules.core.map    :refer [cell cell-floor]))
 
 ;; ---------------------------------------------------------------------
 ;; Enemy AI state machine.
@@ -108,3 +109,66 @@
   [enemy pgrid ^float px ^float py]
   (let [sees? (sees-player? pgrid (:x enemy) (:y enemy) px py)]
     (assoc enemy :state (next-state enemy sees?))))
+
+(def noise-wake-radius
+  "BFS cell radius around the player's fire origin. 6 covers a
+   medium-sized room without leaking through to the next one — sound
+   dies at any non-floor cell (walls + every door variant block
+   propagation), matching DOOM's per-sector noise rule. Bump higher
+   for shotgun / chaingun if you want louder weapons to wake further."
+  6)
+
+(defn- bfs-cells
+  "Pure flood-fill from `(ix0, iy0)` through `cell-floor` neighbours
+   only (4-connected, no diagonals — room shape, not a square). Stops
+   when distance exceeds `radius`. Returns a Phel set of [x y]
+   tuples reachable through floor.
+
+   Walls and ALL door variants block: doors carrying lock colours
+   make rooms acoustically isolated by default, which is the
+   point — one shot wakes the room you're in, not the level."
+  [grid ^int ix0 ^int iy0 ^int radius]
+  (loop [queue   [[ix0 iy0 0]]
+         visited #{[ix0 iy0]}]
+    (if (empty? queue)
+      visited
+      (let [[x y d] (first queue)
+            tail    (rest queue)]
+        (if (php/>= d radius)
+          (recur tail visited)
+          (let [steps      [[1 0] [-1 0] [0 1] [0 -1]]
+                neighbours (apply vector
+                                  (map (fn [s] [(php/+ x (first s)) (php/+ y (second s))])
+                                       steps))
+                fresh      (apply vector
+                                  (filter (fn [nb]
+                                            (and (not (contains? visited nb))
+                                                 (php/=== cell-floor
+                                                          (cell grid (first nb) (second nb)))))
+                                          neighbours))
+                visited'   (into visited fresh)
+                queue'     (into (apply vector tail)
+                                 (map (fn [nb] [(first nb) (second nb) (php/+ d 1)])
+                                      fresh))]
+            (recur queue' visited')))))))
+
+(defn noise-wake
+  "Player-fire driven flood-wake. BFS from the fire origin (player
+   cell) up to `noise-wake-radius` floor cells; every ALIVE enemy
+   whose integer cell sits inside that visited set flips to
+   `:state :aware`. Dead enemies are passed through unchanged so
+   respawn timers + carried `:max-lives` etc. survive.
+
+   Cheap because doors block: the fill rarely escapes the current
+   room. Caller should fire this once per shot (rising edge of the
+   fire button), not every frame the trigger is held — see
+   combat/resolve-shot for the wiring."
+  [enemies grid ^float ox ^float oy]
+  (let [visited (bfs-cells grid (php/intval ox) (php/intval oy) noise-wake-radius)]
+    (apply vector
+           (map (fn [e]
+                  (if (and (:alive e)
+                           (contains? visited [(php/intval (:x e)) (php/intval (:y e))]))
+                    (assoc e :state :aware)
+                    e))
+                enemies))))

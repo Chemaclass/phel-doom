@@ -1,7 +1,7 @@
 (ns phel-doom.modules.core.combat
   (:require phel-doom.modules.core.engine   :refer [cast-ray])
   (:require phel-doom.modules.core.enemy    :refer [push-back-enemy shoot])
-  (:require phel-doom.modules.core.enemy-ai :refer [attacks?])
+  (:require phel-doom.modules.core.enemy-ai :refer [attacks? noise-wake])
   (:require phel-doom.modules.core.physics  :refer [try-move])
   (:require phel-doom.modules.core.state    :refer [max-lives])
   (:require phel-doom.modules.core.weapons  :refer [weapon-order weapon-spec weapons])
@@ -568,15 +568,21 @@
                :reload-cooldown (:reload-duration sp))))))
 
 (defn fire-shot
-  "Resolve one trigger pull end-to-end."
+  "Resolve one trigger pull end-to-end. After the hitscan, run a
+   flood-fill sound-wake from the player's cell so dormant enemies
+   in the same room hear the shot and switch to :aware. Doors block
+   the BFS so the wake stays local — same per-sector noise rule
+   DOOM uses."
   [world]
   (let [[enemies' hit? hit-pos idx] (resolve-shot world)
+        p                           (:player world)
+        woken                       (noise-wake enemies' (:grid world) (:x p) (:y p))
         killed?                     (and hit?
-                                         (false? (:alive (get enemies' idx))))]
+                                         (false? (:alive (get woken idx))))]
     (play-shot-sfx world hit? killed? hit-pos)
     (apply-heat (if hit?
-                  (on-shot-hit world enemies' hit-pos idx)
-                  (on-shot-miss world)))))
+                  (on-shot-hit world woken hit-pos idx)
+                  (on-shot-miss (assoc world :enemies woken))))))
 
 (defn- empty-trigger-pull
   "Trigger pulled while mag = 0 AND no cooldown / jam in the way. Arm

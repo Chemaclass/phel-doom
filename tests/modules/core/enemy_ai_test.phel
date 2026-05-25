@@ -1,6 +1,7 @@
 (ns phel-doom-tests.modules.core.enemy-ai-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.modules.core.enemy-ai :refer [moves? attacks? sees-player? next-state observe
+                                                    noise-wake noise-wake-radius
                                                     state-spec default-state]))
 
 ;; Open chamber grid mirroring engine-test fixtures: 1 = wall, 0 = floor.
@@ -109,3 +110,102 @@
   (let [e  {:x 1.5 :y 3.5 :state :aware}
         e' (observe e wall-between-pgrid 5.5 3.5)]
     (is (= :aware (:state e')))))
+
+;; ---------------------------------------------------------------------
+;; noise-wake: player fire flood-fills through floor cells. Dormant
+;; enemies inside the reachable set switch to :aware; doors + walls
+;; block, so the wake stays in the same sector as the player.
+;; noise-wake uses VECTOR grids (Phel persistent vectors of vectors)
+;; via map/cell, not the PHP-array pgrid the LOS path needs.
+;; ---------------------------------------------------------------------
+
+(def open-room
+  ;; 8x8 open chamber, walls on the edges only.
+  [[1 1 1 1 1 1 1 1]
+   [1 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 1]
+   [1 1 1 1 1 1 1 1]])
+
+(def split-by-wall
+  ;; Vertical wall at x=4 splits the chamber in two halves.
+  [[1 1 1 1 1 1 1 1]
+   [1 0 0 0 1 0 0 1]
+   [1 0 0 0 1 0 0 1]
+   [1 0 0 0 1 0 0 1]
+   [1 0 0 0 1 0 0 1]
+   [1 0 0 0 1 0 0 1]
+   [1 0 0 0 1 0 0 1]
+   [1 1 1 1 1 1 1 1]])
+
+(def split-by-door
+  ;; Door (cell value 2) at the same column. Doors block sound
+  ;; propagation by design — sector isolation.
+  [[1 1 1 1 1 1 1 1]
+   [1 0 0 0 2 0 0 1]
+   [1 0 0 0 2 0 0 1]
+   [1 0 0 0 2 0 0 1]
+   [1 0 0 0 2 0 0 1]
+   [1 0 0 0 2 0 0 1]
+   [1 0 0 0 2 0 0 1]
+   [1 1 1 1 1 1 1 1]])
+
+(deftest test-noise-wake-flips-dormant-in-same-room
+  ;; Player at (2.5, 2.5), dormant imp at (5.5, 5.5). Open room, BFS
+  ;; reaches the imp's cell within radius → wakes.
+  (let [es  [(assoc {:x 5.5 :y 5.5 :alive true} :state :dormant)]
+        es' (noise-wake es open-room 2.5 2.5)]
+    (is (= :aware (:state (first es'))))))
+
+(deftest test-noise-wake-keeps-dormant-behind-wall
+  ;; Wall column at x=4. Player on the left, imp on the right →
+  ;; BFS can't cross, imp stays dormant.
+  (let [es  [(assoc {:x 5.5 :y 3.5 :alive true} :state :dormant)]
+        es' (noise-wake es split-by-wall 2.5 3.5)]
+    (is (= :dormant (:state (first es'))))))
+
+(deftest test-noise-wake-keeps-dormant-behind-door
+  ;; Door column at x=4. Doors block sound too — sector isolation.
+  (let [es  [(assoc {:x 5.5 :y 3.5 :alive true} :state :dormant)]
+        es' (noise-wake es split-by-door 2.5 3.5)]
+    (is (= :dormant (:state (first es'))))))
+
+(deftest test-noise-wake-leaves-dead-enemies-untouched
+  ;; Dead enemy on a reachable cell keeps :alive false + its respawn
+  ;; timer intact. Carrying state we don't touch is critical because
+  ;; the respawn path reads :max-lives + :respawn-after to revive.
+  (let [es  [{:x 5.5 :y 5.5 :alive false :respawn-after 2.0
+              :max-lives 3 :state :aware}]
+        es' (noise-wake es open-room 2.5 2.5)
+        e   (first es')]
+    (is (= false (:alive e)))
+    (is (= 2.0 (:respawn-after e)))
+    (is (= 3 (:max-lives e)))))
+
+(deftest test-noise-wake-leaves-aware-enemies-aware
+  ;; Sticky :aware doesn't downgrade just because the BFS visits.
+  (let [es  [(assoc {:x 5.5 :y 5.5 :alive true} :state :aware)]
+        es' (noise-wake es open-room 2.5 2.5)]
+    (is (= :aware (:state (first es'))))))
+
+(deftest test-noise-wake-multiple-enemies
+  ;; Two enemies — one in the same sector, one behind the wall.
+  ;; Mixed result on a single call.
+  (let [near (assoc {:x 5.5 :y 3.5 :alive true} :state :dormant)
+        far  (assoc {:x 5.5 :y 3.5 :alive true} :state :dormant)
+        es   [near far]
+        es'  (noise-wake es split-by-wall 2.5 3.5)]
+    ;; Both enemies started behind the wall in this fixture — neither
+    ;; reachable. Pin the dormant-still expectation; the wake-via-LOS
+    ;; case is covered by observe tests upstream.
+    (is (= :dormant (:state (php/aget es' 0))))
+    (is (= :dormant (:state (php/aget es' 1))))))
+
+(deftest test-noise-wake-radius-default-is-reasonable
+  ;; Pin the default radius so a future bump (e.g. louder shotgun)
+  ;; doesn't silently break test fixtures that assume room-sized
+  ;; coverage.
+  (is (= 6 noise-wake-radius)))

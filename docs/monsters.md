@@ -46,6 +46,7 @@ Each enemy carries a `:state` keyword that decides whether it moves + deals cont
 
 - **Line-of-sight (LOS)** — every tick, `enemy-ai/observe` casts one ray from each alive enemy to the player. Ray hits a wall before reaching the player cell → no LOS, stays dormant. Reaches the player → flips to `:aware`. Reuses `engine/cast-ray`; capped at `max-depth` (12 units), so very long sectors read as "too far to see" — matches DOOM's sight cutoff.
 - **Pain (being shot)** — `enemy/shoot` stamps `:state :aware` on the hit target unconditionally. A dormant enemy that took a bullet without reacting would read as broken AI.
+- **Noise (player fire)** — `combat/fire-shot` runs a flood-fill BFS from the player's cell up to `noise-wake-radius` (6 cells) through `cell-floor` neighbours only. Walls and ALL door variants block, so sound dies at the room boundary — matches DOOM's per-sector noise rule. Every alive enemy whose integer cell sits inside the visited set flips to `:aware`, including those without LOS. One shot wakes the room you're in, not the level.
 
 Once aware the state is sticky (DOOM "wake once, stay awake"). Future state transitions (`:hunting` for LOS-lost-then-chase-to-LKP, `:pain` for stagger, `:attacking` for ranged windup) slot into the same `state-spec` map + `next-state` cond — call sites don't change.
 

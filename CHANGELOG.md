@@ -9,6 +9,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-05-25
+
 ### Added
 
 - L10 boss door visible in 3D + minimap (red/yellow palette).
@@ -117,7 +119,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `cast + render` under 5 ms per frame at 120×30.
 - Flat PHP arrays on hot paths; `:tag` types for OPcache JIT tracing.
 
-[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/Chemaclass/phel-doom/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Chemaclass/phel-doom/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Chemaclass/phel-doom/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Chemaclass/phel-doom/compare/v0.1.0...v0.2.0

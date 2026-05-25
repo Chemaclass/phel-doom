@@ -19,6 +19,11 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `ESC` is now aliased to `H` — both open / close the info panel (pause-coupled).
 - Removed cheat shortcuts (`make play-dev`, `play-armory`, `play-boss`, `play-level`) from the Makefile. `--god` / `--armory` / `--level=N` flags still work on `play` directly for dev use.
 
+### Fixed
+
+- `ESC` now opens / closes the help panel under kitty CSI-u terminals (kitty, WezTerm, Ghostty, iTerm2/Alacritty with the flag). The bare-ESC detector was stripping the wrapped `\e[27u` sequence before the press could register.
+- Right border on the help panel's `keys:` / `buffs:` rows is no longer gray — clears the sticky dim/bold SGR attribute that was bleeding past the closing `│`.
+
 ## [0.4.1] - 2026-05-25
 
 ### Added

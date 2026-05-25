@@ -17,6 +17,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 ### Fixed
 
 - L10 enemies stop respawning once the boss dies.
+- L10 central pillar now has 2 openings (north + south) so enemies can't spawn-lock inside the box.
 
 ## [0.4.0] - 2026-05-24
 

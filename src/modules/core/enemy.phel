@@ -1,6 +1,6 @@
 (ns phel-doom.modules.core.enemy
   (:require phel-doom.modules.core.map      :refer [random-spawn wall?])
-  (:require phel-doom.modules.core.enemy-ai :refer [apply-pain observe moves? target-pos tick-pain]))
+  (:require phel-doom.modules.core.enemy-ai :refer [apply-pain maybe-start-attack moves? observe target-pos tick-attack tick-pain tick-wander]))
 
 (def default-chase-speed
   "Fallback chase speed (units/sec) used by the single-arity advance
@@ -248,28 +248,53 @@
    → no more respawns of boss OR minions, the run is winding down)."
   [e grid pgrid ^float player-x ^float player-y ^float dt ^float speed all-enemies revive?]
   (cond
-    (:alive e)                (let [;; Pain stagger ticks BEFORE the LOS observe
-                                    ;; pass so a staggered enemy keeps its :pain
-                                    ;; state until the timer expires; observe
-                                    ;; running on top would over-write the state
-                                    ;; back to whatever the LOS check decides.
-                                    pained   (tick-pain e dt)
-                                    in-pain? (php/=== :pain (:state pained))
-                                    observed (if (and pgrid (not in-pain?))
-                                               (observe pained pgrid player-x player-y)
-                                               pained)
-                                    ;; Only compute the step target when the state
-                                    ;; actually moves — `:dormant` / `:pain` skip
-                                    ;; both the target-pos call and the chase step
-                                    ;; entirely.
-                                    stepped  (if (moves? observed)
-                                               (let [target (target-pos observed player-x player-y)
-                                                     mul    (or (get type-speed-mul (:type observed)) 1.0)]
-                                                 (if target
-                                                   (step-toward observed grid (:x target) (:y target) dt (php/* speed mul))
-                                                   observed))
-                                               observed)
-                                    flash'   (php/max 0.0 (php/- (or (:hit-flash-secs observed) 0.0) dt))]
+    (:alive e)                (let [;; Per-frame AI pipeline. Order matters:
+                                    ;;
+                                    ;;  1. Pain stagger ticks FIRST so a staggered
+                                    ;;     enemy's :pain state isn't overwritten
+                                    ;;     by anything below. The timer drives
+                                    ;;     :pain → :aware on expiry.
+                                    ;;
+                                    ;;  2. LOS observe runs ONLY when the enemy
+                                    ;;     isn't already committed to a frame-
+                                    ;;     locked state (:pain or :attacking).
+                                    ;;     During an attack windup the enemy
+                                    ;;     telegraphs the strike — observe would
+                                    ;;     yank them back to :hunting on losing
+                                    ;;     LOS mid-windup, defeating the visible
+                                    ;;     attack rhythm.
+                                    ;;
+                                    ;;  3. maybe-start-attack arms a fresh
+                                    ;;     :attacking window when :aware + in
+                                    ;;     range + cooldown done.
+                                    ;;
+                                    ;;  4. tick-attack decays windup + cooldown,
+                                    ;;     reverts :attacking → :aware on
+                                    ;;     windup expiry.
+                                    ;;
+                                    ;;  5. step-toward runs only when the final
+                                    ;;     state allows movement (state-spec
+                                    ;;     :moves?).
+                                    pained      (tick-pain e dt)
+                                    frame-lock? (or (php/=== :pain (:state pained))
+                                                    (php/=== :attacking (:state pained)))
+                                    observed    (if (and pgrid (not frame-lock?))
+                                                  (observe pained pgrid player-x player-y)
+                                                  pained)
+                                    armed       (maybe-start-attack observed player-x player-y)
+                                    ticked      (tick-attack armed dt)
+                                    ;; tick-wander refreshes the :wander-angle
+                                    ;; timer + rolls a new heading when it
+                                    ;; expires. No-op outside :wander.
+                                    wandered    (tick-wander ticked dt)
+                                    stepped     (if (moves? wandered)
+                                                  (let [target (target-pos wandered player-x player-y)
+                                                        mul    (or (get type-speed-mul (:type wandered)) 1.0)]
+                                                    (if target
+                                                      (step-toward wandered grid (:x target) (:y target) dt (php/* speed mul))
+                                                      wandered))
+                                                  wandered)
+                                    flash'      (php/max 0.0 (php/- (or (:hit-flash-secs wandered) 0.0) dt))]
                                 (assoc stepped :hit-flash-secs flash'))
     (nil? (:respawn-after e)) e
     (not revive?)             e

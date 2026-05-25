@@ -68,34 +68,25 @@
 
 (defn- handle-toggles
   "Apply rising-edge toggle keys (pause / minimap / sound / debug /
-   help / escape / about-face) for this frame. Debug + help edges
-   stay outside the paused short-circuit so F3 / H still flip
+   help / about-face) for this frame. Debug + help edges stay
+   outside the paused short-circuit so F3 / H / ESC still flip
    overlays while paused."
   [world edges]
   (let [after-pause (if (:toggle-pause edges) (toggle-pause world) world)
         after-map   (if (:toggle-map edges) (toggle-map after-pause) after-pause)
         after-sound (if (:toggle-sound edges) (toggle-sound after-map) after-map)
         after-debug (if (:toggle-debug edges) (toggle-debug after-sound) after-sound)
-        ;; H couples to pause: opening the info menu freezes the
-        ;; game so the player can read it; closing un-freezes. If
-        ;; the player already P-paused, then H, then H again, the
-        ;; game un-pauses on the second H (acceptable — they can
-        ;; re-press P to keep it frozen).
+        ;; H + ESC both fire :toggle-help. Couples to pause: opening
+        ;; the info menu freezes the game so the player can read it;
+        ;; closing un-freezes. If the player already P-paused, then
+        ;; H, then H again, the game un-pauses on the second H
+        ;; (acceptable — they can re-press P to keep it frozen).
         after-help  (if (:toggle-help edges)
                       (-> after-debug
                           (update :help? not)
                           (assoc :paused (not (:help? after-debug))))
-                      after-debug)
-        ;; ESC closes whichever modal is open: HELP first (it
-        ;; coupled pause on open, so closing it also unfreezes),
-        ;; otherwise PAUSE alone. No-op when nothing is open so
-        ;; ESC never accidentally pauses the game.
-        after-esc   (cond
-                      (not (:escape edges)) after-help
-                      (:help? after-help)   (assoc after-help :help? false :paused false)
-                      (:paused after-help)  (assoc after-help :paused false)
-                      :else                 after-help)]
-    (if (:about-face edges) (about-face after-esc) after-esc)))
+                      after-debug)]
+    (if (:about-face edges) (about-face after-help) after-help)))
 
 (defn- boss-down?
   "True on a boss-locked level once the cyberdemon is dead — combat

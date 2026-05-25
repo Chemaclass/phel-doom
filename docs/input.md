@@ -135,8 +135,8 @@ One-shot actions (toggles, modals, weapon switch, reload) need rising edges, not
    :e   (str/contains? keys "e")    ; about-face (180°)
    :f3  (f3-pressed? keys)          ; toggle debug overlay
    :r   (str/contains? keys "r")    ; reload
-   :h   (str/contains? keys "h")    ; open help modal
-   :esc (str/contains? keys "\e")   ; close modal / pause
+   :h   (str/contains? keys "h")    ; toggle help modal
+   :esc (str/contains? keys "\e")   ; alias of h — same toggle
    :k1  (str/contains? keys "1")    ; switch to pistol
    :k2  (str/contains? keys "2")    ; switch to shotgun
    :k3  (str/contains? keys "3")})  ; switch to chaingun
@@ -149,8 +149,9 @@ One-shot actions (toggles, modals, weapon switch, reload) need rising edges, not
    :about-face   (and (:e now)  (not (:e prev)))
    :debug        (and (:f3 now) (not (:f3 prev)))
    :reload       (and (:r now)  (not (:r prev)))
-   :help         (and (:h now)  (not (:h prev)))
-   :escape       (and (:esc now) (not (:esc prev)))
+   ;; H + ESC aliased: either rising edge toggles the help panel.
+   :toggle-help  (and (or (:h now)  (:esc now))
+                      (not (or (:h prev) (:esc prev))))
    :switch-1     (and (:k1 now) (not (:k1 prev)))
    :switch-2     (and (:k2 now) (not (:k2 prev)))
    :switch-3     (and (:k3 now) (not (:k3 prev)))})
@@ -162,7 +163,7 @@ Consumed by:
 - `:fire` — `tick-shooting` (hitscan + ammo)
 - `:reload` — `reload` (mag refill)
 - `:toggle-*` — `handle-toggles` (flip flags)
-- `:switch-*` / `:about-face` / `:debug` / `:help` / `:escape` — also `handle-toggles`
+- `:switch-*` / `:about-face` / `:debug` / `:toggle-help` — also `handle-toggles`
 
 ## Why `glue/` not `io/`
 

@@ -115,30 +115,45 @@
             (recur cx cy' sidex (php/+ sidey deltay))))))))
 
 (defn cast-frame
-  "Cast `width` rays and return a map of parallel PHP arrays, one
-   entry per screen column:
+  "Cast `width / scale` rays across the visible FOV and return a map
+   of parallel PHP arrays, one entry per OUTPUT screen column:
      :dists  fish-eye corrected wall distance
      :hits   cell value at the hit
      :sides  0 = vertical face, 1 = horizontal face (side-shading)
      :hxs    integer x coord of the hit cell (brick-texture hash)
-     :hys    integer y coord of the hit cell"
-  [world ^int width]
-  (let [pgrid               (:pgrid world)
-        {:keys [x y angle]} (:player world)
-        center              (php/* 0.5 width)
-        dists               (php/array)
-        hits                (php/array)
-        sides               (php/array)
-        hxs                 (php/array)
-        hys                 (php/array)]
-    (loop [col 0]
-      (when (php/< col width)
-        (let [offset (php/atan (php// (php/- col center) proj-dist))]
-          (let [[d h side hx hy] (cast-ray-hit pgrid x y (php/+ angle offset))]
-            (php/aset dists col (php/* d (php/cos offset)))
-            (php/aset hits col h)
-            (php/aset sides col side)
-            (php/aset hxs col hx)
-            (php/aset hys col hy))
-          (recur (php/+ col 1)))))
-    {:dists dists :hits hits :sides sides :hxs hxs :hys hys}))
+     :hys    integer y coord of the hit cell
+
+   `scale` defaults to 1 (one ray per column, exact 1:1 path). With
+   `scale = N > 1` one ray is cast every Nth column and its result
+   is replicated across the next N output slots — perf-mode wall
+   render at half the cast cost with a chunkier per-block look.
+   Sprites + HUD remain at full vw because they read these arrays
+   by column index and overlay independently."
+  ([world ^int width] (cast-frame world width 1))
+  ([world ^int width ^int scale]
+   (let [pgrid               (:pgrid world)
+         {:keys [x y angle]} (:player world)
+         center              (php/* 0.5 width)
+         dists               (php/array)
+         hits                (php/array)
+         sides               (php/array)
+         hxs                 (php/array)
+         hys                 (php/array)]
+     (loop [col 0]
+       (when (php/< col width)
+         (let [offset (php/atan (php// (php/- col center) proj-dist))]
+           (let [[d h side hx hy] (cast-ray-hit pgrid x y (php/+ angle offset))
+                 d-corr           (php/* d (php/cos offset))]
+             ;; Replicate this sample across the next `scale` output
+             ;; columns. Inner loop bound by `width` so a non-divisible
+             ;; tail (e.g. width=401, scale=2) doesn't overshoot.
+             (loop [c col fill 0]
+               (when (and (php/< c width) (php/< fill scale))
+                 (php/aset dists c d-corr)
+                 (php/aset hits c h)
+                 (php/aset sides c side)
+                 (php/aset hxs c hx)
+                 (php/aset hys c hy)
+                 (recur (php/+ c 1) (php/+ fill 1)))))
+           (recur (php/+ col scale)))))
+     {:dists dists :hits hits :sides sides :hxs hxs :hys hys})))

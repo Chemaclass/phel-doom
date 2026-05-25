@@ -76,3 +76,41 @@
     (is (= 8 (php/count (:sides c))))
     (is (= 8 (php/count (:hxs c))))
     (is (= 8 (php/count (:hys c))))))
+
+(deftest test-cast-frame-scale-2-fills-vw-from-half-rays
+  ;; Perf-mode path: cast every 2nd column, replicate into the next.
+  ;; Output buffers still size to `width` so the row loop downstream
+  ;; doesn't need to know about scaling. Adjacent pairs hold the
+  ;; same sampled value (chunky 2-col look).
+  (let [w (new-world chamber-grid (new-player 2.5 2.5 0.0))
+        c (cast-frame w 8 2)]
+    (is (= 8 (php/count (:dists c))))
+    (is (= 8 (php/count (:hits c))))
+    ;; Pair 0+1 must agree; pair 2+3 must agree (different sample,
+    ;; possibly different value from pair 0+1).
+    (is (= (php/aget (:dists c) 0) (php/aget (:dists c) 1)))
+    (is (= (php/aget (:hits c)  0) (php/aget (:hits c)  1)))
+    (is (= (php/aget (:dists c) 2) (php/aget (:dists c) 3)))
+    (is (= (php/aget (:hits c)  2) (php/aget (:hits c)  3)))))
+
+(deftest test-cast-frame-scale-2-odd-width-leftover
+  ;; width=5 scale=2 → ray at cols 0, 2, 4. Col 4 has no neighbour
+  ;; to duplicate into; the inner replication loop must stop at width.
+  (let [w (new-world chamber-grid (new-player 2.5 2.5 0.0))
+        c (cast-frame w 5 2)]
+    (is (= 5 (php/count (:dists c))))
+    (is (= (php/aget (:dists c) 0) (php/aget (:dists c) 1)))
+    (is (= (php/aget (:dists c) 2) (php/aget (:dists c) 3)))
+    ;; Col 4 stands alone — just needs to be populated (not nil).
+    (is (php/!== nil (php/aget (:dists c) 4)))))
+
+(deftest test-cast-frame-scale-1-matches-default-arity
+  ;; Explicit scale=1 must behave identically to the 2-arity call.
+  (let [w (new-world chamber-grid (new-player 2.5 2.5 0.0))
+        a (cast-frame w 6)
+        b (cast-frame w 6 1)]
+    (loop [i 0]
+      (when (php/< i 6)
+        (is (= (php/aget (:dists a) i) (php/aget (:dists b) i)))
+        (is (= (php/aget (:hits  a) i) (php/aget (:hits  b) i)))
+        (recur (php/+ i 1))))))

@@ -89,6 +89,33 @@
     ;; Counter decayed by one frame.
     (is (= 4 (:fwd (:moves w1))))))
 
+(deftest test-chainsaw-firing-halves-movement
+  ;; While the chainsaw's :fire-cooldown is positive the player walks
+  ;; at the weapon's :movement-mul (0.5) - locks the player to a
+  ;; commited melee approach instead of kiting at base speed.
+  (let [w0           (assoc-in empty-world [:moves :fwd] 5)
+        ;; Active chainsaw + mid-fire-cooldown: movement-mul kicks in.
+        w-saw        (assoc w0 :weapon :chainsaw :fire-cooldown 0.05)
+        ;; Same setup but pistol so the multiplier branch is skipped.
+        w-pistol     (assoc w0 :weapon :pistol :fire-cooldown 0.05)
+        saw-after    (apply-physics w-saw 0.1)
+        pistol-after (apply-physics w-pistol 0.1)
+        d-saw        (- (:x (:player saw-after)) 1.5)
+        d-pis        (- (:x (:player pistol-after)) 1.5)]
+    (is (< d-saw d-pis))
+    ;; ~50% of pistol's distance: the chainsaw's 0.5 movement-mul.
+    (is (< (php/abs (- d-saw (* 0.5 d-pis))) 0.0001))))
+
+(deftest test-chainsaw-idle-does-not-slow-movement
+  ;; :fire-cooldown <= 0 means the saw isn't ticking; walk at full
+  ;; speed. The slow only kicks in MID-swing.
+  (let [w0       (assoc-in empty-world [:moves :fwd] 5)
+        w-saw    (assoc w0 :weapon :chainsaw :fire-cooldown 0.0)
+        w-pistol (assoc w0 :weapon :pistol :fire-cooldown 0.0)
+        saw      (apply-physics w-saw 0.1)
+        pistol   (apply-physics w-pistol 0.1)]
+    (is (< (php/abs (- (:x (:player saw)) (:x (:player pistol)))) 0.0001))))
+
 (deftest test-apply-physics-idle-counters-decay-to-zero
   ;; Single-frame counter goes to 0 after one tick.
   (let [w0 (assoc-in empty-world [:moves :fwd] 1)

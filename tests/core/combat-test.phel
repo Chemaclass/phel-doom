@@ -359,6 +359,50 @@
   ;; doubles. Pin the constant so a future buff/nerf is intentional.
   (is (php/>= berserk-damage-mul 2)))
 
+;; ---------------------------------------------------------------------
+;; Chainsaw (issue #59): no-ammo, melee range, slow movement while firing.
+;; ---------------------------------------------------------------------
+
+(defn- chainsaw-world []
+  (let [grid (apply vector
+                    (cons [1 1 1 1 1]
+                          (concat (apply vector
+                                         (map (fn [_] [1 0 0 0 1]) (range 0 3)))
+                                  [[1 1 1 1 1]])))]
+    (assoc (new-world grid (new-player 1.5 1.5 0.0))
+           :weapon :chainsaw
+           :mag    1
+           :ammo-reserve 0)))
+
+(deftest test-chainsaw-can-fire-with-empty-mag
+  ;; :no-ammo? bypasses the mag check so the saw fires regardless of
+  ;; magazine state. Cooldown still gates the rhythm.
+  (let [w (assoc (chainsaw-world) :mag 0 :fire-cooldown 0.0)]
+    (is (= true (can-fire? w)))))
+
+(deftest test-chainsaw-apply-heat-does-not-burn-mag
+  ;; A trigger pull on the chainsaw must not decrement :mag below
+  ;; whatever it was - the saw has no ammo to drain. Cooldown still
+  ;; arms so the per-tick rhythm is honoured.
+  (let [w0 (assoc (chainsaw-world) :mag 1 :fire-cooldown 0.0)
+        w1 (apply-heat w0)]
+    (is (= 1 (:mag w1)))
+    (is (php/> (:fire-cooldown w1) 0.0))))
+
+(deftest test-chainsaw-reloading-always-false
+  ;; Pressing R with the saw selected is a silent no-op; reloading?
+  ;; must return false so the reload lockout doesn't fire.
+  (let [w (assoc (chainsaw-world) :mag 0 :ammo-reserve 10)]
+    (is (= false (reloading? w)))))
+
+(deftest test-pistol-apply-heat-still-burns-mag
+  ;; Regression guard: the :no-ammo? branch must NOT affect the
+  ;; pistol's standard mag drain.
+  (let [base (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
+        w0   (assoc base :weapon :pistol :mag 10 :fire-cooldown 0.0)
+        w1   (apply-heat w0)]
+    (is (= 9 (:mag w1)))))
+
 (deftest test-invuln-predicate-true-when-timer-active
   (is (= true  (invuln? {:invuln-secs 5.0})))
   (is (= false (invuln? {:invuln-secs 0.0})))

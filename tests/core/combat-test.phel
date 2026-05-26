@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.state :refer [new-world new-player])
   (:require phel-doom.core.combat
-            :refer [armory-reserve closest-attacker attacker-side berserk? berserk-seconds can-fire? apply-heat damage-step empty-click-seconds invuln? invuln-seconds knockback mag-size pick-loot-weapon reload reloading? roll-loot-kind tick-armory tick-shooting]))
+            :refer [arm-berserk armory-reserve closest-attacker attacker-side berserk? berserk-damage-mul berserk-seconds can-fire? apply-heat damage-step empty-click-seconds invuln? invuln-seconds knockback mag-size pick-loot-weapon reload reloading? roll-loot-kind tick-armory tick-shooting]))
 
 ;; ---------------------------------------------------------------------
 ;; closest-attacker: selection rule.
@@ -324,6 +324,40 @@
   (is (= true  (berserk? {:berserk-secs 5.0})))
   (is (= false (berserk? {:berserk-secs 0.0})))
   (is (= false (berserk? {}))))
+
+(deftest test-arm-berserk-stamps-full-window
+  ;; Stepping on a sphere stamps the full berserk-seconds window so the
+  ;; player gets the design-tuned 20s rage instead of whatever remainder
+  ;; is still on the clock.
+  (let [w (arm-berserk {})]
+    (is (= berserk-seconds (:berserk-secs w)))
+    (is (= true (berserk? w)))))
+
+(deftest test-arm-berserk-refreshes-not-stacks
+  ;; Second sphere mid-rage replaces the timer rather than adding to
+  ;; it - keeps the buff capped at berserk-seconds so the player can't
+  ;; chain berserks into an indefinite damage window.
+  (let [mid   (assoc {} :berserk-secs (php/* 0.5 berserk-seconds))
+        armed (arm-berserk mid)]
+    (is (= berserk-seconds (:berserk-secs armed)))))
+
+(deftest test-berserk-timer-decays-through-damage-step
+  ;; damage-step routes through decay-timers, which is the only
+  ;; consumer of :berserk-secs. One frame of dt knocks the timer down
+  ;; by exactly dt; the window expires cleanly once the value hits 0.
+  (let [base (assoc (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
+                    :lives 5 :iframes 0.0 :enemies [])
+        w0   (arm-berserk base)
+        w1   (damage-step w0 0.5)
+        w2   (damage-step (assoc w0 :berserk-secs 0.3) 1.0)]
+    (is (= (php/- berserk-seconds 0.5) (:berserk-secs w1)))
+    (is (= 0.0 (:berserk-secs w2)))
+    (is (= false (berserk? w2)))))
+
+(deftest test-berserk-damage-mul-is-at-least-2
+  ;; Acceptance criterion from issue #57: melee damage AT LEAST
+  ;; doubles. Pin the constant so a future buff/nerf is intentional.
+  (is (php/>= berserk-damage-mul 2)))
 
 (deftest test-invuln-predicate-true-when-timer-active
   (is (= true  (invuln? {:invuln-secs 5.0})))

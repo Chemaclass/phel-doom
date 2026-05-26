@@ -1575,17 +1575,27 @@
   parts)
 
 (defn- paint-hit-vignette
-  "2-col red bar down the screen edge on the side the attacker came
-   from. Painted while iframes active AND :hurt-side is set."
+  "Red bar on the screen edge the attacker came from. Painted while
+   iframes active AND :hurt-side is set. :left / :right paint a 2-col
+   vertical strip; :front / :back paint a 1-row horizontal strip at
+   the top / bottom so the player can read all four directions of
+   incoming damage from the cue alone (issue #66)."
   [parts stats bloody? vw vh]
   (when (and bloody? (get stats :hurt-side))
-    (let [side    (get stats :hurt-side)
-          edge-bg "\e[48;5;160m  "
-          edge-c0 (if (php/=== side :left) 1 (php/max 1 (php/- vw 1)))]
-      (loop [r 1]
-        (when (php/<= r vh)
-          (buf-push parts (str "\e[" r ";" edge-c0 "H" edge-bg "\e[0m"))
-          (recur (php/+ r 1))))))
+    (let [side  (get stats :hurt-side)
+          edge  "\e[48;5;160m  "
+          strip (str "\e[48;5;160m" (php/str_repeat " " vw))]
+      (cond
+        (or (php/=== side :left) (php/=== side :right))
+        (let [c0 (if (php/=== side :left) 1 (php/max 1 (php/- vw 1)))]
+          (loop [r 1]
+            (when (php/<= r vh)
+              (buf-push parts (str "\e[" r ";" c0 "H" edge "\e[0m"))
+              (recur (php/+ r 1)))))
+        (php/=== side :front)
+        (buf-push parts (str "\e[1;1H" strip "\e[0m"))
+        (php/=== side :back)
+        (buf-push parts (str "\e[" vh ";1H" strip "\e[0m")))))
   parts)
 
 (defn- paint-heat-bar

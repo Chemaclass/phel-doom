@@ -50,7 +50,7 @@
   ;; Flash timer should tick down each frame so the HP digit fades on
   ;; its own without needing a separate ticker.
   (let [es' (advance [(assoc (new-enemy 5.0 5.0 3) :hit-flash-secs 1.0)]
-                     open-grid 8.0 5.0 0.25 0.75)]
+                     open-grid 8.0 5.0 0.25 0.75 true)]
     (is (< (:hit-flash-secs (first es')) 1.0))
     (is (>= (:hit-flash-secs (first es')) 0.0))))
 
@@ -102,14 +102,14 @@
 
 (deftest test-advance-moves-enemy-toward-player
   ;; Enemy at (5,5), player at (8,5), open grid -> enemy x increases.
-  (let [es' (advance [(new-enemy 5.0 5.0)] open-grid 8.0 5.0 0.5 0.75)]
+  (let [es' (advance [(new-enemy 5.0 5.0)] open-grid 8.0 5.0 0.5 0.75 true)]
     (is (> (:x (first es')) 5.0))
     (is (< (:x (first es')) 8.0))
     (is (= 5.0 (:y (first es'))))))
 
 (deftest test-advance-respects-stop-dist
   ;; Already on top of player, must not pile in further.
-  (let [es' (advance [(new-enemy 5.1 5.0)] open-grid 5.0 5.0 0.5 0.75)]
+  (let [es' (advance [(new-enemy 5.1 5.0)] open-grid 5.0 5.0 0.5 0.75 true)]
     (is (= 5.1 (:x (first es'))))
     (is (= 5.0 (:y (first es'))))))
 
@@ -117,18 +117,18 @@
   ;; Player at (3.5, 2.5), enemy at (1.5, 2.5). Direct east step hits the
   ;; x=2 wall; the chase should pivot and at least slide on the y axis
   ;; instead of staying put.
-  (let [e (first (advance [(new-enemy 1.5 2.5)] wall-between-grid 3.5 2.5 0.5 0.75))]
+  (let [e (first (advance [(new-enemy 1.5 2.5)] wall-between-grid 3.5 2.5 0.5 0.75 true))]
     (is (or (not (= 1.5 (:x e)))
             (not (= 2.5 (:y e)))))))
 
 (deftest test-advance-leaves-dead-enemies-untouched
-  (let [es' (advance [{:x 5.0 :y 5.0 :alive false}] open-grid 8.0 5.0 0.5 0.75)]
+  (let [es' (advance [{:x 5.0 :y 5.0 :alive false}] open-grid 8.0 5.0 0.5 0.75 true)]
     (is (= 5.0 (:x (first es'))))
     (is (= 5.0 (:y (first es'))))))
 
 (deftest test-advance-ticks-down-respawn-timer
   (let [es' (advance [{:x 5.0 :y 5.0 :alive false :respawn-after 4.0}]
-                     open-grid 8.0 5.0 0.5 0.75)]
+                     open-grid 8.0 5.0 0.5 0.75 true)]
     (is (= false (:alive (first es'))))
     (is (= 3.5 (:respawn-after (first es'))))))
 
@@ -136,7 +136,7 @@
   ;; respawn-after = 0.1 with dt = 0.5 -> timer expires this frame,
   ;; enemy revives at a random open cell.
   (let [es' (advance [{:x 5.0 :y 5.0 :alive false :respawn-after 0.1}]
-                     open-grid 8.0 5.0 0.5 0.75)]
+                     open-grid 8.0 5.0 0.5 0.75 true)]
     (is (= true (:alive (first es'))))))
 
 (deftest test-respawn-carries-max-lives-and-refills
@@ -144,7 +144,7 @@
   ;; trivially-one-shot like a fresh imp would be.
   (let [es' (advance [{:x 5.0 :y 5.0 :alive false :respawn-after 0.0
                        :lives 0 :max-lives 4}]
-                     open-grid 8.0 5.0 0.5 0.75)]
+                     open-grid 8.0 5.0 0.5 0.75 true)]
     (is (= true (:alive (first es'))))
     (is (= 4 (:lives (first es'))))
     (is (= 4 (:max-lives (first es'))))))
@@ -223,11 +223,11 @@
     (is (= 4.5 (:y e)))))
 
 (deftest test-advance-without-pgrid-skips-observation
-  ;; 6-arity legacy form (no pgrid) doesn't run observe. Enemies keep
+  ;; 7-arity advance (nil pgrid) doesn't run observe. Enemies keep
   ;; whatever state they have; default :aware → they chase as before.
   ;; This pins backward-compat for unit tests that build enemies via
   ;; new-enemy without going through spawn-enemies.
-  (let [es' (advance [(new-enemy 5.0 5.0)] open-grid 8.0 5.0 0.5 0.75)
+  (let [es' (advance [(new-enemy 5.0 5.0)] open-grid 8.0 5.0 0.5 0.75 true)
         e   (first es')]
     (is (> (:x e) 5.0))))
 
@@ -446,7 +446,7 @@
               :type :imp :max-concurrent 1 :hit-flash-secs 0.0}
              {:x 0.0 :y 0.0 :alive false :lives 0 :max-lives 1
               :type :imp :max-concurrent 1 :respawn-after 0.0}]
-        es' (advance es open-grid 5.0 5.0 0.1 0.5)]
+        es' (advance es open-grid 5.0 5.0 0.1 0.5 true)]
     (is (= true  (:alive (first  es'))))   ; the live one stays
     (is (= false (:alive (second es')))))) ; the dead one stays dead
 
@@ -455,14 +455,14 @@
   ;; (0 alive < 1), so revival proceeds.
   (let [es  [{:x 0.0 :y 0.0 :alive false :lives 0 :max-lives 1
               :type :imp :max-concurrent 1 :respawn-after 0.0}]
-        es' (advance es open-grid 5.0 5.0 0.1 0.5)]
+        es' (advance es open-grid 5.0 5.0 0.1 0.5 true)]
     (is (= true (:alive (first es'))))))
 
 (deftest test-advance-respawn-uncapped-still-works
   ;; No :max-concurrent → unchanged behaviour from earlier PRs.
   (let [es  [{:x 0.0 :y 0.0 :alive false :lives 0 :max-lives 2
               :type :baron :respawn-after 0.0}]
-        es' (advance es open-grid 5.0 5.0 0.1 0.5)
+        es' (advance es open-grid 5.0 5.0 0.1 0.5 true)
         e   (first es')]
     (is (= true (:alive e)))
     ;; Respawn now carries :type forward (was a bug previously —

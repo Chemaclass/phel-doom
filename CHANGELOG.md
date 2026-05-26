@@ -14,6 +14,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `cast-frame` mean ~60% faster across 80 / 120 / 180 widths (2000-iter bench on `default-grid` at player spawn):
   - Per-column FOV `atan(offset)` + `cos(offset)` prebaked into width-keyed PHP-array tables and memoized; two trig calls per ray drop out of the hot loop.
   - `cast-ray-hit` inlined into `cast-frame`'s DDA loop. Return type switched from Phel persistent vector to `php/array` so the hot path no longer allocates a vector per ray.
+- `cast-frame` short-circuits to a cached previous result on paused frames (single-slot atom keyed by player x / y / angle / width / scale). Pause + help-menu overlays now pay ~3 µs per frame for the cast instead of ~500 µs at 180×40, a ~99% drop on the paused render path. Active gameplay is unchanged.
 
 ## [0.5.0] - 2026-05-25
 

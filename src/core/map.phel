@@ -36,6 +36,16 @@
    `passable?` / `held-keys` machinery."
   5)
 
+(def cell-secret
+  "Secret wall: looks and casts like a normal wall (raycaster treats
+   it as solid, `wall?` returns true) but `passable?` returns false
+   until the player triggers `reveal-secret` by bumping into it with
+   the action key held. Reveal swaps the cell to `cell-floor` so the
+   passage opens. Hand-authored only - never placed by random
+   procgen; pin secret rooms in `:layout` so level design intent
+   stays explicit."
+  6)
+
 (def lock-colours
   "Map from locked-door cell value back to the matching keycard kw.
    Drives door-lock + passable? + render door tint. `:boss` is a
@@ -76,10 +86,17 @@
         (or (get row x) cell-wall)))))
 
 (defn wall?
-  "True when (x, y) blocks player movement. Only solid walls do —
-   doors are passable triggers."
+  "True when (x, y) blocks player movement. Solid walls AND unrevealed
+   secret walls both qualify; doors are passable triggers."
   [grid x y]
-  (= cell-wall (cell grid x y)))
+  (let [c (cell grid x y)]
+    (or (= cell-wall c) (= cell-secret c))))
+
+(defn secret?
+  "True when (x, y) holds an unrevealed secret wall. Used by
+   `reveal-secret-ahead` to spot the player's bump target."
+  [grid x y]
+  (= cell-secret (cell grid x y)))
 
 (defn door?
   "True when (x, y) holds ANY door variant (unlocked + locked).
@@ -97,12 +114,13 @@
 
 (defn passable?
   "True when the player CAN walk into (x, y) given their held keys.
-   Walls always block; locked doors block until the matching key is
-   held. Unlocked doors + floors pass freely."
+   Walls + unrevealed secrets always block; locked doors block until
+   the matching key is held. Unlocked doors + floors pass freely."
   [grid held-keys x y]
   (let [c (cell grid x y)]
     (cond
       (= cell-wall c)            false
+      (= cell-secret c)          false
       (contains? lock-colours c) (contains? (or held-keys #{}) (get lock-colours c))
       :else                      true)))
 
@@ -127,6 +145,36 @@
           (if (nil? hit)
             (recur (php/+ y 1))
             hit))))))
+
+(defn reveal-secret
+  "Swap the cell at (x, y) from `cell-secret` to `cell-floor` so the
+   passage opens. No-op when the cell isn't a secret (defensive: the
+   reveal trigger from play.phel only fires on a secret bump, but
+   keep the swap idempotent so a double-tap doesn't crash)."
+  [grid x y]
+  (if (= cell-secret (cell grid x y))
+    (assoc-in grid [y x] cell-floor)
+    grid))
+
+(defn count-secrets
+  "Count unrevealed secret cells in `grid`. Run once at level build
+   so the world can carry `:secrets-total` for the HUD progress
+   readout."
+  [grid]
+  (let [h (count grid)]
+    (loop [y 0 acc 0]
+      (if (php/>= y h)
+        acc
+        (let [row         (get grid y)
+              w           (count row)
+              row-secrets
+              (loop [x 0 n 0]
+                (if (php/>= x w)
+                  n
+                  (if (= cell-secret (get row x))
+                    (recur (php/+ x 1) (php/+ n 1))
+                    (recur (php/+ x 1) n))))]
+          (recur (php/+ y 1) (php/+ acc row-secrets)))))))
 
 (defn missing-key-for
   "Lock colour kw that's blocking the player at (x, y), or nil. Used
@@ -251,7 +299,8 @@
    "D" cell-door
    "B" cell-door-blue
    "R" cell-door-red
-   "X" cell-door-boss})
+   "X" cell-door-boss
+   "S" cell-secret})
 
 (defn- parse-row
   "Convert one layout string into [row-vec maybe-spawn-x]. Returns

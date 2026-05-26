@@ -3,6 +3,8 @@
   (:require phel-doom.core.map :refer [default-grid wall? door?
                                        cell-floor cell-wall cell-door
                                        cell-door-blue cell-door-red
+                                       cell-secret count-secrets passable?
+                                       reveal-secret secret?
                                        parse-layout
                                        random-grid random-spawn seed-doors]))
 
@@ -168,3 +170,57 @@
                            "####"])
         g   (:grid out)]
     (is (= cell-floor (get-in g [1 1])))))
+
+;; ---------------------------------------------------------------------
+;; Secret walls (issue #61): hidden passage cells the player reveals
+;; by bumping with the action key. Identical to walls until revealed.
+;; ---------------------------------------------------------------------
+
+(deftest test-cell-secret-constant-value-pinned
+  ;; Engine / render rely on the literal value; lock it down.
+  (is (= 6 cell-secret)))
+
+(deftest test-secret-cells-block-player-movement
+  ;; passable? must treat an unrevealed secret as solid so the player
+  ;; can't walk through one accidentally.
+  (let [g [[1 1 1] [1 6 1] [1 1 1]]]
+    (is (= false (passable? g #{} 1 1)))))
+
+(deftest test-secret-cells-also-block-raycaster
+  ;; wall? returns true for secret cells so the raycaster paints them
+  ;; identical to surrounding walls; the cue is bumping, not seeing.
+  (let [g [[1 1 1] [1 6 1] [1 1 1]]]
+    (is (= true (wall? g 1 1)))))
+
+(deftest test-secret-predicate-true-only-for-secret-cells
+  (let [g [[0 1 6] [2 3 4]]]
+    (is (= false (secret? g 0 0)))
+    (is (= false (secret? g 1 0)))
+    (is (= true  (secret? g 2 0)))
+    (is (= false (secret? g 0 1)))))
+
+(deftest test-reveal-secret-swaps-cell-to-floor
+  ;; Reveal opens the passage so the player can walk through next frame.
+  (let [g0 [[1 1 1] [1 6 1] [1 1 1]]
+        g1 (reveal-secret g0 1 1)]
+    (is (= cell-floor (get-in g1 [1 1])))
+    (is (= true (passable? g1 #{} 1 1)))))
+
+(deftest test-reveal-secret-is-noop-on-non-secret
+  ;; Defensive: a double-tap of the action key on an already-revealed
+  ;; cell or a non-secret cell leaves the grid unchanged.
+  (let [g [[1 1 1] [1 0 1] [1 1 1]]]
+    (is (= g (reveal-secret g 1 1)))
+    (is (= g (reveal-secret g 0 0)))))
+
+(deftest test-count-secrets-totals-the-grid
+  (is (= 0 (count-secrets [[1 1 1] [1 0 1] [1 1 1]])))
+  (is (= 1 (count-secrets [[1 1 1] [1 6 1] [1 1 1]])))
+  (is (= 2 (count-secrets [[1 6 1] [1 0 1] [1 6 1]]))))
+
+(deftest test-parse-layout-recognises-S-as-secret
+  (let [out (parse-layout ["####"
+                           "#S@#"
+                           "####"])
+        g   (:grid out)]
+    (is (= cell-secret (get-in g [1 1])))))

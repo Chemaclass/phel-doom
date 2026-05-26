@@ -3,7 +3,7 @@
   (:require phel.string :as str)
   (:require phel-doom.core.state    :refer [advance-game-time gain-life max-armor max-lives max-stamina
                                             toggle-debug toggle-map toggle-pause toggle-sound])
-  (:require phel-doom.core.map      :refer [door?])
+  (:require phel-doom.core.map      :refer [door? reveal-secret secret?])
   (:require phel-doom.glue.controls :refer [refresh-from-keys key-states rising-edges
                                             initial-key-snapshot])
   (:require phel-doom.core.physics  :refer [apply-physics tick-heartbeat tick-flicker tick-blood-drops tick-door-face tick-stamina])
@@ -352,6 +352,28 @@
   (let [p (:player world)]
     (door? (:grid world) (php/intval (:x p)) (php/intval (:y p)))))
 
+(defn- try-reveal-secret
+  "Action-key handler: when F was just pressed AND the cell directly
+   in front of the player (rounded by the player's facing) is an
+   unrevealed secret wall, swap that cell to floor on the world's
+   grid and bump `:secrets-found`. Plays the door sfx so the reveal
+   is audibly distinct from a wall bump. No-op otherwise so other
+   action-bound features (switches, etc) can chain off the same
+   edge without conflict."
+  [world action?]
+  (if (not action?)
+    world
+    (let [p  (:player world)
+          a  (:angle p)
+          cx (php/intval (php/+ (:x p) (php/cos a)))
+          cy (php/intval (php/+ (:y p) (php/sin a)))]
+      (if (secret? (:grid world) cx cy)
+        (do (when (:sound-on world) (play-sfx! :door))
+            (-> world
+                (assoc :grid (reveal-secret (:grid world) cx cy))
+                (update :secrets-found (fn [n] (php/+ (or n 0) 1)))))
+        world))))
+
 (defn tick-world
   "Pure one-frame state transition. `keys` is the drained input string,
    `dt` is seconds since the previous tick, `edges` is the rising-edge
@@ -385,7 +407,8 @@
             ;; 1.6x frame "for free". Drain reads the just-refreshed
             ;; :moves slots (refresh-from-keys above), so the player
             ;; pays for the intent the same frame they signal it.
-            w2  (apply-physics (tick-stamina w1a dt) dt)
+            w1b (try-reveal-secret w1a (:action edges))
+            w2  (apply-physics (tick-stamina w1b dt) dt)
             w3  (pickup-hearts w2)
             w4  (pickup-armors w3)
             w4b (pickup-ammos  w4)
@@ -463,6 +486,8 @@
    :game-time-s  (or (:game-time world) 0.0)
    :held-keys      (or (:held-keys world) #{})
    :door-lock      (:door-lock world)
+   :secrets-total  (or (:secrets-total world) 0)
+   :secrets-found  (or (:secrets-found world) 0)
    :locked-door-bump-secs   (or (:locked-door-bump-secs world) 0.0)
    :locked-door-bump-colour (:locked-door-bump-colour world)
    :owned-weapons  (or (:owned-weapons world) #{:pistol})

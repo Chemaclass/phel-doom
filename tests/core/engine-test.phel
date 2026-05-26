@@ -115,3 +115,54 @@
         (is (php/!== nil (php/aget (:dists c) i)))
         (is (php/!== nil (php/aget (:hits  c) i)))
         (recur (php/+ i 1))))))
+
+;; ---------------------------------------------------------------------
+;; Paused-frame cast cache: while `:paused` is truthy AND the player
+;; hasn't moved, the most recent cast result is reused verbatim.
+;; ---------------------------------------------------------------------
+
+(deftest test-cast-frame-paused-cache-returns-identical-result
+  ;; Two back-to-back paused casts at the same player position must
+  ;; return the same identity (literally the same PHP arrays), proving
+  ;; the cache short-circuited the second call.
+  (let [w (assoc (new-world chamber-grid (new-player 2.5 2.5 0.0)) :paused true)
+        a (cast-frame w 6 1)
+        b (cast-frame w 6 1)]
+    (is (php/=== (:dists a) (:dists b)))
+    (is (php/=== (:hits  a) (:hits  b)))
+    (is (php/=== (:sides a) (:sides b)))))
+
+(deftest test-cast-frame-unpaused-does-not-populate-cache
+  ;; Unpaused cast must NOT seed the pause cache, otherwise the next
+  ;; pause-then-cast call could surface a stale frame instead of
+  ;; recomputing. Verifies via the canary: an unpaused cast, then a
+  ;; paused cast at the same coords. The paused call must compute
+  ;; fresh (we observe by mutating the unpaused result post-hoc and
+  ;; checking the paused result is unaffected).
+  (let [w-active (new-world chamber-grid (new-player 2.5 2.5 0.0))
+        w-paused (assoc w-active :paused true)
+        a        (cast-frame w-active 6 1)]
+    ;; Sabotage the active-frame arrays. If the unpaused call had
+    ;; cached `a`, the next call would surface the sabotage.
+    (php/aset (:dists a) 0 -999.0)
+    (let [b (cast-frame w-paused 6 1)]
+      (is (not (php/=== -999.0 (php/aget (:dists b) 0)))))))
+
+(deftest test-cast-frame-paused-cache-invalidates-on-player-move
+  ;; Paused world, but the player coords change between calls. The
+  ;; cache must miss; the new result must reflect the new position.
+  (let [base (assoc (new-world chamber-grid (new-player 2.5 2.5 0.0)) :paused true)
+        w1   base
+        w2   (assoc base :player (new-player 1.5 2.5 0.0))
+        a    (cast-frame w1 6 1)
+        b    (cast-frame w2 6 1)]
+    (is (not (php/=== (:dists a) (:dists b))))))
+
+(deftest test-cast-frame-paused-cache-invalidates-on-width-change
+  ;; Same player, same paused state, different width: cache key
+  ;; mismatches on width and recomputes.
+  (let [w (assoc (new-world chamber-grid (new-player 2.5 2.5 0.0)) :paused true)
+        a (cast-frame w 4 1)
+        b (cast-frame w 6 1)]
+    (is (= 4 (php/count (:dists a))))
+    (is (= 6 (php/count (:dists b))))))

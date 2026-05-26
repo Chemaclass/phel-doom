@@ -137,6 +137,18 @@ Four gates: i-frame window, invulnerability sphere timer, dev god mode, AND at l
 - 0.05s flash: `render!` paints viewport white. One-frame jolt before the red i-frame wash.
 - Player knockback shove away from the attacker; arms `:hurt-side` (one of `:left` `:right` `:front` `:back`) so the directional red band paints on the matching edge. Front and back use a narrow ±30° wedge around the player's facing / anti-facing vectors; everything else routes to the wider left / right edges. Closes the rear blind spot that the previous left-only / right-only routing left open (issue #66).
 
+### Chainsaw
+
+Slot-4 melee weapon. Spec lives in `weapons/weapons :chainsaw` and carries three flags that the combat path branches on:
+
+| Flag | Effect |
+|------|--------|
+| `:no-ammo? true` | `can-fire?` skips the mag check; `apply-heat` skips the mag decrement; `reloading?` always returns false. |
+| `:max-range 1.5` | `resolve-shot` reads this in place of the global `shot-max-range` so the saw only lands on enemies inside the 1.5-cell envelope. |
+| `:movement-mul 0.5` | `physics/weapon-movement-factor` halves longitudinal + lateral speed while `:fire-cooldown > 0`. The slow only kicks in mid-swing; an idle chainsaw walks at full speed. |
+
+Damage type is `:melee` so future enemy resistances can target the saw without affecting ranged weapons. The 1-per-tick damage stacks with the berserk multiplier for a 2-per-tick swing during the rage window.
+
 ### Berserk pickup
 
 A berserk sphere (`:berserks` vector on the world, `Ω` glyph in the viewport + minimap) sits in 1-in-8 levels. Stepping on the cell drives:

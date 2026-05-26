@@ -1,6 +1,7 @@
 (ns phel-doom.core.physics
-  (:require phel-doom.core.state :refer [max-stamina move-player turn-player])
-  (:require phel-doom.core.map   :refer [missing-key-for passable? wall?]))
+  (:require phel-doom.core.state   :refer [max-stamina move-player turn-player])
+  (:require phel-doom.core.map     :refer [missing-key-for passable? wall?])
+  (:require phel-doom.core.weapons :refer [weapon-spec]))
 
 (def locked-bump-secs
   "How long the 'NEED <COLOUR> KEY' HUD hint stays on after the player
@@ -108,21 +109,35 @@
   [world]
   (if (sprinting? world) sprint-multiplier 1.0))
 
+(defn- weapon-movement-factor
+  "Per-weapon movement multiplier applied while the weapon is ticking
+   (`:fire-cooldown > 0`). Used by the chainsaw to lock the player at
+   half speed during melee swings - DOOM-style commitment. Falls
+   through to 1.0 for weapons that don't declare `:movement-mul` or
+   that aren't currently in their fire-cooldown window."
+  [world]
+  (let [sp  (weapon-spec world)
+        mul (:movement-mul sp)
+        cd  (or (:fire-cooldown world) 0.0)]
+    (if (and mul (php/> cd 0.0)) mul 1.0)))
+
 (defn- turn-delta [moves ^float dt]
   (php/- (contribution moves :turn-right turn-speed dt)
          (contribution moves :turn-left  turn-speed dt)))
 
 (defn- longitudinal-delta [world ^float dt]
   (let [moves (:moves world)
-        sf    (sprint-factor world)]
-    (php/* sf
+        sf    (sprint-factor world)
+        wf    (weapon-movement-factor world)]
+    (php/* sf wf
            (php/- (contribution moves :fwd  move-speed dt)
                   (contribution moves :back move-speed dt)))))
 
 (defn- lateral-delta [world ^float dt]
   (let [moves (:moves world)
-        sf    (sprint-factor world)]
-    (php/* sf
+        sf    (sprint-factor world)
+        wf    (weapon-movement-factor world)]
+    (php/* sf wf
            (php/- (contribution moves :strafe-right strafe-speed dt)
                   (contribution moves :strafe-left  strafe-speed dt)))))
 

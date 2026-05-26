@@ -365,14 +365,15 @@
     (cast-ray (:pgrid world) (:x p) (:y p) (:angle p))))
 
 (defn- resolve-shot [world]
-  (let [p        (:player world)
-        spec     (w-spec world)
-        base-dmg (or (:damage spec) 1)
-        dmg      (if (berserk? world) (php/* base-dmg berserk-damage-mul) base-dmg)
-        dmg-type (:damage-type spec)]
+  (let [p         (:player world)
+        spec      (w-spec world)
+        base-dmg  (or (:damage spec) 1)
+        dmg       (if (berserk? world) (php/* base-dmg berserk-damage-mul) base-dmg)
+        dmg-type  (:damage-type spec)
+        max-range (or (:max-range spec) shot-max-range)]
     (shoot (:enemies world) (:x p) (:y p) (:angle p)
            (cast-wall-distance world)
-           shot-hit-radius shot-max-range dmg dmg-type)))
+           shot-hit-radius max-range dmg dmg-type)))
 
 (defn- push-blood-fx [world hit-pos]
   (update world :fx
@@ -521,16 +522,20 @@
       :else   (play-sfx! :shoot 1.0))))
 
 (defn can-fire?
-  "True when the pistol is ready: cooldown elapsed, not jammed, no
-   reload in progress, AND the magazine still has rounds. Empty mags
-   fall through to tick-shooting's dry-fire path which arms the
+  "True when the active weapon is ready: cooldown elapsed, not jammed,
+   no reload in progress, AND the magazine still has rounds. Empty
+   mags fall through to tick-shooting's dry-fire path which arms the
    `:empty-click-secs` timer and plays the deny sfx so the player
-   sees they need to press R."
+   sees they need to press R.
+
+   Weapons flagged `:no-ammo?` (chainsaw) skip the mag check entirely
+   so the saw fires as long as the cooldown is up."
   [world]
-  (and (php/<= (or (:fire-cooldown world) 0.0) 0.0)
-       (php/<= (or (:jam-secs world) 0.0) 0.0)
-       (php/<= (or (:reload-cooldown world) 0.0) 0.0)
-       (pos? (or (:mag world) 0))))
+  (let [no-ammo? (boolean (:no-ammo? (w-spec world)))]
+    (and (php/<= (or (:fire-cooldown world) 0.0) 0.0)
+         (php/<= (or (:jam-secs world) 0.0) 0.0)
+         (php/<= (or (:reload-cooldown world) 0.0) 0.0)
+         (or no-ammo? (pos? (or (:mag world) 0))))))
 
 (defn apply-heat
   "After a shot lands, bump heat + arm the per-weapon fire-cooldown,
@@ -539,15 +544,21 @@
    other weapons heat stays at 0 and the jam timer is never set.
    Chaingun would otherwise hit jam in under half a second of
    auto-fire (0.30 heat-per-shot × 20 shots/s) — that's
-   anti-feature for a 'sustained spray' weapon."
+   anti-feature for a 'sustained spray' weapon.
+
+   Weapons flagged `:no-ammo?` (chainsaw) skip the mag drain so the
+   saw can run indefinitely; the cooldown still arms so the per-tick
+   rhythm is honoured."
   [world]
   (let [sp        (w-spec world)
         overheat? (boolean (:overheats? sp))
+        no-ammo?  (boolean (:no-ammo? sp))
         heat'     (if overheat?
                     (php/+ (or (:heat world) 0.0) heat-per-shot)
                     0.0)
         jam?      (and overheat? (php/>= heat' 1.0))
-        mag'      (php/max 0 (php/- (or (:mag world) (:mag-size sp)) 1))]
+        mag-now   (or (:mag world) (:mag-size sp))
+        mag'      (if no-ammo? mag-now (php/max 0 (php/- mag-now 1)))]
     (assoc world
            :fire-cooldown (:fire-cooldown sp)
            :heat          (if jam? 0.0 heat')
@@ -555,10 +566,14 @@
            :mag           mag')))
 
 (defn reloading?
-  "True when the player COULD reload the active weapon right now."
+  "True when the player COULD reload the active weapon right now.
+   Returns false unconditionally for `:no-ammo?` weapons (chainsaw)
+   so pressing R is a silent no-op rather than firing the reload
+   lockout."
   [world]
   (let [sp (w-spec world)]
-    (and (php/<= (or (:reload-cooldown world) 0.0) 0.0)
+    (and (not (boolean (:no-ammo? sp)))
+         (php/<= (or (:reload-cooldown world) 0.0) 0.0)
          (php/< (or (:mag world) 0) (:mag-size sp))
          (pos? (or (:ammo-reserve world) 0)))))
 

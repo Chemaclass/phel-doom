@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.map    :refer [default-grid])
   (:require phel-doom.core.state  :refer [new-world new-player])
-  (:require phel-doom.core.engine :refer [cast-ray cast-frame max-depth]))
+  (:require phel-doom.core.engine :refer [cast-ray cast-frame mark-visible-cells max-depth visited? visit-radius]))
 
 (def pgrid (to-php-array (map to-php-array default-grid)))
 
@@ -166,3 +166,70 @@
         b (cast-frame w 6 1)]
     (is (= 4 (php/count (:dists a))))
     (is (= 6 (php/count (:dists b))))))
+
+;; ---------------------------------------------------------------------
+;; Fog-of-war visibility (issue #67). mark-visible-cells stamps cells
+;; within visit-radius + line-of-sight; visited? reads the result.
+;; ---------------------------------------------------------------------
+
+(def open-room
+  ;; 7x7 open chamber, perimeter walls.
+  [[1 1 1 1 1 1 1]
+   [1 0 0 0 0 0 1]
+   [1 0 0 0 0 0 1]
+   [1 0 0 0 0 0 1]
+   [1 0 0 0 0 0 1]
+   [1 0 0 0 0 0 1]
+   [1 1 1 1 1 1 1]])
+
+(deftest test-mark-visible-marks-player-cell
+  (let [w  (new-world open-room (new-player 3.5 3.5 0.0))
+        w' (mark-visible-cells w)]
+    (is (visited? w' 3 3))))
+
+(deftest test-mark-visible-marks-nearby-floor-with-clear-los
+  ;; 7x7 open chamber: every cell within visit-radius of the player
+  ;; has clear LOS, so every interior cell flips visited after one
+  ;; tick.
+  (let [w  (new-world open-room (new-player 3.5 3.5 0.0))
+        w' (mark-visible-cells w)]
+    (is (visited? w' 1 1))
+    (is (visited? w' 5 5))
+    (is (visited? w' 1 5))))
+
+(def wall-room
+  ;; 7x7 chamber with a vertical wall at x=3 dividing player (1, 3)
+  ;; from cells at x=5. The wall column blocks LOS.
+  [[1 1 1 1 1 1 1]
+   [1 0 0 1 0 0 1]
+   [1 0 0 1 0 0 1]
+   [1 0 0 1 0 0 1]
+   [1 0 0 1 0 0 1]
+   [1 0 0 1 0 0 1]
+   [1 1 1 1 1 1 1]])
+
+(deftest test-mark-visible-blocked-by-wall
+  ;; Player at (1.5, 3.5) facing east; wall column at x=3 blocks LOS
+  ;; to the cells at x=5.
+  (let [w  (new-world wall-room (new-player 1.5 3.5 0.0))
+        w' (mark-visible-cells w)]
+    (is (visited? w' 1 3))
+    (is (visited? w' 2 3))
+    ;; Wall itself is at the LOS boundary so it stays unseen until
+    ;; the player is adjacent. From x=1 the wall at x=3 is two cells
+    ;; away with floor between - LOS reaches it.
+    (is (not (visited? w' 5 3)))))
+
+(deftest test-mark-visible-full-map-flag-marks-everything
+  ;; --full-map short-circuits the LOS scan and flips every cell.
+  (let [w  (assoc (new-world wall-room (new-player 1.5 3.5 0.0)) :full-map? true)
+        w' (mark-visible-cells w)]
+    (is (visited? w' 5 3))
+    (is (visited? w' 0 0))
+    (is (visited? w' 6 6))))
+
+(deftest test-visit-radius-is-eight
+  ;; Pin the constant: scanning further would slow the per-frame mark
+  ;; without adding visible map; smaller would clip the player's
+  ;; visible footprint.
+  (is (= 8 visit-radius)))

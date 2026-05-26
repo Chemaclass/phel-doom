@@ -40,7 +40,7 @@
   ├── overlay layers via absolute cursor positioning:
   │     - bottom HUD line (hud-line - dim tagline)
   │     - F3 debug row (hud-debug-line, when :debug? is on)
-  │     - minimap (top-right rows, auto-scaled to ≤ 1/3 vw)
+  │     - minimap (top-right rows, auto-scaled to ≤ 1/3 vw, fog-of-war gated)
   │     - face glyphs (per enemy, occluded by walls)
   │     - wall-mounted torches, door-face indicator
   │     - crosshair (centre), kill-streak counter, compass
@@ -144,3 +144,11 @@ Walls/sky/floor/enemies go into one string via the inner row loop, top-to-bottom
 Alternate screen buffer + cursor-home redraw means each frame overwrites the previous in place. No flicker, no scroll, no full clear.
 
 See [performance.md](performance.md).
+
+## Minimap fog-of-war (issue #67)
+
+Minimap cells stay hidden behind a uniform dim `minimap-unseen` block until the player has visually crossed them. `core/engine/mark-visible-cells` runs once per frame in `tick-world`: scans a `visit-radius = 8` bounding box around the player, runs a Bresenham `los-clear?` test per candidate cell, and stamps an entry into the world's `:visited` PHP array (keyed by `y * width + x`). PHP arrays are copy-on-write so the local mutation is `assoc`d back into the world under `:visited`.
+
+`minimap-rows` reads `:visited` via the same key and short-circuits the wall / door / pickup paint when the block is unseen, painting `minimap-unseen` instead. The pulsing pickup glyphs (heart / ammo / berserk / etc.) are only painted if the underlying cell is already visited, so a hidden treasure room reveals its contents only after the player walks within line of sight.
+
+`:full-map?` (set by the `--full-map` / `-f` CLI flag) short-circuits the LOS scan and flips every cell; the minimap reads exactly as before this feature landed. Useful for level editors + screenshot capture.

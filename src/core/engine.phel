@@ -184,6 +184,119 @@
           (recur (php/+ col scale)))))
     {:dists dists :hits hits :sides sides :hxs hxs :hys hys}))
 
+(def visit-radius
+  "Square radius (cells) around the player scanned each frame for
+   visibility marks. 8 is roughly the wall-paint horizon at the
+   default render scale, so the player's footprint of revealed map
+   matches what they can actually see in the 3D view."
+  8)
+
+(defn- los-clear?
+  "Bresenham line-of-sight test between two integer cells in `pgrid`.
+   Returns true when every cell between (x0, y0) and (x1, y1) -
+   exclusive of the endpoints - is non-wall (cell value 0). The
+   player's own cell + the target cell are not tested here; callers
+   skip the predicate when the target IS the player and treat walls
+   as their own visit case (so the player can see the wall they're
+   standing next to)."
+  [pgrid ^int x0 ^int y0 ^int x1 ^int y1]
+  (let [dx  (php/abs (php/- x1 x0))
+        dy  (php/abs (php/- y1 y0))
+        sx  (if (php/< x0 x1) 1 -1)
+        sy  (if (php/< y0 y1) 1 -1)
+        ;; Phel's `(php/- x)` is a no-op identity (single-arg unary
+        ;; minus isn't emitted as negation), so negate via subtraction
+        ;; from zero. Without this the dy > dx branch never advances
+        ;; x and the loop hangs.
+        ndy (php/- 0 dy)]
+    (loop [x   x0
+           y   y0
+           err (php/- dx dy)]
+      (if (and (php/=== x x1) (php/=== y y1))
+        true
+        (let [e2   (php/* 2 err)
+              x'   (if (php/> e2 ndy) (php/+ x sx) x)
+              y'   (if (php/< e2 dx)  (php/+ y sy) y)
+              err' (php/+ err
+                          (if (php/> e2 ndy) ndy 0)
+                          (if (php/< e2 dx)  dx  0))]
+          ;; Now sitting on (x', y'). Stop if it's the endpoint;
+          ;; otherwise test it for blocking. Walls block; doors do not
+          ;; (player can see through unlocked + locked doors so the
+          ;; map shows the wall structure behind them).
+          (if (and (php/=== x' x1) (php/=== y' y1))
+            true
+            (if (php/=== 1 (cell-at pgrid x' y'))
+              false
+              (recur x' y' err'))))))))
+
+(defn mark-visible-cells
+  "Stamp every cell within `visit-radius` of the player AND with a
+   clear line of sight as visited on the world's `:visited` PHP array.
+   Walls inside the radius are also marked so the minimap shows the
+   shape of the seen room, not just the floor. Out-of-bounds reads
+   short-circuit via `cell-at` (returns wall).
+
+   PHP arrays are copy-on-write: a bare `php/aset` on `(:visited
+   world)` would mutate a local copy and never propagate. To make the
+   update visible, the local PHP array is mutated and then `assoc`d
+   back into the world map under `:visited`. Returns the new world.
+
+   `:full-map?` short-circuits the LOS scan and marks the entire grid
+   as visited - used by the `--full-map` CLI flag for level editors /
+   debugging."
+  [world]
+  (let [pgrid     (:pgrid world)
+        width     (:width world)
+        height    (:height world)
+        visited   (or (:visited world) (php/array))
+        full-map? (boolean (:full-map? world))
+        px        (php/intval (:x (:player world)))
+        py        (php/intval (:y (:player world)))]
+    (if full-map?
+      (do (loop [y 0]
+            (when (php/< y height)
+              (loop [x 0]
+                (when (php/< x width)
+                  (php/aset visited (php/+ (php/* y width) x) 1)
+                  (recur (php/+ x 1))))
+              (recur (php/+ y 1))))
+          (assoc world :visited visited))
+      (let [r       visit-radius
+            r-sq    (php/* r r)
+            y-start (php/max 0 (php/- py r))
+            y-end   (php/min (php/- height 1) (php/+ py r))
+            x-start (php/max 0 (php/- px r))
+            x-end   (php/min (php/- width 1)  (php/+ px r))]
+        ;; Always mark the player's own cell - LOS test would test it
+        ;; against itself and the player's cell could be wall-free
+        ;; without ever flipping visited otherwise on the first frame.
+        (php/aset visited (php/+ (php/* py width) px) 1)
+        (loop [y y-start]
+          (when (php/<= y y-end)
+            (loop [x x-start]
+              (when (php/<= x x-end)
+                (let [dx (php/- x px)
+                      dy (php/- y py)
+                      d2 (php/+ (php/* dx dx) (php/* dy dy))]
+                  (when (php/<= d2 r-sq)
+                    (when (los-clear? pgrid px py x y)
+                      (php/aset visited (php/+ (php/* y width) x) 1))))
+                (recur (php/+ x 1))))
+            (recur (php/+ y 1))))
+        (assoc world :visited visited)))))
+
+(defn visited?
+  "True when (x, y) has been marked seen on the world's `:visited`
+   array. Used by minimap-rows to gate cell paint. Nil-safe so a
+   world built before mark-visible-cells ran (or a test fixture
+   without :visited) reads as 'unseen' rather than crashing."
+  [world ^int x y]
+  (let [visited (:visited world)
+        width   (:width world)
+        idx     (php/+ (php/* y width) x)]
+    (and (some? visited) (php/=== 1 (php/aget visited idx)))))
+
 (defn cast-frame
   "Cast `width / scale` rays across the visible FOV and return a map
    of parallel PHP arrays, one entry per OUTPUT screen column:

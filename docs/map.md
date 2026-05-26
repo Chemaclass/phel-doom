@@ -11,6 +11,7 @@
 (def cell-door-blue 3)  ; blue-keyed door: blocks until player holds :blue keycard
 (def cell-door-red  4)  ; red-keyed door: blocks until player holds :red keycard
 (def cell-door-boss 5)  ; boss-locked door: blocks until player kills the boss (grants synthetic :boss keycard)
+(def cell-secret    6)  ; hidden passage: looks + blocks like a wall until the player reveals it with F
 ```
 
 Every cell is one of these ints. Constants exported so no module uses raw `0/1/2/3/4/5` literals. `(= cell-door (cell g x y))` reads as purpose.
@@ -67,6 +68,20 @@ Converts `n` random interior wall cells into doors. Candidate must (a) currently
 ```
 
 Picks until it finds a `cell-floor`. Bordered grid guarantees one exists; loop terminates.
+
+## Secret walls
+
+Hand-authored only - `cell-secret` is never placed by `random-grid` / `seed-doors`. Author opts a cell in by writing `S` in a `:layout` row; `parse-layout` resolves it to `cell-secret`.
+
+```phel
+(wall?    grid x y)  ; true for secret cells - the raycaster paints them like normal walls
+(passable? grid keys x y) ; false for secret cells - the player bumps until reveal
+(secret?  grid x y)  ; true only for cell-secret
+(reveal-secret grid x y)  ; swap cell-secret → cell-floor (no-op on non-secret)
+(count-secrets grid)      ; per-level total, stamped at build time
+```
+
+The visual cue is deliberately absent (DOOM-style): identical wall shading, no overlay. Discovery is by exploration + bumping. `commands/play.phel/try-reveal-secret` watches the action-key rising edge (`F`); on a press it checks the cell one unit ahead of the player along `:angle` and calls `reveal-secret` if it's a secret. World tracks `:secrets-total` (set by `count-secrets` in `build-world`) + `:secrets-found` (bumped by `try-reveal-secret`); the F3 debug HUD paints `secrets X/Y`.
 
 ## Out-of-bounds reads
 

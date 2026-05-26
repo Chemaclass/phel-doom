@@ -1,7 +1,7 @@
 (ns phel-doom-tests.core.enemies-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.enemies
-            :refer [default-lives-for enemy-types required-keys type-spec]))
+            :refer [default-lives-for enemy-types required-keys resists? type-spec]))
 
 ;; ---------------------------------------------------------------------
 ;; Catalog completeness: every entry must carry every required field.
@@ -72,3 +72,35 @@
 
 (deftest test-type-spec-unknown-returns-nil
   (is (nil? (type-spec :nope))))
+
+;; ---------------------------------------------------------------------
+;; Per-enemy resistances. Catalog carries a `:resists` set for the
+;; fire-themed monsters so weapons that deal :fire bounce off them.
+;; Catalog-wired so adding a new monster + resist is one entry.
+;; ---------------------------------------------------------------------
+
+(deftest test-fire-resistant-types-pinned
+  ;; Pinning the set guards against an accidental rename / drop that
+  ;; would silently make a BFG round one-shot a cacodemon.
+  (doseq [t [:caco :baron :archvile :mancubus]]
+         (is (contains? (or (:resists (type-spec t)) #{}) :fire)
+             (str t " must resist :fire"))))
+
+(deftest test-non-resistant-types-have-no-resists
+  ;; Imps + demons stay vanilla so the early game balance is unchanged.
+  (doseq [t [:imp :demon :cyber :pinky :spectre :revenant]]
+         (is (not (contains? (or (:resists (type-spec t)) #{}) :fire))
+             (str t " must NOT resist :fire"))))
+
+(deftest test-resists-helper-matches-set
+  (is (true?  (resists? :caco :fire)))
+  (is (false? (resists? :caco :ballistic)))
+  (is (false? (resists? :imp  :fire))))
+
+(deftest test-resists-helper-nil-safe
+  ;; Nil damage-type (legacy 8-arity shoot) or nil type-kw (raw new-enemy
+  ;; without a catalog tag) must never throw - just return false so the
+  ;; default damage path runs.
+  (is (false? (resists? nil  :fire)))
+  (is (false? (resists? :imp nil)))
+  (is (false? (resists? nil  nil))))

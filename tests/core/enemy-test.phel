@@ -100,6 +100,39 @@
     (is (= nil hit-pos))
     (is (= -1 idx))))
 
+(deftest test-shoot-resistance-zeros-damage
+  ;; Cacodemon (3 HP) shot by a fire round: hit registers but lives
+  ;; stay at 3 because the catalog flags caco as fire-resistant.
+  ;; The trailing damage-type kw is the new 9-arity arg the combat
+  ;; path threads through from the active weapon spec.
+  (let [caco           (new-enemy 3.5 1.5 3 :caco)
+        [es' hit? _ _]
+        (shoot [caco] 1.5 1.5 0.0 10.0 0.5 12.0 3 :fire)]
+    (is (= true hit?))
+    (is (= true (:alive (first es'))))
+    (is (= 3 (:lives (first es'))))))
+
+(deftest test-shoot-resistance-misses-do-not-affect-non-resistant
+  ;; Imp (1 HP) shot by a fire round: dies — imps are not on the
+  ;; fire-resist list, so the damage applies normally. Guards
+  ;; against accidentally zeroing all :fire damage.
+  (let [imp            (new-enemy 3.5 1.5 1 :imp)
+        [es' hit? _ _]
+        (shoot [imp] 1.5 1.5 0.0 10.0 0.5 12.0 1 :fire)]
+    (is (= true hit?))
+    (is (= false (:alive (first es'))))
+    (is (= 0 (:lives (first es'))))))
+
+(deftest test-shoot-ballistic-unaffected-by-fire-resist
+  ;; Same caco target, but the shot is :ballistic — the :fire resist
+  ;; must not block ballistic damage. Pistol / shotgun / chaingun
+  ;; keep their old behaviour.
+  (let [caco        (new-enemy 3.5 1.5 3 :caco)
+        [es' _ _ _]
+        (shoot [caco] 1.5 1.5 0.0 10.0 0.5 12.0 3 :ballistic)]
+    (is (= 0 (:lives (first es'))))
+    (is (= false (:alive (first es'))))))
+
 (deftest test-advance-moves-enemy-toward-player
   ;; Enemy at (5,5), player at (8,5), open grid -> enemy x increases.
   (let [es' (advance [(new-enemy 5.0 5.0)] open-grid 8.0 5.0 0.5 0.75 true)]

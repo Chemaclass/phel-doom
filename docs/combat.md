@@ -137,6 +137,21 @@ Four gates: i-frame window, invulnerability sphere timer, dev god mode, AND at l
 - 0.05s flash: `render!` paints viewport white. One-frame jolt before the red i-frame wash.
 - Player knockback shove away from the attacker; arms `:hurt-side` (one of `:left` `:right` `:front` `:back`) so the directional red band paints on the matching edge. Front and back use a narrow ±30° wedge around the player's facing / anti-facing vectors; everything else routes to the wider left / right edges. Closes the rear blind spot that the previous left-only / right-only routing left open (issue #66).
 
+### Damage resistance
+
+`enemy/shoot` takes a `damage-type` keyword (threaded in by `resolve-shot` from the active weapon's `:damage-type` field). The enemy catalog (`core/enemies.phel`) optionally tags monster types with `:resists #{...}`; if the picked target's type resists the incoming damage type, the per-hit damage is multiplied by zero so the target survives the hit with its lives unchanged. Hit registration (blood splatter, flash, sfx, wake) still fires so the player sees the bullet land and reads "no effect" from the missing HP digit / fading health bar.
+
+Current catalog:
+
+| Type | Resists |
+|------|---------|
+| caco | `:fire` |
+| baron | `:fire` |
+| archvile | `:fire` |
+| mancubus | `:fire` |
+
+All current weapons deal `:ballistic`, so the resist data is dormant until the BFG / plasma roster lands. Adding a new resistance is a one-line catalog edit; adding a new damage type is one keyword on the weapon spec.
+
 ### Nightmare respawn
 
 `--difficulty=nightmare` stamps `:nightmare? true` on every enemy at level build time. Two downstream effects:

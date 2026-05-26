@@ -1,5 +1,6 @@
 (ns phel-doom.core.enemy
   (:require phel-doom.core.map      :refer [random-spawn wall?])
+  (:require phel-doom.core.enemies  :refer [resists?])
   (:require phel-doom.core.enemy-ai :refer [apply-pain maybe-start-attack moves? observe target-pos tick-attack tick-pain tick-wander]))
 
 (def default-chase-speed
@@ -129,8 +130,8 @@
    shell drops it. `damage` defaults to 1 for callers that don't
    carry a weapon spec (older tests, etc)."
   ([enemies ^float px ^float py ^float angle ^float wall-dist ^float hit-radius ^float max-range]
-   (shoot enemies px py angle wall-dist hit-radius max-range 1))
-  ([es' ^float x' ^float y' ^float a' ^float wd' ^float hr ^float max-r ^int damage]
+   (shoot enemies px py angle wall-dist hit-radius max-range 1 nil))
+  ([es' ^float x' ^float y' ^float a' ^float wd' ^float hr ^float max-r ^int damage damage-type]
    (let [cos-a (php/cos a')
          sin-a (php/sin a')]
      (let [best (loop [i      0
@@ -163,7 +164,8 @@
          (let [hit-enemy  (get es' best)
                hit-pos    {:x (:x hit-enemy) :y (:y hit-enemy)}
                prev-lives (or (:lives hit-enemy) 1)
-               new-lives  (php/max 0 (php/- prev-lives damage))
+               eff-dmg    (if (resists? (:type hit-enemy) damage-type) 0 damage)
+               new-lives  (php/max 0 (php/- prev-lives eff-dmg))
                hit-vec    (apply vector es')
                ;; Any hit wakes the target — being shot is the
                ;; loudest possible "I see you" signal, and a dormant

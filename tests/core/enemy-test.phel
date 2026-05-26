@@ -471,6 +471,36 @@
     (is (= :baron (:type e)))))
 
 ;; ---------------------------------------------------------------------
+;; Nightmare modifier (issue #65): :nightmare? flag on the enemy bypasses
+;; :max-concurrent on respawn AND draws from a tighter respawn-delay
+;; range (set in shoot, not exercised here — that path is covered by
+;; the integration smoke test below).
+;; ---------------------------------------------------------------------
+
+(deftest test-advance-nightmare-bypasses-max-concurrent-cap
+  ;; Two imps both flagged :nightmare?, cap 1. One alive, one dead with
+  ;; expired timer. The cap that would normally block revival is
+  ;; ignored on nightmare; the dead one revives this frame.
+  (let [es  [{:x 3.0 :y 3.0 :alive true :lives 1 :max-lives 1
+              :type :imp :max-concurrent 1 :nightmare? true :hit-flash-secs 0.0}
+             {:x 0.0 :y 0.0 :alive false :lives 0 :max-lives 1
+              :type :imp :max-concurrent 1 :nightmare? true :respawn-after 0.0}]
+        es' (advance es open-grid 5.0 5.0 0.1 0.5 true)]
+    (is (= true (:alive (first  es'))))
+    (is (= true (:alive (second es'))))))
+
+(deftest test-advance-non-nightmare-still-respects-cap
+  ;; Sanity: drop the :nightmare? flag from the previous fixture and
+  ;; the cap re-engages. Pins that nightmare doesn't accidentally
+  ;; bypass the cap for non-nightmare runs.
+  (let [es  [{:x 3.0 :y 3.0 :alive true :lives 1 :max-lives 1
+              :type :imp :max-concurrent 1 :hit-flash-secs 0.0}
+             {:x 0.0 :y 0.0 :alive false :lives 0 :max-lives 1
+              :type :imp :max-concurrent 1 :respawn-after 0.0}]
+        es' (advance es open-grid 5.0 5.0 0.1 0.5 true)]
+    (is (= false (:alive (second es'))))))
+
+;; ---------------------------------------------------------------------
 ;; push-back-enemy: shove an enemy along a unit vector by `dist`
 ;; units, wall-clamped via the existing wall? predicate.
 ;; ---------------------------------------------------------------------

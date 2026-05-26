@@ -15,6 +15,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+- Nightmare difficulty modifier (issue #65): `--difficulty=nightmare` now also stamps `:nightmare?` on every spawned enemy. Killed nightmare enemies respawn on a 1-2s timer instead of the regular 3-6s and bypass the `:max-concurrent` cap entirely, restoring DOOM's signature swarm pressure on top of the existing HP / speed / count scalars.
 - 4-way damage-direction HUD cue (issue #66). `attacker-side` now returns `:front` / `:back` / `:left` / `:right` (was `:left` / `:right` only); render paints a red strip on the matching screen edge so a hit from behind is visually distinct from a flank. Front / back use a narrow ±30° wedge so 45° off-axis hits keep using the wider left / right edge bar.
 
 ### Performance

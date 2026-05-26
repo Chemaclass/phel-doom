@@ -18,6 +18,35 @@
    'never crosses this axis'."
   1.0e9)
 
+;; Per-column FOV offset (atan) and its cos are pure functions of the
+;; ray's column index and the viewport width. They never change at
+;; runtime for a given width, so we memoize one PHP-array per width.
+;; The atom holds an idempotent build cache — same input always
+;; produces the same arrays — so it's effectively a lazy `def` and
+;; preserves the purity contract of cast-frame.
+(def- offset-cache (atom {}))
+
+(defn- build-offset-tables [^int width]
+  (let [center  (php/* 0.5 width)
+        offs    (php/array)
+        cosoffs (php/array)]
+    (loop [col 0]
+      (when (php/< col width)
+        (let [o (php/atan (php// (php/- col center) proj-dist))]
+          (php/aset offs col o)
+          (php/aset cosoffs col (php/cos o))
+          (recur (php/+ col 1)))))
+    {:offsets offs :cos-offs cosoffs}))
+
+(defn- offset-tables-for [^int width]
+  (let [cache @offset-cache
+        hit   (get cache width)]
+    (if hit
+      hit
+      (let [tables (build-offset-tables width)]
+        (swap! offset-cache assoc width tables)
+        tables))))
+
 (defn- ^int cell-at
   "Return the cell value at integer (x, y) in `pgrid`. 0 = floor, 1 =
    wall, 2 = closed door. Out-of-bounds yields 1 so rays stop at the
@@ -133,7 +162,9 @@
   ([world ^int width ^int scale]
    (let [pgrid               (:pgrid world)
          {:keys [x y angle]} (:player world)
-         center              (php/* 0.5 width)
+         tables              (offset-tables-for width)
+         offsets             (:offsets tables)
+         cos-offs            (:cos-offs tables)
          dists               (php/array)
          hits                (php/array)
          sides               (php/array)
@@ -141,9 +172,9 @@
          hys                 (php/array)]
      (loop [col 0]
        (when (php/< col width)
-         (let [offset           (php/atan (php// (php/- col center) proj-dist))
+         (let [offset           (php/aget offsets col)
                [d h side hx hy] (cast-ray-hit pgrid x y (php/+ angle offset))
-               d-corr           (php/* d (php/cos offset))]
+               d-corr           (php/* d (php/aget cos-offs col))]
            ;; Replicate this sample across the next `scale` output
            ;; columns. Inner loop bound by `width` so a non-divisible
            ;; tail (e.g. width=401, scale=2) doesn't overshoot. The

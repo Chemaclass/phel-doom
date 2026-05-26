@@ -137,6 +137,15 @@ Four gates: i-frame window, invulnerability sphere timer, dev god mode, AND at l
 - 0.05s flash: `render!` paints viewport white. One-frame jolt before the red i-frame wash.
 - Player knockback shove away from the attacker; arms `:hurt-side` (one of `:left` `:right` `:front` `:back`) so the directional red band paints on the matching edge. Front and back use a narrow ±30° wedge around the player's facing / anti-facing vectors; everything else routes to the wider left / right edges. Closes the rear blind spot that the previous left-only / right-only routing left open (issue #66).
 
+### Berserk pickup
+
+A berserk sphere (`:berserks` vector on the world, `Ω` glyph in the viewport + minimap) sits in 1-in-8 levels. Stepping on the cell drives:
+
+1. `pickup-berserks` in `commands/play.phel` removes the sphere from `:berserks`, plays the dedicated `:berserk` sfx (Hero.aiff on macOS), and calls `arm-berserk`.
+2. `arm-berserk` is a pure helper that stamps `:berserk-secs` to the full `berserk-seconds` window (20s). Refresh-not-stack: stepping on a second sphere replaces the timer rather than extending it, so the buff can never exceed `berserk-seconds`.
+3. `decay-timers` (inside `damage-step`) ticks the counter down by dt each frame. `berserk?` reads it; `fire-shot` multiplies the active weapon's `:damage` by `berserk-damage-mul` (2) while the predicate is true.
+4. `paint-berserk-tint` in `io/render.phel` paints a pulsing deep-red border around the viewport while the timer is positive AND the player is not already in i-frames; the bright i-frame edge bar wins on overlap so the more urgent cue reads first.
+
 ### Damage resistance
 
 `enemy/shoot` takes a `damage-type` keyword (threaded in by `resolve-shot` from the active weapon's `:damage-type` field). The enemy catalog (`core/enemies.phel`) optionally tags monster types with `:resists #{...}`; if the picked target's type resists the incoming damage type, the per-hit damage is multiplied by zero so the target survives the hit with its lives unchanged. Hit registration (blood splatter, flash, sfx, wake) still fires so the player sees the bullet land and reads "no effect" from the missing HP digit / fading health bar.

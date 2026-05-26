@@ -1598,6 +1598,32 @@
         (buf-push parts (str "\e[" vh ";1H" strip "\e[0m")))))
   parts)
 
+(defn- paint-berserk-tint
+  "Thin rage-red border around the viewport while `:berserk-secs > 0`.
+   Distinct from the iframe `paint-hit-vignette` red band so the player
+   can read the two states at once (berserk while taking damage shows
+   both): the iframe band is bright (code 160) on one edge only;
+   berserk paints code 88 (deep crimson) on all four edges, pulsed in
+   sync with the badge. Skipped when iframes are also active so the
+   shouty hit-vignette wins; the berserk badge already covers
+   readability for that overlap case."
+  [parts ^float t stats vw vh]
+  (let [secs    (or (get stats :berserk-secs) 0.0)
+        bloody? (php/> (or (get stats :iframes) 0.0) 0.0)]
+    (when (and (php/> secs 0.0) (not bloody?))
+      (let [bright? (pulse t 9.0)
+            bg      (if bright? "\e[48;5;124m" "\e[48;5;88m")
+            top     (str bg (php/str_repeat " " vw) "\e[0m")
+            edge    (str bg " \e[0m")]
+        (buf-push parts (str "\e[1;1H" top))
+        (buf-push parts (str "\e[" vh ";1H" top))
+        (loop [r 2]
+          (when (php/<= r (php/- vh 1))
+            (buf-push parts (str "\e[" r ";1H" edge))
+            (buf-push parts (str "\e[" r ";" vw "H" edge))
+            (recur (php/+ r 1)))))))
+  parts)
+
 (defn- paint-heat-bar
   "10-cell heat bar under the pistol sprite. Replaced by blinking
    'JAMMED' when :jam-secs > 0. Blink is code-driven off game-time
@@ -2585,7 +2611,8 @@
             p7          (paint-flicker            p6 stats vw vh)
             p8          (paint-heartbeat-vignette p7 stats vw vh)
             p9          (paint-hit-vignette       p8 stats bloody? vw vh)
-            p10         (paint-heat-bar           p9 t stats vw vh)
+            p9b         (paint-berserk-tint       p9 t stats vw vh)
+            p10         (paint-heat-bar           p9b t stats vw vh)
             p11         (paint-kill-streak        p10 stats map-col map-row visible-mh)
             p12         (paint-compass            p11 world vw)
             p13         (paint-rear-warning       p12 t stats vw)

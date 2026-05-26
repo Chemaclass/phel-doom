@@ -262,13 +262,24 @@
           (recur (next es) best-d best))))))
 
 (defn attacker-side
-  "Map an attacker position to `:left` / `:right` relative to player
-   facing (atan2 convention). nil if attacker is nil. Exported for
-   the directional-hit-vignette behaviour to be testable."
+  "Map an attacker position to one of four bearings relative to player
+   facing (atan2 convention): `:front`, `:back`, `:left`, `:right`. nil
+   if `att` is nil. Front and back are narrow ±30° wedges around the
+   player's facing and anti-facing vectors (`cos rel > cos(30°)` /
+   `cos rel < -cos(30°)`) so the off-axis 45° hits stay on left/right.
+   The remaining ~300° splits left vs right on the sign of `sin rel`.
+   Render reads this to paint a directional damage indicator on the
+   matching screen edge."
   [att ^float px ^float py ^float pangle]
   (when att
-    (let [rel (php/- (php/atan2 (php/- (:y att) py) (php/- (:x att) px)) pangle)]
-      (if (php/> (php/sin rel) 0.0) :right :left))))
+    (let [rel (php/- (php/atan2 (php/- (:y att) py) (php/- (:x att) px)) pangle)
+          c   (php/cos rel)
+          s   (php/sin rel)]
+      (cond
+        (php/> c 0.866)  :front
+        (php/< c -0.866) :back
+        (php/> s 0.0)    :right
+        :else            :left))))
 
 (defn knockback
   "Shove the player one knockback-distance step AWAY from `att`.

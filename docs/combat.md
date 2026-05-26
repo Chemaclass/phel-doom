@@ -135,7 +135,7 @@ Four gates: i-frame window, invulnerability sphere timer, dev god mode, AND at l
 - Otherwise loses one life (clamped at 0).
 - 1.0s i-frame: `vulnerable?` returns false, single touch can't drain multiple lives.
 - 0.05s flash: `render!` paints viewport white. One-frame jolt before the red i-frame wash.
-- Player knockback shove away from the attacker; arms `:hurt-side` so the directional red band paints on the correct edge.
+- Player knockback shove away from the attacker; arms `:hurt-side` (one of `:left` `:right` `:front` `:back`) so the directional red band paints on the matching edge. Front and back use a narrow ±30° wedge around the player's facing / anti-facing vectors; everything else routes to the wider left / right edges. Closes the rear blind spot that the previous left-only / right-only routing left open (issue #66).
 
 ### Shot knockback (enemy-only)
 

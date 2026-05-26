@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Added
+
+- 4-way damage-direction HUD cue (issue #66). `attacker-side` now returns `:front` / `:back` / `:left` / `:right` (was `:left` / `:right` only); render paints a red strip on the matching screen edge so a hit from behind is visually distinct from a flank. Front / back use a narrow ±30° wedge so 45° off-axis hits keep using the wider left / right edge bar.
+
 ### Performance
 
 - `cast-frame` mean ~60% faster across 80 / 120 / 180 widths (2000-iter bench on `default-grid` at player spawn):

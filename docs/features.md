@@ -46,7 +46,7 @@ See [level-system.md](level-system.md), [map.md](map.md).
 
   Pistol + chaingun spray while space is held; shotgun needs a fresh pull per shell. Pistol is the only weapon that overheats / jams. Distinct silhouette + palette per slot. Per-weapon mag/reserve persists across switches. First-time pickup auto-switches. Drop/refill/raise reload anim; sprite recoils 2 rows per shot.
 - Kill-loot ammo skips the pistol when other weapons are owned - biases toward the scarce shotgun + chaingun the player had to hunt for. Level-spawn boxes still refill the active weapon.
-- 5 lives, 1s i-frame, directional red hurt-side band, knockback shove on contact damage.
+- 5 lives, 1s i-frame, 4-way directional red hurt-side band (left / right edge bar OR top / bottom row depending on attacker bearing), knockback shove on contact damage.
 
 See [monsters.md](monsters.md), [combat.md](combat.md).
 

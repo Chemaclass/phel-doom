@@ -37,6 +37,16 @@ Modules: `controls`, `input`, `scores`, `sound` (the data-prep parts), `wad`.
 - Functions here SHOULD end in `!`.
 - Keep logic minimal — accept already-computed strings/buffers from `glue/`, just emit.
 
+## Output primitive: `print` / `println`, NEVER `php/fwrite`
+
+`php/fwrite($fh, $s)` returns the byte count written and can be `< strlen($s)` on partial writes (full kernel terminal buffer, or EINTR from a signal under `pcntl_async_signals`). The renderer is a tight loop that does not retry partial writes; result is silently truncated frames. PHP's `print` / `echo` loop internally via the output handler chain, so they are the safe primitive.
+
+Same applies to flush: use `php/flush`, not `php/fflush php/STDOUT` direct.
+
+## Signal handlers
+
+Do NOT call `php/pcntl_async_signals true` in the play loop. With async signals on, every `write(2)` / `read(2)` / `exec(3)` can return EINTR mid-call, breaking any code path that doesn't retry — including all of render. If a SIGWINCH-aware resize feature is ever needed, drive it via explicit `pcntl_signal_dispatch` at safe checkpoints, not via async dispatch.
+
 ## Smell test
 
 If a function in `core/` calls `php/rand`, reads `php/microtime`, or prints anything → move the effect to `io/` and pass the value in instead.

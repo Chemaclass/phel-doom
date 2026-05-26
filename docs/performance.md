@@ -156,15 +156,30 @@ Add to that: invalidation logic for resize, scene reset, alt-screen re-entry, pa
 
 Verdict: **complexity cost > realistic win**. Issue closed without merging.
 
+## Inlined DDA + prebaked FOV tables
+
+After DDA landed (issue #2), `cast-frame` was still doing one `atan` + one `cos` per output column per frame to compute the FOV offset, and one private-fn dispatch (`cast-ray-hit`) per ray returning a Phel persistent vector. Two follow-up changes collapsed that:
+
+1. **Width-keyed `atan` / `cos` memo.** `offset-tables-for` builds `[col -> offset]` + `[col -> cos(offset)]` PHP arrays once per viewport width and caches them in an atom. The cast-frame loop reads two `aget`s instead of running trig per column.
+2. **Inlined DDA + `php/array` return.** `cast-ray-hit` was removed; its body lives directly in `cast-frame`. The inlined DDA returns a plain PHP array literal on hit (`(php/array dist hit side hx hy)`); destructuring is five `php/aget`s. The persistent-vector allocation the old `[d h side hx hy]` form paid is gone.
+
+Combined effect on `cast-frame` mean (2000-iter bench, `default-grid`, player spawn):
+
+| Viewport | post-DDA | post-prebake+inline | Δ |
+|---|---|---|---|
+| 80×24 | 0.53 ms | 0.21 ms | -61 % |
+| 120×30 | 0.82 ms | 0.32 ms | -61 % |
+| 180×40 | 1.28 ms | 0.51 ms | -60 % |
+
 ## Measured numbers
 
 `cast-frame` only, 2000-iteration mean from `default-grid` at the player spawn - bench harness lives in [`/perf-bench`](../.claude/skills/perf-bench/SKILL.md):
 
-| Viewport | step-march (pre-#2) | DDA (post-#2) | Δ |
-|---|---|---|---|
-| 80×24 | 0.81 ms | 0.65 ms | -19 % |
-| 120×30 | 1.26 ms | 0.99 ms | -22 % |
-| 180×40 | 2.04 ms | 1.55 ms | -24 % |
+| Viewport | step-march (pre-#2) | DDA (post-#2) | prebake+inline | Δ vs step-march |
+|---|---|---|---|---|
+| 80×24 | 0.81 ms | 0.53 ms | 0.21 ms | -74 % |
+| 120×30 | 1.26 ms | 0.82 ms | 0.32 ms | -75 % |
+| 180×40 | 2.04 ms | 1.28 ms | 0.51 ms | -75 % |
 
 Cast time scales roughly linearly with column count; DDA's win grows with viewport width because each ray's traversal cost drops while the per-ray trig (cos/sin/atan) stays fixed.
 

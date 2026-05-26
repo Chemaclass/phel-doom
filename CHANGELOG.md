@@ -9,6 +9,12 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Performance
+
+- `cast-frame` mean ~60% faster across 80 / 120 / 180 widths (2000-iter bench on `default-grid` at player spawn):
+  - Per-column FOV `atan(offset)` + `cos(offset)` prebaked into width-keyed PHP-array tables and memoized; two trig calls per ray drop out of the hot loop.
+  - `cast-ray-hit` inlined into `cast-frame`'s DDA loop. Return type switched from Phel persistent vector to `php/array` so the hot path no longer allocates a vector per ray.
+
 ## [0.5.0] - 2026-05-25
 
 ### Added

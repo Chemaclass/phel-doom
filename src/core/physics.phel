@@ -134,10 +134,16 @@
 (defn- apply-translation [world ^float long-d ^float lat-d]
   (if (and (php/=== long-d 0.0) (php/=== lat-d 0.0))
     world
-    (let [a (:angle (:player world))]
+    (let [^float a (:angle (:player world))]
+      ;; Post phel-lang#2181: native `+` `-` `*` emit raw PHP arith when
+      ;; one operand is a typed local (`long-d` / `lat-d` / `a`) and the
+      ;; other is `(php/cos x)` / `(php/sin x)` (return-typed by the
+      ;; compiler's PHP-native return-type table). Same PHP as the
+      ;; previous `php/*` / `php/-` form, no perf delta, plain Phel
+      ;; reads.
       (try-move world
-                (php/- (php/* long-d (php/cos a)) (php/* lat-d (php/sin a)))
-                (php/+ (php/* long-d (php/sin a)) (php/* lat-d (php/cos a)))))))
+                (- (* long-d (php/cos a)) (* lat-d (php/sin a)))
+                (+ (* long-d (php/sin a)) (* lat-d (php/cos a)))))))
 
 (defn- decay-counter [n]
   (php/max 0 (php/- n 1)))

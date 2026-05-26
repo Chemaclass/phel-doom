@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Changed
+
+- Bump `phel-lang/phel-lang` to `dev-main` post phel-lang#2148 + #2181 (typed-binding native arith inside `let` / `loop` + return-type table for `php/cos` / `php/sin` / `php/sqrt` / etc.). `apply-translation` in `core/physics.phel` swaps `php/* php/- php/+` for native `* - +` plus a `^float a` hint on the angle binding; emitted PHP is identical, Phel source no longer shouts `php/` at the reader for plain arithmetic.
+
 ### Added
 
 - 4-way damage-direction HUD cue (issue #66). `attacker-side` now returns `:front` / `:back` / `:left` / `:right` (was `:left` / `:right` only); render paints a red strip on the matching screen edge so a hit from behind is visually distinct from a flank. Front / back use a narrow ±30° wedge so 45° off-axis hits keep using the wider left / right edge bar.

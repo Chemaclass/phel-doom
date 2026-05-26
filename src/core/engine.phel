@@ -111,62 +111,61 @@
    render at half the cast cost with a chunkier per-block look.
    Sprites + HUD remain at full vw because they read these arrays
    by column index and overlay independently."
-  ([world ^int width] (cast-frame world width 1))
-  ([world ^int width ^int scale]
-   (let [pgrid               (:pgrid world)
-         {:keys [x y angle]} (:player world)
-         tables              (offset-tables-for width)
-         offsets             (:offsets tables)
-         cos-offs            (:cos-offs tables)
-         dists               (php/array)
-         hits                (php/array)
-         sides               (php/array)
-         hxs                 (php/array)
-         hys                 (php/array)]
+  [world ^int width ^int scale]
+  (let [pgrid               (:pgrid world)
+        {:keys [x y angle]} (:player world)
+        tables              (offset-tables-for width)
+        offsets             (:offsets tables)
+        cos-offs            (:cos-offs tables)
+        dists               (php/array)
+        hits                (php/array)
+        sides               (php/array)
+        hxs                 (php/array)
+        hys                 (php/array)]
      ;; DDA traversal is inlined: avoids one fn call per column AND
      ;; replaces the per-ray Phel-vector `[d h side hx hy]` return
      ;; with a cheap `php/array` so the hot loop allocates a plain
      ;; PHP array per ray instead of a persistent vector.
-     (loop [col 0]
-       (when (php/< col width)
-         (let [a       (php/+ angle (php/aget offsets col))
-               dirx    (php/cos a)
-               diry    (php/sin a)
-               stepx   (if (php/< dirx 0.0) -1 1)
-               stepy   (if (php/< diry 0.0) -1 1)
-               deltax  (if (php/=== dirx 0.0) dda-inf (php/abs (php// 1.0 dirx)))
-               deltay  (if (php/=== diry 0.0) dda-inf (php/abs (php// 1.0 diry)))
-               cx0     (php/intval (php/floor x))
-               cy0     (php/intval (php/floor y))
-               sidex0  (if (php/< dirx 0.0)
-                         (php/* (php/- x cx0) deltax)
-                         (php/* (php/- (php/+ cx0 1.0) x) deltax))
-               sidey0  (if (php/< diry 0.0)
-                         (php/* (php/- y cy0) deltay)
-                         (php/* (php/- (php/+ cy0 1.0) y) deltay))
-               hit-arr (loop [cx cx0 cy cy0 sidex sidex0 sidey sidey0]
-                         (if (php/< sidex sidey)
-                           (let [cx'  (php/+ cx stepx)
-                                 dist sidex
-                                 hit  (cell-at pgrid cx' cy)]
-                             (cond
-                               (php/> dist max-depth) (php/array max-depth 0 0 cx' cy)
-                               (php/!== 0 hit)        (php/array dist hit 0 cx' cy)
-                               :else
-                               (recur cx' cy (php/+ sidex deltax) sidey)))
-                           (let [cy'  (php/+ cy stepy)
-                                 dist sidey
-                                 hit  (cell-at pgrid cx cy')]
-                             (cond
-                               (php/> dist max-depth) (php/array max-depth 0 1 cx cy')
-                               (php/!== 0 hit)        (php/array dist hit 1 cx cy')
-                               :else
-                               (recur cx cy' sidex (php/+ sidey deltay))))))
-               d-corr  (php/* (php/aget hit-arr 0) (php/aget cos-offs col))
-               h       (php/aget hit-arr 1)
-               side    (php/aget hit-arr 2)
-               hx      (php/aget hit-arr 3)
-               hy      (php/aget hit-arr 4)]
+    (loop [col 0]
+      (when (php/< col width)
+        (let [a       (php/+ angle (php/aget offsets col))
+              dirx    (php/cos a)
+              diry    (php/sin a)
+              stepx   (if (php/< dirx 0.0) -1 1)
+              stepy   (if (php/< diry 0.0) -1 1)
+              deltax  (if (php/=== dirx 0.0) dda-inf (php/abs (php// 1.0 dirx)))
+              deltay  (if (php/=== diry 0.0) dda-inf (php/abs (php// 1.0 diry)))
+              cx0     (php/intval (php/floor x))
+              cy0     (php/intval (php/floor y))
+              sidex0  (if (php/< dirx 0.0)
+                        (php/* (php/- x cx0) deltax)
+                        (php/* (php/- (php/+ cx0 1.0) x) deltax))
+              sidey0  (if (php/< diry 0.0)
+                        (php/* (php/- y cy0) deltay)
+                        (php/* (php/- (php/+ cy0 1.0) y) deltay))
+              hit-arr (loop [cx cx0 cy cy0 sidex sidex0 sidey sidey0]
+                        (if (php/< sidex sidey)
+                          (let [cx'  (php/+ cx stepx)
+                                dist sidex
+                                hit  (cell-at pgrid cx' cy)]
+                            (cond
+                              (php/> dist max-depth) (php/array max-depth 0 0 cx' cy)
+                              (php/!== 0 hit)        (php/array dist hit 0 cx' cy)
+                              :else
+                              (recur cx' cy (php/+ sidex deltax) sidey)))
+                          (let [cy'  (php/+ cy stepy)
+                                dist sidey
+                                hit  (cell-at pgrid cx cy')]
+                            (cond
+                              (php/> dist max-depth) (php/array max-depth 0 1 cx cy')
+                              (php/!== 0 hit)        (php/array dist hit 1 cx cy')
+                              :else
+                              (recur cx cy' sidex (php/+ sidey deltay))))))
+              d-corr  (php/* (php/aget hit-arr 0) (php/aget cos-offs col))
+              h       (php/aget hit-arr 1)
+              side    (php/aget hit-arr 2)
+              hx      (php/aget hit-arr 3)
+              hy      (php/aget hit-arr 4)]
            ;; Replicate this sample across the next `scale` output
            ;; columns. Inner loop bound by `width` so a non-divisible
            ;; tail (e.g. width=401, scale=2) doesn't overshoot. The
@@ -176,13 +175,13 @@
            ;; cos(offset), reading as slightly chunkier walls. The
            ;; per-cell-accurate alternative would mean N atan + cos
            ;; calls per sample, defeating the perf-mode win.
-           (loop [c col fill 0]
-             (when (and (php/< c width) (php/< fill scale))
-               (php/aset dists c d-corr)
-               (php/aset hits c h)
-               (php/aset sides c side)
-               (php/aset hxs c hx)
-               (php/aset hys c hy)
-               (recur (php/+ c 1) (php/+ fill 1))))
-           (recur (php/+ col scale)))))
-     {:dists dists :hits hits :sides sides :hxs hxs :hys hys})))
+          (loop [c col fill 0]
+            (when (and (php/< c width) (php/< fill scale))
+              (php/aset dists c d-corr)
+              (php/aset hits c h)
+              (php/aset sides c side)
+              (php/aset hxs c hx)
+              (php/aset hys c hy)
+              (recur (php/+ c 1) (php/+ fill 1))))
+          (recur (php/+ col scale)))))
+    {:dists dists :hits hits :sides sides :hxs hxs :hys hys}))

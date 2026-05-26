@@ -38,7 +38,7 @@
 (defn- one-ray-frame [world angle]
   ;; A single-column cast-frame so we can read column 0 directly.
   (let [w' (assoc world :player (new-player 2.5 2.5 angle))
-        c  (cast-frame w' 1)]
+        c  (cast-frame w' 1 1)]
     {:dist (php/aget (:dists c) 0)
      :hit  (php/aget (:hits c)  0)
      :side (php/aget (:sides c) 0)
@@ -70,7 +70,7 @@
   ;; cast-frame and walks them by column index. Pin that they all
   ;; have the same length so a column-major loop stays safe.
   (let [w (new-world chamber-grid (new-player 2.5 2.5 0.0))
-        c (cast-frame w 8)]
+        c (cast-frame w 8 1)]
     (is (= 8 (php/count (:dists c))))
     (is (= 8 (php/count (:hits c))))
     (is (= 8 (php/count (:sides c))))
@@ -104,13 +104,14 @@
     ;; Col 4 stands alone — just needs to be populated (not nil).
     (is (php/!== nil (php/aget (:dists c) 4)))))
 
-(deftest test-cast-frame-scale-1-matches-default-arity
-  ;; Explicit scale=1 must behave identically to the 2-arity call.
+(deftest test-cast-frame-scale-1-fills-every-column
+  ;; scale=1 is the canonical 1:1 ray-per-column path; pin that every
+  ;; output slot is populated (not nil) so the renderer's per-column
+  ;; walk never reads an unset cell.
   (let [w (new-world chamber-grid (new-player 2.5 2.5 0.0))
-        a (cast-frame w 6)
-        b (cast-frame w 6 1)]
+        c (cast-frame w 6 1)]
     (loop [i 0]
       (when (php/< i 6)
-        (is (= (php/aget (:dists a) i) (php/aget (:dists b) i)))
-        (is (= (php/aget (:hits  a) i) (php/aget (:hits  b) i)))
+        (is (php/!== nil (php/aget (:dists c) i)))
+        (is (php/!== nil (php/aget (:hits  c) i)))
         (recur (php/+ i 1))))))

@@ -7,6 +7,7 @@
   (:require phel-doom.glue.controls :refer [refresh-from-keys key-states rising-edges
                                             initial-key-snapshot])
   (:require phel-doom.core.physics  :refer [apply-physics tick-heartbeat tick-flicker tick-blood-drops tick-door-face tick-stamina])
+  (:require phel-doom.core.engine   :refer [mark-visible-cells])
   (:require phel-doom.core.combat   :refer [ammo-per-box arm-berserk berserk-seconds damage-step fire-anim-seconds invuln-seconds max-reserve reload reloading? reload-cooldown-seconds tick-armory tick-shooting])
   (:require phel-doom.core.enemy    :refer [advance tick-scare rear-attacker?])
   (:require phel-doom.core.weapons  :refer [effective-reserve-cap give-weapon switch-weapon weapon-spec weapon-order weapons])
@@ -408,7 +409,13 @@
             ;; :moves slots (refresh-from-keys above), so the player
             ;; pays for the intent the same frame they signal it.
             w1b (try-reveal-secret w1a (:action edges))
-            w2  (apply-physics (tick-stamina w1b dt) dt)
+            ;; Fog-of-war mark: stamp every cell within visit-radius +
+            ;; LOS of the player onto :visited so the minimap reveals
+            ;; the layout as the player explores. Skipped while paused
+            ;; so a paused frame doesn't drift the visible footprint
+            ;; from where the player actually is.
+            w1c (mark-visible-cells w1b)
+            w2  (apply-physics (tick-stamina w1c dt) dt)
             w3  (pickup-hearts w2)
             w4  (pickup-armors w3)
             w4b (pickup-ammos  w4)
@@ -720,7 +727,7 @@
    (from --level / -l) sets where the run begins — 1..num-levels,
    clamped. Death + retry reset to L1 (the start-level only seeds
    the initial loop entry)."
-  [diff god? armory? start-level]
+  [diff god? armory? full-map? start-level]
   (loop [level       (php/max 1 (php/min num-levels (or start-level 1)))
          lives       max-lives
          carry-kills 0
@@ -743,7 +750,8 @@
           ;; stays purely about the level itself.
           w1     (if god? (assoc w0 :god? true) w0)
           w1a    (if armory? (assoc w1 :armory? true) w1)
-          w2     (assoc w1a :show-map show-map? :sound-on sound-on?)
+          w1b    (if full-map? (assoc w1a :full-map? true) w1a)
+          w2     (assoc w1b :show-map show-map? :sound-on sound-on?)
           w3     (if (nil? weapon)
                    w2
                    (let [stash  (or wstate (:weapon-state w2))
@@ -821,21 +829,22 @@
 
 (defn- run-play [ctx]
   (init-input!)
-  (let [diff    (cli/opt ctx "difficulty")
-        god?    (cli/opt ctx "god")
-        armory? (cli/opt ctx "armory")
-        lv-raw  (cli/opt ctx "level")
+  (let [diff      (cli/opt ctx "difficulty")
+        god?      (cli/opt ctx "god")
+        armory?   (cli/opt ctx "armory")
+        full-map? (cli/opt ctx "full-map")
+        lv-raw    (cli/opt ctx "level")
         ;; CLI gives strings; coerce to int. nil / empty → nil → L1.
-        lv      (cond
-                  (nil? lv-raw) nil
-                  (= lv-raw "") nil
-                  :else         (php/intval lv-raw))]
+        lv        (cond
+                    (nil? lv-raw) nil
+                    (= lv-raw "") nil
+                    :else         (php/intval lv-raw))]
     (if (= (show-start-menu!) :quit)
       (do (restore!)
           (clear-screen)
           0)
       (do (clear-screen)
-          (run-levels diff god? armory? lv)
+          (run-levels diff god? armory? full-map? lv)
           (restore!)
           (clear-screen)
           (cli/success ctx "Thanks for playing.")
@@ -861,6 +870,10 @@
            :short "a"
            :mode  :none
            :doc   "Dev armory: own every weapon + infinite ammo (per-frame refill). Pairs naturally with --god for end-to-end mechanic testing."}
+          {:name "full-map"
+           :short "f"
+           :mode  :none
+           :doc   "Reveal the whole minimap from the start (skip fog-of-war). Useful for level editors / debugging."}
           {:name    "level"
            :short   "l"
            :mode    :optional

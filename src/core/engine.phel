@@ -47,6 +47,15 @@
         (swap! offset-cache assoc width tables)
         tables))))
 
+;; Single-slot cache for the most recent cast-frame result. Only
+;; consulted (and only populated) when the world is paused: a paused
+;; world freezes player position, angle, grid + door state, so the
+;; cast is deterministically identical to the previous frame. Stored
+;; as a PHP array `[width scale x y angle result]` rather than a Phel
+;; map so the key probe is six `php/===` comparisons — cheap enough
+;; not to regress the active (unpaused) per-frame path.
+(def- pause-cast-cache (atom nil))
+
 (defn- ^int cell-at
   "Return the cell value at integer (x, y) in `pgrid`. 0 = floor, 1 =
    wall, 2 = closed door. Out-of-bounds yields 1 so rays stop at the
@@ -96,21 +105,10 @@
             (php/!== 0 (cell-at pgrid cx cy')) dist
             :else                              (recur cx cy' sidex (php/+ sidey deltay))))))))
 
-(defn cast-frame
-  "Cast `width / scale` rays across the visible FOV and return a map
-   of parallel PHP arrays, one entry per OUTPUT screen column:
-     :dists  fish-eye corrected wall distance
-     :hits   cell value at the hit
-     :sides  0 = vertical face, 1 = horizontal face (side-shading)
-     :hxs    integer x coord of the hit cell (brick-texture hash)
-     :hys    integer y coord of the hit cell
-
-   `scale` defaults to 1 (one ray per column, exact 1:1 path). With
-   `scale = N > 1` one ray is cast every Nth column and its result
-   is replicated across the next N output slots — perf-mode wall
-   render at half the cast cost with a chunkier per-block look.
-   Sprites + HUD remain at full vw because they read these arrays
-   by column index and overlay independently."
+(defn- do-cast
+  "Cast every column once; returns the parallel :dists / :hits / :sides
+   / :hxs / :hys map. Pure: no cache lookup, no atom touch. cast-frame
+   wraps this with a paused-frame cache short-circuit."
   [world ^int width ^int scale]
   (let [pgrid               (:pgrid world)
         {:keys [x y angle]} (:player world)
@@ -185,3 +183,37 @@
               (recur (php/+ c 1) (php/+ fill 1))))
           (recur (php/+ col scale)))))
     {:dists dists :hits hits :sides sides :hxs hxs :hys hys}))
+
+(defn cast-frame
+  "Cast `width / scale` rays across the visible FOV and return a map
+   of parallel PHP arrays, one entry per OUTPUT screen column:
+     :dists  fish-eye corrected wall distance
+     :hits   cell value at the hit
+     :sides  0 = vertical face, 1 = horizontal face (side-shading)
+     :hxs    integer x coord of the hit cell (brick-texture hash)
+     :hys    integer y coord of the hit cell
+
+   `scale` controls the ray-replication factor (see `do-cast`).
+
+   While `(:paused world)` is truthy, the most recent cast is cached in
+   a private single-slot atom and reused as long as `width` / `scale` /
+   player x / y / angle match. Pause overlays + help-menu screens then
+   pay zero cast cost per frame. Active (unpaused) frames pass through
+   to `do-cast` and never touch the cache, so the fast path is
+   unchanged."
+  [world ^int width ^int scale]
+  (let [paused?             (:paused world)
+        cached              (when paused? @pause-cast-cache)
+        {:keys [x y angle]} (:player world)]
+    (if (and cached
+             (php/=== width  (php/aget cached 0))
+             (php/=== scale  (php/aget cached 1))
+             (php/=== x      (php/aget cached 2))
+             (php/=== y      (php/aget cached 3))
+             (php/=== angle  (php/aget cached 4)))
+      (php/aget cached 5)
+      (let [result (do-cast world width scale)]
+        (when paused?
+          (reset! pause-cast-cache
+                  (php/array width scale x y angle result)))
+        result))))

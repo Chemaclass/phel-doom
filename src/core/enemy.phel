@@ -27,6 +27,26 @@
 (def respawn-delay-max
   "Upper bound (seconds) on the respawn cooldown."
   6.0)
+
+(def nightmare-respawn-delay-min
+  "Lower bound on the respawn cooldown for `:nightmare?` enemies.
+   DOOM-faithful nightmare: dead enemies barely give you breathing
+   room before they're back chasing."
+  1.0)
+(def nightmare-respawn-delay-max
+  "Upper bound on the respawn cooldown for `:nightmare?` enemies."
+  2.0)
+
+(defn- respawn-delay-for
+  "Random respawn-cooldown seconds for the given enemy. Nightmare-flagged
+   enemies (set at level build time when `--difficulty=nightmare`) draw
+   from a much shorter range; everything else uses the standard band."
+  [enemy]
+  (let [nm (:nightmare? enemy)
+        lo (if nm nightmare-respawn-delay-min respawn-delay-min)
+        hi (if nm nightmare-respawn-delay-max respawn-delay-max)]
+    (php/+ lo (php/* (php// (php/mt_rand) (php/mt_getrandmax))
+                     (php/- hi lo)))))
 (def respawn-min-dist
   "Minimum spawn distance from the player a revived enemy must claim,
    so the next frame isn't an ambush."
@@ -153,9 +173,7 @@
                woken      (assoc-in hit-vec [best :state] :aware)
                wounded    (assoc-in woken [best :lives] new-lives)]
            (if (php/<= new-lives 0)
-             (let [delay   (php/+ respawn-delay-min
-                                  (php/* (php// (php/mt_rand) (php/mt_getrandmax))
-                                         (php/- respawn-delay-max respawn-delay-min)))
+             (let [delay   (respawn-delay-for hit-enemy)
                    killed' (assoc-in (assoc-in wounded [best :alive] false)
                                      [best :respawn-after] delay)]
                [killed' true hit-pos best])
@@ -304,15 +322,20 @@
         (assoc e :respawn-after t)
         (let [cap     (:max-concurrent e)
               type-kw (:type e)
-              capped? (and cap (php/>= (alive-count-of-type all-enemies type-kw) cap))
+              ;; Nightmare bypasses :max-concurrent: every minion can
+              ;; come back regardless of how many of its type are alive,
+              ;; matching DOOM's nightmare swarm pressure.
+              capped? (and cap (not (:nightmare? e))
+                           (php/>= (alive-count-of-type all-enemies type-kw) cap))
               pos     (when (not capped?)
                         (random-spawn-far-from grid respawn-min-dist player-x player-y))]
           (if pos
-            ;; Carry :max-lives, :type, :max-concurrent across the
-            ;; respawn so a revived baron is still a baron and the
-            ;; mixed-room cap keeps holding. Refill :lives to full
-            ;; and clear the timer. Older fixtures without :max-lives
-            ;; fall back to 1.
+            ;; Carry :max-lives, :type, :max-concurrent, :nightmare?
+            ;; across the respawn so a revived baron is still a baron,
+            ;; the mixed-room cap keeps holding, and a nightmare-flagged
+            ;; minion stays nightmare-flagged across deaths. Refill
+            ;; :lives to full and clear the timer. Older fixtures
+            ;; without :max-lives fall back to 1.
             (let [mx (or (:max-lives e) 1)]
               (merge e
                      {:x         (first pos)

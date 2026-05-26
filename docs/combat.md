@@ -137,6 +137,15 @@ Four gates: i-frame window, invulnerability sphere timer, dev god mode, AND at l
 - 0.05s flash: `render!` paints viewport white. One-frame jolt before the red i-frame wash.
 - Player knockback shove away from the attacker; arms `:hurt-side` (one of `:left` `:right` `:front` `:back`) so the directional red band paints on the matching edge. Front and back use a narrow ±30° wedge around the player's facing / anti-facing vectors; everything else routes to the wider left / right edges. Closes the rear blind spot that the previous left-only / right-only routing left open (issue #66).
 
+### Nightmare respawn
+
+`--difficulty=nightmare` stamps `:nightmare? true` on every enemy at level build time. Two downstream effects:
+
+- `shoot` reads `:nightmare?` on the kill victim and draws the respawn cooldown from a tighter `[nightmare-respawn-delay-min, nightmare-respawn-delay-max]` band (1.0s to 2.0s) instead of the regular 3.0s to 6.0s.
+- `tick-one`'s `:max-concurrent` gate skips entirely for nightmare enemies, so the L10 boss-arena cap (1 alive imp at a time) no longer applies and the swarm reasserts itself.
+
+Other difficulties are unchanged. The HUD nightmare badge (red `[nightmare]` tag in the top strip) already existed.
+
 ### Shot knockback (enemy-only)
 
 Every wounding enemy hit (`:lives > 0` after damage) pushes the enemy ~1 cell back along the shot direction. Movement respects walls (half-step or quarter-step fallback if full step hits a wall). Killing blows skip knockback so the corpse lands on the death cell and loot drops cleanly. See `enemy/push-back-enemy`.

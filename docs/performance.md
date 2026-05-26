@@ -16,6 +16,40 @@ Terminals ≥ 200 cols OR area > 12,000 cells automatically engage perf-mode: 30
 
 Auto-engages with zero config; large terminals now hit the frame budget cleanly without manual window resizing.
 
+## PHP runtime: OPcache + JIT
+
+Phel compiles to PHP, so phel-doom's frame budget is bounded by whatever the PHP runtime does with that PHP. Two settings move the needle more than any single code change:
+
+- **OPcache.** Stores parsed + compiled bytecode so each new php-cli invocation doesn't re-parse the world. For a long-lived game-loop process this matters at start-up only, but it's a free win: the entire `vendor/phel-lang/` runtime gets cached on first hit.
+- **JIT (tracing mode).** PHP's tracing JIT specialises hot paths against observed types. The DDA inner loop, RLE walk, and shade lookups are exactly the shape (tight loops, type-stable PHP scalars) that benefit most.
+
+Recommended `php.ini` for running the game:
+
+```ini
+opcache.enable=1
+opcache.enable_cli=1
+opcache.memory_consumption=128
+opcache.max_accelerated_files=20000
+opcache.validate_timestamps=0     ; production: don't stat each include
+
+opcache.jit_buffer_size=128M
+opcache.jit=tracing               ; tracing > function for tight loops
+```
+
+Verify it's actually loaded by the CLI:
+
+```bash
+php -r 'var_dump(opcache_get_status(false));' | head -20
+php -r 'var_dump(opcache_get_status()["jit"] ?? "no jit");'
+```
+
+You should see `"on" => true` plus a non-zero JIT buffer in the status. If `opcache.enable_cli` is off (the Linux distro default), the CLI process never hits OPcache and JIT never kicks in regardless of `jit_buffer_size`.
+
+Caveats:
+- Tracing JIT trades start-up time (warm-up) for steady-state speed. The first few frames are slower while traces compile; after that the inner loops run on native machine code paths. Bench at frame >= 60 to compare apples to apples.
+- `opcache.validate_timestamps=0` means PHP won't notice source edits without a manual `opcache_reset()`. Fine for shipping / Docker; set to `1` during dev.
+- Dockerfile in the repo root already ships OPcache enabled; JIT is the part to tune per host.
+
 ## Direct PHP ops in the hot loop
 
 Unspecialised Phel `+`, `<`, and collection reads dispatch through the Phel

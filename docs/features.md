@@ -115,4 +115,4 @@ See [scores.md](scores.md).
 
 - **WAD parser** (header + lump directory + VERTEXES / LINEDEFS) - toy reader, not wired to render yet. See [wad-parser.md](wad-parser.md).
 - **Keyboard**: kitty protocol for instant release on supported terminals (kitty, WezTerm, Ghostty, Alacritty ≥0.13, iTerm2 ≥3.5); legacy hold-frame fallback on Terminal.app / GNOME Terminal / xterm. See [input.md](input.md).
-- **Sprint**: hold **SHIFT** (kitty) or **`x`** (anywhere) for 1.6× move/strafe speed. Drains a 100-unit `:stamina` pool at 30/s; regenerates at 20/s after a 0.5s cooldown. At empty, sprint stays locked until stamina recovers to 20. HUD shows a 10-cell `STA ████████░░` bar that turns amber under 33% and red at 0.
+- **Sprint**: hold **SHIFT+WASD** or **`x`** (anywhere) for 1.6× move/strafe speed. Drains a 100-unit `:stamina` pool at 30/s; regenerates at 20/s after a 0.5s cooldown. At empty, sprint stays locked until stamina recovers to 20. HUD shows a 10-cell `STA ████████░░` bar that turns amber under 33% and red at 0.

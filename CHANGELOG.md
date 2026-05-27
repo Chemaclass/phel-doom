@@ -20,6 +20,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 ### Fixed
 
 - Grid mutations (#61 secrets, doors, switches) left the raycaster's `:pgrid` stale - player walked through visually solid walls. New `state/rebuild-pgrid` resyncs after every mutation.
+- SHIFT+WASD sprint silently no-op on Terminal.app / xterm / GNOME Terminal (any non-kitty terminal). Capital W/A/S/D bytes now refresh both the matching movement slot AND `:sprint`, so SHIFT+WASD sprints universally instead of being kitty-only.
 
 ## [0.6.0] - 2026-05-27
 

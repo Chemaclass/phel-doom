@@ -107,7 +107,7 @@ Seven time-limited counters drive directional motion + sprint intent:
  :strafe-right <int>
  :turn-left    <int>
  :turn-right   <int>
- :sprint       <int>}    ; SHIFT (kitty) or `x` press refresh
+ :sprint       <int>}    ; SHIFT+WASD or `x` press refresh
 ```
 
 Each input byte from `glue/controls.phel` refreshes the matching counter. Each frame `core/physics.phel` consumes whatever is non-zero (scaled by `dt`) and decays every counter by 1. Counter hits 0 = direction stops.

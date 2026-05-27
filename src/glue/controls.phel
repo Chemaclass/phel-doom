@@ -55,6 +55,18 @@
    "d" :strafe-right
    "x" :sprint})
 
+(def shift-key->slot
+  "Capital-letter equivalents of `key->slot` movement keys. In cooked
+   raw-mode terminals without kitty CSI-u support (Terminal.app, plain
+   xterm, GNOME Terminal) holding SHIFT just uppercases the byte, so
+   SHIFT+W = 'W' (87), SHIFT+A = 'A' (65), etc. Mapping these to the
+   matching direction slot AND :sprint makes SHIFT+WASD sprint work
+   everywhere, not just on kitty-protocol terminals."
+  {"W" :fwd
+   "S" :back
+   "A" :strafe-left
+   "D" :strafe-right})
+
 (def turn-slots
   "Slots that use turn-hold-frames instead of move-hold-frames."
   #{:turn-left :turn-right})
@@ -67,12 +79,22 @@
 
 (defn refresh-move
   "If `byte` maps to a direction slot, refresh that slot's counter on
-   `world`. Anything else (unmapped bytes) leaves the world untouched."
+   `world`. Capital W/A/S/D additionally refresh `:sprint` so SHIFT+WASD
+   sprints on terminals without kitty CSI-u (Terminal.app, xterm).
+   Anything else (unmapped bytes) leaves the world untouched."
   [world byte]
-  (let [slot (get key->slot byte)]
-    (if (nil? slot)
-      world
-      (assoc-in world [:moves slot] (hold-frames-for slot)))))
+  (let [slot       (get key->slot byte)
+        shift-slot (get shift-key->slot byte)]
+    (cond
+      (not (nil? shift-slot))
+      (-> world
+          (assoc-in [:moves shift-slot] (hold-frames-for shift-slot))
+          (assoc-in [:moves :sprint]    (hold-frames-for :sprint)))
+
+      (not (nil? slot))
+      (assoc-in world [:moves slot] (hold-frames-for slot))
+
+      :else                   world)))
 
 (def arrow-escape-keys
   "Search-side PHP array for php/str_replace: arrow-key CSI escapes."

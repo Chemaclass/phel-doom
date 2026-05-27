@@ -146,13 +146,25 @@
   (get weapons (current-weapon world)))
 
 (defn effective-reserve-cap
-  "Active weapon's reserve cap, doubled when the player owns the
-   backpack pickup. Callers should use this in place of raw
-   `:reserve-cap` so the backpack buff propagates everywhere ammo
-   gets bumped (level pickups, kill drops, swap restores)."
+  "Active weapon's reserve cap scaled by the player's backpack
+   stack: `base * (1 + backpack-level)`. Issue #68 part 3 swapped
+   the old boolean `:backpack?` for a stacking integer
+   `:backpack-level` (0..max-backpacks) so each pickup adds one
+   base's worth of capacity. Callers should use this in place of
+   raw `:reserve-cap` so the buff propagates everywhere ammo gets
+   bumped (level pickups, kill drops, swap restores)."
   [world]
-  (let [base (or (:reserve-cap (weapon-spec world)) 0)]
-    (if (:backpack? world) (php/* 2 base) base)))
+  (let [base   (or (:reserve-cap (weapon-spec world)) 0)
+        ;; `or` would short-circuit on `:backpack-level 0` (zero is
+        ;; truthy in Phel) and skip the legacy `:backpack?` fallback,
+        ;; so an `if`+`nil?` chain is needed to honour the back-compat
+        ;; boolean when the new int field is missing.
+        bp-int (:backpack-level world)
+        lvl    (cond
+                 (some? bp-int)     bp-int
+                 (:backpack? world) 1
+                 :else              0)]
+    (php/* base (php/+ 1 lvl))))
 
 (defn initial-weapon-state
   "Per-weapon ammo state for a brand-new run: starting mag full,

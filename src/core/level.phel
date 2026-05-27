@@ -1,5 +1,5 @@
 (ns phel-doom.core.level
-  (:require phel-doom.core.state      :refer [new-player new-world with-enemies max-lives])
+  (:require phel-doom.core.state      :refer [max-backpacks max-lives new-player new-world with-enemies])
   (:require phel-doom.core.map        :refer [cell-door cell-door-blue cell-door-red count-secrets parse-layout random-grid random-spawn seed-doors])
   (:require phel-doom.core.enemy      :refer [spawn-enemies spawn-enemies-mixed])
   (:require phel-doom.core.enemies    :refer [enemy-types type-spec default-lives-for])
@@ -232,15 +232,21 @@
   3)
 
 (defn- maybe-spawn-backpack
-  "One-shot backpack: L2+ only, ~1 in 5 qualifying levels (was 30%).
-   Skipped once owned."
-  [grid level-num backpack-owned?]
-  (if (or backpack-owned?
-          (php/< level-num 2)
-          (php/!== 0 (mod (rand-int 5) 5)))
-    []
-    (let [[bx by] (random-spawn grid)]
-      [{:x bx :y by}])))
+  "Stacking backpack (#68 part 3): L2+ only, ~1 in 5 qualifying
+   levels. Skipped once the player is at `max-backpacks`. `pack`
+   accepts the legacy boolean (true = level 1) or the new integer
+   level for back-compat with old callers."
+  [grid level-num pack]
+  (let [lvl (cond
+              (boolean? pack)   (if pack 1 0)
+              (php/is_int pack) pack
+              :else             0)]
+    (if (or (php/>= lvl max-backpacks)
+            (php/< level-num 2)
+            (php/!== 0 (mod (rand-int 5) 5)))
+      []
+      (let [[bx by] (random-spawn grid)]
+        [{:x bx :y by}]))))
 
 (defn- specs-total-hp
   "Sum `count * lives` across a mixed-spec vector. Used to size the
@@ -406,11 +412,15 @@
    from the previous level. Walls, enemies, doors, player spawn, and
    pickups are randomised by default; a level entry can opt into a
    hand-authored `:layout` for boss arenas. Enemies stamp `:type` so
-   render reads per-enemy visuals from the catalog."
-  ([level-num lives] (build-world level-num lives false :normal #{:pistol}))
-  ([n l pack?] (build-world n l pack? :normal #{:pistol}))
-  ([n l pack? diff] (build-world n l pack? diff #{:pistol}))
-  ([lv life pack? diff owned]
+   render reads per-enemy visuals from the catalog.
+
+   `pack-level` (the 3rd positional) is the player's current backpack
+   stack count (0..max-backpacks). Accepts a legacy boolean for
+   back-compat: true coerces to 1, false to 0."
+  ([level-num lives] (build-world level-num lives 0 :normal #{:pistol}))
+  ([n l pack] (build-world n l pack :normal #{:pistol}))
+  ([n l pack diff] (build-world n l pack diff #{:pistol}))
+  ([lv life pack diff owned]
    (let [diff'                (normalise diff)
          raw                  (config-for lv)
          ;; Resolve :enemy-lives from the catalog BEFORE scale-cfg —
@@ -441,7 +451,10 @@
             :level         lv
             :lives         life
             :difficulty    diff'
-            :backpack?     pack?
+            :backpack-level (cond
+                              (boolean? pack)   (if pack 1 0)
+                              (php/is_int pack) pack
+                              :else             0)
             :owned-weapons (or owned #{:pistol})
             :hearts        (maybe-spawn-heart grid life px py)
             :armors        (maybe-spawn-armor grid)
@@ -449,7 +462,7 @@
             :invulns       (maybe-spawn-invuln grid)
             :soulspheres   (maybe-spawn-soulsphere grid)
             :armor-shards  (spawn-armor-shards grid armor-shards-per-level)
-            :backpacks     (maybe-spawn-backpack grid lv pack?)
+            :backpacks     (maybe-spawn-backpack grid lv pack)
             :keycards      (maybe-spawn-keycard grid lock)
             :weapon-pickups (maybe-spawn-weapon-pickups grid lv (or owned #{:pistol}))
             :door-lock     lock

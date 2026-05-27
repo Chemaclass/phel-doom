@@ -3,8 +3,10 @@
   (:require phel-doom.core.state :refer [new-player new-world move-player turn-player
                                          rebuild-pgrid
                                          toggle-map toggle-pause toggle-debug with-enemies
-                                         advance-game-time gain-armor-shard gain-life
-                                         gain-soulsphere decay-soul-overcap max-armor max-lives
+                                         advance-game-time at-backpack-cap?
+                                         backpack-level gain-armor-shard gain-backpack
+                                         gain-life gain-soulsphere decay-soul-overcap
+                                         max-armor max-backpacks max-lives
                                          armor-shard-cap soul-overcap-decay-secs
                                          soulsphere-cap]))
 
@@ -174,3 +176,41 @@
   ;; At cap, the pickup is a silent no-op.
   (let [w (gain-armor-shard {:armor armor-shard-cap})]
     (is (= armor-shard-cap (:armor w)))))
+
+;; ---------------------------------------------------------------------
+;; Backpack capacity expansion (issue #68 part 3): backpack pickup
+;; stacks beyond the one-shot boolean into a counter capped at
+;; max-backpacks. Effective reserve cap = base * (1 + level).
+;; ---------------------------------------------------------------------
+
+(deftest test-max-backpacks-is-three
+  (is (= 3 max-backpacks)))
+
+(deftest test-backpack-level-defaults-to-zero
+  (is (= 0 (backpack-level {}))))
+
+(deftest test-backpack-level-translates-legacy-boolean
+  (is (= 1 (backpack-level {:backpack? true})))
+  (is (= 0 (backpack-level {:backpack? false}))))
+
+(deftest test-backpack-level-prefers-int-when-set
+  ;; Both fields set: int wins so a fresh world setting the new field
+  ;; overrides any leftover boolean.
+  (is (= 2 (backpack-level {:backpack? true :backpack-level 2}))))
+
+(deftest test-gain-backpack-increments-and-caps
+  (let [w0 {}
+        w1 (gain-backpack w0)
+        w2 (gain-backpack w1)
+        w3 (gain-backpack w2)
+        w4 (gain-backpack w3)]
+    (is (= 1 (backpack-level w1)))
+    (is (= 2 (backpack-level w2)))
+    (is (= 3 (backpack-level w3)))
+    ;; Past cap: stays at max-backpacks.
+    (is (= max-backpacks (backpack-level w4)))))
+
+(deftest test-at-backpack-cap-true-only-at-max
+  (is (= false (at-backpack-cap? {:backpack-level 0})))
+  (is (= false (at-backpack-cap? {:backpack-level 2})))
+  (is (= true  (at-backpack-cap? {:backpack-level 3}))))

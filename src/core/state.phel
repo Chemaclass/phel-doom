@@ -52,6 +52,15 @@
    this are silently ignored so the pickup never wastes."
   (php/+ max-armor armor-shard-overcap))
 
+(def max-backpacks
+  "Hard cap on stacked backpack pickups (issue #68 part 3). Each
+   stage adds one base reserve-cap's worth of ammo capacity:
+   level 0 = 1x base, level 1 = 2x, level 2 = 3x, level 3 = 4x.
+   Cap of 3 keeps a long run from approaching infinite ammo while
+   still giving the player a real reason to grab the second / third
+   backpack."
+  3)
+
 (def max-stamina
   "Hard cap on the sprint stamina pool. Fresh runs start at this value
    so the player has a full burst available the moment they spawn.
@@ -128,7 +137,11 @@
    :berserks        []
    :invuln-secs     0.0
    :invulns         []
-   :backpack?       false
+   ;; Backpack stacking (issue #68 part 3). `:backpack-level` 0..N
+   ;; replaces the old boolean. Effective reserve cap is `base * (1 +
+   ;; level)` so each pickup adds one base's worth. Capped at
+   ;; `max-backpacks` so reserve growth has a known ceiling.
+   :backpack-level  0
    :backpacks       []
    ;; Keycards. :held-keys is a set of collected colour kws
    ;; (e.g. #{:blue}). :keycards is the per-level pickup vector.
@@ -187,6 +200,33 @@
   "Add one life to the player, capped at max-lives."
   [world]
   (update world :lives (fn [l] (php/min max-lives (php/+ l 1)))))
+
+(defn backpack-level
+  "Current backpack stack count on `world`. Reads `:backpack-level`
+   directly when present; falls back to translating the legacy
+   `:backpack?` boolean (true = 1, false = 0) so older fixtures /
+   tests / carried-over fields keep working."
+  [world]
+  (let [lvl (:backpack-level world)]
+    (cond
+      (some? lvl)        lvl
+      (:backpack? world) 1
+      :else              0)))
+
+(defn gain-backpack
+  "Increment the player's backpack stack by one (capped at
+   `max-backpacks`). No-op once at the cap so a redundant pickup
+   doesn't waste; callers gate with `at-backpack-cap?`. Used by
+   `pickup-backpacks` in play.phel."
+  [world]
+  (let [lvl  (backpack-level world)
+        lvl' (php/min max-backpacks (php/+ lvl 1))]
+    (assoc world :backpack-level lvl')))
+
+(defn at-backpack-cap?
+  "True when stacking another backpack would be a no-op."
+  [world]
+  (php/>= (backpack-level world) max-backpacks))
 
 (defn gain-armor-shard
   "Stamp +1 armor on the player, capped at `armor-shard-cap` (2x

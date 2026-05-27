@@ -9,26 +9,24 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
-### Changed
-
-- Bump `phel-lang/phel-lang` to `dev-main` post phel-lang#2148 + #2181 (typed-binding native arith inside `let` / `loop` + return-type table for `php/cos` / `php/sin` / `php/sqrt` / etc.). `apply-translation` in `core/physics.phel` swaps `php/* php/- php/+` for native `* - +` plus a `^float a` hint on the angle binding; emitted PHP is identical, Phel source no longer shouts `php/` at the reader for plain arithmetic.
-
 ### Added
 
-- Automap fog-of-war (issue #67). Minimap cells stay hidden behind a uniform dim block until the player has seen them. `core/engine/mark-visible-cells` runs each frame, scanning a `visit-radius=8` bounding box around the player; cells with clear Bresenham line-of-sight flip on the world's `:visited` PHP array. `visited?` is the read predicate; `minimap-rows` in `io/render.phel` checks it before painting any cell. New `--full-map` / `-f` CLI flag (level-editor / debug aid) short-circuits the LOS scan and stamps every cell as seen.
-- Secret walls (issue #61). New `cell-secret` cell type (value `6`) for hand-authored hidden passages: identical to `cell-wall` for the raycaster + visually identical to surrounding walls until revealed. Walking into one with the action key (`F`) held swaps it to `cell-floor`, plays the door sfx, and bumps the per-level secret counter. World carries `:secrets-total` (counted at level build) + `:secrets-found`; F3 debug HUD shows `secrets X/Y`. Layout char `S` opts a cell in. L10 catalog gains 2 secret cells inside the central pillar's inner walls.
-- Chainsaw melee weapon (issue #59). New slot-4 weapon (`:chainsaw`) with `:no-ammo? true`, `:max-range 1.5`, `:damage-type :melee`, and `:movement-mul 0.5`. `can-fire?` / `apply-heat` / `reloading?` skip the magazine bookkeeping for any weapon flagged `:no-ammo?`. `resolve-shot` now reads per-weapon `:max-range` so the saw only hits adjacent enemies. Physics gains a `weapon-movement-factor` step: while the saw's `:fire-cooldown` is positive the player walks at half speed - DOOM-style commitment that pairs with the existing berserk multiplier for a `4x` damage melee burst on a single swing.
-- Berserk viewport tint + distinct pickup sfx (issue #57). The world already spawned berserk spheres and ran the `:berserk-secs` timer + 2x damage multiplier; this round finishes the look + feel: while the rage window is active the viewport gains a pulsing deep-red border (code 88/124, distinct from the i-frame red bar so the two cues can co-exist), and stepping on a sphere now plays a dedicated `:berserk` sfx (Hero.aiff on macOS) instead of the generic door tink. New `arm-berserk` helper in `core/combat.phel` extracts the pure timer-stamp logic so the buff window is unit-tested.
-- Per-enemy damage resistances (issue #60). Weapons now carry a `:damage-type` tag (currently `:ballistic` for the pistol / shotgun / chaingun roster) and the enemy catalog grows an optional `:resists` set. Cacodemon, baron, archvile, and mancubus resist `:fire` so future fire-flavoured weapons (BFG splash, plasma rifle) bounce off them while ballistic damage keeps cutting through. `enemy/shoot` gains an extra `damage-type` arg that combat's `resolve-shot` threads through from the active weapon spec - on a catalog match the per-hit damage is zeroed, so the target stays alive but registers as a hit (blood + flash) for feedback.
-- Nightmare difficulty modifier (issue #65): `--difficulty=nightmare` now also stamps `:nightmare?` on every spawned enemy. Killed nightmare enemies respawn on a 1-2s timer instead of the regular 3-6s and bypass the `:max-concurrent` cap entirely, restoring DOOM's signature swarm pressure on top of the existing HP / speed / count scalars.
-- 4-way damage-direction HUD cue (issue #66). `attacker-side` now returns `:front` / `:back` / `:left` / `:right` (was `:left` / `:right` only); render paints a red strip on the matching screen edge so a hit from behind is visually distinct from a flank. Front / back use a narrow ±30° wedge so 45° off-axis hits keep using the wider left / right edge bar.
+- Automap fog-of-war (#67). Minimap cells stay hidden until the player has line-of-sight on them. New `--full-map` / `-f` CLI flag reveals everything for level editors.
+- Secret walls (#61). Hand-authored hidden passages (`S` in `:layout`). Walk up, press `F` to reveal. World tracks `:secrets-total` / `:secrets-found`; F3 HUD shows progress. L10 ships with 2 secrets in the central pillar.
+- Chainsaw (#59). Slot-4 melee weapon: no ammo, 1.5-cell range, half-speed while swinging. Stacks with berserk for a 2-damage-per-tick burst.
+- Berserk viewport tint + dedicated pickup sfx (#57). Pulsing red border while the rage window is active (distinct from the i-frame red bar). Hero.aiff replaces the generic door tink on pickup.
+- Per-enemy damage resistances (#60). Weapons carry `:damage-type`; enemies carry optional `:resists`. Caco / baron / archvile / mancubus resist `:fire` so future plasma / BFG shots bounce off them.
+- Nightmare difficulty modifier (#65). `--difficulty=nightmare` stamps `:nightmare?` on every spawned enemy: 1-2s respawn instead of 3-6s, `:max-concurrent` cap bypassed.
+- 4-way damage-direction HUD cue (#66). `attacker-side` returns `:front` / `:back` / `:left` / `:right`; render paints the matching screen edge so a rear hit is visually distinct from a flank.
+
+### Changed
+
+- Bumped `phel-lang/phel-lang` to `dev-main` (post phel-lang#2148 + #2181). `apply-translation` in `core/physics.phel` swaps `php/* php/- php/+` for native arith; same compiled PHP, cleaner source.
 
 ### Performance
 
-- `cast-frame` mean ~60% faster across 80 / 120 / 180 widths (2000-iter bench on `default-grid` at player spawn):
-  - Per-column FOV `atan(offset)` + `cos(offset)` prebaked into width-keyed PHP-array tables and memoized; two trig calls per ray drop out of the hot loop.
-  - `cast-ray-hit` inlined into `cast-frame`'s DDA loop. Return type switched from Phel persistent vector to `php/array` so the hot path no longer allocates a vector per ray.
-- `cast-frame` short-circuits to a cached previous result on paused frames (single-slot atom keyed by player x / y / angle / width / scale). Pause + help-menu overlays now pay ~3 µs per frame for the cast instead of ~500 µs at 180×40, a ~99% drop on the paused render path. Active gameplay is unchanged.
+- `cast-frame` mean ~60% faster across 80 / 120 / 180 widths via prebaked FOV trig tables + inlined DDA + `php/array` returns (was: persistent vector per ray).
+- `cast-frame` short-circuits to a cached result on paused frames (~99% drop on paused-render path). Active gameplay unchanged.
 
 ## [0.5.0] - 2026-05-25
 

@@ -2,8 +2,8 @@
   (:require phel.cli :as cli)
   (:require phel.string :as str)
   (:require phel-doom.core.state    :refer [advance-game-time gain-life max-armor max-lives max-stamina
-                                            toggle-debug toggle-map toggle-pause toggle-sound])
-  (:require phel-doom.core.map      :refer [door? reveal-secret secret?])
+                                            rebuild-pgrid toggle-debug toggle-map toggle-pause toggle-sound])
+  (:require phel-doom.core.map      :refer [door? reveal-secret secret? switch? toggle-switch])
   (:require phel-doom.glue.controls :refer [refresh-from-keys key-states rising-edges
                                             initial-key-snapshot])
   (:require phel-doom.core.physics  :refer [apply-physics tick-heartbeat tick-flicker tick-blood-drops tick-door-face tick-stamina])
@@ -353,26 +353,53 @@
   (let [p (:player world)]
     (door? (:grid world) (php/intval (:x p)) (php/intval (:y p)))))
 
+(defn- cell-ahead
+  "Integer (x, y) of the cell the player is facing (one unit ahead
+   along `:angle`). Used by F-key handlers (secret reveal, switch
+   toggle) to pick the player's interact target."
+  [world]
+  (let [p (:player world)
+        a (:angle p)]
+    [(php/intval (php/+ (:x p) (php/cos a)))
+     (php/intval (php/+ (:y p) (php/sin a)))]))
+
 (defn- try-reveal-secret
   "Action-key handler: when F was just pressed AND the cell directly
-   in front of the player (rounded by the player's facing) is an
-   unrevealed secret wall, swap that cell to floor on the world's
-   grid and bump `:secrets-found`. Plays the door sfx so the reveal
-   is audibly distinct from a wall bump. No-op otherwise so other
-   action-bound features (switches, etc) can chain off the same
-   edge without conflict."
+   in front of the player is an unrevealed secret wall, swap that
+   cell to floor on the world's grid and bump `:secrets-found`.
+   Plays the door sfx so the reveal is audibly distinct from a wall
+   bump. No-op otherwise so other action-bound features (switches,
+   etc) chain off the same edge without conflict."
   [world action?]
   (if (not action?)
     world
-    (let [p  (:player world)
-          a  (:angle p)
-          cx (php/intval (php/+ (:x p) (php/cos a)))
-          cy (php/intval (php/+ (:y p) (php/sin a)))]
+    (let [[cx cy] (cell-ahead world)]
       (if (secret? (:grid world) cx cy)
         (do (when (:sound-on world) (play-sfx! :door))
             (-> world
                 (assoc :grid (reveal-secret (:grid world) cx cy))
+                (rebuild-pgrid)
                 (update :secrets-found (fn [n] (php/+ (or n 0) 1)))))
+        world))))
+
+(defn- try-toggle-switch
+  "Action-key handler: when F was just pressed AND the cell directly
+   in front of the player is a switch (either state), flip the
+   switch glyph + every target cell listed under the matching
+   `:switches` entry. Plays the door sfx so the interaction is
+   audible. Chained AFTER `try-reveal-secret` so the two handlers
+   never claim the same F-press."
+  [world action?]
+  (if (not action?)
+    world
+    (let [[cx cy] (cell-ahead world)]
+      (if (switch? (:grid world) cx cy)
+        (do (when (:sound-on world) (play-sfx! :door))
+            (-> world
+                (assoc :grid (toggle-switch (:grid world)
+                                            (or (:switches world) [])
+                                            cx cy))
+                (rebuild-pgrid)))
         world))))
 
 (defn tick-world
@@ -391,16 +418,16 @@
       ;; own deps and returns a new world. Phel `->` would be nicer
       ;; but the lint pass doesn't macro-expand it (arity-mismatch
       ;; false positives), so stick with sequential let bindings.
-      (let [w1  (refresh-from-keys w0 keys)
+      (let [w1   (refresh-from-keys w0 keys)
             ;; Weapon swap (1/2/3) routes through weapons/switch-weapon
             ;; — no-op when the player is mid-reload so the lockout
             ;; can't be skipped.
-            w1a (cond
-                  (:select-weapon1 edges) (switch-weapon w1 (get weapon-order 0))
-                  (:select-weapon2 edges) (switch-weapon w1 (get weapon-order 1))
-                  (:select-weapon3 edges) (switch-weapon w1 (get weapon-order 2))
-                  (:select-weapon4 edges) (switch-weapon w1 (get weapon-order 3))
-                  :else                   w1)
+            w1a  (cond
+                   (:select-weapon1 edges) (switch-weapon w1 (get weapon-order 0))
+                   (:select-weapon2 edges) (switch-weapon w1 (get weapon-order 1))
+                   (:select-weapon3 edges) (switch-weapon w1 (get weapon-order 2))
+                   (:select-weapon4 edges) (switch-weapon w1 (get weapon-order 3))
+                   :else                   w1)
             ;; tick-stamina runs BEFORE apply-physics so that, on the
             ;; frame the player's pool empties, the `:sprint-blocked?`
             ;; latch fires before physics samples it — apply-physics
@@ -408,36 +435,40 @@
             ;; 1.6x frame "for free". Drain reads the just-refreshed
             ;; :moves slots (refresh-from-keys above), so the player
             ;; pays for the intent the same frame they signal it.
-            w1b (try-reveal-secret w1a (:action edges))
+            w1b  (try-reveal-secret w1a (:action edges))
+            ;; Switch (issue #62): flip the cell glyph + every target
+            ;; on the world's :switches metadata. Chained AFTER
+            ;; reveal-secret so the F-press never double-fires.
+            w1b2 (try-toggle-switch w1b (:action edges))
             ;; Fog-of-war mark: stamp every cell within visit-radius +
             ;; LOS of the player onto :visited so the minimap reveals
             ;; the layout as the player explores. Skipped while paused
             ;; so a paused frame doesn't drift the visible footprint
             ;; from where the player actually is.
-            w1c (mark-visible-cells w1b)
-            w2  (apply-physics (tick-stamina w1c dt) dt)
-            w3  (pickup-hearts w2)
-            w4  (pickup-armors w3)
-            w4b (pickup-ammos  w4)
-            w4c (pickup-berserks w4b)
-            w4d (pickup-invulns  w4c)
-            w4e (pickup-backpacks w4d)
-            w4f (pickup-keycards w4e)
-            w4g (pickup-weapon-pickups w4f)
-            w5  (tick-enemies  w4g dt)
-            w5b (if (:reload edges)
-                  (do
-                    (when (and (:sound-on w5) (reloading? w5)) (play-sfx! :reload))
-                    (reload w5))
-                  w5)
-            w5c (tick-armory w5b)
-            w6  (tick-shooting w5c (:fire edges) (:fire-held edges))
-            w7  (damage-step   w6 dt)
-            w8  (tick-heartbeat w7 dt)
-            w9  (tick-flicker  w8 dt)
-            w10 (tick-scare    w9 dt)
-            w11 (tick-blood-drops w10 dt)
-            w12 (tick-door-face w11 dt)]
+            w1c  (mark-visible-cells w1b2)
+            w2   (apply-physics (tick-stamina w1c dt) dt)
+            w3   (pickup-hearts w2)
+            w4   (pickup-armors w3)
+            w4b  (pickup-ammos  w4)
+            w4c  (pickup-berserks w4b)
+            w4d  (pickup-invulns  w4c)
+            w4e  (pickup-backpacks w4d)
+            w4f  (pickup-keycards w4e)
+            w4g  (pickup-weapon-pickups w4f)
+            w5   (tick-enemies  w4g dt)
+            w5b  (if (:reload edges)
+                   (do
+                     (when (and (:sound-on w5) (reloading? w5)) (play-sfx! :reload))
+                     (reload w5))
+                   w5)
+            w5c  (tick-armory w5b)
+            w6   (tick-shooting w5c (:fire edges) (:fire-held edges))
+            w7   (damage-step   w6 dt)
+            w8   (tick-heartbeat w7 dt)
+            w9   (tick-flicker  w8 dt)
+            w10  (tick-scare    w9 dt)
+            w11  (tick-blood-drops w10 dt)
+            w12  (tick-door-face w11 dt)]
         (advance-game-time w12 dt)))))
 
 ;; =====================================================================

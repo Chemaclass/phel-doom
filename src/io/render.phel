@@ -487,6 +487,15 @@
 (def minimap-wall  "\e[40;37;1m█\e[0m")
 (def minimap-floor "\e[40;90m·\e[0m")
 (def minimap-door  "\e[40;33;1mD\e[0m")
+(def minimap-switch-off
+  "Inactive switch (issue #62): cyan-on-black `T`. Reads as
+   'press F here' but distinct from the orange D door glyph."
+  "\e[40;36mT\e[0m")
+(def minimap-switch-on
+  "Activated switch: bright yellow `T`. Two states + glyph swap so
+   the player can read which switches they've already flipped from
+   the minimap alone."
+  "\e[40;93;1mT\e[0m")
 (def minimap-unseen
   "Fog-of-war (issue #67) glyph: cells the player has not yet seen
    render as a uniform dim block so the layout doesn't leak. A flat
@@ -610,9 +619,10 @@
                                   :else (recur (php/+ dr 1)))))
         sample-cell         (fn [r0 c0]
                               ;; Priority: wall (1) > any door (2/3/4/5) >
-                              ;; floor (0). Door variants flow through so
-                              ;; minimap-rows can paint blue/red/boss
-                              ;; markers distinct from the orange D.
+                              ;; switch (7 / 8) > floor (0). Door + switch
+                              ;; variants flow through so minimap-rows can
+                              ;; paint blue/red/boss + switch-on/off
+                              ;; markers distinct from each other.
                               (loop [dr 0 found 0]
                                 (if (php/>= dr step)
                                   found
@@ -626,14 +636,18 @@
                                                      (or (php/=== cell 2)
                                                          (php/=== cell 3)
                                                          (php/=== cell 4)
-                                                         (php/=== cell 5)) (recur (php/+ dc 1) cell)
+                                                         (php/=== cell 5)
+                                                         (php/=== cell 7)
+                                                         (php/=== cell 8)) (recur (php/+ dc 1) cell)
                                                      :else            (recur (php/+ dc 1) acc)))))]
                                     (cond
                                       (php/=== v 1) 1
                                       (or (php/=== v 2)
                                           (php/=== v 3)
                                           (php/=== v 4)
-                                          (php/=== v 5)) (recur (php/+ dr 1) v)
+                                          (php/=== v 5)
+                                          (php/=== v 7)
+                                          (php/=== v 8)) (recur (php/+ dr 1) v)
                                       :else         (recur (php/+ dr 1) found))))))]
     (loop [row 0]
       (when (php/< row out-h)
@@ -653,6 +667,8 @@
                             (php/=== 3 cell)                              door-blue-marker
                             (php/=== 4 cell)                              door-red-marker
                             (php/=== 5 cell)                              boss-door-marker
+                            (php/=== 7 cell)                              minimap-switch-off
+                            (php/=== 8 cell)                              minimap-switch-on
                             (buf-get emap (php/+ (php/* row out-w) col))  enemy-marker
                             (buf-get hmap (php/+ (php/* row out-w) col))  heart-marker
                             (buf-get amap (php/+ (php/* row out-w) col))  ammo-marker

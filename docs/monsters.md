@@ -97,8 +97,6 @@ Player can break contact by ducking around a corner / behind a door while an awa
 3. Hunter walks to the frozen `:lkp`. Player keeps running.
 4. Hunter arrives at `:lkp`. Still no LOS → `:dormant`. Player got away.
 
-Future improvements left as `next-state` clause extensions (no call-site churn): `:pain` (hit stagger), `:attacking` (ranged windup), `:wander` (random patrol while dormant).
-
 ## Respawn cooldown + max-concurrent cap
 
 Killed enemies stay in the vector with `:alive false` and `:respawn-after` set to a random 3-6s.

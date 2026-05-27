@@ -34,31 +34,30 @@ One doc per subsystem. Each points to its source files + functions.
 ## Quick orientation
 
 ```
-src/main.phel                          ; CLI entrypoint
-src/commands/play.phel                 ; tick-world + run-levels lifecycle
-src/core/                      ; pure logic, no IO
+src/main.phel                ; CLI entrypoint (phel.cli)
+src/commands/play.phel       ; tick-world + run-levels lifecycle
+src/core/                    ; pure logic, no IO
   state.phel       world data model
-  map.phel         grid + random arena gen
+  map.phel         grid + procgen + cell semantics
   engine.phel      raycaster (cast-frame, cast-ray)
-  physics.phel     player movement + counter decay
-  combat.phel      hitscan + damage + heat/jam + knockback + berserk/invuln timers
-  enemy.phel       chase AI + shoot resolution + respawn
-  level.phel       10-level catalog + build-world (random or hand-authored)
+  physics.phel     player movement + counter decay + stamina
+  combat.phel      hitscan + damage + heat/jam + knockback + berserk/invuln
+  enemy.phel       spawn + chase step + shoot resolution + respawn
+  enemy_ai.phel    AI state machine (dormant/wander/aware/hunting/pain/attacking)
   enemies.phel     enemy-types catalog (visuals + default HP per kw)
-  weapons.phel     3-weapon catalogue + per-weapon ammo state + switch
+  level.phel       10-level catalog + build-world (procgen or hand-authored)
+  weapons.phel     weapon catalog + per-weapon ammo state + switch
+  perf.phel        big-screen perf-mode predicates
   difficulty.phel  easy/normal/hard/nightmare multipliers
-src/io/                        ; side effects only
+src/glue/                    ; wires core + io, stays pure
+  controls.phel    bytes -> :moves counters + rising edges
+src/io/                      ; side effects only
   input.phel       stty raw mode + kitty protocol opt-in
   render.phel      frame->string + paint-* overlays + ANSI
   sound.phel       afplay/paplay/aplay shell-out
   scores.phel      $HOME/.phel-doom-scores.json
   wad.phel         WAD lump-directory parser
-src/glue/                      ; wires core + io
-  controls.phel    bytes -> :moves counters + rising-edges
-tests/                                 ; mirrors src/
+tests/                       ; mirrors src/
 ```
 
-Hot-loop boundary: anything under `core/` is pure data-in / data-out
-and runs the same way in tests as in production. `io/` is where
-side effects live; mock-free testability ends there. `glue/` reads
-from both but stays effect-free (it's a pure byte → world transform).
+Hot-loop boundary: `core/` is pure data-in / data-out, same in tests as prod. `io/` is where side effects live. `glue/` reads both but stays effect-free (pure byte → world transform).

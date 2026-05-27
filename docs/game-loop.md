@@ -65,38 +65,52 @@ Four lifecycle layers:
 ## tick-world
 
 ```phel
-(defn tick-world
-  {:export true}
-  [world keys ^float dt edges]
-  (let [w0  (handle-toggles world edges)]
+(defn tick-world [world keys ^float dt edges]
+  (let [w0 (handle-toggles world edges)]
     (if (:paused w0)
       w0
-      (let [w1  (refresh-from-keys w0 keys)
-            w2  (apply-physics w1 dt)
-            w3  (pickup-hearts w2)
-            w4  (pickup-armors w3)
-            w4b (pickup-ammos  w4)
-            w5  (tick-enemies  w4b dt)
-            w5b (if (:reload edges) (reload w5) w5)
-            w6  (tick-shooting w5b (:fire edges))
-            w7  (damage-step   w6 dt)
-            ;; horror layer ...
-            w8  (tick-heartbeat w7 dt)]
-        (advance-game-time w8 dt)))))
+      ;; Linear pipeline. Each step takes the previous world + own deps.
+      ;; Real code uses sequential `let` bindings, not `->` (Phel lint
+      ;; doesn't macro-expand `->`, false arity errors).
+      (-> (refresh-from-keys w0 keys)
+          (switch-weapon-if-edge edges)
+          (try-reveal-secret  (:action edges))
+          (try-toggle-switch  (:action edges))
+          (mark-visible-cells)
+          (tick-stamina dt) (apply-physics dt)
+          (pickup-hearts) (pickup-armors) (pickup-armor-shards) (pickup-ammos)
+          (pickup-berserks) (pickup-invulns) (pickup-soulspheres)
+          (pickup-backpacks) (pickup-keycards) (pickup-weapon-pickups)
+          (tick-enemies dt)
+          (maybe-reload edges)
+          (tick-armory)
+          (tick-shooting (:fire edges) (:fire-held edges))
+          (damage-step dt)
+          (tick-heartbeat dt) (tick-flicker dt) (tick-scare dt)
+          (tick-blood-drops dt) (tick-door-face dt)
+          (decay-soul-overcap dt)
+          (advance-game-time dt)))))
 ```
 
-| Step | What it does | Module |
+| Step group | What | Module |
 |---|---|---|
-| `handle-toggles` | Rising-edge toggles (pause / map / sound / debug / about-face) | `commands/play` |
-| `refresh-from-keys` | Walk input bytes, refresh `:moves` counters | `glue/controls` |
-| `apply-physics` | Rotate then translate then decay counters | `core/physics` |
-| `pickup-hearts` / `pickup-armors` / `pickup-ammos` | Standing on a pickup gains a life / armor stack / `+10` reserve rounds | `commands/play` |
-| `tick-enemies` | Step alive enemies toward player; tick respawn + hit-flash timers | `core/enemy` |
-| `reload` | If R edge: draw from `:ammo-reserve` into `:mag`, arm reload cooldown + animation | `core/combat` |
-| `tick-shooting` | If fire edge: resolve hitscan (kill / wound / miss). Empty mag arms `:empty-click-secs` for the dry-fire CLICK prompt | `core/combat` |
-| `damage-step` | Decay timers; apply contact damage if i-frames are 0 | `core/combat` |
+| `handle-toggles` | Rising-edge: pause / map / sound / debug / about-face | `commands/play` |
+| `refresh-from-keys` | Refresh `:moves` counters from input bytes | `glue/controls` |
+| `switch-weapon` | 1/2/3/4 keys swap active weapon (no-op while reloading) | `core/weapons` |
+| `try-reveal-secret` / `try-toggle-switch` | `F` adjacent: unhide secret wall OR flip switch + linked cells | `commands/play` |
+| `mark-visible-cells` | Stamp visit + LOS cells onto `:visited` (fog-of-war) | `commands/play` |
+| `tick-stamina` + `apply-physics` | Drain sprint pool, then rotate + translate + decay counters | `core/physics` |
+| `pickup-*` | Hearts, armor + shards, ammo, berserk, invuln, soulsphere, backpack, keycards, weapon pickups | `commands/play` |
+| `tick-enemies` | Step alive enemies; tick respawn + AI + hit-flash | `core/enemy`, `enemy_ai` |
+| `reload` | R edge: drain `:ammo-reserve` into `:mag`, arm cooldown + anim | `core/combat` |
+| `tick-armory` | `--armory` flag: refill reserves to `armory-reserve` per frame | `core/combat` |
+| `tick-shooting` | Fire edge: resolve hitscan; empty mag arms CLICK prompt | `core/combat` |
+| `damage-step` | Decay timers; apply contact damage if `:iframes` is 0 | `core/combat` |
+| `tick-heartbeat` … `tick-door-face` | Horror layer: pulse, light flicker, jump-scare, ceiling drips, door eye | `commands/play` |
+| `decay-soul-overcap` | Drop one life per 5s while `:lives > max-lives` (soulsphere) | `core/state` |
+| `advance-game-time` | Add `dt` to pause-aware `:game-time` (drives render pulses) | `core/state` |
 
-`tick-world` calls no IO. Data in, data out. Lets the test suite drive entire frame sequences without touching the terminal.
+`tick-world` calls no IO. Data in, data out. Tests drive entire frame sequences without touching the terminal.
 
 ## Frame timing + adaptive FPS
 

@@ -2,13 +2,13 @@
 
 [![phel-doom gameplay (YouTube)](https://img.youtube.com/vi/0s-sXxpcoIA/maxresdefault.jpg)](https://www.youtube.com/watch?v=0s-sXxpcoIA)
 
-DOOM-lite raycaster in your terminal. Pure [Phel](https://phel-lang.org/) (Lisp on PHP). 256-color ANSI, procedural levels, FPS combat, ~5ms frame.
+DOOM-lite raycaster in your terminal. Pure [Phel](https://phel-lang.org/) (Lisp on PHP). 256-color ANSI, 10 procgen levels, FPS combat, ~5ms frame.
 
-Full feature list: [docs/features.md](docs/features.md).
+Feature list: [docs/features.md](docs/features.md).
 
 ## Quick start
 
-Requires PHP >= 8.4, Composer, 256-color terminal.
+Needs PHP >= 8.4, Composer, 256-color terminal.
 
 ```bash
 git clone git@github.com:Chemaclass/phel-doom.git
@@ -22,28 +22,24 @@ make play
 <details>
 <summary><strong>No PHP locally? Run it in Docker</strong></summary>
 
-The repo ships a `Dockerfile` bundling PHP 8.4 CLI + Composer + the project deps. No host install required - `docker` is the only prerequisite.
+The repo ships a `Dockerfile` (PHP 8.4 CLI + Composer + deps). `docker` is the only prerequisite.
 
 ```bash
-make docker-build      # builds the image (~195MB)
-make docker-play       # launches the game with raw TTY pass-through
-make docker-test       # runs the phel test suite headless
-make docker-shell      # drops you into a bash shell inside the image
-make docker-clean      # removes the local image
+make docker-build      # build image (~195MB)
+make docker-play       # launch game with raw TTY
+make docker-test       # run test suite headless
+make docker-shell      # bash inside the image
+make docker-clean      # remove local image
 ```
 
-Behind the scenes each target is a one-line `docker run --rm` wrapper. Use `DOCKER_IMG=...` to point at a custom tag.
+Each target is a one-line `docker run --rm` wrapper. Override tag with `DOCKER_IMG=...`. Host-PHP targets stay the inner-loop default; Docker adds ~1s startup per command. Rebuild after `composer.json` edits.
 
-The host-PHP targets (`make play`, `make test`, …) remain the inner-loop default - Docker per-command adds ~1s of container startup overhead, which adds up across a fast TDD cycle. Use Docker when you don't have PHP / Composer locally OR when you want a reproducible build env.
-
-For custom invocations (e.g. dev flags), bypass the wrappers:
+Custom invocations:
 
 ```bash
 docker run --rm -it phel-doom run phel-doom.main play --god --level=10
-docker run --rm -it -v "$PWD:/app" phel-doom    # live-mount source for edits
+docker run --rm -it -v "$PWD:/app" phel-doom    # live-mount for edits
 ```
-
-Rebuild after editing `composer.json` so the deps layer refreshes.
 
 </details>
 
@@ -61,7 +57,7 @@ Rebuild after editing `composer.json` so the deps layer refreshes.
 | `1` / `2` / `3` | Switch weapon (pistol / shotgun / chaingun) |
 | `m` / `n`      | Toggle minimap / sound       |
 | `p`            | Pause                        |
-| `h` / `ESC`    | Info menu (stats, weapons table, controls) - also pauses |
+| `h` / `ESC`    | Info menu (stats + weapons + controls; also pauses) |
 | `F3`           | Debug overlay (fps, pos, perf) |
 | `q`            | Quit                         |
 
@@ -69,43 +65,37 @@ Walk into a door to advance. Walk over pickups:
 
 - **♥ heart** - `+1` life
 - **◆ armor** - absorbs one hit (cap 5)
-- **ammo box** - `+N` to a weapon's reserve. Kill-loot tags a random non-pistol weapon you own (pistol always has a refill path via floor boxes)
+- **armor shard** - `+1` armor over cap, up to 10 (no decay)
+- **soulsphere** - `+1` life over cap; decays back to cap over time
+- **ammo box** - `+N` to a weapon's reserve. Kill-loot tags a random non-pistol weapon you own
 - **berserk** - 20s of `×2` damage
 - **invuln** - 10s damage immunity
-- **backpack** - doubles every weapon's reserve cap
-- **⚿ keycard** - unlocks matching exit on L4 (blue) / L5 (red)
+- **backpack** - stacks reserve cap (each pickup adds a tier)
+- **⚿ keycard** - unlocks matching exit on L4 (blue) / L5 (red); L10 boss-locked
 
-Compass top-centre tints one cardinal letter (E/S/W/N) toward your next target - **orange** = exit door, **blue / red** = keycard you still need. Built so you can play in 3D without checking the 2D map.
+Compass top-centre tints one cardinal letter (E/S/W/N) toward your next target - **orange** = exit door, **blue / red** = keycard you need. Play in 3D without checking the 2D map.
 
 Weapons (DPS-balanced niches, find on map):
 
-| Weapon | Dmg | Cd | Mag | DPS | Tier |
-|---|---|---|---|---|---|
-| pistol | 1 | 0.12s | 10 | 8 | L1 start (auto-fire) |
-| shotgun | 3 | 0.6s | 4 | 5 | L2 pickup (single-action) |
-| chaingun | 1 | 0.05s | 30 | 20 | L3 pickup (auto-fire) |
+| Slot | Weapon | Dmg | Cd | Mag | DPS | Tier |
+|---|---|---|---|---|---|---|
+| 1 | pistol | 1 | 0.12s | 10 | 8 | L1 start (auto-fire, overheats) |
+| 2 | shotgun | 3 | 0.6s | 4 | 5 | L2 pickup (single-action) |
+| 3 | chaingun | 1 | 0.05s | 30 | 20 | L3 pickup (auto-fire) |
+| 4 | chainsaw | 1 | 0.10s | ∞ | 10 | melee (1.5 cell range, slows you to half speed) |
 
-Hold space to spray with the pistol/chaingun. Shotgun needs a fresh pull per shell.
+Hold space to spray with pistol/chaingun/chainsaw. Shotgun needs a fresh pull per shell.
 
 CLI:
 - `--difficulty=easy|normal|hard|nightmare` (`-d`) - scales enemy speed, HP, count
+- `--level=N` (`-l`) - start at level N (clamped)
+- `--god` (`-g`), `--armory` (`-a`), `--full-map` (`-f`) - dev flags
 
-Terminal quirks (kitty keyboard, tmux): see [docs/input.md](docs/input.md).
+Terminal quirks (kitty keyboard, tmux): [docs/input.md](docs/input.md).
 
 ## Docs
 
-Per-subsystem write-ups in [docs/](docs/README.md):
-
-- [features](docs/features.md) - what the game does
-- [architecture](docs/architecture.md) - module layout + dependency rules
-- [game-loop](docs/game-loop.md) - per-frame state transition
-- [raycaster](docs/raycaster.md) + [rendering](docs/rendering.md) - pixels on screen
-- [monsters](docs/monsters.md) + [combat](docs/combat.md) - AI, damage, knockback
-- [level-system](docs/level-system.md) + [map](docs/map.md) - progression + procgen
-- [input](docs/input.md) + [audio](docs/audio.md) + [scores](docs/scores.md)
-- [wad-parser](docs/wad-parser.md) - DOOM .wad reader
-- [performance](docs/performance.md) - hot-loop optimisations
-- [contributing](docs/contributing.md) - dev workflow + Phel quirks
+[docs/](docs/README.md) - per-subsystem write-ups.
 
 ## License
 

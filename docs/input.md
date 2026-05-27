@@ -128,46 +128,40 @@ Dedicated key was chosen over double-tap S so a brake-walk mid-combat never acci
 One-shot actions (toggles, modals, weapon switch, reload) need rising edges, not auto-repeat:
 
 ```phel
-(def initial-key-snapshot 
-  {:m false :sp false :p false :n false :e false :f3 false :r false :h false :esc false :k1 false :k2 false :k3 false})
+(def initial-key-snapshot
+  {:m false :sp false :p false :n false :e false :f false :f3 false :r false
+   :h false :esc false :k1 false :k2 false :k3 false :k4 false})
 
-(defn key-states [keys]
-  {:m   (str/contains? keys "m")    ; toggle minimap
-   :sp  (str/contains? keys " ")    ; fire
-   :p   (str/contains? keys "p")    ; toggle pause
-   :n   (str/contains? keys "n")    ; toggle sound
-   :e   (str/contains? keys "e")    ; about-face (180°)
-   :f3  (f3-pressed? keys)          ; toggle debug overlay
-   :r   (str/contains? keys "r")    ; reload
-   :h   (str/contains? keys "h")    ; toggle help modal
-   :esc (str/contains? keys "\e")   ; alias of h - same toggle
-   :k1  (str/contains? keys "1")    ; switch to pistol
-   :k2  (str/contains? keys "2")    ; switch to shotgun
-   :k3  (str/contains? keys "3")})  ; switch to chaingun
+;; key-states checks each tracked key via key-pressed? which handles both
+;; legacy bytes ("m", " ", ...) and kitty CSI-u press codes (\e[<code>u).
+;; Tracked: m sp p n e f f3 r h esc k1 k2 k3 k4.
 
 (defn rising-edges [now prev]
-  {:fire         (and (:sp now) (not (:sp prev)))
-   :toggle-map   (and (:m now)  (not (:m prev)))
-   :toggle-pause (and (:p now)  (not (:p prev)))
-   :toggle-sound (and (:n now)  (not (:n prev)))
-   :about-face   (and (:e now)  (not (:e prev)))
-   :debug        (and (:f3 now) (not (:f3 prev)))
-   :reload       (and (:r now)  (not (:r prev)))
-   ;; H + ESC aliased: either rising edge toggles the help panel.
-   :toggle-help  (and (or (:h now)  (:esc now))
-                      (not (or (:h prev) (:esc prev))))
-   :switch-1     (and (:k1 now) (not (:k1 prev)))
-   :switch-2     (and (:k2 now) (not (:k2 prev)))
-   :switch-3     (and (:k3 now) (not (:k3 prev)))})
+  {:fire           (and (:sp now) (not (:sp prev)))
+   :fire-held      (boolean (:sp now))                  ; auto-fire while held
+   :toggle-map     (and (:m now)  (not (:m prev)))
+   :toggle-pause   (and (:p now)  (not (:p prev)))
+   :toggle-sound   (and (:n now)  (not (:n prev)))
+   :toggle-debug   (and (:f3 now) (not (:f3 prev)))
+   :reload         (and (:r now)  (not (:r prev)))
+   :toggle-help    (and (or (:h now)  (:esc now))       ; H + ESC aliased
+                        (not (or (:h prev) (:esc prev))))
+   :about-face     (and (:e now)  (not (:e prev)))
+   :action         (and (:f now)  (not (:f prev)))      ; reveal-secret + switch
+   :select-weapon1 (and (:k1 now) (not (:k1 prev)))     ; pistol
+   :select-weapon2 (and (:k2 now) (not (:k2 prev)))     ; shotgun
+   :select-weapon3 (and (:k3 now) (not (:k3 prev)))     ; chaingun
+   :select-weapon4 (and (:k4 now) (not (:k4 prev)))})   ; chainsaw
 ```
 
 `game-loop` carries `prev-keys` across iterations; `rising-edges` runs each frame. `tick-world` consumes the edges map. Pure data.
 
 Consumed by:
-- `:fire` - `tick-shooting` (hitscan + ammo)
+- `:fire` / `:fire-held` - `tick-shooting` (per-shot edge + auto-fire spray)
 - `:reload` - `reload` (mag refill)
-- `:toggle-*` - `handle-toggles` (flip flags)
-- `:switch-*` / `:about-face` / `:debug` / `:toggle-help` - also `handle-toggles`
+- `:action` - `try-reveal-secret` + `try-toggle-switch`
+- `:select-weapon*` - `switch-weapon`
+- `:toggle-*` / `:about-face` - `handle-toggles`
 
 ## Why `glue/` not `io/`
 

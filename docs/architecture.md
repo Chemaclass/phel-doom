@@ -5,21 +5,22 @@ Pure `core/` (deterministic logic) → composition `glue/` (pure wiring) → eff
 ```
 src/
 ├── main.phel                        ; phel.cli wiring, CLI entrypoint
-├── commands/play.phel               ; outer orchestration (game-loop, run-levels)
+├── commands/play.phel               ; orchestration (game-loop, run-levels, tick-world)
 ├── core/                            ; pure, deterministic, no IO
 │   ├── state.phel                   ; world + player maps, gain-life, max-lives
 │   ├── map.phel                     ; grid generators, cell constants, wall? / door?
 │   ├── engine.phel                  ; raycaster (cast-ray, cast-frame)
-│   ├── physics.phel                 ; player rotation + translation + counter decay
+│   ├── physics.phel                 ; rotation + translation + counter decay + stamina
 │   ├── combat.phel                  ; fire-shot + damage-step + tunables
 │   ├── enemy.phel                   ; spawn-enemies, advance, shoot, respawn timer
 │   ├── enemy_ai.phel                ; AI state machine (dormant/wander/aware/hunting/pain/attacking)
-│   ├── level.phel                   ; per-level catalog + build-world factory
-│   ├── perf.phel                    ; big-screen perf-mode predicates
+│   ├── enemies.phel                 ; enemy-type catalog (visuals + default HP)
+│   ├── level.phel                   ; 10-level catalog + build-world factory
 │   ├── weapons.phel                 ; per-weapon stat catalog + switch/reload
-│   └── difficulty.phel              ; per-difficulty scaling (speed, HP, count)
-├── glue/                            ; composition, needs both halves
-│   └── controls.phel                ; key bytes -> world state mutations
+│   ├── perf.phel                    ; big-screen perf-mode predicates
+│   └── difficulty.phel              ; easy/normal/hard/nightmare multipliers
+├── glue/                            ; pure wiring, needs both halves
+│   └── controls.phel                ; key bytes -> :moves counters + rising edges
 └── io/                              ; effects, touch the OS
     ├── input.phel                   ; raw STDIN, alt screen buffer
     ├── render.phel                  ; ANSI escape composition + flush
@@ -56,23 +57,29 @@ Tests never need a fake terminal, audio device, or disk: all tests import from `
                       ▼                                 │
               ┌───────────────────────────────┐         │
               │ tick-world  (commands/play)   │─────────┘
-              │ pure orchestration:           │
+              │ pure orchestration. Per frame:│
               │   handle-toggles              │
               │   refresh-from-keys (glue)    │
-              │   apply-physics    (core)     │
-              │   pickup-hearts    (core)     │
-              │   tick-enemies     (core)     │
-              │   tick-shooting    (core)     │
-              │   damage-step      (core)     │
+              │   weapon swap / reveal-secret │
+              │   toggle-switch / mark-vis    │
+              │   tick-stamina + apply-physics│
+              │   pickup-* (hearts, armor,    │
+              │     shards, ammo, berserk,    │
+              │     invuln, soul, backpack,   │
+              │     keycards, weapon-pickups) │
+              │   tick-enemies / reload       │
+              │   tick-armory / tick-shooting │
+              │   damage-step + horror layer  │
+              │   decay-soul-overcap          │
               └───────────────────────────────┘
 ```
 
-IO shell does two things: drain input from stdin, flush a frame to stdout. Everything between is one pure call, `tick-world`, composed of pure helpers.
+See [game-loop.md](game-loop.md) for the full step table.
+
+IO shell does two things: drain input from stdin, flush a frame to stdout. Everything between is one pure `tick-world` call.
 
 ## Why this layout
 
-- Test cost visible from folder name. `core/` = unit test against a Phel map. `io/` would need a fake (none exist; IO shell is integration-tested by running the binary).
-- Dependency arrows point one direction. Easy to grep, easy to reason about.
-- Refactors stay local. Changing wall shading touches only `core/engine.phel` + `io/render.phel`.
-
-See [game-loop.md](game-loop.md) for the per-frame walkthrough.
+- Test cost visible from folder name. `core/` = unit test against a Phel map. `io/` integration-tested by running the binary.
+- Dependency arrows point one way. Easy to grep + reason about.
+- Refactors stay local. Wall-shade tweak touches only `core/engine.phel` + `io/render.phel`.

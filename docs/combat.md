@@ -11,7 +11,7 @@ Hitscan + damage timing + i-frames. `src/core/combat.phel`. Only side effect is 
 (def touch-damage-dist 0.7)   ; enemy this close = take-damage
 (def iframe-seconds    1.0)   ; post-hit invulnerability window
 (def fire-anim-seconds 0.09)  ; muzzle flash visibility
-(def fx-ttl-seconds    0.45)  ; blood splatter lifetime
+(def fx-ttl-seconds    0.7)   ; blood splatter lifetime
 (def flash-seconds     0.05)  ; 1-frame white impact jolt
 (def heat-per-shot     0.30)  ; pistol-only - see `:overheats?` flag
 (def jam-seconds       1.4)   ; pistol-only lockout when heat ≥ 1

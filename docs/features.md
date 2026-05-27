@@ -20,7 +20,7 @@ See [rendering.md](rendering.md), [raycaster.md](raycaster.md), [performance.md]
 
 - 10 levels: 5 procedurally-generated escalating rooms (L1-L5), 4 mixed-monster rooms (L6-L9), and L10 a hand-authored boss arena (cyberdemon HP 50 + 2 imp minions, cap 1 alive)
 - Per-level wall + sky + floor palette
-- Pickups: hearts (cap 5), armor (cap 5, absorbs one hit each), ammo boxes (per-weapon `:ammo-per-box`), berserk (20s ×2 dmg), invuln (10s immune), backpack (1-shot, doubles every weapon's reserve cap)
+- Pickups: hearts (cap 5), armor (cap 5, absorbs one hit each), armor shards (+1 over-cap up to 10, no decay), soulsphere (+1 life over-cap, decays back to cap), ammo boxes (per-weapon `:ammo-per-box`), berserk (20s ×2 dmg), invuln (10s immune), stacking backpack (L2+, each pickup adds one tier of reserve cap, up to `max-backpacks`)
 - Keycards + locked exits on L4 (blue) / L5 (red). Intro splash adds a `FIND THE <COLOUR> KEY` subtitle on locked levels; compass top-centre tints the E/S/W/N letter pointing at the un-picked card in the lock colour; bumping the door without the matching key pulses `⚿ NEED <COLOUR> KEY ⚿` for 1.5s. L10 boss door unlocks via synthetic `:boss` keycard granted on cyberdemon kill (no physical pickup); intro splash: `KILL THE BOSS TO ESCAPE`, door pulse: `☠ KILL THE BOSS ☠`
 - Walk-into-door auto-advance; pulsing minimap door + bright 3D door glyph
 - Cross-level carry: lives, kills, time, owned-weapons, **active weapon**, **per-weapon mag/reserve**, backpack, minimap + sound toggles. Retry/restart resets to fresh defaults.
@@ -36,15 +36,16 @@ See [level-system.md](level-system.md), [map.md](map.md).
 - Pain chance per type (`cyber 0.05`, `imp 0.35`, etc.) - heavier bosses ignore most hits; fragile monsters flinch on nearly every shot
 - Cyberdemon chase speed scaled to 0.55× for playability
 - Hitscan combat: distance-attenuated kill/wound sfx, blood splatter, muzzle flash, 5-stage death anim, 3-6s respawn cooldown
-- 3-slot loadout (1/2/3), DPS-balanced niches. Pistol on every run; shotgun + chaingun must be found.
+- 4-slot loadout (1/2/3/4), DPS-balanced niches. Pistol on every run; rest must be found.
 
-  | Slot | Dmg | Cd | Mag | DPS | Tier |
-  |---|---|---|---|---|---|
-  | pistol | 1 | 0.12s | 10 | 8 | L1 (auto-fire) |
-  | shotgun | 3 | 0.6s | 4 | 5 | L2 (single-action) |
-  | chaingun | 1 | 0.05s | 30 | 20 | L3 (auto-fire) |
+  | Slot | Weapon | Dmg | Cd | Mag | DPS | Tier |
+  |---|---|---|---|---|---|---|
+  | 1 | pistol | 1 | 0.12s | 10 | 8 | L1 (auto-fire, overheats) |
+  | 2 | shotgun | 3 | 0.6s | 4 | 5 | L2 (single-action) |
+  | 3 | chaingun | 1 | 0.05s | 30 | 20 | L3 (auto-fire) |
+  | 4 | chainsaw | 1 (`:melee`) | 0.10s | ∞ | 10 | melee 1.5-cell range, halves movement while ticking |
 
-  Pistol + chaingun spray while space is held; shotgun needs a fresh pull per shell. Pistol is the only weapon that overheats / jams. Distinct silhouette + palette per slot. Per-weapon mag/reserve persists across switches. First-time pickup auto-switches. Drop/refill/raise reload anim; sprite recoils 2 rows per shot.
+  Pistol + chaingun + chainsaw spray while space is held; shotgun needs a fresh pull per shell. Pistol is the only weapon that overheats / jams. Distinct silhouette + palette per slot. Per-weapon mag/reserve persists across switches. First-time pickup auto-switches. Drop/refill/raise reload anim; sprite recoils 2 rows per shot.
 - Kill-loot ammo skips the pistol when other weapons are owned - biases toward the scarce shotgun + chaingun the player had to hunt for. Level-spawn boxes still refill the active weapon.
 - 5 lives, 1s i-frame, 4-way directional red hurt-side band (left / right edge bar OR top / bottom row depending on attacker bearing), knockback shove on contact damage.
 
@@ -105,6 +106,10 @@ See [scores.md](scores.md).
 ## CLI
 
 - `--difficulty=easy|normal|hard|nightmare` (`-d`) - scales enemy chase speed, per-enemy HP, per-level enemy count. HUD tag suppressed for `normal`.
+- `--god` (`-g`) - contact damage suppressed; GOD badge in HUD. Dev.
+- `--armory` (`-a`) - own every weapon + infinite reserves (per-frame refill). Pairs with `--god` for mechanic testing.
+- `--full-map` (`-f`) - reveal whole minimap (skip fog-of-war). Level-editor + screenshots.
+- `--level=N` (`-l`) - start at level N (clamped). Pairs with `--god` to drop into boss rooms.
 
 ## Misc
 

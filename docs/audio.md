@@ -31,9 +31,10 @@ Combat and other modules raise events by name, not by file:
 (play-sfx! :click)      ; trigger pulled on empty mag (dry-fire deny)
 (play-sfx! :door)       ; level transition or heart/armor/ammo pickup
 (play-sfx! :heartbeat)  ; low-life pulse
+(play-sfx! :berserk)    ; rage sphere picked up
 ```
 
-`macos-sounds` and Linux equivalents map each tag to a file. Current mapping aims for distinct semantic families: `Pop` for shoot + kill (consistent firing family), `Submarine` for wound (muted thunk so it doesn't compete with the floating HP digit), `Sosumi` for player-hurt, `Basso` for empty-click deny, `Funk` for reload, `Tink` for door / pickup, `Bottle` for heartbeat.
+`macos-sounds` and Linux equivalents map each tag to a file. Current mapping picks distinct semantic families: `Pop` for shoot + kill, `Submarine` for wound (muted, so it doesn't compete with the floating HP digit), `Sosumi` for player-hurt, `Basso` for empty-click deny, `Funk` for reload, `Tink` for door / pickup, `Bottle` for heartbeat, `Hero` for berserk.
 
 ## Async firing
 
@@ -53,6 +54,14 @@ afplay /System/Library/Sounds/Pop.aiff &
 
 N key toggles `:sound-on`. Mute is instant; in-flight sfx finish on their own.
 
+## Test gate
+
+`composer test` exports `PHEL_DOOM_SILENT=1`; `play-sfx!` short-circuits when the env var is `"1"`. `tests/io/sound-test.phel` asserts the gate is on during the suite so it can't silently regress.
+
+## Distance attenuation
+
+`distance-volume` scales `:wound` / `:kill` sfx by distance to the hit so crowded fights don't drown the channel.
+
 ## Why under `io/`
 
-Calls `exec`, talks to OS. Pure side effect. No tests; would need a fake `php/exec`. Currently integration-tested (run the game, hear sounds).
+Calls `exec`, talks to OS. Pure side effect. Integration-tested by running the game.

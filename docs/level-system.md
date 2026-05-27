@@ -19,13 +19,17 @@
 
 ## Catalog
 
+L1-L5 are single-type procgen rooms. L6-L9 are mixed-monster procgen rooms. L10 is a hand-authored boss arena with secret walls + switches (see source in `src/core/level.phel`).
+
 ```phel
 (def levels
   [{:size [22 16] :walls 12 :enemy :imp   :enemies 4 :chase 0.8 :name "imps"}
    {:size [28 20] :walls 22 :enemy :demon :enemies 6 :chase 1.0 :name "demons"}
    {:size [36 24] :walls 38 :enemy :caco  :enemies 8 :chase 1.3 :name "cacodemons"}
    {:size [44 28] :walls 55 :enemy :baron :enemies 5 :chase 1.6 :name "barons"      :door-lock :blue}
-   {:size [52 32] :walls 75 :enemy :cyber :enemies 7 :chase 2.0 :name "cyberdemons" :door-lock :red}])
+   {:size [52 32] :walls 75 :enemy :cyber :enemies 7 :chase 2.0 :name "cyberdemons" :door-lock :red}
+   ;; L6-L9: mixed specs. L10: :layout + :switches, :door-lock :boss.
+   ...])
 ```
 
 Required fields:
@@ -71,8 +75,12 @@ When `:enemies` is a vector, each spec spawns its own count + HP and the enemy c
 | `B` | blue-locked door |
 | `R` | red-locked door |
 | `X` | boss-locked door (synthetic keycard, no pickup) |
+| `S` | secret wall (reveals on adjacent `F`-press) |
+| `T` | switch (toggles linked cells listed in `:switches`) |
 
 `:layout` skips `random-grid`, `seed-doors`, and `lock-the-door` - the author placed everything explicitly. Enemy spawn (random / mixed-spec) still applies on top.
+
+Switch spec: `:switches [{:at [cx cy] :targets [[tx ty] ...]}]`. F adjacent to `:at` flips every `:targets` cell wall↔floor.
 
 ### Adding a new room
 
@@ -89,19 +97,20 @@ Level N config (1-indexed). Clamps out-of-range to nearest valid.
 
 ## `build-world`
 
-Signature: `(build-world level-num lives backpack? diff owned)`. Sequence per build:
+Signature: `(build-world level-num lives backpack-level diff owned)`. Per build:
 
 1. Grid: hand-authored (`map/parse-layout` of `:layout`) OR procedural (`random-grid` + `seed-doors` + `lock-the-door`).
 2. Player spawn: `:layout`'s `@` cell OR `random-spawn`. Random angle either way.
-3. Enemies: `spawn-enemies-mixed` from the normalised spec vector. Each enemy carries `:type` for per-enemy render visuals.
+3. Enemies: `spawn-enemies-mixed` from the normalised spec vector. Each enemy carries `:type` for per-sprite visuals.
 4. `maybe-spawn-heart` only if `lives < max-lives`.
-5. `maybe-spawn-armor` (50%); `maybe-spawn-berserk` (1/8); `maybe-spawn-invuln` (1/12); `maybe-spawn-backpack` (L2+, 1/5, skipped when already owned).
-6. `maybe-spawn-keycard` when `:door-lock` is set.
-7. `maybe-spawn-weapon-pickups`: shotgun on L2 / chaingun on L3, skipped when already owned.
-8. `spawn-ammo-boxes` count = `ceil(sum(count × lives) / 8)`, floor 2.
-9. Stamp `:enemy` (primary type), `:level-name`, `:difficulty`, 1.5s `:intro-secs`.
+5. `maybe-spawn-armor` (50%); `maybe-spawn-berserk` (1/8); `maybe-spawn-invuln` (1/12); `maybe-spawn-soulsphere` (1/10); `maybe-spawn-backpack` (L2+, 1/5, until `max-backpacks`).
+6. `spawn-armor-shards` seeds `armor-shards-per-level` (3) shards per level.
+7. `maybe-spawn-keycard` when `:door-lock` is set (skips `:boss`).
+8. `maybe-spawn-weapon-pickups`: shotgun on L2 / chaingun on L3, skipped when already owned.
+9. `spawn-ammo-boxes` count = `max(2, ceil(sum(count × lives) / 8))`.
+10. Stamp `:enemy` (primary type), `:level-name`, `:difficulty`, 1.5s `:intro-secs`.
 
-`run-levels` (in `commands/play.phel`) wraps the call and overlays cross-level carries on top of the fresh world: **active weapon + per-weapon mag/reserve state**, minimap + sound toggles, `:god?` flag.
+`run-levels` (in `commands/play.phel`) overlays cross-level carries on the fresh world: **active weapon + per-weapon mag/reserve state**, backpack level, minimap + sound toggles, `:god?` + `:armory?` flags.
 
 ## Why hearts only when lives < max-lives
 

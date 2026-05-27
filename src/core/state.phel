@@ -38,6 +38,20 @@
    ignored so the player can't farm an indestructible buffer."
   5)
 
+(def armor-shard-overcap
+  "Lives the armor-shard pickup (issue #68) is allowed to push the
+   player above `max-armor` for. Shards add +1 each up to
+   `(+ max-armor armor-shard-overcap)`; the over-cap portion does
+   NOT decay (DOOM-style helmet bonus), so the player banks shards
+   as a long-term buffer rather than a ticking buff."
+  5)
+
+(def armor-shard-cap
+  "Hard ceiling on armor after stacking shards: `max-armor +
+   armor-shard-overcap` = 10. Twice the regular cap. Shards beyond
+   this are silently ignored so the pickup never wastes."
+  (php/+ max-armor armor-shard-overcap))
+
 (def max-stamina
   "Hard cap on the sprint stamina pool. Fresh runs start at this value
    so the player has a full burst available the moment they spawn.
@@ -80,6 +94,11 @@
    ;; decay clock for the over-cap portion of `:lives`.
    :soulspheres        []
    :soul-decay-secs    0.0
+   ;; Armor shards (issue #68): common pickup that adds +1 armor
+   ;; over the normal `max-armor` cap, up to `armor-shard-cap`.
+   ;; No decay - shards are a permanent buffer (DOOM-style helmet
+   ;; bonus) so the player can stockpile them across rooms.
+   :armor-shards       []
    :show-map  false
    :paused    false
    :help?     false
@@ -168,6 +187,16 @@
   "Add one life to the player, capped at max-lives."
   [world]
   (update world :lives (fn [l] (php/min max-lives (php/+ l 1)))))
+
+(defn gain-armor-shard
+  "Stamp +1 armor on the player, capped at `armor-shard-cap` (2x
+   `max-armor`). No-op when already at cap so a wasted pickup is
+   silent rather than confusing. Used by `pickup-armor-shards` in
+   play.phel."
+  [world]
+  (let [armor (or (:armor world) 0)
+        next  (php/min armor-shard-cap (php/+ armor 1))]
+    (assoc world :armor next)))
 
 (defn gain-soulsphere
   "Boost lives toward `soulsphere-cap` (max-lives + over-cap bonus).

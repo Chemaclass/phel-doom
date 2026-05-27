@@ -203,6 +203,34 @@
       [{:x sx :y sy}])
     []))
 
+(defn- spawn-armor-shards
+  "Common armor shards (issue #68): seed `n` of them at random open
+   cells. Each adds +1 armor over the normal `max-armor` cap up to
+   `armor-shard-cap` (10). Skip duplicates so two shards can't share
+   a cell (silently merging into one pickup)."
+  [grid n]
+  (loop [acc [] attempts 0]
+    (cond
+      (php/>= (count acc) n)       acc
+      (php/> attempts (php/* n 6)) acc
+      :else
+      (let [[sx sy] (random-spawn grid)
+            dup?    (loop [xs acc]
+                      (cond
+                        (php/=== xs nil) false
+                        (let [s (first xs)]
+                          (and (php/=== (:x s) sx) (php/=== (:y s) sy))) true
+                        :else (recur (next xs))))]
+        (if dup?
+          (recur acc (php/+ attempts 1))
+          (recur (conj acc {:x sx :y sy}) (php/+ attempts 1)))))))
+
+(def armor-shards-per-level
+  "Tunable: how many shards seed per level. Three keeps the level
+   floor visibly seeded with the common pickup without overwhelming
+   the heart / armor / ammo balance."
+  3)
+
 (defn- maybe-spawn-backpack
   "One-shot backpack: L2+ only, ~1 in 5 qualifying levels (was 30%).
    Skipped once owned."
@@ -420,6 +448,7 @@
             :berserks      (maybe-spawn-berserk grid)
             :invulns       (maybe-spawn-invuln grid)
             :soulspheres   (maybe-spawn-soulsphere grid)
+            :armor-shards  (spawn-armor-shards grid armor-shards-per-level)
             :backpacks     (maybe-spawn-backpack grid lv pack?)
             :keycards      (maybe-spawn-keycard grid lock)
             :weapon-pickups (maybe-spawn-weapon-pickups grid lv (or owned #{:pistol}))

@@ -1,7 +1,8 @@
 (ns phel-doom.commands.play
   (:require phel.cli :as cli)
   (:require phel.string :as str)
-  (:require phel-doom.core.state    :refer [advance-game-time decay-soul-overcap gain-life gain-soulsphere
+  (:require phel-doom.core.state    :refer [advance-game-time decay-soul-overcap gain-armor-shard
+                                            gain-life gain-soulsphere
                                             max-armor max-lives max-stamina
                                             rebuild-pgrid toggle-debug toggle-map toggle-pause toggle-sound])
   (:require phel-doom.core.map      :refer [door? reveal-secret secret? switch? toggle-switch])
@@ -286,6 +287,28 @@
       (do (when (:sound-on world) (play-sfx! :berserk))
           (gain-soulsphere (assoc world :soulspheres kept))))))
 
+(defn- armor-shards-not-at [shards px py]
+  (apply vector
+         (filter (fn [s]
+                   (not (and (= (php/intval (:x s)) px)
+                             (= (php/intval (:y s)) py))))
+                 (or shards []))))
+
+(defn- pickup-armor-shards
+  "Step-on consumes an armor shard + adds +1 armor via
+   `gain-armor-shard` (capped at `armor-shard-cap` = 2x max-armor).
+   No decay - shards bank as a permanent buffer (DOOM helmet bonus
+   pattern). Common pickup so the door tink reads as routine
+   loot rather than a special-event sfx."
+  [world]
+  (let [kept (armor-shards-not-at (:armor-shards world)
+                                  (php/intval (:x (:player world)))
+                                  (php/intval (:y (:player world))))]
+    (if (= (count kept) (count (or (:armor-shards world) [])))
+      world
+      (do (when (:sound-on world) (play-sfx! :door))
+          (gain-armor-shard (assoc world :armor-shards kept))))))
+
 (defn- backpacks-not-at [bs px py]
   (apply vector
          (filter (fn [b]
@@ -469,7 +492,7 @@
             w1c  (mark-visible-cells w1b2)
             w2   (apply-physics (tick-stamina w1c dt) dt)
             w3   (pickup-hearts w2)
-            w4   (pickup-armors w3)
+            w4   (pickup-armor-shards (pickup-armors w3))
             w4b  (pickup-ammos  w4)
             w4c  (pickup-berserks w4b)
             w4d  (pickup-invulns  w4c)

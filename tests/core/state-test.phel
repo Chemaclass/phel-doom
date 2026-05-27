@@ -3,8 +3,9 @@
   (:require phel-doom.core.state :refer [new-player new-world move-player turn-player
                                          rebuild-pgrid
                                          toggle-map toggle-pause toggle-debug with-enemies
-                                         advance-game-time gain-life gain-soulsphere
-                                         decay-soul-overcap max-lives soul-overcap-decay-secs
+                                         advance-game-time gain-armor-shard gain-life
+                                         gain-soulsphere decay-soul-overcap max-armor max-lives
+                                         armor-shard-cap soul-overcap-decay-secs
                                          soulsphere-cap]))
 
 (def grid [[1 1 1] [1 0 1] [1 1 1]])
@@ -148,3 +149,28 @@
   (let [w (decay-soul-overcap {:lives (php/+ max-lives 1)
                                :soul-decay-secs (php/+ soul-overcap-decay-secs 1.0)} 0.0)]
     (is (= max-lives (:lives w)))))
+
+;; ---------------------------------------------------------------------
+;; Armor shards (issue #68 part 2): common +1 armor pickup over the
+;; normal max-armor cap, up to armor-shard-cap. No decay.
+;; ---------------------------------------------------------------------
+
+(deftest test-armor-shard-cap-is-twice-max-armor
+  (is (= (php/* 2 max-armor) armor-shard-cap)))
+
+(deftest test-gain-armor-shard-adds-one
+  (let [w (gain-armor-shard {:armor 0})]
+    (is (= 1 (:armor w))))
+  (let [w (gain-armor-shard {:armor 4})]
+    (is (= 5 (:armor w)))))
+
+(deftest test-gain-armor-shard-pushes-past-max-armor
+  ;; Shards keep stacking past max-armor (5) up to armor-shard-cap (10).
+  ;; Distinct from the regular armor pickup which caps at max-armor.
+  (let [w (gain-armor-shard {:armor max-armor})]
+    (is (= (php/+ max-armor 1) (:armor w)))))
+
+(deftest test-gain-armor-shard-clamped-at-shard-cap
+  ;; At cap, the pickup is a silent no-op.
+  (let [w (gain-armor-shard {:armor armor-shard-cap})]
+    (is (= armor-shard-cap (:armor w)))))

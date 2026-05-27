@@ -67,6 +67,11 @@
    palette family so the player can tell which powerup is which at
    a glance."
   "\e[40;96;1m●\e[0m")
+(def armor-shard-marker
+  "Armor-shard minimap glyph (issue #68): green caret. Shape +
+   colour both distinct from the heart `♥` and ammo `A` so the
+   common shard pickup reads as its own kind on a busy minimap."
+  "\e[40;92;1m▲\e[0m")
 (def backpack-marker "\e[40;33;1mP\e[0m")
 (def keycard-blue-marker "\e[40;94;1mk\e[0m")
 (def keycard-red-marker  "\e[40;91;1mk\e[0m")
@@ -151,6 +156,26 @@
 (def armor-glyph-bright
   "Yellow ◆ on the bright-blue BG for the pulse frame."
   "\e[48;5;33;38;5;226;1m◆")
+
+(def armor-shard-shade
+  "Armor-shard idle BG: dim slate-blue. Lower contrast than the
+   full armor pickup so a player can read shard vs armor at a
+   glance: shards are the common, less-impactful drop."
+  "\e[48;5;60m ")
+
+(def armor-shard-shade-bright
+  "Armor-shard pulse BG: lighter slate flare."
+  "\e[48;5;67m ")
+
+(def armor-shard-glyph
+  "Small green triangle (▲) on slate - distinct from the full
+   armor's white diamond. Shape-not-colour rule: shards vs armor
+   stay readable even on the same monitor."
+  "\e[48;5;60;38;5;46;1m▲")
+
+(def armor-shard-glyph-bright
+  "Yellow triangle on the slate pulse."
+  "\e[48;5;67;38;5;226;1m▲")
 
 (def ammo-shade
   "Ammo-box idle BG: warm brown so it reads as a wooden crate from a
@@ -572,6 +597,9 @@
 (defn- soulsphere-cells [ss step out-w]
   (scaled-cells ss step out-w (fn [_] true)))
 
+(defn- armor-shard-cells [ss step out-w]
+  (scaled-cells ss step out-w (fn [_] true)))
+
 (defn- backpack-cells [bs step out-w]
   (scaled-cells bs step out-w (fn [_] true)))
 
@@ -625,6 +653,7 @@
         bmap                (berserk-cells (:berserks world) step out-w)
         imap                (invuln-cells  (:invulns world) step out-w)
         ssmap               (soulsphere-cells (:soulspheres world) step out-w)
+        asmap               (armor-shard-cells (:armor-shards world) step out-w)
         pmap                (backpack-cells (:backpacks world) step out-w)
         kbmap               (scaled-cells (:keycards world) step out-w
                                           (fn [k] (php/=== (:colour k) :blue)))
@@ -704,6 +733,7 @@
                             (buf-get bmap (php/+ (php/* row out-w) col))  berserk-marker
                             (buf-get imap (php/+ (php/* row out-w) col))  invuln-marker
                             (buf-get ssmap (php/+ (php/* row out-w) col)) soulsphere-marker
+                            (buf-get asmap (php/+ (php/* row out-w) col)) armor-shard-marker
                             (buf-get pmap (php/+ (php/* row out-w) col))  backpack-marker
                             (buf-get kbmap (php/+ (php/* row out-w) col)) keycard-blue-marker
                             (buf-get krmap (php/+ (php/* row out-w) col)) keycard-red-marker
@@ -2366,6 +2396,13 @@
         soulsphere-bright?                 (pulse t 6.0)
         soulsphere-shade-now               (if soulsphere-bright? soulsphere-shade-bright soulsphere-shade)
         soulsphere-glyph-now               (if soulsphere-bright? soulsphere-glyph-bright soulsphere-glyph)
+        ;; Armor-shard pulse: faster than the full armor pickup
+        ;; (5 rad/s) so a shard sitting next to an armor item reads
+        ;; with a quicker tempo - matches its 'common chip drop'
+        ;; feel vs the rarer fuller pickup.
+        armor-shard-bright?                (pulse t 5.5)
+        armor-shard-shade-now              (if armor-shard-bright? armor-shard-shade-bright armor-shard-shade)
+        armor-shard-glyph-now              (if armor-shard-bright? armor-shard-glyph-bright armor-shard-glyph)
         ;; Backpack pulse — slowest of the powerup family so the
         ;; one-shot pickup reads as 'permanent gear' rather than a
         ;; ticking buff.
@@ -2567,7 +2604,10 @@
           bp-armors (paint-pickups-into  bp-hearts (or (:armors world) [])
                                          (:player world) dists edists vw vh
                                          armor-shade-now armor-glyph-now)
-          bp-ammos  (paint-pickups-into  bp-armors (or (:ammo-boxes world) [])
+          bp-shards (paint-pickups-into  bp-armors (or (:armor-shards world) [])
+                                         (:player world) dists edists vw vh
+                                         armor-shard-shade-now armor-shard-glyph-now)
+          bp-ammos  (paint-pickups-into  bp-shards (or (:ammo-boxes world) [])
                                          (:player world) dists edists vw vh
                                          ammo-shade-now ammo-glyph-now)
           bp-bers   (paint-pickups-into  bp-ammos (or (:berserks world) [])

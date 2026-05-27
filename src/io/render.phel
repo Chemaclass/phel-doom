@@ -61,6 +61,12 @@
 (def ammo-marker     "\e[40;93;1mA\e[0m")
 (def berserk-marker  "\e[40;91;1mB\e[0m")
 (def invuln-marker   "\e[40;96;1mI\e[0m")
+(def soulsphere-marker
+  "Soulsphere minimap glyph (issue #68): bright cyan circle on
+   black. Distinct from `I` (invuln) and `B` (berserk) on the same
+   palette family so the player can tell which powerup is which at
+   a glance."
+  "\e[40;96;1m●\e[0m")
 (def backpack-marker "\e[40;33;1mP\e[0m")
 (def keycard-blue-marker "\e[40;94;1mk\e[0m")
 (def keycard-red-marker  "\e[40;91;1mk\e[0m")
@@ -198,6 +204,25 @@
 (def invuln-glyph-bright
   "Yellow star on cyan pulse."
   "\e[48;5;51;38;5;226;1m★")
+
+(def soulsphere-shade
+  "Soulsphere idle BG: deep sea blue so it sits visually between
+   invuln (bright cyan flare) and the wall greys."
+  "\e[48;5;25m ")
+
+(def soulsphere-shade-bright
+  "Soulsphere pulse BG: lighter sky-cyan flare."
+  "\e[48;5;39m ")
+
+(def soulsphere-glyph
+  "Cyan circle on deep blue: round shape distinguishes it from
+   invuln's star + berserk's omega so the shape-not-colour rule
+   from CHANGELOG 0.3.0 holds."
+  "\e[48;5;25;38;5;87;1m●")
+
+(def soulsphere-glyph-bright
+  "Bright white circle on sky-cyan pulse."
+  "\e[48;5;39;38;5;231;1m●")
 
 (def backpack-shade
   "Backpack idle BG: dim olive-tan crate so it reads as field gear."
@@ -544,6 +569,9 @@
 (defn- invuln-cells [is step out-w]
   (scaled-cells is step out-w (fn [_] true)))
 
+(defn- soulsphere-cells [ss step out-w]
+  (scaled-cells ss step out-w (fn [_] true)))
+
 (defn- backpack-cells [bs step out-w]
   (scaled-cells bs step out-w (fn [_] true)))
 
@@ -596,6 +624,7 @@
         amap                (ammo-cells  (:ammo-boxes world) step out-w)
         bmap                (berserk-cells (:berserks world) step out-w)
         imap                (invuln-cells  (:invulns world) step out-w)
+        ssmap               (soulsphere-cells (:soulspheres world) step out-w)
         pmap                (backpack-cells (:backpacks world) step out-w)
         kbmap               (scaled-cells (:keycards world) step out-w
                                           (fn [k] (php/=== (:colour k) :blue)))
@@ -674,6 +703,7 @@
                             (buf-get amap (php/+ (php/* row out-w) col))  ammo-marker
                             (buf-get bmap (php/+ (php/* row out-w) col))  berserk-marker
                             (buf-get imap (php/+ (php/* row out-w) col))  invuln-marker
+                            (buf-get ssmap (php/+ (php/* row out-w) col)) soulsphere-marker
                             (buf-get pmap (php/+ (php/* row out-w) col))  backpack-marker
                             (buf-get kbmap (php/+ (php/* row out-w) col)) keycard-blue-marker
                             (buf-get krmap (php/+ (php/* row out-w) col)) keycard-red-marker
@@ -2331,6 +2361,11 @@
         invuln-bright?                     (pulse t 8.0)
         invuln-shade-now                   (if invuln-bright? invuln-shade-bright invuln-shade)
         invuln-glyph-now                   (if invuln-bright? invuln-glyph-bright invuln-glyph)
+        ;; Soulsphere pulse — slower than invuln so a co-spawn reads
+        ;; with two distinct cadences instead of synced flashes.
+        soulsphere-bright?                 (pulse t 6.0)
+        soulsphere-shade-now               (if soulsphere-bright? soulsphere-shade-bright soulsphere-shade)
+        soulsphere-glyph-now               (if soulsphere-bright? soulsphere-glyph-bright soulsphere-glyph)
         ;; Backpack pulse — slowest of the powerup family so the
         ;; one-shot pickup reads as 'permanent gear' rather than a
         ;; ticking buff.
@@ -2541,7 +2576,10 @@
           bp-inv    (paint-pickups-into  bp-bers (or (:invulns world) [])
                                          (:player world) dists edists vw vh
                                          invuln-shade-now invuln-glyph-now)
-          bp-pack   (paint-pickups-into  bp-inv (or (:backpacks world) [])
+          bp-soul   (paint-pickups-into  bp-inv (or (:soulspheres world) [])
+                                         (:player world) dists edists vw vh
+                                         soulsphere-shade-now soulsphere-glyph-now)
+          bp-pack   (paint-pickups-into  bp-soul (or (:backpacks world) [])
                                          (:player world) dists edists vw vh
                                          backpack-shade-now backpack-glyph-now)
           bp-kb     (paint-pickups-into  bp-pack

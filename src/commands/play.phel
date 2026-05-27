@@ -1,7 +1,8 @@
 (ns phel-doom.commands.play
   (:require phel.cli :as cli)
   (:require phel.string :as str)
-  (:require phel-doom.core.state    :refer [advance-game-time gain-life max-armor max-lives max-stamina
+  (:require phel-doom.core.state    :refer [advance-game-time decay-soul-overcap gain-life gain-soulsphere
+                                            max-armor max-lives max-stamina
                                             rebuild-pgrid toggle-debug toggle-map toggle-pause toggle-sound])
   (:require phel-doom.core.map      :refer [door? reveal-secret secret? switch? toggle-switch])
   (:require phel-doom.glue.controls :refer [refresh-from-keys key-states rising-edges
@@ -265,6 +266,26 @@
                  :invulns     kept
                  :invuln-secs invuln-seconds)))))
 
+(defn- soulspheres-not-at [ss px py]
+  (apply vector
+         (filter (fn [s]
+                   (not (and (= (php/intval (:x s)) px)
+                             (= (php/intval (:y s)) py))))
+                 (or ss []))))
+
+(defn- pickup-soulspheres
+  "Step-on consumes a soulsphere + bumps `:lives` toward
+   `soulsphere-cap` via `gain-soulsphere`. Over-cap lives decay back
+   to `max-lives` over time (see `decay-soul-overcap`)."
+  [world]
+  (let [kept (soulspheres-not-at (:soulspheres world)
+                                 (php/intval (:x (:player world)))
+                                 (php/intval (:y (:player world))))]
+    (if (= (count kept) (count (or (:soulspheres world) [])))
+      world
+      (do (when (:sound-on world) (play-sfx! :berserk))
+          (gain-soulsphere (assoc world :soulspheres kept))))))
+
 (defn- backpacks-not-at [bs px py]
   (apply vector
          (filter (fn [b]
@@ -452,7 +473,8 @@
             w4b  (pickup-ammos  w4)
             w4c  (pickup-berserks w4b)
             w4d  (pickup-invulns  w4c)
-            w4e  (pickup-backpacks w4d)
+            w4d2 (pickup-soulspheres w4d)
+            w4e  (pickup-backpacks w4d2)
             w4f  (pickup-keycards w4e)
             w4g  (pickup-weapon-pickups w4f)
             w5   (tick-enemies  w4g dt)
@@ -468,8 +490,9 @@
             w9   (tick-flicker  w8 dt)
             w10  (tick-scare    w9 dt)
             w11  (tick-blood-drops w10 dt)
-            w12  (tick-door-face w11 dt)]
-        (advance-game-time w12 dt)))))
+            w12  (tick-door-face w11 dt)
+            w13  (decay-soul-overcap w12 dt)]
+        (advance-game-time w13 dt)))))
 
 ;; =====================================================================
 ;; § Per-frame IO + stats

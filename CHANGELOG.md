@@ -11,6 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+- Soulsphere pickup (#68 part 1). Rare (~1 in 10 levels) cyan sphere that bumps `:lives` toward `soulsphere-cap` (max-lives + 2 over-cap). The over-cap portion decays back to max-lives over time (one life every 5s) so the buff is a real defensive window, not permanent. Distinct cyan circle glyph + slower pulse cadence keep it readable next to berserk + invuln spheres.
 - Switches that toggle remote cells (#62). New `cell-switch-off` / `cell-switch-on` cell types (layout char `T`). Pressing `F` while facing a switch flips its glyph AND every linked target cell (wall ↔ floor) listed under the level config's `:switches`. L10 ships with two switches on its south wall that reconfigure the central pillar mid-fight.
 
 ### Fixed

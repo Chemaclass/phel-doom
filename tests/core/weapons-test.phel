@@ -1,7 +1,7 @@
 (ns phel-doom-tests.core.weapons-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.state :refer [new-player new-world])
-  (:require phel-doom.core.weapons :refer [current-weapon give-weapon initial-weapon-state owns? switch-weapon weapon-order weapon-spec weapons]))
+  (:require phel-doom.core.weapons :refer [current-weapon effective-reserve-cap give-weapon initial-weapon-state owns? switch-weapon weapon-order weapon-spec weapons]))
 
 (def empty-grid [[1 1 1] [1 0 1] [1 1 1]])
 
@@ -134,3 +134,23 @@
   ;; stay stable so muscle memory survives.
   (is (= [:pistol :shotgun :chaingun :chainsaw] weapon-order))
   (is (= :chainsaw (get weapon-order 3))))
+
+(deftest test-effective-reserve-cap-scales-with-backpack-level
+  ;; Pistol's reserve-cap is 50 from the catalog. Backpack stack scales
+  ;; it linearly: level 0 = 1x, level 1 = 2x, level 2 = 3x, level 3 = 4x.
+  (let [w0 (fresh-world)
+        w1 (assoc w0 :backpack-level 1)
+        w2 (assoc w0 :backpack-level 2)
+        w3 (assoc w0 :backpack-level 3)]
+    (is (= 50  (effective-reserve-cap w0)))
+    (is (= 100 (effective-reserve-cap w1)))
+    (is (= 150 (effective-reserve-cap w2)))
+    (is (= 200 (effective-reserve-cap w3)))))
+
+(deftest test-effective-reserve-cap-back-compat-with-boolean
+  ;; Legacy :backpack? true coerces to level 1 (2x cap) so older
+  ;; fixtures + carried state survive the int migration. Uses a bare
+  ;; map (no :backpack-level slot) to simulate state from before the
+  ;; migration.
+  (let [w {:weapon :pistol :backpack? true}]
+    (is (= 100 (effective-reserve-cap w)))))

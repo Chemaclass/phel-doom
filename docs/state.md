@@ -24,7 +24,8 @@ Pure data shapes that every other module operates on. `src/core/state.phel`.
  :soulspheres <vector of {:x :y}>          ; over-cap lives pickup (issue #68)
  :soul-decay-secs <float seconds>          ; over-cap decay clock; decrements lives once per 5s while > max-lives
  :armor-shards <vector of {:x :y}>         ; +1 over-cap armor; banks up to armor-shard-cap (10), no decay
- :backpacks  <vector of {:x :y}>           ; one-shot reserve doubler
+ :backpacks  <vector of {:x :y}>           ; per-level pickup spawn vector (stacks via :backpack-level)
+ :backpack-level <int 0..max-backpacks>    ; 0 = no backpack, 1+ = stacked; effective reserve cap = base * (1 + level)
  :keycards   <vector of {:x :y :colour}>   ; :blue / :red / :boss keycards for locked exits (boss = synthetic, no pickup)
  :held-keys  <set of colour kws>           ; #{:blue :red :boss} collected so far
  :armor      <int 0..max-armor, hits absorbed before lives drop>

@@ -11,15 +11,15 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Wandering idle enemies. Half of every level's freshly spawned monsters now start in `:wander` instead of `:dormant`, pacing short stretches in random directions until LOS to the player flips them to `:aware`. New `enemy/promote-wanderers` helper applied inside `build-world` against `default-wander-fraction` (0.5). Rooms feel alive instead of frozen and wanderers can stumble into the player by accident.
-- Backpack capacity expansion (#68 part 3). Backpack pickup now stacks: each grabbed backpack bumps `:backpack-level` by one up to `max-backpacks` (3). Reserve cap on every weapon scales linearly as `base * (1 + backpack-level)` so 1 = 2x (the previous one-shot behaviour), 2 = 3x, 3 = 4x. HUD chip swaps from `+pack` to `+pack x2` / `+pack x3` while stacked. Legacy `:backpack?` boolean still translated for older fixtures + saved state.
-- Armor shards (#68 part 2). Common +1 armor pickup that stacks PAST the regular `max-armor` cap up to `armor-shard-cap` (2x max-armor = 10). No decay - shards bank as a permanent buffer (DOOM-style helmet bonus). Distinct green triangle glyph + faster pulse cadence than the full armor pickup. Three shards seed per level.
-- Soulsphere pickup (#68 part 1). Rare (~1 in 10 levels) cyan sphere that bumps `:lives` toward `soulsphere-cap` (max-lives + 2 over-cap). The over-cap portion decays back to max-lives over time (one life every 5s) so the buff is a real defensive window, not permanent. Distinct cyan circle glyph + slower pulse cadence keep it readable next to berserk + invuln spheres.
-- Switches that toggle remote cells (#62). New `cell-switch-off` / `cell-switch-on` cell types (layout char `T`). Pressing `F` while facing a switch flips its glyph AND every linked target cell (wall ↔ floor) listed under the level config's `:switches`. L10 ships with two switches on its south wall that reconfigure the central pillar mid-fight.
+- Wandering idle enemies. Half the freshly spawned monsters start pacing random directions; LOS flips them to chase.
+- Backpack capacity expansion (#68 part 3). Stacks up to 3; reserve cap scales `base * (1 + level)`. HUD shows `+pack xN`.
+- Armor shards (#68 part 2). +1 armor pickup that banks past `max-armor` up to 2x (no decay). Three per level.
+- Soulsphere pickup (#68 part 1). Rare cyan sphere; pushes lives 2 over cap, decays back at 1 life / 5s.
+- Switches that toggle remote cells (#62). `F` on a switch flips linked target cells (wall <-> floor). L10 uses two.
 
 ### Fixed
 
-- Secret reveal (#61) + door / cell mutations were updating `:grid` but leaving the raycaster's `:pgrid` PHP array stale, so the player walked through a wall that visually still looked solid. New `state/rebuild-pgrid` helper resyncs both; `try-reveal-secret` + `try-toggle-switch` call it after every mutation.
+- Grid mutations (#61 secrets, doors, switches) left the raycaster's `:pgrid` stale - player walked through visually solid walls. New `state/rebuild-pgrid` resyncs after every mutation.
 
 ## [0.6.0] - 2026-05-27
 

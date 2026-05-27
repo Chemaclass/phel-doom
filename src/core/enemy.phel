@@ -1,7 +1,7 @@
 (ns phel-doom.core.enemy
   (:require phel-doom.core.map      :refer [random-spawn wall?])
   (:require phel-doom.core.enemies  :refer [resists?])
-  (:require phel-doom.core.enemy-ai :refer [apply-pain maybe-start-attack moves? observe target-pos tick-attack tick-pain tick-wander]))
+  (:require phel-doom.core.enemy-ai :refer [apply-pain maybe-start-attack moves? observe start-wander target-pos tick-attack tick-pain tick-wander]))
 
 (def default-chase-speed
   "Fallback chase speed (units/sec) used by the single-arity advance
@@ -525,3 +525,32 @@
                     (apply vector
                            (map (fn [e] (assoc e :max-concurrent cap)) raw)))]
         (recur (next remaining) (into acc batch))))))
+
+(def default-wander-fraction
+  "Probability (0..1) that a freshly spawned `:dormant` enemy is
+   promoted to `:wander` on level build. Sleeping enemies waiting on
+   LOS / noise reads as dead air across the whole map; promoting some
+   fraction to wander gives rooms a baseline pulse — a few imps pace
+   short stretches, occasionally stumbling into player LOS by
+   accident. 0.5 keeps sneaking viable (half the room is still still)
+   while burying the boring 'every monster is a statue' default."
+  0.5)
+
+(defn promote-wanderers
+  "Per-enemy coin flip: with probability `fraction`, promote a
+   `:dormant` enemy via `enemy-ai/start-wander` (fresh random heading +
+   wander timer). Non-dormant enemies pass through untouched — a
+   respawned `:aware` monster shouldn't be yanked back to wander, and
+   a hand-placed boss with an explicit state should keep it. Caller
+   (level / spawn pipeline) decides the fraction; 0.0 preserves the
+   pure-sleep default for tests, 1.0 turns the whole batch into
+   pacers."
+  [enemies ^float fraction]
+  (apply vector
+         (map (fn [e]
+                (if (and (php/=== :dormant (or (:state e) :dormant))
+                         (php/< (php// (php/mt_rand) (php/mt_getrandmax))
+                                fraction))
+                  (start-wander e)
+                  e))
+              enemies)))

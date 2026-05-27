@@ -1,6 +1,6 @@
 (ns phel-doom-tests.core.enemy-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.enemy :refer [new-enemy push-back-enemy spawn-enemies spawn-enemies-mixed shoot advance tick-scare rear-attacker?]))
+  (:require phel-doom.core.enemy :refer [default-wander-fraction new-enemy promote-wanderers push-back-enemy spawn-enemies spawn-enemies-mixed shoot advance tick-scare rear-attacker?]))
 
 (def open-grid
   "Bordered 10x10 open arena, no interior walls."
@@ -278,6 +278,42 @@
   ;; silently swap the default and undo the LOS-gate behaviour.
   (let [es (spawn-enemies open-grid 3 0.0 5.0 5.0 1)]
     (is (every? (fn [e] (= :dormant (:state e))) es))))
+
+(deftest test-default-wander-fraction-is-in-mid-range
+  ;; Default sits inside (0, 1) — some sleep, some pace. Pin the
+  ;; band so a future tweak stays intentional rather than drifting
+  ;; toward all-sleep or all-pace.
+  (is (php/> default-wander-fraction 0.0))
+  (is (php/< default-wander-fraction 1.0)))
+
+(deftest test-promote-wanderers-zero-fraction-leaves-all-dormant
+  ;; fraction 0 -> the random roll is always >= 0, so no enemy is
+  ;; promoted. Deterministic regardless of mt_rand state.
+  (let [es  (spawn-enemies open-grid 5 0.0 5.0 5.0 1)
+        es' (promote-wanderers es 0.0)]
+    (is (every? (fn [e] (= :dormant (:state e))) es'))))
+
+(deftest test-promote-wanderers-full-fraction-promotes-every-dormant
+  ;; fraction 1.0 -> any roll in [0, 1) is strictly less, so every
+  ;; dormant enemy flips. Each carries a fresh wander angle + timer
+  ;; (via start-wander).
+  (let [es  (spawn-enemies open-grid 5 0.0 5.0 5.0 1)
+        es' (promote-wanderers es 1.0)]
+    (is (every? (fn [e] (= :wander (:state e))) es'))
+    (is (every? (fn [e] (php/!== nil (:wander-angle e))) es'))
+    (is (every? (fn [e] (php/!== nil (:wander-secs e))) es'))))
+
+(deftest test-promote-wanderers-skips-non-dormant-enemies
+  ;; Aware / hunting / attacking enemies must not be yanked back to
+  ;; wander — they represent engaged or freshly respawned monsters
+  ;; and should keep their state.
+  (let [aware    (assoc (new-enemy 2.5 2.5 1 :imp)   :state :aware)
+        hunting  (assoc (new-enemy 3.5 3.5 1 :imp)   :state :hunting)
+        attacker (assoc (new-enemy 4.5 4.5 1 :baron) :state :attacking)
+        es'      (promote-wanderers [aware hunting attacker] 1.0)]
+    (is (= :aware     (:state (get es' 0))))
+    (is (= :hunting   (:state (get es' 1))))
+    (is (= :attacking (:state (get es' 2))))))
 
 (deftest test-advance-hunting-walks-toward-lkp-not-player
   ;; Hunter at (2.5, 2.5) with :lkp at (2.5, 5.5). Player has moved

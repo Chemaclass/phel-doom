@@ -1,7 +1,7 @@
 (ns phel-doom.core.level
   (:require phel-doom.core.state      :refer [max-backpacks max-lives new-player new-world with-enemies])
   (:require phel-doom.core.map        :refer [cell-door cell-door-blue cell-door-red count-secrets parse-layout random-grid random-spawn seed-doors])
-  (:require phel-doom.core.enemy      :refer [spawn-enemies spawn-enemies-mixed])
+  (:require phel-doom.core.enemy      :refer [default-wander-fraction promote-wanderers spawn-enemies spawn-enemies-mixed])
   (:require phel-doom.core.enemies    :refer [enemy-types type-spec default-lives-for])
   (:require phel-doom.core.difficulty :refer [normalise scale-cfg]))
 
@@ -446,7 +446,14 @@
          tagged-foes          (if (php/=== :nightmare diff')
                                 (apply vector (map (fn [e] (assoc e :nightmare? true)) spawned))
                                 spawned)
-         with-foes            (with-enemies world tagged-foes)]
+         ;; Half the freshly-spawned dormant enemies start pacing
+         ;; instead of sleeping. Wanderers can stumble into the
+         ;; player's LOS by accident — that's the "rooms feel alive"
+         ;; cue. Tests opting out pass through 0.0 via fixtures that
+         ;; never run through build-world (they construct enemies
+         ;; directly).
+         lively-foes          (promote-wanderers tagged-foes default-wander-fraction)
+         with-foes            (with-enemies world lively-foes)]
      (assoc with-foes
             :level         lv
             :lives         life

@@ -11,6 +11,27 @@
    this; new runs start here."
   5)
 
+(def soul-overcap
+  "Lives the soulsphere pickup (issue #68) is allowed to push the
+   player above `max-lives` for. Soulsphere bumps lives toward
+   `(+ max-lives soul-overcap)` (7) so the player feels a real
+   buffer; the over-cap portion decays back to `max-lives` over
+   time via `decay-soul-overcap`."
+  2)
+
+(def soulsphere-cap
+  "Hard ceiling on lives after a soulsphere pickup: `max-lives +
+   soul-overcap` = 7. Set so a player at full health still benefits
+   from grabbing one (no fully-wasted pickup)."
+  (php/+ max-lives soul-overcap))
+
+(def soul-overcap-decay-secs
+  "Seconds the over-cap portion of `:lives` lingers before ticking
+   down by 1. DOOM's soulsphere starts decaying ~1 HP / sec; with
+   integer lives we use a coarser cadence so each over-cap point
+   sticks for the duration."
+  5.0)
+
 (def max-armor
   "Hard cap on stacked armor pickups. Each absorbs one contact-damage
    hit (combat/take-damage). Picked-up armor beyond this is silently
@@ -55,6 +76,10 @@
    ;; try-toggle-switch reads :at and applies map/toggle-switch on the
    ;; F-key edge.
    :switches  []
+   ;; Soulsphere (issue #68). Per-level pickup spawn vector + the
+   ;; decay clock for the over-cap portion of `:lives`.
+   :soulspheres        []
+   :soul-decay-secs    0.0
    :show-map  false
    :paused    false
    :help?     false
@@ -143,6 +168,37 @@
   "Add one life to the player, capped at max-lives."
   [world]
   (update world :lives (fn [l] (php/min max-lives (php/+ l 1)))))
+
+(defn gain-soulsphere
+  "Boost lives toward `soulsphere-cap` (max-lives + over-cap bonus).
+   Adds `max-lives` worth of lives but clamps so a fresh player ends
+   at the cap and a player already over-cap doesn't stack further.
+   Resets the over-cap decay clock so the new lives start fresh
+   regardless of when the previous sphere was picked up."
+  [world]
+  (let [lives (or (:lives world) 0)
+        next  (php/min soulsphere-cap (php/+ lives max-lives))]
+    (assoc world
+           :lives           next
+           :soul-decay-secs 0.0)))
+
+(defn decay-soul-overcap
+  "Tick the over-cap decay clock. While `:lives > max-lives`, the
+   timer accumulates dt; once it reaches `soul-overcap-decay-secs`
+   one over-cap life is consumed (clamped to max-lives) and the
+   timer resets. Below the cap the clock is held at zero so the
+   first frame after picking up a sphere always pays full duration."
+  [world ^float dt]
+  (let [lives (or (:lives world) 0)
+        clock (or (:soul-decay-secs world) 0.0)]
+    (if (php/<= lives max-lives)
+      (assoc world :soul-decay-secs 0.0)
+      (let [clock' (php/+ clock dt)]
+        (if (php/>= clock' soul-overcap-decay-secs)
+          (assoc world
+                 :lives           (php/max max-lives (php/- lives 1))
+                 :soul-decay-secs 0.0)
+          (assoc world :soul-decay-secs clock'))))))
 
 (defn with-enemies
   "Attach an enemies vector to the world. Kept as a separate step so

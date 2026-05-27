@@ -21,6 +21,8 @@ Pure data shapes that every other module operates on. `src/core/state.phel`.
  :ammo-boxes <vector of {:x :y}>
  :berserks   <vector of {:x :y}>           ; rage spheres (20s ×2 damage)
  :invulns    <vector of {:x :y}>           ; immunity spheres (10s invincible)
+ :soulspheres <vector of {:x :y}>          ; over-cap lives pickup (issue #68)
+ :soul-decay-secs <float seconds>          ; over-cap decay clock; decrements lives once per 5s while > max-lives
  :backpacks  <vector of {:x :y}>           ; one-shot reserve doubler
  :keycards   <vector of {:x :y :colour}>   ; :blue / :red / :boss keycards for locked exits (boss = synthetic, no pickup)
  :held-keys  <set of colour kws>           ; #{:blue :red :boss} collected so far

@@ -3,7 +3,9 @@
   (:require phel-doom.core.state :refer [new-player new-world move-player turn-player
                                          rebuild-pgrid
                                          toggle-map toggle-pause toggle-debug with-enemies
-                                         advance-game-time gain-life max-lives]))
+                                         advance-game-time gain-life gain-soulsphere
+                                         decay-soul-overcap max-lives soul-overcap-decay-secs
+                                         soulsphere-cap]))
 
 (def grid [[1 1 1] [1 0 1] [1 1 1]])
 
@@ -93,3 +95,56 @@
         post (php/aget (php/aget (:pgrid w2) 1) 1)]
     (is (= 0 pre))
     (is (= 1 post))))
+
+;; ---------------------------------------------------------------------
+;; Soulsphere (issue #68): pickup pushes lives over max-lives toward
+;; soulsphere-cap; the over-cap portion decays back to max-lives over
+;; time.
+;; ---------------------------------------------------------------------
+
+(deftest test-soulsphere-cap-is-max-plus-overcap
+  (is (= 7 soulsphere-cap)))
+
+(deftest test-gain-soulsphere-bumps-fresh-player-to-cap
+  ;; A fresh player at 5 lives picking up a soulsphere gets 5 more
+  ;; (clamped to soulsphere-cap = 7).
+  (let [w (gain-soulsphere {:lives 5})]
+    (is (= 7 (:lives w)))
+    (is (= 0.0 (:soul-decay-secs w)))))
+
+(deftest test-gain-soulsphere-from-low-lives
+  ;; 1 + max-lives = 6, capped to 7. Lower starting health benefits
+  ;; less than full-health pickup so the buff feels valuable AT all
+  ;; health levels.
+  (let [w (gain-soulsphere {:lives 1})]
+    (is (= 6 (:lives w)))))
+
+(deftest test-gain-soulsphere-resets-decay-clock
+  ;; Picking up a sphere mid-decay rearms the timer so the new lives
+  ;; get full duration.
+  (let [w (gain-soulsphere {:lives 7 :soul-decay-secs 3.0})]
+    (is (= 0.0 (:soul-decay-secs w)))))
+
+(deftest test-decay-soul-overcap-holds-clock-at-zero-when-not-over-cap
+  ;; lives <= max-lives → clock parked at 0, lives untouched.
+  (let [w (decay-soul-overcap {:lives 5 :soul-decay-secs 1.0} 2.0)]
+    (is (= 5 (:lives w)))
+    (is (= 0.0 (:soul-decay-secs w)))))
+
+(deftest test-decay-soul-overcap-accumulates-and-decrements
+  ;; Below the threshold: clock advances, lives untouched.
+  (let [w (decay-soul-overcap {:lives 7 :soul-decay-secs 0.0} 1.0)]
+    (is (= 7 (:lives w)))
+    (is (= 1.0 (:soul-decay-secs w))))
+  ;; At the threshold: clock resets, lives drop by one.
+  (let [w (decay-soul-overcap {:lives 7 :soul-decay-secs (php/- soul-overcap-decay-secs 0.01)} 0.1)]
+    (is (= 6 (:lives w)))
+    (is (= 0.0 (:soul-decay-secs w)))))
+
+(deftest test-decay-soul-overcap-stops-at-max-lives
+  ;; The decay never drops the player below max-lives even if the
+  ;; timer keeps ticking — soulsphere can't punish the player past
+  ;; the over-cap bonus.
+  (let [w (decay-soul-overcap {:lives (php/+ max-lives 1)
+                               :soul-decay-secs (php/+ soul-overcap-decay-secs 1.0)} 0.0)]
+    (is (= max-lives (:lives w)))))

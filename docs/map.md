@@ -12,6 +12,8 @@
 (def cell-door-red  4)  ; red-keyed door: blocks until player holds :red keycard
 (def cell-door-boss 5)  ; boss-locked door: blocks until player kills the boss (grants synthetic :boss keycard)
 (def cell-secret    6)  ; hidden passage: looks + blocks like a wall until the player reveals it with F
+(def cell-switch-off 7) ; inactive switch: blocks like a wall, F-press flips to cell-switch-on + mutates target cells
+(def cell-switch-on  8) ; activated switch: same blocking + a second F-press reverts to cell-switch-off + targets
 ```
 
 Every cell is one of these ints. Constants exported so no module uses raw `0/1/2/3/4/5` literals. `(= cell-door (cell g x y))` reads as purpose.
@@ -82,6 +84,26 @@ Hand-authored only - `cell-secret` is never placed by `random-grid` / `seed-door
 ```
 
 The visual cue is deliberately absent (DOOM-style): identical wall shading, no overlay. Discovery is by exploration + bumping. `commands/play.phel/try-reveal-secret` watches the action-key rising edge (`F`); on a press it checks the cell one unit ahead of the player along `:angle` and calls `reveal-secret` if it's a secret. World tracks `:secrets-total` (set by `count-secrets` in `build-world`) + `:secrets-found` (bumped by `try-reveal-secret`); the F3 debug HUD paints `secrets X/Y`.
+
+## Switches
+
+Hand-authored only - `cell-switch-off` is never placed by random procgen. Layout char `T` opts a cell in; the level config supplies the `:switches` metadata:
+
+```phel
+:layout    [...
+            "#..T............T..#"
+            ...]
+:switches  [{:at [3 14]  :targets [[7 10]]}
+            {:at [16 14] :targets [[12 10]]}]
+```
+
+Each entry pairs a switch position with the cells it toggles. `try-toggle-switch` in `commands/play.phel` watches the `F` rising edge (after `try-reveal-secret`), checks the cell ahead of the player, and routes through `map/toggle-switch`:
+
+1. `toggle-switch-cell` swaps the glyph between `cell-switch-off` and `cell-switch-on`.
+2. For every `[x y]` in `:targets`, `toggle-target-cell` flips `cell-wall` ↔ `cell-floor`. Doors are skipped (defensive: targeting a door cell leaves it untouched).
+3. `state/rebuild-pgrid` resyncs the raycaster's PHP-array view; without this the 3D render would still paint the pre-toggle wall.
+
+The minimap glyph differs per state: dim cyan `T` for inactive, bright yellow `T` for activated, so the player can read which switches they've already flipped.
 
 ## Out-of-bounds reads
 

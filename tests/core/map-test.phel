@@ -3,8 +3,11 @@
   (:require phel-doom.core.map :refer [default-grid wall? door?
                                        cell-floor cell-wall cell-door
                                        cell-door-blue cell-door-red
-                                       cell-secret count-secrets passable?
-                                       reveal-secret secret?
+                                       cell-secret cell-switch-off
+                                       cell-switch-on count-secrets passable?
+                                       reveal-secret secret? switch?
+                                       switch-on? toggle-switch
+                                       toggle-switch-cell toggle-target-cell
                                        parse-layout
                                        random-grid random-spawn seed-doors]))
 
@@ -224,3 +227,98 @@
                            "####"])
         g   (:grid out)]
     (is (= cell-secret (get-in g [1 1])))))
+
+;; ---------------------------------------------------------------------
+;; Switches (issue #62): two-state cell, action-key flips state +
+;; mutates linked target cells.
+;; ---------------------------------------------------------------------
+
+(deftest test-switch-cell-constants-pinned
+  (is (= 7 cell-switch-off))
+  (is (= 8 cell-switch-on)))
+
+(deftest test-switch-cells-block-player-movement
+  (let [g [[1 1 1] [1 7 1] [1 1 1]]]
+    (is (= false (passable? g #{} 1 1))))
+  (let [g [[1 1 1] [1 8 1] [1 1 1]]]
+    (is (= false (passable? g #{} 1 1)))))
+
+(deftest test-switch-cells-block-raycaster
+  (let [g [[1 1 1] [1 7 1] [1 1 1]]]
+    (is (= true (wall? g 1 1))))
+  (let [g [[1 1 1] [1 8 1] [1 1 1]]]
+    (is (= true (wall? g 1 1)))))
+
+(deftest test-switch-predicate-spots-both-states
+  (let [g [[1 1 1] [1 7 8] [1 1 1]]]
+    (is (= true  (switch? g 1 1)))
+    (is (= true  (switch? g 2 1)))
+    (is (= false (switch? g 0 0)))))
+
+(deftest test-switch-on-predicate-true-only-for-activated
+  (let [g [[1 1 1] [1 7 8] [1 1 1]]]
+    (is (= false (switch-on? g 1 1)))
+    (is (= true  (switch-on? g 2 1)))))
+
+(deftest test-toggle-switch-cell-flips-state
+  (let [g0 [[1 1 1] [1 7 1] [1 1 1]]
+        g1 (toggle-switch-cell g0 1 1)
+        g2 (toggle-switch-cell g1 1 1)]
+    (is (= cell-switch-on  (get-in g1 [1 1])))
+    (is (= cell-switch-off (get-in g2 [1 1])))))
+
+(deftest test-toggle-target-cell-flips-wall-and-floor
+  ;; Wall → floor on first toggle, floor → wall on second. Doors are
+  ;; left alone so a level author can target a door cell with no
+  ;; surprise side-effect.
+  (let [g0      [[1 1 1] [1 0 1] [1 1 1]]
+        g1      (toggle-target-cell g0 1 1)
+        g2      (toggle-target-cell g1 1 1)
+        g-door  [[1 1 1] [1 2 1] [1 1 1]]
+        g-door' (toggle-target-cell g-door 1 1)]
+    (is (= cell-wall  (get-in g1 [1 1])))
+    (is (= cell-floor (get-in g2 [1 1])))
+    (is (= g-door g-door'))))
+
+(deftest test-toggle-switch-flips-switch-and-single-target
+  ;; Switch at (3, 3) with one target wall at (1, 1). One toggle:
+  ;; switch lights up + wall opens. Second toggle: both revert.
+  (let [g0       [[1 1 1 1 1]
+                  [1 1 0 0 1]
+                  [1 0 0 0 1]
+                  [1 0 0 7 1]
+                  [1 1 1 1 1]]
+        switches [{:at [3 3] :targets [[1 1]]}]
+        g1       (toggle-switch g0 switches 3 3)
+        g2       (toggle-switch g1 switches 3 3)]
+    (is (= cell-switch-on  (get-in g1 [3 3])))
+    (is (= cell-floor       (get-in g1 [1 1])))
+    (is (= cell-switch-off (get-in g2 [3 3])))
+    (is (= cell-wall        (get-in g2 [1 1])))))
+
+(deftest test-toggle-switch-flips-multiple-targets
+  (let [g0       [[1 1 1 1 1]
+                  [1 1 0 1 1]
+                  [1 0 0 0 1]
+                  [1 0 0 7 1]
+                  [1 1 1 1 1]]
+        switches [{:at [3 3] :targets [[1 1] [3 1]]}]
+        g1       (toggle-switch g0 switches 3 3)]
+    (is (= cell-floor (get-in g1 [1 1])))
+    (is (= cell-floor (get-in g1 [1 3])))
+    (is (= cell-switch-on (get-in g1 [3 3])))))
+
+(deftest test-toggle-switch-without-meta-still-flips-glyph
+  ;; A switch cell with no matching entry in `switches` still flips
+  ;; its own glyph - only the target mutation is gated. Stops a
+  ;; cosmetic / orphan switch from leaving the grid half-mutated.
+  (let [g0 [[1 1 1] [1 7 1] [1 1 1]]
+        g1 (toggle-switch g0 [] 1 1)]
+    (is (= cell-switch-on (get-in g1 [1 1])))))
+
+(deftest test-parse-layout-recognises-T-as-switch-off
+  (let [out (parse-layout ["####"
+                           "#T@#"
+                           "####"])
+        g   (:grid out)]
+    (is (= cell-switch-off (get-in g [1 1])))))

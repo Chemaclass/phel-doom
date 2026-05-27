@@ -1,6 +1,7 @@
 (ns phel-doom-tests.core.state-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.state :refer [new-player new-world move-player turn-player
+                                         rebuild-pgrid
                                          toggle-map toggle-pause toggle-debug with-enemies
                                          advance-game-time gain-life max-lives]))
 
@@ -77,3 +78,18 @@
   (let [w (new-world grid (new-player 1.0 1.0 0.0))]
     (is (= true  (:debug? (toggle-debug w))))
     (is (= false (:debug? (toggle-debug (toggle-debug w)))))))
+
+(deftest test-rebuild-pgrid-syncs-with-grid
+  ;; A mutation on :grid (e.g. switch toggle / secret reveal) leaves
+  ;; the raycaster's :pgrid stale unless rebuild-pgrid runs. After
+  ;; rebuild the same cell reads as the new value through the PHP
+  ;; array path.
+  (let [w0   (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
+        ;; Mutate :grid only.
+        w1   (assoc w0 :grid (assoc-in (:grid w0) [1 1] 1))
+        ;; pgrid is still the pre-mutation array - reads 0 at [1 1].
+        pre  (php/aget (php/aget (:pgrid w1) 1) 1)
+        w2   (rebuild-pgrid w1)
+        post (php/aget (php/aget (:pgrid w2) 1) 1)]
+    (is (= 0 pre))
+    (is (= 1 post))))

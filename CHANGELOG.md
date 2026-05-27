@@ -9,6 +9,14 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Added
+
+- Switches that toggle remote cells (#62). New `cell-switch-off` / `cell-switch-on` cell types (layout char `T`). Pressing `F` while facing a switch flips its glyph AND every linked target cell (wall ↔ floor) listed under the level config's `:switches`. L10 ships with two switches on its south wall that reconfigure the central pillar mid-fight.
+
+### Fixed
+
+- Secret reveal (#61) + door / cell mutations were updating `:grid` but leaving the raycaster's `:pgrid` PHP array stale, so the player walked through a wall that visually still looked solid. New `state/rebuild-pgrid` helper resyncs both; `try-reveal-secret` + `try-toggle-switch` call it after every mutation.
+
 ## [0.6.0] - 2026-05-27
 
 ### Added

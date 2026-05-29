@@ -167,6 +167,16 @@ Slot-4 melee weapon. Spec lives in `weapons/weapons :chainsaw` and carries three
 
 Damage type is `:melee` so future enemy resistances can target the saw without affecting ranged weapons. The 1-per-tick damage stacks with the berserk multiplier for a 2-per-tick swing during the rage window.
 
+### BFG (splash weapon, issue #58)
+
+Slot-5 area weapon, found on L7. The spec carries `:splash-radius` + `:splash-damage`; `fire-shot` branches on `:splash-radius` and routes to `bfg-fire` instead of the single-target hitscan:
+
+1. `enemy/beam-impact` finds where the beam lands - the nearest alive enemy along the player's ray, else the wall (both capped at range). Pure projection scan, no mutation.
+2. `enemy/splash` damages every alive enemy within `:splash-radius` of that impact point, returning `[new-enemies killed-count]`. Survivors wake (`:aware`) + take a hit-flash; no pain roll (a room-clear shouldn't stagger-lock the survivors).
+3. `bfg-fire` bumps `:kills` by the body count, chains the streak, arms hit-stop (boss-length if a cyber died), and unlocks the boss door if the blast killed the cyberdemon. No per-enemy loot - the blast is its own reward.
+
+Damage type is `:plasma`, NOT `:fire`, so the BFG bypasses the fire-resistant caco / baron / archvile / mancubus - it's the intended answer to grouped late-game mobs. Single-action (one deliberate shot per pull), slow 1.2s cooldown, expensive cells (mag 1, reserve cap 20).
+
 ### Berserk pickup
 
 A berserk sphere (`:berserks` vector on the world, `Ω` glyph in the viewport + minimap) sits in 1-in-8 levels. Stepping on the cell drives:

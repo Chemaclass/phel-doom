@@ -69,14 +69,16 @@ Killed enemy stays in vector with `:respawn-after` timer. See [monsters.md](mons
 
 `damage-step` decays timers each frame, then applies touch hit if no i-frames and alive enemy in range (0.7 units).
 
+`:lives` is a half-heart HP pool: `state/max-lives` = 10, drawn as 5 hearts of 2 HP each. A hit costs `enemy-hit-damage` HP by attacker type - 1 (half heart) for light melee, 2 (full heart) for heavy bruisers + casters (caco/baron/archvile/mancubus), 3 for the cyberdemon boss; `hit-damage-for` falls back to 1 for unlisted/nil types.
+
 On contact:
-- Armor absorbs first (no life loss); otherwise lose 1 life.
+- Armor absorbs the whole hit (drop one armor unit, no life lost regardless of damage size); otherwise lose `hit-damage-for (:type attacker)` HP.
 - Arm 1.0s i-frames (prevent double-drain).
 - 0.05s white flash (impact jolt).
 - Knockback away from attacker (try 1.0 / 0.5 / 0.25 units on wall collision).
 - Stamp `:hurt-side` (`:front` / `:back` / `:left` / `:right`) for directional red band at impact edge. Front/back use ±30° wedges around facing; everything else routes to left/right.
 
-Both `take-damage` (contact) and `hit-player-at` (projectile) share `apply-hit` logic. `player-immune?` gates both: i-frames, invuln sphere, or dev god mode.
+Both `take-damage` (contact, reads the nearest attacker's `:type`) and `hit-player-at` (projectile, the bolt carries its caster's `:dmg`) share `apply-hit`. `player-immune?` gates both: i-frames, invuln sphere, or dev god mode.
 
 ## Hit-stop (kill weight)
 

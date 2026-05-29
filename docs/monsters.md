@@ -28,24 +28,25 @@ Each enemy carries `:lives` / `:max-lives` / `:type`. `enemy/shoot` drops `:live
 
 ## Stats comparison
 
-Combat numbers per type. HP is the catalog `:default-lives` (a level may override). Speed = level `:chase` x the type's `enemy/type-speed-mul` (1.0 when unlisted). Range / windup / cooldown come from `enemy_ai/attack-spec` (melee) or `enemy_ai/caster-spec` (ranged); types not listed in `attack-spec` use `default-attack-spec` (1.4 / 0.4 / 1.0). Cooldown shown is the level-1 value: it shrinks with depth (see "Depth-scaled aggression" below). Every hit, melee or bolt, costs the player exactly 1 unit (armor first, else a life).
+Combat numbers per type. HP is the catalog `:default-lives` (a level may override). Speed = level `:chase` x the type's `enemy/type-speed-mul` (1.0 when unlisted). Range / windup / cooldown come from `enemy_ai/attack-spec` (melee) or `enemy_ai/caster-spec` (ranged); types not listed in `attack-spec` use `default-attack-spec` (1.4 / 0.4 / 1.0). Cooldown shown is the level-1 value: it shrinks with depth (see "Depth-scaled aggression" below). Dmg is the half-heart HP a hit costs the player (`combat/enemy-hit-damage`); the pool is 10 HP = 5 hearts of 2 HP each, so 1 = half a heart. Armor absorbs a whole hit regardless of size.
 
-| Type | Debut | HP | Speed x | Attack | Range (u) | Windup (s) | Cooldown (s) | Bolt spd | Resists |
-|---|---|---|---|---|---|---|---|---|---|
-| `:imp`      | L1    | 1 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | -      |
-| `:demon`    | L2    | 2 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | -      |
-| `:caco`     | L3    | 3 | 0.70 | ranged | 7.0 | 0.6 | 1.0 | 2.5 | `:fire` |
-| `:baron`    | L4    | 4 | 0.65 | ranged | 8.0 | 0.8 | 1.3 | 3.0 | `:fire` |
-| `:cyber`    | L5    | 5 | 0.55 | melee  | 1.8 | 0.8 | 1.8 | -   | -      |
-| `:spectre`  | L6    | 3 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | -      |
-| `:revenant` | L7    | 4 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | -      |
-| `:archvile` | L8    | 5 | 1.0  | ranged | 6.5 | 0.6 | 1.1 | 3.4 | `:fire` |
-| `:mancubus` | L8    | 4 | 1.0  | melee  | 1.6 | 0.5 | 1.3 | -   | `:fire` |
-| `:pinky`    | L9    | 2 | 1.0  | melee  | 1.4 | 0.3 | 0.8 | -   | -      |
+| Type | Debut | HP | Speed x | Attack | Range (u) | Windup (s) | Cooldown (s) | Bolt spd | Dmg | Resists |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `:imp`      | L1    | 1 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | 1 | -      |
+| `:demon`    | L2    | 2 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | 1 | -      |
+| `:caco`     | L3    | 3 | 0.70 | ranged | 7.0 | 0.6 | 1.0 | 2.5 | 2 | `:fire` |
+| `:baron`    | L4    | 4 | 0.65 | ranged | 8.0 | 0.8 | 1.3 | 3.0 | 2 | `:fire` |
+| `:cyber`    | L5    | 5 | 0.55 | melee  | 1.8 | 0.8 | 1.8 | -   | 3 | -      |
+| `:spectre`  | L6    | 3 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | 1 | -      |
+| `:revenant` | L7    | 4 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | 1 | -      |
+| `:archvile` | L8    | 5 | 1.0  | ranged | 6.5 | 0.6 | 1.1 | 3.4 | 2 | `:fire` |
+| `:mancubus` | L8    | 4 | 1.0  | melee  | 1.6 | 0.5 | 1.3 | -   | 2 | `:fire` |
+| `:pinky`    | L9    | 2 | 1.0  | melee  | 1.4 | 0.3 | 0.8 | -   | 1 | -      |
 
 Reading it:
 
 - **Range** is melee reach (~1 cell) for everyone except the casters, who commit from across the room. **Windup** is the frozen telegraph before the strike/bolt; **cooldown** is the gap before they can attack again (smaller = more pressure).
+- **Dmg** escalates by type: light melee rushers chip a half heart (1), heavy bruisers + casters take a full heart (2), and the cyberdemon boss hits for 1.5 hearts (3). Same value whether it lands as a melee touch or a bolt.
 - **Casters** (`:caco`, `:baron`, `:archvile`) are the types that fire projectiles (`caster-spec`). They move slower than the melee rushers to stay fair: keep distance and strafe the bolts, or close in and trade the dodge window for melee range. Bolt speed is world-units/sec (deliberately low so a fireball is dodge-able, not near-hitscan). The archvile is the escalated caster: fastest bolt (3.4) and tightest range, but its windup matches the caco (0.6s) so the telegraph stays reactable on a laggy terminal.
 - `:cyber` is the heaviest: top HP, slowest move (0.55x), long telegraph. The L10 boss spawns it with 50 HP.
 - `:pinky` is the glass rusher: low HP, full speed, shortest windup + cooldown.

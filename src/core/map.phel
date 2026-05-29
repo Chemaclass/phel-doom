@@ -265,6 +265,46 @@
                     (recur (php/+ x 1) n))))]
           (recur (php/+ y 1) (php/+ acc row-secrets)))))))
 
+(defn- divider-wall?
+  "True when the interior wall at (x, y) is a 1-cell-thick divider
+   between two floors — floor on both horizontal OR both vertical
+   sides. Such a wall is bump-reachable from a floor side and opens a
+   hidden shortcut when revealed."
+  [grid x y]
+  (and (= cell-wall (cell grid x y))
+       (or (and (= cell-floor (cell grid (php/- x 1) y))
+                (= cell-floor (cell grid (php/+ x 1) y)))
+           (and (= cell-floor (cell grid x (php/- y 1)))
+                (= cell-floor (cell grid x (php/+ y 1)))))))
+
+(defn seed-secrets
+  "Convert up to `n` divider walls (see `divider-wall?`) into
+   `cell-secret`, turning them into bump-reachable secret passages
+   where the reward stash drops on reveal (level/place-secret-reward).
+   Deterministic top-left-first scan so it's testable; with procgen
+   the grid itself varies per seed, so secret spots still differ run
+   to run. Skips the border, never converts a cell adjacent to an
+   already-placed secret (so reveals stay distinct). Returns the grid,
+   possibly fewer than `n` if too few walls qualify."
+  [grid ^int n]
+  (let [h (count grid)
+        w (count (first grid))]
+    (loop [y 1 g grid placed 0]
+      (if (or (php/>= placed n) (php/>= y (php/- h 1)))
+        g
+        (let [[g' placed']
+              (loop [x 1 gg g p placed]
+                (if (or (php/>= p n) (php/>= x (php/- w 1)))
+                  [gg p]
+                  (if (and (divider-wall? gg x y)
+                           ;; keep secrets non-adjacent so each reveal
+                           ;; opens a separate spot
+                           (not (= cell-secret (cell gg (php/- x 1) y)))
+                           (not (= cell-secret (cell gg x (php/- y 1)))))
+                    (recur (php/+ x 1) (assoc-in gg [y x] cell-secret) (php/+ p 1))
+                    (recur (php/+ x 1) gg p))))]
+          (recur (php/+ y 1) g' placed'))))))
+
 (defn missing-key-for
   "Lock colour kw that's blocking the player at (x, y), or nil. Used
    by physics/try-move to differentiate a 'bounced off a wall' bump

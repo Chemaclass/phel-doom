@@ -17,7 +17,7 @@
   (:require phel-doom.core.weapons  :refer [effective-reserve-cap give-weapon switch-weapon weapon-spec weapon-order weapons])
   (:require phel-doom.io.sound    :refer [play-sfx! mute-for!])
   (:require phel-doom.io.ambient  :refer [start-ambient! stop-ambient! sync-ambient!])
-  (:require phel-doom.core.level    :refer [build-world num-levels])
+  (:require phel-doom.core.level    :refer [build-world num-levels place-secret-reward])
   (:require phel-doom.core.perf     :refer [target-frame-us])
   (:require phel-doom.io.scores   :refer [update-scores!])
   (:require phel-doom.io.render   :refer [render! clear-screen
@@ -417,7 +417,8 @@
 (defn- try-reveal-secret
   "Action-key handler: when F was just pressed AND the cell directly
    in front of the player is an unrevealed secret wall, swap that
-   cell to floor on the world's grid and bump `:secrets-found`.
+   cell to floor on the world's grid, drop a reward stash at the
+   revealed cell (level/place-secret-reward), and bump `:secrets-found`.
    Plays the door sfx so the reveal is audibly distinct from a wall
    bump. No-op otherwise so other action-bound features (switches,
    etc) chain off the same edge without conflict."
@@ -426,11 +427,13 @@
     world
     (let [[cx cy] (cell-ahead world)]
       (if (secret? (:grid world) cx cy)
-        (do (when (:sound-on world) (play-sfx! :door))
-            (-> world
-                (assoc :grid (reveal-secret (:grid world) cx cy))
-                (rebuild-pgrid)
-                (update :secrets-found (fn [n] (php/+ (or n 0) 1)))))
+        (let [idx (or (:secrets-found world) 0)]
+          (when (:sound-on world) (play-sfx! :door))
+          (-> world
+              (assoc :grid (reveal-secret (:grid world) cx cy))
+              (rebuild-pgrid)
+              (place-secret-reward cx cy idx)
+              (update :secrets-found (fn [n] (php/+ (or n 0) 1)))))
         world))))
 
 (defn- try-toggle-switch

@@ -22,6 +22,7 @@ See [rendering.md](rendering.md), [raycaster.md](raycaster.md), [performance.md]
 - Per-level wall + sky + floor palette
 - Pickups: hearts (cap 5), armor (cap 5, absorbs one hit each), armor shards (+1 over-cap up to 10, no decay), soulsphere (+1 life over-cap, decays back to cap), ammo boxes (per-weapon `:ammo-per-box`), berserk (20s ×2 dmg), invuln (10s immune), stacking backpack (L2+, each pickup adds one tier of reserve cap, up to `max-backpacks`)
 - Keycards + locked exits on L4 (blue) / L5 (red). Intro splash adds a `FIND THE <COLOUR> KEY` subtitle on locked levels; compass top-centre tints the E/S/W/N letter pointing at the un-picked card in the lock colour; bumping the door without the matching key pulses `⚿ NEED <COLOUR> KEY ⚿` for 1.5s. L10 boss door unlocks via synthetic `:boss` keycard granted on cyberdemon kill (no physical pickup); intro splash: `KILL THE BOSS TO ESCAPE`, door pulse: `☠ KILL THE BOSS ☠`
+- Secret reward passages: every non-locked procgen level hides up to 2 secret walls (plus L10's hand-authored pair). Bump one with `F` to reveal a reward stash - ammo + armor shard + a rotating trophy powerup (soulsphere / berserk / invuln). Locked levels are skipped so a secret can't bypass a keycard door.
 - Walk-into-door auto-advance; pulsing minimap door + bright 3D door glyph
 - Cross-level carry: lives, kills, time, owned-weapons, **active weapon**, **per-weapon mag/reserve**, backpack, minimap + sound toggles. Retry/restart resets to fresh defaults.
 

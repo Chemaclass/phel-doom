@@ -12,6 +12,7 @@
                                             caster-spec caster?
                                             attack-spec-of in-attack-range?
                                             maybe-start-attack tick-attack
+                                            aggression-for aggression-floor
                                             start-wander tick-wander
                                             wander-step-secs wander-step-dist]))
 
@@ -525,6 +526,41 @@
               (:cooldown default-attack-spec)))
   (is (php/< (get-in caster-spec [:caco :cooldown])
              (get-in caster-spec [:baron :cooldown]))))
+
+(deftest test-archvile-is-a-wired-caster
+  ;; archvile was themed a caster but had no caster-spec, so it meleed.
+  ;; It now has a distinct ranged profile: the fastest bolt of the three
+  ;; casters, so L8 ranged escalates over caco/baron.
+  (is (= true (caster? {:type :archvile})))
+  (let [a (get caster-spec :archvile)]
+    (is (= 3.4 (:speed a)) "fastest bolt of the casters")
+    (is (php/> (:speed a) (get-in caster-spec [:baron :speed])))
+    ;; Windup matches the caco (0.6s) - kept reactable on a laggy
+    ;; terminal; the escalation is bolt speed + cooldown, not a shorter
+    ;; telegraph.
+    (is (= (:windup a) (get-in caster-spec [:caco :windup])))))
+
+(deftest test-aggression-for-shrinks-cooldown-with-depth
+  ;; Level 1 = full cooldown (1.0x). Deeper levels scale it down, so the
+  ;; same monster attacks more often. Clamped at aggression-floor.
+  (is (= 1.0 (aggression-for 1)) "no penalty on level 1")
+  (is (php/< (aggression-for 5) (aggression-for 1)) "deeper = smaller")
+  (is (php/< (aggression-for 10) (aggression-for 5)) "monotonic")
+  (is (php/>= (aggression-for 99) aggression-floor) "clamped at the floor")
+  (is (= 1.0 (aggression-for 0)) "level < 1 treated as level 1"))
+
+(deftest test-tick-attack-scales-cooldown-by-aggression
+  ;; On windup-release the armed cooldown is the per-type :cooldown
+  ;; times the enemy's stamped :aggression. A deep-level imp (0.7) arms
+  ;; a shorter cooldown than a level-1 imp (1.0) for the same type.
+  (let [base    {:type :imp :state :attacking :attack-windup-secs 0.05}
+        l1      (tick-attack (assoc base :aggression 1.0) 0.1)
+        deep    (tick-attack (assoc base :aggression 0.7) 0.1)
+        type-cd (:cooldown default-attack-spec)]
+    (is (= type-cd (:attack-cooldown-secs l1)) "level-1 arms the full cooldown")
+    (is (php/< (:attack-cooldown-secs deep) (:attack-cooldown-secs l1))
+        "deep level arms a shorter cooldown")
+    (is (= (php/* type-cd 0.7) (:attack-cooldown-secs deep)))))
 
 (deftest test-caster-in-attack-range-uses-long-range
   ;; Player 5 units east of a caco — out of melee range but inside the

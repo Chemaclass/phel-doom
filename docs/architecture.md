@@ -19,6 +19,7 @@ src/
 │   ├── level.phel                   ; 10-level catalog + build-world factory
 │   ├── weapons.phel                 ; per-weapon stat catalog + switch/reload
 │   ├── perf.phel                    ; big-screen perf-mode predicates
+│   ├── rng.phel                     ; seeded PRNG (deterministic runs / demos)
 │   └── difficulty.phel              ; easy/normal/hard/nightmare multipliers
 ├── glue/                            ; pure wiring, needs both halves
 │   └── controls.phel                ; key bytes -> :moves counters + rising edges
@@ -28,6 +29,8 @@ src/
     ├── sound.phel                   ; afplay/paplay/aplay shell-out (one-shot sfx)
     ├── ambient.phel                 ; synthesised drone loop (crash-safe bg process)
     ├── scores.phel                  ; JSON in $HOME
+    ├── savegame.phel                ; mid-level save/load (tagged JSON world dump)
+    ├── demo.phel                    ; record / replay input stream + seed
     └── wad.phel                     ; .wad file format parser
 ```
 

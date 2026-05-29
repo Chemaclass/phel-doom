@@ -2,6 +2,8 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.state  :refer [new-player new-world with-enemies])
   (:require phel-doom.core.enemy  :refer [new-enemy])
+  (:require phel-doom.core.level  :refer [build-world])
+  (:require phel-doom.core.rng    :as rng)
   (:require phel-doom.commands.play  :refer [tick-world]))
 
 (def open-grid
@@ -187,3 +189,22 @@
         w' (tick-world w0 "" 0.016 (assoc no-edges :fire true))]
     (is (= 0 (:kills w')))
     (is (= 0 (:mag w')))))
+
+;; ---------------------------------------------------------------------
+;; Demo determinism (issue #64): same seed + same input stream =>
+;; identical world frame-for-frame. This is the property demo replay
+;; relies on; with the seeded core/rng it holds end to end.
+;; ---------------------------------------------------------------------
+
+(deftest test-replay-reproduces-world
+  (let [run (fn []
+              (rng/seed! 2024)
+              (loop [w (build-world 1 5) i 0]
+                (if (php/>= i 40)
+                  w
+                  (recur (tick-world w "w" 0.016 no-edges) (php/+ i 1)))))
+        a   (run)
+        b   (run)]
+    (is (= (:player a) (:player b)) "player state identical after 40 frames")
+    (is (= (:enemies a) (:enemies b)) "enemy state identical")
+    (is (= (:game-time a) (:game-time b)))))

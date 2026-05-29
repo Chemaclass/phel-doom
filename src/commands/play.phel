@@ -18,6 +18,8 @@
   (:require phel-doom.io.sound    :refer [play-sfx! mute-for!])
   (:require phel-doom.io.ambient  :refer [start-ambient! stop-ambient! sync-ambient!])
   (:require phel-doom.io.savegame :refer [save-game! load-game])
+  (:require phel-doom.io.demo     :as demo)
+  (:require phel-doom.core.rng    :as rng)
   (:require phel-doom.core.level    :refer [build-world num-levels place-secret-reward])
   (:require phel-doom.core.perf     :refer [target-frame-us])
   (:require phel-doom.io.scores   :refer [update-scores!])
@@ -759,16 +761,23 @@
         (let [render-start (php/microtime true)]
           (draw-frame world fps frame-ms rows cols)
           (adaptive-sleep! render-start cols rows))
-        (let [keys     (drain-keys)
-              now      (php/microtime true)
-              ms       (ms-since t-last now)
-              now-keys (key-states keys)
-              edges    (rising-edges now-keys prev-keys)
-              ticked   (tick-world world keys (php// ms 1000.0) edges)
+        (let [live-keys (drain-keys)
+              now       (php/microtime true)
+              live-ms   (ms-since t-last now)
+              ;; Input source: live terminal, or — under demo record /
+              ;; replay — the recorder taps the stream / the player
+              ;; feeds recorded frames (issue #64). A replay that runs
+              ;; out of frames sets `:end?` and the cond below quits.
+              frame     (demo/resolve-frame! live-keys live-ms)
+              keys      (or (:keys frame) "")
+              ms        (or (:ms frame) live-ms)
+              now-keys  (key-states keys)
+              edges     (rising-edges now-keys prev-keys)
+              ticked    (tick-world world keys (php// ms 1000.0) edges)
               ;; F5 / F9 quick-save / load run here (file IO), outside
               ;; the pure tick. Load swaps the whole world; both stamp a
               ;; brief HUD flash so the player sees it took.
-              world'   (handle-save-load ticked edges)]
+              world'    (handle-save-load ticked edges)]
           (when (and (:heartbeat-tick? world') (:sound-on world'))
             (play-sfx! :heartbeat 0.35))
           (when (and (:silence-tick? world') (:sound-on world'))
@@ -779,6 +788,7 @@
           (when (php/!== (:sound-on world) (:sound-on world'))
             (sync-ambient! (:sound-on world')))
           (cond
+            (:end? frame)              :quit
             (str/contains? keys "q")   :quit
             (php/<= (:lives world') 0) (result-game-over world' t-start now)
             (on-door? world')          (door-result      world' t-start now)
@@ -873,12 +883,12 @@
    (from --level / -l) sets where the run begins — 1..num-levels,
    clamped. Death + retry reset to L1 (the start-level only seeds
    the initial loop entry)."
-  [diff god? armory? full-map? start-level]
+  [diff god? armory? full-map? start-level init-seed]
   (loop [level       (php/max 1 (php/min num-levels (or start-level 1)))
          lives       max-lives
          carry-kills 0
          carry-time  0
-         seed        (php/mt_rand)
+         seed        init-seed
          ;; Backpack stack carried across levels (0..max-backpacks).
          ;; Was a boolean before #68 part 3 - swapped to an int so
          ;; each pickup adds one base's reserve cap.
@@ -892,7 +902,7 @@
          wstate      nil
          show-map?   false
          sound-on?   true]
-    (php/mt_srand seed)
+    (rng/seed! seed)
     (let [w0     (build-world level lives bp-level diff owned)
           ;; God mode + carried user toggles + weapon ammo are
           ;; overlaid on the freshly-built world so build-world
@@ -924,7 +934,7 @@
         ;; counts as a breather, the pool refills to max via new-world.
         ;; Lives, weapons, mag/reserve and player toggles do carry.
         (let [[k t] (carry-on carry-kills carry-time result)]
-          (recur (:level result) (:lives result) k t (php/mt_rand)
+          (recur (:level result) (:lives result) k t (rng/next-raw!)
                  (backpack-level result)
                  (or (:owned-weapons result) #{:pistol})
                  (or (:weapon result) :pistol)
@@ -936,7 +946,7 @@
         (let [[k t]           (carry-on carry-kills carry-time result)
               [kind new-seed] (handle-end victory-loop k t result seed true)]
           (cond
-            (= kind :fresh) (recur 1 max-lives 0 0 (php/mt_rand) 0 #{:pistol} nil nil true true)
+            (= kind :fresh) (recur 1 max-lives 0 0 (rng/fresh-seed) 0 #{:pistol} nil nil true true)
             (= kind :same)  (recur 1 max-lives 0 0 new-seed 0 #{:pistol} nil nil true true)
             :else           nil))
 
@@ -946,7 +956,7 @@
               died-on         (or (:level result) 1)]
           (cond
             ;; r: try the level you died on again with a fresh map.
-            (= kind :fresh) (recur died-on max-lives 0 0 (php/mt_rand) 0 #{:pistol} nil nil true true)
+            (= kind :fresh) (recur died-on max-lives 0 0 (rng/fresh-seed) 0 #{:pistol} nil nil true true)
             ;; R: replay the exact level you died on (same seed + same
             ;; level number reproduces identical geometry + enemies).
             (= kind :same)  (recur died-on max-lives 0 0 new-seed 0 #{:pistol} nil nil true true)
@@ -978,17 +988,32 @@
 
 (defn- run-play [ctx]
   (init-input!)
-  (let [diff      (cli/opt ctx "difficulty")
-        god?      (cli/opt ctx "god")
-        armory?   (cli/opt ctx "armory")
-        full-map? (cli/opt ctx "full-map")
-        lv-raw    (cli/opt ctx "level")
+  (let [diff        (cli/opt ctx "difficulty")
+        god?        (cli/opt ctx "god")
+        armory?     (cli/opt ctx "armory")
+        full-map?   (cli/opt ctx "full-map")
+        lv-raw      (cli/opt ctx "level")
         ;; CLI gives strings; coerce to int. nil / empty → nil → L1.
-        lv        (cond
-                    (nil? lv-raw) nil
-                    (= lv-raw "") nil
-                    :else         (php/intval lv-raw))]
-    (if (= (show-start-menu!) :quit)
+        lv          (cond
+                      (nil? lv-raw) nil
+                      (= lv-raw "") nil
+                      :else         (php/intval lv-raw))
+        ;; Demo (issue #64): --demo replays a recorded run (forces its
+        ;; seed + input stream, skips the menu); --record captures the
+        ;; run's seed + per-frame input to a file on exit.
+        record-path (cli/opt ctx "record")
+        demo-path   (cli/opt ctx "demo")
+        record?     (and record-path (not (= record-path "")))
+        replay      (when (and demo-path (not (= demo-path "")))
+                      (demo/read-demo demo-path))
+        ;; Replay reproduces the recorded seed; record / normal start
+        ;; from a fresh seed (recorded so the run can be replayed).
+        init-seed   (if replay (:seed replay) (rng/fresh-seed))]
+    (cond
+      replay  (demo/start-replay! (:seed replay) (:frames replay))
+      record? (demo/start-record! init-seed)
+      :else   (demo/reset-off!))
+    (if (and (nil? replay) (= (show-start-menu!) :quit))
       (do (restore!)
           (clear-screen)
           0)
@@ -997,8 +1022,10 @@
           ;; levels + end screens). N-toggle starts/stops it mid-run;
           ;; teardown always stops it so no loop process is orphaned.
           (start-ambient!)
-          (run-levels diff god? armory? full-map? lv)
+          (run-levels diff god? armory? full-map? lv init-seed)
           (stop-ambient!)
+          (when record? (demo/save-recording! record-path))
+          (demo/reset-off!)
           (restore!)
           (clear-screen)
           (cli/success ctx "Thanks for playing.")
@@ -1032,5 +1059,13 @@
            :short   "l"
            :mode    :optional
            :doc     "Start at level N (1..num-levels). Clamped. Pairs naturally with --god to drop straight into a boss room for testing."
+           :default ""}
+          {:name    "record"
+           :mode    :optional
+           :doc     "Record the run (seed + per-frame input) to a demo file for deterministic replay."
+           :default ""}
+          {:name    "demo"
+           :mode    :optional
+           :doc     "Replay a demo file recorded with --record (skips the start menu)."
            :default ""}]
    :run  run-play})

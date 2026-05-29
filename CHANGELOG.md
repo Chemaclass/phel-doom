@@ -11,6 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+- Demo recording + replay (#64). `--record=FILE` captures a run (seed + per-frame input); `--demo=FILE` replays it deterministically. Built on a new seeded RNG (`core/rng`) that every gameplay draw flows through, replacing the unseedable `random_int` / `mt_rand`.
 - Mid-level save / load (#63). `F5` quick-saves the whole `:world` to `$HOME/.phel-doom/saves/slot-1.json`, `F9` loads it back, with a `SAVED` / `LOADED` HUD cue. A tagged JSON codec round-trips Phel keywords / sets / vectors / maps; `:pgrid` is rebuilt and fog re-reveals on load. Versioned: a save from an incompatible build is refused. Slots 1-9 exist in `io/savegame`.
 - BFG splash weapon (#58). Slot 5, found on L7. A heavy `:plasma` shot: the beam lands on the nearest enemy or wall, then a 3-cell-radius blast damages every enemy around the impact - a multi-kill room-clearer that also bypasses the fire-resistant caco / baron / archvile / mancubus. Single-action, slow cadence, expensive cells. Distinct green plasma report (Glass).
 - Secret reward passages. Every non-locked procgen level now hides up to 2 secret walls; revealing one (bump + `F`) drops a reward stash: an ammo box, an armor shard, and a rotating trophy powerup (soulsphere / berserk / invuln). Locked levels are skipped so a secret shortcut can't bypass a keycard door. Makes exploration pay off and turns the rare powerups into a reliable find.
@@ -29,6 +30,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Fixed
 
+- `R` (restart same map) now actually reproduces the level geometry + enemy spawns. It re-seeded `mt_rand`, but map gen used `random_int` (unseedable), so the "same map" never matched. Both now flow through the seeded `core/rng`.
 - Weapon felt silent when a shot connected (esp. the shotgun): a hit swapped the gun report for the enemy reaction, so you only heard a quiet thud. Every trigger pull now plays the active weapon's own fire sound, hit or miss, with the kill cue layered on top. Each weapon gets a distinct report (pistol Pop, shotgun Blow, chaingun Morse, chainsaw Purr) via a data-driven `:fire-sfx` spec key.
 - Enemy face / eyes glyph drew over closer sprites (#91). The face overlay was gated only by walls, not by nearer enemies, so a far enemy's eyes floated on top of one in front. Now gated by the same front-most-enemy check as the grounding shadow.
 - Grid mutations (#61 secrets, doors, switches) left the raycaster's `:pgrid` stale - player walked through visually solid walls. New `state/rebuild-pgrid` resyncs after every mutation.

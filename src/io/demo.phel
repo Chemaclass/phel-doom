@@ -1,0 +1,126 @@
+(ns phel-doom.io.demo)
+
+;; ---------------------------------------------------------------------
+;; Demo record / replay (issue #64). A demo is the run's RNG seed plus
+;; the per-frame [key-bytes, dt-ms] input stream. Because every gameplay
+;; draw now flows through the seeded core/rng, seed + input stream fully
+;; determine the run: replaying the same seed and feeding the same
+;; inputs reproduces the world frame for frame.
+;;
+;; The game loop calls `resolve-frame!` each frame: in :record mode it
+;; appends the live (keys, ms) and passes them through; in :replay mode
+;; it returns the next recorded frame (ignoring the terminal) and
+;; signals `:end?` when the stream runs out. `:off` is a pass-through.
+;;
+;; A module atom holds the session — the loop is the single caller, so
+;; there's no contention. Pure helpers (frames<->json) are unit-tested.
+;; ---------------------------------------------------------------------
+
+(def demo-version 1)
+
+(def state
+  "Demo session: {:mode :off|:record|:replay :seed n :frames [...] :cursor i}.
+   Frames are [keys-string dt-ms] pairs."
+  (atom {:mode :off :seed nil :frames [] :cursor 0}))
+
+(defn recording? [] (php/=== :record (:mode @state)))
+(defn replaying? [] (php/=== :replay (:mode @state)))
+(defn run-seed [] (:seed @state))
+
+(defn start-record!
+  "Begin capturing frames against `seed`."
+  [seed]
+  (reset! state {:mode :record :seed seed :frames [] :cursor 0})
+  nil)
+
+(defn start-replay!
+  "Begin replaying `frames` (vector of [keys ms]) under `seed`."
+  [seed frames]
+  (reset! state {:mode :replay :seed seed :frames frames :cursor 0})
+  nil)
+
+(defn reset-off! []
+  (reset! state {:mode :off :seed nil :frames [] :cursor 0})
+  nil)
+
+(defn resolve-frame!
+  "Per-frame input source. Given the live `[keys ms]`, return
+   `{:keys :ms}` to drive this frame, or `{:end? true}` when a replay
+   has exhausted its stream.
+     :record -> record the live frame, pass it through
+     :replay -> return the next recorded frame (terminal ignored)
+     :off    -> pass the live frame through"
+  [live-keys live-ms]
+  (let [s @state]
+    (cond
+      (php/=== :record (:mode s))
+      (do (swap! state update :frames conj [live-keys live-ms])
+          {:keys live-keys :ms live-ms})
+
+      (php/=== :replay (:mode s))
+      (let [c  (:cursor s)
+            fs (:frames s)]
+        (if (php/>= c (count fs))
+          {:end? true}
+          (let [fr (get fs c)]
+            (swap! state assoc :cursor (php/+ c 1))
+            {:keys (get fr 0) :ms (get fr 1)})))
+
+      :else
+      {:keys live-keys :ms live-ms})))
+
+;; --- serialization (pure) -------------------------------------------
+
+(defn frames->json
+  "Pure: serialize a demo (seed + frames) to a versioned JSON string."
+  [seed frames]
+  (let [o  (php/array)
+        fa (php/array)]
+    (php/aset o "version" demo-version)
+    (php/aset o "seed" seed)
+    (loop [i 0]
+      (when (php/< i (count frames))
+        (let [fr   (get frames i)
+              pair (php/array)]
+          (php/aset pair 0 (get fr 0))
+          (php/aset pair 1 (get fr 1))
+          (php/array_push fa pair))
+        (recur (php/+ i 1))))
+    (php/aset o "frames" fa)
+    (php/json_encode o)))
+
+(defn json->demo
+  "Pure: parse a demo JSON string into {:seed :frames}, or nil on a
+   version mismatch / malformed input."
+  [s]
+  (let [d (php/json_decode s true)]
+    (if (and (php/is_array d)
+             (php/=== demo-version (php/aget d "version")))
+      {:seed   (php/aget d "seed")
+       :frames (apply vector
+                      (map (fn [p] [(php/aget p 0) (php/aget p 1)])
+                           (php/aget d "frames")))}
+      nil)))
+
+;; --- file IO --------------------------------------------------------
+
+(defn save-recording!
+  "Write the recorded frames to `path`. No-op unless recording. Returns
+   true on success."
+  [path]
+  (if (not (recording?))
+    false
+    (let [s @state]
+      (not (php/=== false
+                    (php/file_put_contents path (frames->json (:seed s) (:frames s))))))))
+
+(defn read-demo
+  "Read + parse a demo file into {:seed :frames}, or nil when missing /
+   unreadable / malformed."
+  [path]
+  (if (not (php/file_exists path))
+    nil
+    (let [c (php/file_get_contents path)]
+      (if (or (php/=== c false) (php/=== c ""))
+        nil
+        (json->demo c)))))

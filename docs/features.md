@@ -126,6 +126,15 @@ See [scores.md](scores.md), [savegame.md](savegame.md).
 - `--armory` (`-a`) - own every weapon + infinite reserves (per-frame refill). Pairs with `--god` for mechanic testing.
 - `--full-map` (`-f`) - reveal whole minimap (skip fog-of-war). Level-editor + screenshots.
 - `--level=N` (`-l`) - start at level N (clamped). Pairs with `--god` to drop into boss rooms.
+- `--record=FILE` - record the run (seed + per-frame input) to a demo file.
+- `--demo=FILE` - replay a recorded demo deterministically (skips the start menu). See [demo.md](demo.md).
+
+## Determinism + demos
+
+All gameplay randomness flows through one seeded generator (`core/rng`, Park-Miller LCG) instead of the unseedable `random_int` / `mt_rand`. Seed once and the whole run is reproducible from seed + input stream. This:
+
+- powers `--record` / `--demo` deterministic replay (#64),
+- fixes `R` (restart same map) actually reproducing the level geometry + enemy spawns (it previously re-seeded `mt_rand`, which `random_int`-based map gen ignored).
 
 ## Misc
 

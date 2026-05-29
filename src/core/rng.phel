@@ -1,0 +1,64 @@
+(ns phel-doom.core.rng)
+
+;; ---------------------------------------------------------------------
+;; Seeded pseudo-random generator (issue #64).
+;;
+;; The game previously drew randomness straight from `php/random_int`
+;; (rand-int) and `php/mt_rand`. `random_int` is a CSPRNG and can't be
+;; seeded, so runs were unreproducible — which broke both the "R =
+;; replay the same map" restart and any hope of deterministic demo
+;; playback.
+;;
+;; This module is the single RNG every gameplay draw flows through. Seed
+;; it once (`seed!`) and the whole run is reproducible: same seed + same
+;; input/dt stream => identical world every frame. That's what makes
+;; demo record/replay (io/demo) deterministic.
+;;
+;; Algorithm: Park-Miller minimal-standard LCG (x' = 16807*x mod
+;; 2147483647). All intermediate math stays inside PHP's 64-bit int
+;; range, so no overflow-to-float. A module atom holds the state — the
+;; same pragmatic "global RNG" shape the code already had, just seedable.
+;; ---------------------------------------------------------------------
+
+(def modulus 2147483647)        ; 2^31 - 1 (Mersenne prime)
+(def multiplier 16807)
+
+(def state
+  "Current generator state in 1..modulus-1. Never 0 (a zero state is a
+   fixed point that only ever yields 0)."
+  (atom 1))
+
+(defn seed!
+  "Seed the generator. Any integer is folded into the valid 1..m-1
+   range; 0 maps to 1 so the stream never collapses."
+  [n]
+  (let [s (php/% (php/abs (php/intval n)) modulus)]
+    (reset! state (if (php/=== 0 s) 1 s))
+    nil))
+
+(defn fresh-seed
+  "A nondeterministic seed for a fresh run (does NOT seed the
+   generator). Drawn from the CSPRNG so two real runs differ; the value
+   is recorded by the demo writer so a replay can reproduce the run."
+  []
+  (php/random_int 1 (php/- modulus 1)))
+
+(defn next-raw!
+  "Advance the generator and return the new raw state in 1..m-1."
+  []
+  (swap! state (fn [x] (php/% (php/* multiplier x) modulus)))
+  @state)
+
+(defn int!
+  "Random integer in 0..n inclusive (matches `rand-int` semantics).
+   Returns 0 for n <= 0."
+  [n]
+  (if (php/<= n 0)
+    0
+    (php/% (next-raw!) (php/+ n 1))))
+
+(defn float!
+  "Random float in [0, 1) (replacement for the old
+   `(/ (mt_rand) (mt_getrandmax))` ratio)."
+  []
+  (php// (php/- (next-raw!) 1) (php/- modulus 1.0)))

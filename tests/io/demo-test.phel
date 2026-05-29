@@ -1,0 +1,43 @@
+(ns phel-doom-tests.io.demo-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.io.demo :as demo))
+
+(deftest test-frames-json-round-trip
+  (let [frames [["w" 16] ["s a" 17] ["" 16]]
+        back   (demo/json->demo (demo/frames->json 4242 frames))]
+    (is (= 4242 (:seed back)))
+    (is (= frames (:frames back)))))
+
+(deftest test-json-demo-rejects-malformed
+  (is (= nil (demo/json->demo "garbage not json"))))
+
+(deftest test-json-demo-rejects-version-mismatch
+  (let [o (php/array)]
+    (php/aset o "version" 99)
+    (php/aset o "frames" (php/array))
+    (is (= nil (demo/json->demo (php/json_encode o))))))
+
+(deftest test-record-mode-flags
+  (demo/start-record! 1)
+  (is (demo/recording?))
+  (is (not (demo/replaying?)))
+  (is (= 1 (demo/run-seed)))
+  (demo/reset-off!)
+  (is (not (demo/recording?))))
+
+(deftest test-replay-feeds-frames-then-ends
+  (demo/start-replay! 9 [["w" 16] ["s" 17]])
+  (let [f1 (demo/resolve-frame! "x" 99)
+        f2 (demo/resolve-frame! "x" 99)
+        f3 (demo/resolve-frame! "x" 99)]
+    (is (= "w" (:keys f1)) "first recorded frame, terminal ignored")
+    (is (= 16 (:ms f1)))
+    (is (= "s" (:keys f2)))
+    (is (= true (:end? f3)) "stream exhausted -> end"))
+  (demo/reset-off!))
+
+(deftest test-off-mode-passes-through
+  (demo/reset-off!)
+  (let [f (demo/resolve-frame! "wd" 16)]
+    (is (= "wd" (:keys f)))
+    (is (= 16 (:ms f)))))

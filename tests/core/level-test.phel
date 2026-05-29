@@ -1,6 +1,30 @@
 (ns phel-doom-tests.core.level-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.level :refer [config-for num-levels build-world place-secret-reward secret-trophies]))
+  (:require phel-doom.core.level :refer [config-for num-levels build-world place-secret-reward secret-trophies])
+  (:require phel-doom.core.rng :as rng))
+
+;; ---------------------------------------------------------------------
+;; Seeded determinism (issue #64): same rng seed => identical level.
+;; This is the foundation demo replay relies on.
+;; ---------------------------------------------------------------------
+
+(deftest test-build-world-deterministic-under-seed
+  (rng/seed! 777)
+  (let [a (build-world 1 5)]
+    (rng/seed! 777)
+    (let [b (build-world 1 5)]
+      (is (= (:grid a) (:grid b)) "same seed -> identical map geometry")
+      (is (= (:player a) (:player b)) "same spawn position + angle")
+      (is (= (map (fn [e] [(:x e) (:y e) (:type e)]) (:enemies a))
+             (map (fn [e] [(:x e) (:y e) (:type e)]) (:enemies b)))
+          "same enemy spawns"))))
+
+(deftest test-build-world-differs-under-different-seed
+  (rng/seed! 1)
+  (let [a (build-world 1 5)]
+    (rng/seed! 2)
+    (is (not (= (:grid a) (:grid (build-world 1 5))))
+        "different seeds -> different maps")))
 
 (deftest test-config-for-returns-each-level
   (is (= "imps"        (:name (config-for 1))))

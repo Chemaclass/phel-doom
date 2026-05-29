@@ -28,12 +28,16 @@ Every cell is one of these ints. Constants exported so no module uses raw `0/1/2
 ## Lookup helpers
 
 ```phel
-(cell  grid x y)   ; cell value; out-of-bounds = cell-wall
-(wall? grid x y)   ; true for cell-wall only (doors are passable!)
-(door? grid x y)   ; true for cell-door
+(cell  grid x y)      ; cell value; out-of-bounds = cell-wall
+(wall? grid x y)      ; true for cell-wall, cell-secret, switches (player-collision)
+(door? grid x y)      ; true for any door variant (locked or not)
+(secret? grid x y)    ; true for unrevealed secret
+(switch? grid x y)    ; true for switch (either state)
+(switch-on? grid x y) ; true for activated switch
+(passable? grid keys x y) ; true if player can walk into (x,y) given held keys
 ```
 
-`wall?` is the player-collision predicate. Doors return false because walking into a door is the level-advance trigger. The raycaster has its own predicate that blocks rays on cell-door so doors stay visually solid until traversed.
+`wall?` / `passable?` use the same lock colour resolution, so the player can't walk through locked doors but the raycaster still blocks rays on them (stay visually solid until traversed).
 
 ## Random map generation
 
@@ -53,15 +57,7 @@ Every cell is one of these ints. Constants exported so no module uses raw `0/1/2
 (seed-doors grid n)
 ```
 
-Converts `n` random interior wall cells into doors. Candidate must (a) currently be a wall and (b) sit next to at least one floor cell. Without the floor-neighbour check a door can hide inside a 2×2 wall blob and lock the room (real bug that shipped once). Gives up after 400 attempts.
-
-```phel
-(defn- has-floor-neighbour? [grid x y]
-  (or (= cell-floor (cell grid (- x 1) y))
-      (= cell-floor (cell grid (+ x 1) y))
-      (= cell-floor (cell grid x (- y 1)))
-      (= cell-floor (cell grid x (+ y 1)))))
-```
+Converts `n` random interior wall cells to doors. Candidate must be a wall with an adjacent floor cell (prevents doors hidden in 2x2 blobs that lock the room). Retries up to 400 times.
 
 ## Player spawn
 
@@ -69,45 +65,40 @@ Converts `n` random interior wall cells into doors. Candidate must (a) currently
 (random-spawn grid)  → [x y]   floats at the centre of a random open cell
 ```
 
-Picks until it finds a `cell-floor`. Bordered grid guarantees one exists; loop terminates.
+Retries until a floor cell is found. Bordered grid always has at least one.
 
 ## Secret walls
 
-Two sources:
+Sources: hand-authored (`:layout` char `S`) or procgen-seeded (divider walls in random grids).
 
-- **Hand-authored**: write `S` in a `:layout` row; `parse-layout` resolves it to `cell-secret` (L10's pillar secrets).
-- **Procgen-seeded**: `seed-secrets grid n` converts up to `n` *divider walls* (`divider-wall?`: a 1-cell-thick interior wall with floor on both horizontal OR both vertical sides) into `cell-secret`. Deterministic top-left-first scan (testable; the random grid itself varies the spots). `build-world` calls it on non-`:layout` levels, but **skips locked levels** - a secret shortcut there could bypass the keycard door. `secrets-per-level` (level.phel) = 2.
+**Divider wall**: 1-cell-thick interior wall with floor on both horizontal OR vertical sides. `seed-secrets grid n` converts up to `n` of them to `cell-secret` via deterministic top-left scan. `build-world` skips locked levels to prevent shortcut bypassing keycard doors. Default: 2 per level.
 
+API:
 ```phel
-(wall?    grid x y)  ; true for secret cells - the raycaster paints them like normal walls
-(passable? grid keys x y) ; false for secret cells - the player bumps until reveal
-(secret?  grid x y)  ; true only for cell-secret
-(reveal-secret grid x y)  ; swap cell-secret → cell-floor (no-op on non-secret)
-(count-secrets grid)      ; per-level total, stamped at build time
-(seed-secrets grid n)     ; convert up to n divider walls to cell-secret
+(secret? grid x y)        ; true for unrevealed secret
+(reveal-secret grid x y)  ; swap to cell-floor (no-op if not secret)
+(count-secrets grid)      ; total per-level
+(seed-secrets grid n)     ; convert divider walls to cell-secret
 ```
 
-The visual cue is deliberately absent (DOOM-style): identical wall shading, no overlay. Discovery is by exploration + bumping. `commands/play.phel/try-reveal-secret` watches the action-key rising edge (`F`); on a press it checks the cell one unit ahead of the player along `:angle`, calls `reveal-secret` if it's a secret, and drops a reward stash via `level/place-secret-reward`: an ammo box + armor shard plus one rotating trophy powerup (soulsphere / berserk / invuln, by reveal index - the rare pickups become a reliable exploration payoff). World tracks `:secrets-total` (set by `count-secrets` in `build-world`) + `:secrets-found` (bumped by `try-reveal-secret`); the F3 debug HUD paints `secrets X/Y`.
+Visual cue: none (DOOM-style). Discovery by bumping. `F`-press near a secret calls `reveal-secret` and drops reward stash (ammo box + armor shard + rotating trophy) via `level/place-secret-reward`. World tracks `:secrets-total` (count) + `:secrets-found` (bumps); debug HUD: `secrets X/Y`.
 
 ## Switches
 
-Hand-authored only - `cell-switch-off` is never placed by random procgen. Layout char `T` opts a cell in; the level config supplies the `:switches` metadata:
+Hand-authored only (`:layout` char `T`). Level config supplies targets:
 
 ```phel
-:layout    [...
-            "#..T............T..#"
-            ...]
+:layout    ["#..T............T..#" ...]
 :switches  [{:at [3 14]  :targets [[7 10]]}
             {:at [16 14] :targets [[12 10]]}]
 ```
 
-Each entry pairs a switch position with the cells it toggles. `try-toggle-switch` in `commands/play.phel` watches the `F` rising edge (after `try-reveal-secret`), checks the cell ahead of the player, and routes through `map/toggle-switch`:
+`F`-press near a switch calls `toggle-switch`:
+1. Swap switch cell `off` ↔ `on`.
+2. Flip every target cell `wall` ↔ `floor` (doors skipped).
+3. Resync raycaster's cached grid view.
 
-1. `toggle-switch-cell` swaps the glyph between `cell-switch-off` and `cell-switch-on`.
-2. For every `[x y]` in `:targets`, `toggle-target-cell` flips `cell-wall` ↔ `cell-floor`. Doors are skipped (defensive: targeting a door cell leaves it untouched).
-3. `state/rebuild-pgrid` resyncs the raycaster's PHP-array view; without this the 3D render would still paint the pre-toggle wall.
-
-The minimap glyph differs per state: dim cyan `T` for inactive, bright yellow `T` for activated, so the player can read which switches they've already flipped.
+Minimap: dim `T` (off) / bright `T` (on).
 
 ## Out-of-bounds reads
 

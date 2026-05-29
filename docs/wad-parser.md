@@ -1,58 +1,44 @@
 # WAD parser
 
-`src/io/wad.phel`. Parses the DOOM .wad format. Not yet wired into gameplay (active renderer uses procedurally-generated grids). Kept for future BSP-renderer experiments.
+`src/io/wad.phel`. Parses DOOM .wad binary format. Not wired into gameplay (renderer uses procedurally-generated grids). Available for future BSP-renderer work.
 
-## WAD format primer
+## Format
 
-A .wad is a flat archive of "lumps", named binary chunks. Header gives count + offset to the lump directory at the end of the file:
+Binary archive of "lumps" (named chunks). Header (12 B): magic ("IWAD" or "PWAD") + lump count + directory offset (at EOF). Each lump is (offset, size, 8-byte name).
 
-```
-+------------------+
-| header (12 B)    |  "IWAD" or "PWAD" magic + num-lumps + dir-offset
-+------------------+
-| lump bytes       |  raw payload of each lump back-to-back
-| ...              |
-+------------------+
-| lump directory   |  array of {offset, size, name} records
-+------------------+
-```
+Directory structure: header | lump payloads | lump directory.
 
-Each level (E1M1, MAP01, etc.) is a sequence of named lumps that follow the level marker in the directory: VERTEXES, LINEDEFS, SIDEDEFS, SECTORS, SEGS, SSECTORS, NODES, REJECT, BLOCKMAP.
+Each level (E1M1, MAP01, etc.) is a named marker followed by geometry lumps: VERTEXES, LINEDEFS, SIDEDEFS, SECTORS, SEGS, SSECTORS, NODES, REJECT, BLOCKMAP.
 
-## What this parser handles
+## Parser coverage
 
-| Lump | What it is | Status |
-|---|---|---|
-| Header | Magic + lump count + directory offset | yes |
-| Directory | Per-lump offset/size/name records | yes |
-| VERTEXES | List of (x, y) int16 vertices | yes |
-| LINEDEFS | List of (v1, v2, flags, type, tag, side-r, side-l) line records | yes |
-| SIDEDEFS, SECTORS, etc. | Sector + texture metadata | no |
-| BSP nodes / SEGS / SSECTORS | Pre-built BSP tree for rendering | no |
+Reads: header (magic/count/offset), directory (all lumps), VERTEXES (int16 x/y pairs), LINEDEFS (vertex pair indices).
 
-Current scope: enough to read level geometry (vertices + line connectivity) for inspection / debugging / future BSP prototyping.
+Skipped: SIDEDEFS/SECTORS (texture metadata), BSP tree (pre-built rendering nodes).
+
+Scope: level geometry (vertices + connectivity) for inspection, debugging, BSP prototyping.
 
 ## API
 
 ```phel
-(read-wad path)
-;; → {:header  {:magic "IWAD"/"PWAD" :num-lumps N :dir-offset N}
-;;    :lumps   <PHP array of {:name :offset :size}>
-;;    :raw     <file contents as a PHP string>}
+(parse-header bytes)
+;; → {:id "IWAD"/"PWAD" :num-lumps N :dir-offset N}
 
-(read-vertexes wad lump-record)
-;; → vector of {:x :y}
+(parse-directory bytes header)
+;; → [PHP array of {:offset :size :name}]
 
-(read-linedefs wad lump-record)
-;; → vector of {:v1 :v2 :flags :type :tag :side-r :side-l}
+(find-lump dir name)
+;; → {:offset :size :name} or nil
+
+(read-vertexes bytes entry)
+;; → [PHP array of {:x :y}] (int16 map-unit coords)
+
+(read-linedefs bytes entry)
+;; → [PHP array of {:a :b}] (vertex indices, 14-byte records)
 ```
 
-Parser operates on the in-memory file string for random access. WAD files are typically a few MB; loading into RAM is fine.
+Reads entire file into memory for random access. Typical WAD: few MB.
 
 ## Tests
 
-`tests/io/wad-test.phel` covers header parse, directory walk, and the two lump decoders. Fixture is a hand-rolled minimal WAD constructed inline, so tests don't depend on shipping a real WAD.
-
-## Why it exists
-
-DOOM's original level format is the natural target for loading authentic maps. Procedural generation covers gameplay today; WAD parser keeps the door open: drop a real `.wad` in + write a BSP renderer that consumes the parsed geometry = next layer.
+`tests/io/wad-test.phel` covers header parse, directory, vertex/linedef decode. Fixture: hand-rolled minimal WAD inline (no shipped file dependency).

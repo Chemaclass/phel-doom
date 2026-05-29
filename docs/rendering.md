@@ -116,11 +116,14 @@ Iterates visible enemies after the main frame composes; paints one face glyph (`
 
 Blood splatters from kills + heart pickups paint into a PHP array `blood-paint` indexed by `row * vw + col`. Inner loop reads first via `(or (php/aget blood-paint ...) main-cond)` so overlays override wall/floor/enemy paint.
 
-### Enemy grounding shadows (two-pass, issue #86)
+### Front-most-enemy gate (shadows + faces, issues #86 / #91)
 
-Each enemy drops a dark `sprite-shadow` cell into `blood-paint` at its foot row to read as grounded. Because `blood-paint` is the top-priority layer, the shadow can NOT be written inline during the back-to-front enemy zone pass: a farther enemy's foot-row shadow would sit over a nearer enemy's body (which lives in the lower-priority enemy-zone layer) and bleed through.
+Two per-enemy overlays paint into top-priority layers and so can't be depth-resolved by the back-to-front zone pass alone:
 
-So shadows are deferred to a second pass after the zone pass, once `edists` (nearest enemy depth per column) is complete. `enemy-shadow-visible-at?` gates each shadow cell on wall depth (`d < dists[c]`) AND front-most-enemy depth (`d <= edists[c]`, inclusive so the column's own front enemy still grounds). Only the nearest enemy at a column drops its shadow; farther ones skip. Enemies are projected + depth-sorted once (`enemy-projs`) and reused across both passes.
+- **Grounding shadow** - a dark `sprite-shadow` cell at the foot row, written into `blood-paint` (top layer). Painted inline, a farther enemy's foot-row shadow would sit over a nearer enemy's body (lower-priority enemy-zone layer) and bleed through.
+- **Face / eyes glyph** (`paint-face-overlay`) - a cursor-positioned glyph appended after the frame, so it draws over everything unless gated.
+
+Both reuse `enemy-front-visible-at?`: a column draws the overlay only when the enemy is in front of the wall (`d < dists[c]`) AND the front-most enemy there (`d <= edists[c]`, inclusive so the column's own front enemy still draws; farther ones skip). `edists` (nearest enemy depth per column) is built during the zone pass. The shadow runs as a deferred second pass once `edists` is complete; the face overlay reads the same `edists` in the post-frame overlay chain. Enemies are projected + depth-sorted once (`enemy-projs`).
 
 ## Run-length encoding
 

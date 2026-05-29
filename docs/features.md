@@ -34,6 +34,7 @@ See [level-system.md](level-system.md), [map.md](map.md).
 - Per-level HP (L1 imp 1, L2 demon 2, L3 caco 3, L4 baron 4, L5 cyber 5; L10 boss cyber 50). Wounded body shades darker as HP drops; a yellow HP digit floats above the head for 1.2s after each hit
 - Shot knockback: every wounding hit shoves the enemy ~1 cell back along the shot direction (wall-clamped; killing blow skips push so corpse lands on death cell)
 - Pain chance per type (`cyber 0.05`, `imp 0.35`, etc.) - heavier bosses ignore most hits; fragile monsters flinch on nearly every shot
+- Projectile casters: cacodemons + barons fire dodgeable fireballs (long-range telegraphed windup, then an orange bolt aimed at your position). Bolts pass doorways, stop at walls, cost one armor/life on impact (i-frames gate a burst to one hit). Strafe or break line of fire to dodge. See `core/projectile.phel`.
 - Cyberdemon chase speed scaled to 0.55× for playability
 - Hitscan combat: distance-attenuated kill/wound sfx, blood splatter, muzzle flash, 5-stage death anim, 3-6s respawn cooldown
 - 4-slot loadout (1/2/3/4), DPS-balanced niches. Pistol on every run; rest must be found.

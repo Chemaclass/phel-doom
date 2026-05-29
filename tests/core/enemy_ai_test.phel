@@ -9,6 +9,7 @@
                                             pain-stagger-secs default-pain-chance
                                             type-pain-chance
                                             attack-spec default-attack-spec
+                                            caster-spec caster?
                                             attack-spec-of in-attack-range?
                                             maybe-start-attack tick-attack
                                             start-wander tick-wander
@@ -485,6 +486,40 @@
     (is (= :aware (:state e')))
     (is (= 0.0 (:attack-windup-secs e')))
     (is (= 1.0 (:attack-cooldown-secs e')))))
+
+;; ---------------------------------------------------------------------
+;; Casters: ranged types (caco, baron) commit from their long
+;; projectile range and raise :fire-now on windup-release so the
+;; projectile-spawn pass can launch a bolt. Melee types leave it false.
+;; ---------------------------------------------------------------------
+
+(deftest test-caster-predicate
+  (is (= true  (caster? {:type :caco})))
+  (is (= true  (caster? {:type :baron})))
+  (is (= false (caster? {:type :imp})))
+  (is (= false (caster? {:type :unknown}))))
+
+(deftest test-attack-spec-of-prefers-caster-spec
+  ;; Caco resolves to its long-range caster profile, not melee.
+  (let [s (attack-spec-of {:type :caco})]
+    (is (= 7.0 (:range s)))
+    (is (= (get-in caster-spec [:caco :speed]) (:speed s)))))
+
+(deftest test-caster-in-attack-range-uses-long-range
+  ;; Player 5 units east of a caco — out of melee range but inside the
+  ;; caco's 7.0 caster range, so it still commits.
+  (is (= true (in-attack-range? {:type :caco :x 5.0 :y 5.0} 10.0 5.0))))
+
+(deftest test-tick-attack-caster-raises-fire-now-on-release
+  (let [e  {:type :caco :state :attacking :attack-windup-secs 0.05}
+        e' (tick-attack e 0.1)]
+    (is (= :aware (:state e')))
+    (is (= true (:fire-now e')) "caster flags a bolt to spawn on release")))
+
+(deftest test-tick-attack-melee-leaves-fire-now-false
+  (let [e  {:type :imp :state :attacking :attack-windup-secs 0.05}
+        e' (tick-attack e 0.1)]
+    (is (= false (:fire-now e')) "melee enemy never flags a bolt")))
 
 ;; ---------------------------------------------------------------------
 ;; Wander: opt-in random patrol. `start-wander` promotes :dormant →

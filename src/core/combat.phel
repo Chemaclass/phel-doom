@@ -321,33 +321,59 @@
   [^float dist]
   (php/max 0.1 (php/- 1.0 (php/min 1.0 (php// dist shot-max-range)))))
 
-(defn- take-damage [world]
+(defn- apply-hit
+  "Land one hit on the player from attacker `att` ({:x :y :d2} or nil),
+   `vol`-scaled pain sfx included. Armor absorbs the hit (drop a unit
+   instead of a life) but still triggers i-frames + the white flash so
+   the player sees the armor consumed. Knockback shoves away from the
+   attacker first, then the timers + hurt-side stamp onto the shoved
+   world so render reads the new position next frame. Shared by the
+   contact path (`take-damage`) and the projectile path
+   (`hit-player-at`)."
+  [world att ^float vol]
   (let [p       (:player world)
-        att     (closest-attacker (:enemies world) (:x p) (:y p))
         armor   (or (:armor world) 0)
-        ;; Distance-attenuate the player-pain sfx the same way `:kill`
-        ;; / `:wound` are scaled: a far enemy chipping a life off
-        ;; should sound as quiet as the final hit that drops a far
-        ;; enemy, not blast at full volume from across the map.
-        ;; closest-attacker already cached squared distance, no extra
-        ;; pass over the enemies vector.
-        vol     (if att
-                  (distance-volume (php/sqrt (or (:d2 att) 0.0)))
-                  1.0)
-        ;; Armor absorbs the hit: drop the unit instead of a life. Still
-        ;; trigger i-frames + the visual flash so the player sees the
-        ;; armor consumed.
         damaged (if (php/> armor 0)
                   (assoc world :armor (php/- armor 1))
                   (update world :lives (fn [l] (php/max 0 (php/- l 1)))))]
     (when (:sound-on world) (play-sfx! :hit vol))
-    ;; Knockback first, then stamp the timers + hurt-side on the
-    ;; shoved world so render reads the new player position next
-    ;; frame.
     (assoc (knockback damaged att)
            :iframes    iframe-seconds
            :flash-secs flash-seconds
            :hurt-side  (attacker-side att (:x p) (:y p) (:angle p)))))
+
+(defn player-immune?
+  "True when an incoming hit can't land: i-frames still ticking, an
+   invuln powerup is up, or dev god mode. Mirrors `vulnerable?`'s
+   guards minus the enemy-touch test so the projectile path
+   (core/projectile) shares the exact immunity rule."
+  [world]
+  (or (php/> (:iframes world) 0.0)
+      (php/> (or (:invuln-secs world) 0.0) 0.0)
+      (:god? world)))
+
+(defn hit-player-at
+  "Apply one hit from a point source at world `(sx, sy)` — a projectile
+   impact. Same effect as a contact hit (armor/life, i-frames, flash,
+   distance-scaled sfx, knockback + hurt-side away from the source) but
+   the attacker is an arbitrary point rather than the nearest enemy.
+   Caller must gate on `player-immune?` first."
+  [world ^float sx ^float sy]
+  (let [p  (:player world)
+        dx (php/- sx (:x p))
+        dy (php/- sy (:y p))
+        d2 (php/+ (php/* dx dx) (php/* dy dy))]
+    (apply-hit world {:x sx :y sy :d2 d2} (distance-volume (php/sqrt d2)))))
+
+(defn- take-damage [world]
+  (let [p   (:player world)
+        att (closest-attacker (:enemies world) (:x p) (:y p))
+        ;; Distance-attenuate the player-pain sfx the same way `:kill`
+        ;; / `:wound` are scaled: a far enemy chipping a life off
+        ;; should sound as quiet as the final hit that drops a far
+        ;; enemy. closest-attacker already cached squared distance.
+        vol (if att (distance-volume (php/sqrt (or (:d2 att) 0.0))) 1.0)]
+    (apply-hit world att vol)))
 
 (defn damage-step
   "Per-frame: decay every timer, then apply a touch hit if i-frames

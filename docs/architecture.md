@@ -15,6 +15,7 @@ src/
 │   ├── enemy.phel                   ; spawn-enemies, advance, shoot, respawn timer
 │   ├── enemy_ai.phel                ; AI state machine (dormant/wander/aware/hunting/pain/attacking)
 │   ├── enemies.phel                 ; enemy-type catalog (visuals + default HP)
+│   ├── projectile.phel              ; enemy fireballs: spawn + march + player impacts
 │   ├── level.phel                   ; 10-level catalog + build-world factory
 │   ├── weapons.phel                 ; per-weapon stat catalog + switch/reload
 │   ├── perf.phel                    ; big-screen perf-mode predicates
@@ -67,7 +68,8 @@ Tests never need a fake terminal, audio device, or disk: all tests import from `
               │     shards, ammo, berserk,    │
               │     invuln, soul, backpack,   │
               │     keycards, weapon-pickups) │
-              │   tick-enemies / reload       │
+              │   tick-enemies                │
+              │   tick-projectiles / reload   │
               │   tick-armory / tick-shooting │
               │   damage-step + horror layer  │
               │   decay-soul-overcap          │

@@ -197,6 +197,17 @@
    with the shade swap."
   "\e[48;5;220;38;5;52;1m◉")
 
+(def fireball-shade
+  "Enemy fireball glow BG: saturated orange so an incoming bolt reads
+   as a hot threat against any wall / floor palette."
+  "\e[48;5;208m ")
+
+(def fireball-glyph
+  "Bright white-hot core ● on the orange glow — a small dense dot the
+   eye tracks as it crosses the viewport, distinct from the round ammo
+   pickup (which sits still on a brown crate BG)."
+  "\e[48;5;208;38;5;231;1m●")
+
 (def berserk-shade
   "Berserk sphere idle BG: dark blood-red so it reads as 'rage' from
    across the room, distinct from the dim heart red (52)."
@@ -2270,6 +2281,49 @@
                           glyph-now))))))
   blood-paint)
 
+(defn- paint-projectiles-into
+  "Project each enemy fireball to screen and write its orange glow plus
+   a white-hot core glyph into `blood-paint`. Same projection pipeline
+   as enemies / pickups; occlusion checks walls only (`dists`) so a
+   bolt always reads in front of the monster that fired it as it closes
+   on the player. The glow is a tight square (half the projected
+   half-width, a few rows tall) so a bolt stays a compact dot rather
+   than a wall-sized blob up close.
+
+   Returns the mutated buffer — PHP arrays pass by value, so the caller
+   must rebind to see the writes."
+  [blood-paint projectiles player dists vw vh]
+  (doseq [pr (or projectiles [])]
+         (let [proj (project-enemy pr player vw)]
+           (when proj
+             (let [col    (:col proj)
+                   hw     (php/max 1 (php/intdiv (:half-width proj) 2))
+                   d      (:dist proj)
+                   c-from (php/max 0 (php/- col hw))
+                   c-to   (php/min (php/- vw 1) (php/+ col hw))
+                   h      (php/min vh (php/intval (php// proj-dist
+                                                         (php/* (php/max 0.5 d) char-aspect))))
+                   mid    (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 2))
+                   r-top  (php/max 0 (php/- mid (php/intdiv h 6)))
+                   r-bot  (php/min vh (php/+ mid (php/intdiv h 6) 1))]
+               (loop [c c-from]
+                 (when (php/<= c c-to)
+                   (when (php/< d (buf-get dists c))
+                     (loop [r r-top]
+                       (when (php/< r r-bot)
+                         (buf-set blood-paint (php/+ (php/* r vw) c) fireball-shade)
+                         (recur (php/+ r 1)))))
+                   (recur (php/+ c 1))))
+               (when (and (php/>= col 0)
+                          (php/< col vw)
+                          (php/>= mid 0)
+                          (php/< mid vh)
+                          (php/< d (buf-get dists col)))
+                 (buf-set blood-paint
+                          (php/+ (php/* mid vw) col)
+                          fireball-glyph))))))
+  blood-paint)
+
 (defn build-blood-cols
   "Directional blood mask: per-column intensity in [0, 1]. Non-zero
    only when iframes active AND a hurt-side is set. Fades from 1.0
@@ -2655,6 +2709,10 @@
                                                         (or (:weapon-pickups world) [])))
                                          (:player world) dists edists vw vh
                                          chaingun-pickup-shade-now chaingun-pickup-glyph-now)
+          ;; Fireballs paint last into the overlay so an incoming bolt
+          ;; sits on top of every pickup glow it crosses.
+          bp-proj   (paint-projectiles-into bp-wc (or (:projectiles world) [])
+                                            (:player world) dists vw vh)
           parts     (buf-mk)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]
@@ -2673,7 +2731,7 @@
                          flr-row   (buf-get (if in-blood? blood-floor-gradient floor-gradient) row)
                          c         (if (and (php/< row visible-mh) (php/>= col mini-col0))
                                      sky-row
-                                     (or (buf-get bp-wc (php/+ (php/* row vw) col))
+                                     (or (buf-get bp-proj (php/+ (php/* row vw) col))
                                          (cond
                                            (php/< row (buf-get tops col))             sky-row
                                            (php/>= row (buf-get bots col))            flr-row
@@ -2722,7 +2780,7 @@
             c-row       (php/+ (php/intdiv vh 2) (if firing? -1 0))
             top-col     (buf-get tops c-col)
             bot-col     (buf-get bots c-col)
-            center-cell (or (buf-get bp-wc (php/+ (php/* c-row vw) c-col))
+            center-cell (or (buf-get bp-proj (php/+ (php/* c-row vw) c-col))
                             (cond
                               (php/< c-row top-col)             (buf-get sky-gradient c-row)
                               (php/>= c-row bot-col)            (buf-get floor-gradient c-row)

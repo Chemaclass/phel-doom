@@ -1,0 +1,130 @@
+(ns phel-doom.core.projectile
+  (:require phel-doom.core.map      :refer [wall?])
+  (:require phel-doom.core.enemy-ai :refer [caster-spec])
+  (:require phel-doom.core.combat   :refer [hit-player-at player-immune?]))
+
+;; ---------------------------------------------------------------------
+;; Enemy projectiles (fireballs). Ranged casters (caco, baron) launch a
+;; bolt on attack windup-release instead of meleeing — see
+;; enemy-ai/caster-spec + tick-attack, which raise an enemy's :fire-now
+;; flag on the firing frame. The pipeline here is pure data: harvest
+;; those flags into world :projectiles, march each bolt along its
+;; velocity, cull on wall / lifetime, and resolve player impacts
+;; through combat/hit-player-at. Bolts pass through doorways (doors
+;; aren't walls) but stop at solid cells, so the player can break line
+;; of fire with geometry.
+;; ---------------------------------------------------------------------
+
+(def projectile-ttl
+  "Seconds a bolt lives before it despawns even if it never hits a wall
+   or the player. A safety net so a bolt fired down a long corridor the
+   player has left can't accumulate forever."
+  4.0)
+
+(def spawn-offset
+  "World-units to nudge the spawn point out from the enemy centre toward
+   the player, so a freshly launched bolt clears the caster's own cell
+   instead of self-colliding on frame one."
+  0.6)
+
+(def hit-radius
+  "World-units proximity at which a bolt is considered to strike the
+   player. A touch wider than the contact-damage distance so a
+   fast-moving bolt can't tunnel past the player point between frames at
+   normal speeds."
+  0.6)
+
+(defn spawn-from-enemies
+  "Harvest every enemy whose `:fire-now` flag is set (raised by
+   enemy-ai/tick-attack on a caster's windup-release): launch one bolt
+   aimed at the player's current cell, then clear the flag. Returns the
+   world with the new bolts appended to `:projectiles` and the enemies
+   un-flagged. No-op (and no allocation) on a frame where nobody fired."
+  [world]
+  (let [enemies (or (:enemies world) [])
+        firing  (apply vector (filter (fn [e] (:fire-now e)) enemies))]
+    (if (empty? firing)
+      world
+      (let [p         (:player world)
+            px        (:x p)
+            py        (:y p)
+            new-bolts
+            (apply vector
+                   (map (fn [e]
+                          (let [spec (get caster-spec (:type e))
+                                spd  (or (:speed spec) 4.0)
+                                ang  (php/atan2 (php/- py (:y e))
+                                                (php/- px (:x e)))
+                                ca   (php/cos ang)
+                                sa   (php/sin ang)]
+                            {:x    (php/+ (:x e) (php/* ca spawn-offset))
+                             :y    (php/+ (:y e) (php/* sa spawn-offset))
+                             :vx   (php/* spd ca)
+                             :vy   (php/* spd sa)
+                             :ttl  projectile-ttl
+                             :type :fireball}))
+                        firing))
+            cleared
+            (apply vector
+                   (map (fn [e] (if (:fire-now e) (assoc e :fire-now false) e))
+                        enemies))]
+        (-> world
+            (assoc :enemies cleared)
+            (update :projectiles (fn [ps] (into (or ps []) new-bolts))))))))
+
+(defn step
+  "March each bolt one dt-scaled frame along its velocity. Drop a bolt
+   that crosses into a solid cell (walls + secrets + switches; doors
+   pass) or whose lifetime expired. Pure: takes + returns the bolt
+   vector, no world / player. `grid` is the Phel cell grid."
+  [projectiles grid ^float dt]
+  (apply vector
+         (filter some?
+                 (map (fn [pr]
+                        (let [nx   (php/+ (:x pr) (php/* (:vx pr) dt))
+                              ny   (php/+ (:y pr) (php/* (:vy pr) dt))
+                              ttl' (php/- (:ttl pr) dt)]
+                          (if (or (php/<= ttl' 0.0)
+                                  (wall? grid (php/intval nx) (php/intval ny)))
+                            nil
+                            (assoc pr :x nx :y ny :ttl ttl'))))
+                      (or projectiles [])))))
+
+(defn resolve-hits
+  "Consume every bolt within `hit-radius` of the player. If the player
+   isn't immune (i-frames / invuln / god — see combat/player-immune?)
+   the first such bolt lands one hit via combat/hit-player-at; i-frames
+   from that hit then absorb any others the same frame, so a burst can't
+   drain multiple lives at once. Bolts that reach the player are removed
+   whether or not they dealt damage (they fizzle on the i-frame shield
+   rather than phasing through)."
+  [world]
+  (let [p         (:player world)
+        px        (:x p)
+        py        (:y p)
+        r2        (php/* hit-radius hit-radius)
+        projs     (or (:projectiles world) [])
+        hit?      (fn [pr]
+                    (let [dx (php/- (:x pr) px)
+                          dy (php/- (:y pr) py)]
+                      (php/<= (php/+ (php/* dx dx) (php/* dy dy)) r2)))
+        struck    (apply vector (filter hit? projs))
+        remaining (apply vector (filter (fn [pr] (not (hit? pr))) projs))
+        w'        (assoc world :projectiles remaining)]
+    (if (and (not (empty? struck))
+             (not (player-immune? world)))
+      (let [b (first struck)]
+        (hit-player-at w' (:x b) (:y b)))
+      w')))
+
+(defn tick-projectiles
+  "One full projectile frame: spawn freshly fired bolts, march + cull
+   them, then resolve player impacts. Single entry point for the game
+   loop."
+  [world ^float dt]
+  ;; Sequential lets, not `->`: the lint pass doesn't macro-expand the
+  ;; thread macro and false-positives arity on the trailing
+  ;; (resolve-hits) call. Same convention as play/tick-world.
+  (let [spawned (spawn-from-enemies world)
+        marched (update spawned :projectiles step (:grid spawned) dt)]
+    (resolve-hits marched)))

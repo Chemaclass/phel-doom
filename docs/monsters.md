@@ -55,6 +55,18 @@ Each enemy carries a `:state` keyword + an optional `:lkp` (last-known player po
 - **`:attacking`** - telegraphed strike window. When an `:aware` enemy is inside its per-type `attack-spec` `:range` AND its `:attack-cooldown-secs` has fully decayed, `maybe-start-attack` flips state to `:attacking` and arms `:attack-windup-secs`. While `:attacking` the enemy stops moving (visible telegraph) but `:attacks?` stays true so contact damage still applies. `tick-attack` decays the windup; on expiry state reverts to `:aware` and the per-type `:cooldown` arms so the enemy chases for at least one cooldown window before the next telegraphed strike. Cooldown ticks every frame regardless of state so a brief `:pain` interrupt doesn't leave a stale cooldown armed.
 - **`:wander`** - opt-in random patrol. `start-wander` promotes a `:dormant` enemy to `:wander` with a fresh random `:wander-angle` and `:wander-secs` timer. `target-pos` projects `wander-step-dist` units ahead in the current angle so `step-toward` walks the enemy in that direction. `tick-wander` rolls a new angle every `wander-step-secs`. `:wander` reacts to LOS / noise the same way `:dormant` does (LOS → `:aware`, noise → `:hunting`). Real-game spawns stay `:dormant` by default to preserve the sneak feel; levels / types opt in by mapping `start-wander` over fresh batches.
 
+### Ranged casters (projectiles)
+
+Cacodemons (`:caco`) and barons (`:baron`) are casters: instead of meleeing on windup-release they launch a fireball. `enemy_ai/caster-spec` gives them a much longer `:range` (caco 7.0, baron 8.0) so they commit to an attack from across the room, plus a bolt `:speed`. `attack-spec-of` prefers `caster-spec` over the melee `attack-spec`, so the `:attacking` rhythm above drives them unchanged: freeze, telegraph the windup, release. On release `tick-attack` raises `:fire-now` on the enemy (melee types leave it `false`).
+
+The projectile pipeline lives in `core/projectile.phel` and runs once per frame between `tick-enemies` and `damage-step` in `play/tick-world`:
+
+- `spawn-from-enemies` harvests every `:fire-now` enemy, aims one bolt at the player's current position, then clears the flag. Bolt = `{:x :y :vx :vy :ttl :type :fireball}` in world `:projectiles`.
+- `step` marches each bolt along its velocity; a bolt that crosses into a solid cell (`map/wall?` - walls/secrets/switches; doors pass) or whose `projectile-ttl` (4s) runs out is dropped.
+- `resolve-hits` consumes any bolt within `hit-radius` (0.6) of the player and lands one hit via `combat/hit-player-at` unless `combat/player-immune?` (i-frames / invuln / god). The hit's i-frames absorb the rest of a burst the same frame, so a wall of bolts costs at most one unit. Running before `damage-step` means a bolt hit and a contact hit can't both land in one frame.
+
+A caster still melees on contact - the touch test ignores range - so cornering one is still dangerous. Dodge bolts by strafing or breaking line of fire around a corner. Render draws each bolt as a white-hot core on an orange glow via the shared `project-enemy` pipeline (`io/render.phel` `paint-projectiles-into`), occluded by walls only so it always reads in front of its caster.
+
 ### Wake / transition triggers
 
 - **LOS** - every tick, `enemy-ai/observe` casts one ray from each alive enemy to the player via `engine/cast-ray`. Ray hits a wall before reaching the player cell → no LOS. Player closer than the wall → LOS clear. Capped at `max-depth` (12 units) - long sectors read as "too far to see" (DOOM sight cutoff).

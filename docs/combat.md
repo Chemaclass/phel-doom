@@ -137,6 +137,12 @@ Four gates: i-frame window, invulnerability sphere timer, dev god mode, AND at l
 - 0.05s flash: `render!` paints viewport white. One-frame jolt before the red i-frame wash.
 - Player knockback shove away from the attacker; arms `:hurt-side` (one of `:left` `:right` `:front` `:back`) so the directional red band paints on the matching edge. Front and back use a narrow ±30° wedge around the player's facing / anti-facing vectors; everything else routes to the wider left / right edges. Closes the rear blind spot that the previous left-only / right-only routing left open (issue #66).
 
+Internally `take-damage` and the projectile path share `apply-hit`, which takes an attacker `{:x :y :d2}` (the nearest enemy for contact, the bolt impact point for projectiles).
+
+### hit-player-at + player-immune? (projectile impacts)
+
+`hit-player-at world sx sy` applies the same hit as a contact touch but from an arbitrary world point - an enemy fireball impact (see [monsters.md](monsters.md) ranged casters + `core/projectile.phel`). `player-immune? world` is the projectile-side gate: i-frames, invuln sphere, or dev god mode - the same guards as `vulnerable?` minus the enemy-touch test. `core/projectile/resolve-hits` checks it before calling `hit-player-at`, so a bolt fizzles on the i-frame shield instead of phasing through.
+
 ### Chainsaw
 
 Slot-4 melee weapon. Spec lives in `weapons/weapons :chainsaw` and carries three flags that the combat path branches on:

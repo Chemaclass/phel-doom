@@ -17,6 +17,7 @@
   (:require phel-doom.core.weapons  :refer [effective-reserve-cap give-weapon switch-weapon weapon-spec weapon-order weapons])
   (:require phel-doom.io.sound    :refer [play-sfx! mute-for!])
   (:require phel-doom.io.ambient  :refer [start-ambient! stop-ambient! sync-ambient!])
+  (:require phel-doom.io.savegame :refer [save-game! load-game])
   (:require phel-doom.core.level    :refer [build-world num-levels place-secret-reward])
   (:require phel-doom.core.perf     :refer [target-frame-us])
   (:require phel-doom.io.scores   :refer [update-scores!])
@@ -540,8 +541,12 @@
             w10  (tick-scare    w9 dt)
             w11  (tick-blood-drops w10 dt)
             w12  (tick-door-face w11 dt)
-            w13  (decay-soul-overcap w12 dt)]
-        (advance-game-time w13 dt)))))
+            w13  (decay-soul-overcap w12 dt)
+            ;; Decay the F5/F9 save/load HUD cue (set in game-loop after
+            ;; the tick).
+            w13b (update w13 :save-flash-secs
+                         (fn [s] (php/max 0.0 (php/- (or s 0.0) dt))))]
+        (advance-game-time w13b dt)))))
 
 ;; =====================================================================
 ;; § Per-frame IO + stats
@@ -614,7 +619,9 @@
    ;; visual when a per-enemy `:type` field is missing. Mixed-monster
    ;; rooms still stamp `:type` per enemy at spawn so the renderer
    ;; can branch.
-   :enemy                (or (:enemy world) :imp)})
+   :enemy                (or (:enemy world) :imp)
+   :save-flash-secs      (or (:save-flash-secs world) 0.0)
+   :save-flash-msg       (:save-flash-msg world)})
 
 (defn- ms-since
   "Whole-millisecond delta between two microtime samples. Args tagged
@@ -713,6 +720,32 @@
         remaining  (php/- budget elapsed-us)]
     (php/usleep (php/max min-yield-us remaining))))
 
+(def quick-save-slot
+  "Slot F5/F9 quick-save + quick-load use. Slots 1-9 exist in
+   io/savegame; the in-game keys drive slot 1 for now."
+  1)
+
+(def save-flash-seconds
+  "How long the SAVED / LOADED HUD cue holds after F5 / F9."
+  1.2)
+
+(defn- handle-save-load
+  "F5 saves the current world to the quick-save slot; F9 loads it back
+   (swapping the whole world). Both stamp a brief `:save-flash-*` HUD
+   cue. File IO lives here in the loop, never in the pure tick."
+  [world edges]
+  (cond
+    (:save edges)
+    (let [ok (save-game! world quick-save-slot)]
+      (assoc world :save-flash-secs save-flash-seconds
+             :save-flash-msg (if ok "SAVED" "SAVE FAILED")))
+    (:load edges)
+    (let [loaded (load-game quick-save-slot)]
+      (if loaded
+        (assoc loaded :save-flash-secs save-flash-seconds :save-flash-msg "LOADED")
+        (assoc world :save-flash-secs save-flash-seconds :save-flash-msg "NO SAVE")))
+    :else         world))
+
 (defn- game-loop [world0]
   (let [t-start (php/microtime true)]
     (loop [world     world0
@@ -730,8 +763,12 @@
               now      (php/microtime true)
               ms       (ms-since t-last now)
               now-keys (key-states keys)
-              world'   (tick-world world keys (php// ms 1000.0)
-                                   (rising-edges now-keys prev-keys))]
+              edges    (rising-edges now-keys prev-keys)
+              ticked   (tick-world world keys (php// ms 1000.0) edges)
+              ;; F5 / F9 quick-save / load run here (file IO), outside
+              ;; the pure tick. Load swaps the whole world; both stamp a
+              ;; brief HUD flash so the player sees it took.
+              world'   (handle-save-load ticked edges)]
           (when (and (:heartbeat-tick? world') (:sound-on world'))
             (play-sfx! :heartbeat 0.35))
           (when (and (:silence-tick? world') (:sound-on world'))

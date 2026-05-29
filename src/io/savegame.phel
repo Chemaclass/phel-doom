@@ -1,0 +1,126 @@
+(ns phel-doom.io.savegame
+  (:require phel-doom.core.state :refer [rebuild-pgrid]))
+
+;; ---------------------------------------------------------------------
+;; Mid-level save / load (issue #63). The immutable `:world` map is pure
+;; data, so it round-trips through JSON — but Phel keywords / sets /
+;; vectors / maps have no native JSON form, and `php/serialize` mangles
+;; Phel's internal objects. So `encode` / `decode` are a small tagged
+;; codec:
+;;   keyword  -> ["$k" "name"]
+;;   set      -> ["$s" [items...]]
+;;   map      -> ["$m" {kw-name: val ...}]   (all world map keys are kws)
+;;   vector   -> [items...]
+;;   scalar   -> itself
+;; `:pgrid` (a derived PHP-array mirror of `:grid`) and `:visited` (the
+;; fog-of-war PHP array) are dropped on save: pgrid is rebuilt from the
+;; grid on load, and the fog simply re-reveals as the player walks.
+;; encode / decode are pure (no IO) so the round-trip is unit-tested.
+;; ---------------------------------------------------------------------
+
+(def save-version
+  "Bumped whenever the world shape changes incompatibly. `load-game`
+   refuses a save whose version doesn't match so a stale file surfaces
+   as a friendly miss instead of a corrupt world."
+  1)
+
+(def max-slots
+  "Save slots 1..max-slots."
+  9)
+
+(declare encode)
+
+(defn- encode-map [m]
+  ;; All world map keys are keywords -> store by name, decode re-kws.
+  (php/array "$m"
+             (reduce (fn [o k]
+                       (php/aset o (name k) (encode (get m k)))
+                       o)
+                     (php/array)
+                     (keys m))))
+
+(defn encode
+  "Pure: Phel value -> JSON-safe PHP structure (tagged for keywords /
+   sets / maps so `decode` can reconstruct the exact types)."
+  [x]
+  (cond
+    (keyword? x) (php/array "$k" (name x))
+    (set? x)     (php/array "$s" (to-php-array (map encode x)))
+    (map? x)     (encode-map x)
+    (vector? x)  (to-php-array (map encode x))
+    :else        x))
+
+(defn decode
+  "Pure inverse of `encode`: tagged PHP structure -> Phel value."
+  [x]
+  (if (php/is_array x)
+    (let [tag (php/aget x 0)]
+      (cond
+        (php/=== tag "$k") (keyword (php/aget x 1))
+        (php/=== tag "$s") (set (map decode (php/aget x 1)))
+        (php/=== tag "$m") (let [o (php/aget x 1)]
+                             (reduce (fn [m k] (assoc m (keyword k) (decode (php/aget o k))))
+                                     {}
+                                     (php/array_keys o)))
+        :else              (apply vector (map decode x))))
+    x))
+
+(defn world->savestring
+  "Pure: serialize `world` to a versioned JSON string. Drops `:pgrid` +
+   `:visited` (rebuilt / reset on load)."
+  [world]
+  (let [clean (dissoc world :pgrid :visited)
+        o     (php/array)]
+    (php/aset o "version" save-version)
+    (php/aset o "world"   (encode clean))
+    (php/json_encode o)))
+
+(defn savestring->world
+  "Pure: parse a save string back into a world (pgrid rebuilt, fog
+   reset). Returns nil on malformed JSON or a version mismatch so the
+   caller can surface a friendly miss."
+  [s]
+  (let [data (php/json_decode s true)]
+    (if (and (php/is_array data)
+             (php/=== save-version (php/aget data "version")))
+      (-> (decode (php/aget data "world"))
+          (assoc :visited (php/array))
+          (rebuild-pgrid))
+      nil)))
+
+(defn- save-dir []
+  (str (or (php/getenv "HOME") ".") "/.phel-doom/saves"))
+
+(defn- slot-path [^int slot]
+  (str (save-dir) "/slot-" slot ".json"))
+
+(defn- valid-slot? [slot]
+  (and (php/is_int slot) (php/>= slot 1) (php/<= slot max-slots)))
+
+(defn save-game!
+  "Write `world` to save `slot` (1..max-slots). Creates the save dir on
+   first use. Returns true on success, false on a bad slot or write
+   failure."
+  [world slot]
+  (if (not (valid-slot? slot))
+    false
+    (do
+      (when (not (php/is_dir (save-dir)))
+        (php/mkdir (save-dir) 0755 true))
+      (not (php/=== false
+                    (php/file_put_contents (slot-path slot)
+                                           (world->savestring world)))))))
+
+(defn load-game
+  "Read save `slot` back into a world, or nil when the slot is empty,
+   unreadable, malformed, or a version mismatch."
+  [slot]
+  (if (not (valid-slot? slot))
+    nil
+    (let [p (slot-path slot)]
+      (if (not (php/file_exists p))
+        nil
+        (let [c (php/file_get_contents p)]
+          (if (or (php/=== c false) (php/=== c ""))
+            nil
+            (savestring->world c)))))))

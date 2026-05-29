@@ -110,8 +110,14 @@ See [audio.md](audio.md).
 - High-scores in `$HOME/.phel-doom-scores.json`: per-level best
   kills + best time + last-run timestamp
 - Pure `merge-run` fn (testable) wrapping the IO writer
+- Mid-level save / load (#63): **F5** quick-saves the whole `:world` to
+  `$HOME/.phel-doom/saves/slot-1.json`, **F9** loads it back. A tagged
+  JSON codec round-trips Phel keywords / sets / vectors / maps; `:pgrid`
+  is rebuilt and fog-of-war re-reveals on load. Versioned - a save from
+  an incompatible build is refused with a `NO SAVE` cue. Slots 1-9 exist
+  in `io/savegame`; the in-game keys use slot 1.
 
-See [scores.md](scores.md).
+See [scores.md](scores.md), [savegame.md](savegame.md).
 
 ## CLI
 

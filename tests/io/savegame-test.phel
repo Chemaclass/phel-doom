@@ -1,0 +1,68 @@
+(ns phel-doom-tests.io.savegame-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.state :refer [new-world new-player with-enemies])
+  (:require phel-doom.io.savegame :refer [encode decode world->savestring savestring->world save-version]))
+
+(def grid [[1 1 1 1] [1 0 0 1] [1 0 0 1] [1 1 1 1]])
+
+;; ---------------------------------------------------------------------
+;; Tagged codec: pure Phel<->JSON-safe round-trip (issue #63).
+;; ---------------------------------------------------------------------
+
+(deftest test-codec-round-trips-keyword
+  (is (= :bfg (decode (encode :bfg)))))
+
+(deftest test-codec-round-trips-set-of-keywords
+  (is (= #{:blue :boss} (decode (encode #{:blue :boss})))))
+
+(deftest test-codec-round-trips-vector
+  (is (= [1 0 1] (decode (encode [1 0 1])))))
+
+(deftest test-codec-round-trips-nested-structure
+  (let [v {:weapon  :bfg
+           :grid    [[1 0] [0 1]]
+           :enemies [{:type :imp :alive true :lives 1}]
+           :keys    #{:red}}]
+    (is (= v (decode (encode v))))))
+
+(deftest test-codec-round-trips-empty-collections
+  (is (= {} (decode (encode {}))))
+  (is (= [] (decode (encode []))))
+  (is (= #{} (decode (encode #{})))))
+
+;; ---------------------------------------------------------------------
+;; Full world string round-trip: key state survives, pgrid rebuilt,
+;; fog reset.
+;; ---------------------------------------------------------------------
+
+(deftest test-world-savestring-round-trip
+  (let [w    (-> (new-world grid (new-player 1.5 2.5 0.0))
+                 (with-enemies [{:x 2.5 :y 2.5 :type :imp :alive true
+                                 :lives 1 :max-lives 1}])
+                 (assoc :weapon :bfg
+                        :owned-weapons #{:pistol :bfg}
+                        :kills 7 :level 3
+                        :held-keys #{:blue}))
+        back (savestring->world (world->savestring w))]
+    (is (= :bfg (:weapon back)) "active weapon preserved")
+    (is (= 7 (:kills back)))
+    (is (= 3 (:level back)))
+    (is (= :imp (:type (first (:enemies back)))) "enemy type keyword preserved")
+    (is (= #{:blue} (:held-keys back)) "keycard set preserved")
+    (is (= #{:pistol :bfg} (:owned-weapons back)))
+    (is (= (:grid w) (:grid back)) "grid preserved")
+    (is (= 1.5 (:x (:player back))))
+    (is (some? (:pgrid back)) "pgrid rebuilt on load")))
+
+(deftest test-load-rejects-version-mismatch
+  (let [o (php/array)]
+    (php/aset o "version" 999)
+    (php/aset o "world" (php/array))
+    (is (= nil (savestring->world (php/json_encode o))) "future version refused")))
+
+(deftest test-load-rejects-malformed
+  (is (= nil (savestring->world "not json at all")))
+  (is (= nil (savestring->world ""))))
+
+(deftest test-save-version-is-pinned
+  (is (= 1 save-version)))

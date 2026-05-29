@@ -153,8 +153,12 @@ One-shot actions (toggles, modals, weapon switch, reload) need rising edges, not
    :select-weapon2 (and (:k2 now) (not (:k2 prev)))     ; shotgun
    :select-weapon3 (and (:k3 now) (not (:k3 prev)))     ; chaingun
    :select-weapon4 (and (:k4 now) (not (:k4 prev)))      ; chainsaw
-   :select-weapon5 (and (:k5 now) (not (:k5 prev)))})   ; BFG
+   :select-weapon5 (and (:k5 now) (not (:k5 prev)))      ; BFG
+   :save           (and (:f5 now) (not (:f5 prev)))      ; F5 quick-save
+   :load           (and (:f9 now) (not (:f9 prev)))})   ; F9 quick-load
 ```
+
+F5 (`\e[15~`) / F9 (`\e[20~`) drive quick-save / load. The edges are handled in `game-loop` (file IO), not `tick-world`, so the pure tick stays effect-free. See [savegame.md](savegame.md).
 
 `game-loop` carries `prev-keys` across iterations; `rising-edges` runs each frame. `tick-world` consumes the edges map. Pure data.
 

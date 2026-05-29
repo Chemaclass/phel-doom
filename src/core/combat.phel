@@ -238,38 +238,32 @@
                  (map (fn [e] (assoc e :ttl (php/- (:ttl e) dt)))
                       (or fx [])))))
 
+(defn- decay-timer
+  "Tick world timer `k` down by `dt`, clamped at 0. Missing keys read as
+   0.0 so a partial test fixture never errors."
+  [world k ^float dt]
+  (php/max 0.0 (php/- (or (get world k) 0.0) dt)))
+
 (defn- decay-timers [world ^float dt]
-  (let [iframes      (php/max 0.0 (php/- (:iframes world) dt))
-        fire-anim    (php/max 0.0 (php/- (or (:fire-anim world) 0.0) dt))
-        intro-secs   (php/max 0.0 (php/- (or (:intro-secs world) 0.0) dt))
-        flash-secs   (php/max 0.0 (php/- (or (:flash-secs world) 0.0) dt))
-        streak-secs' (php/max 0.0 (php/- (or (:streak-secs world) 0.0) dt))
-        cooldown'    (php/max 0.0 (php/- (or (:fire-cooldown world) 0.0) dt))
-        reload-cd'   (php/max 0.0 (php/- (or (:reload-cooldown world) 0.0) dt))
-        click-secs'  (php/max 0.0 (php/- (or (:empty-click-secs world) 0.0) dt))
-        berserk'     (php/max 0.0 (php/- (or (:berserk-secs world) 0.0) dt))
-        invuln'      (php/max 0.0 (php/- (or (:invuln-secs world) 0.0) dt))
-        heat'        (php/max 0.0 (php/- (or (:heat world) 0.0) (php/* heat-cool-rate dt)))
-        jam-secs'    (php/max 0.0 (php/- (or (:jam-secs world) 0.0) dt))
-        locked-bump' (php/max 0.0 (php/- (or (:locked-door-bump-secs world) 0.0) dt))]
+  (let [streak-secs' (decay-timer world :streak-secs dt)]
     (assoc world
-           :iframes         iframes
-           :fire-anim       fire-anim
-           :intro-secs      intro-secs
-           :flash-secs      flash-secs
-           :streak-secs     streak-secs'
-           :fire-cooldown   cooldown'
-           :reload-cooldown reload-cd'
-           :empty-click-secs click-secs'
-           :berserk-secs    berserk'
-           :invuln-secs     invuln'
-           :heat            heat'
-           :jam-secs        jam-secs'
-           :locked-door-bump-secs locked-bump'
+           :iframes               (decay-timer world :iframes dt)
+           :fire-anim             (decay-timer world :fire-anim dt)
+           :intro-secs            (decay-timer world :intro-secs dt)
+           :flash-secs            (decay-timer world :flash-secs dt)
+           :streak-secs           streak-secs'
+           :fire-cooldown         (decay-timer world :fire-cooldown dt)
+           :reload-cooldown       (decay-timer world :reload-cooldown dt)
+           :empty-click-secs      (decay-timer world :empty-click-secs dt)
+           :berserk-secs          (decay-timer world :berserk-secs dt)
+           :invuln-secs           (decay-timer world :invuln-secs dt)
+           :heat                  (php/max 0.0 (php/- (or (:heat world) 0.0) (php/* heat-cool-rate dt)))
+           :jam-secs              (decay-timer world :jam-secs dt)
+           :locked-door-bump-secs (decay-timer world :locked-door-bump-secs dt)
            ;; Window expired: streak counter goes back to 0 so the HUD
            ;; stops showing it.
-           :streak        (if (php/<= streak-secs' 0.0) 0 (or (:streak world) 0))
-           :fx            (decay-fx (:fx world) dt))))
+           :streak                (if (php/<= streak-secs' 0.0) 0 (or (:streak world) 0))
+           :fx                    (decay-fx (:fx world) dt))))
 
 (defn player-immune?
   "True when an incoming hit can't land: i-frames still ticking, an

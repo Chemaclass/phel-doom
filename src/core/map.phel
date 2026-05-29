@@ -218,23 +218,15 @@
    leaving the world in a weird half-mutated state."
   [grid switches ^int x ^int y]
   (let [grid' (toggle-switch-cell grid x y)
-        match (loop [xs switches]
-                (cond
-                  (or (php/=== xs nil) (php/=== (count xs) 0)) nil
-                  :else
-                  (let [s       (first xs)
-                        [sx sy] (:at s)]
-                    (if (and (php/=== sx x) (php/=== sy y))
-                      s
-                      (recur (next xs))))))]
+        match (some (fn [s]
+                      (let [[sx sy] (:at s)]
+                        (when (and (php/=== sx x) (php/=== sy y)) s)))
+                    switches)]
     (if (nil? match)
       grid'
-      (loop [g grid' ts (:targets match)]
-        (cond
-          (or (php/=== ts nil) (php/=== (count ts) 0)) g
-          :else
-          (let [[tx ty] (first ts)]
-            (recur (toggle-target-cell g tx ty) (next ts))))))))
+      (reduce (fn [g [tx ty]] (toggle-target-cell g tx ty))
+              grid'
+              (:targets match)))))
 
 (defn reveal-secret
   "Swap the cell at (x, y) from `cell-secret` to `cell-floor` so the
@@ -251,20 +243,8 @@
    so the world can carry `:secrets-total` for the HUD progress
    readout."
   [grid]
-  (let [h (count grid)]
-    (loop [y 0 acc 0]
-      (if (php/>= y h)
-        acc
-        (let [row         (get grid y)
-              w           (count row)
-              row-secrets
-              (loop [x 0 n 0]
-                (if (php/>= x w)
-                  n
-                  (if (= cell-secret (get row x))
-                    (recur (php/+ x 1) (php/+ n 1))
-                    (recur (php/+ x 1) n))))]
-          (recur (php/+ y 1) (php/+ acc row-secrets)))))))
+  (count (filter (fn [c] (= cell-secret c))
+                 (apply concat grid))))
 
 (defn- divider-wall?
   "True when the interior wall at (x, y) is a 1-cell-thick divider
@@ -351,13 +331,12 @@
             (recur g placed (+ attempts 1))))))))
 
 (defn- border-row [w]
-  (apply vector (map (fn [_] cell-wall) (range 0 w))))
+  (into [] (map (fn [_] cell-wall) (range 0 w))))
 
 (defn- interior-row [w]
-  (apply vector
-         (concat [cell-wall]
-                 (map (fn [_] cell-floor) (range 0 (- w 2)))
-                 [cell-wall])))
+  (into [] (concat [cell-wall]
+                   (map (fn [_] cell-floor) (range 0 (- w 2)))
+                   [cell-wall])))
 
 (defn- place-block [grid w h x y bw bh]
   (loop [yy 0 g grid]

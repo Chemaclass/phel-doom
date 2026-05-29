@@ -161,7 +161,7 @@
   "Return a one-element vector with a heart pickup at a random open
    cell, or [] when the player is already at max-lives (no point
    spawning a heart they can't pick up)."
-  [grid lives px py]
+  [grid lives]
   (if (php/>= lives max-lives)
     []
     (let [[hx hy] (random-spawn grid)]
@@ -204,11 +204,12 @@
       [{:x sx :y sy}])
     []))
 
-(defn- spawn-armor-shards
-  "Common armor shards (issue #68): seed `n` of them at random open
-   cells. Each adds +1 armor over the normal `max-armor` cap up to
-   `armor-shard-cap` (10). Skip duplicates so two shards can't share
-   a cell (silently merging into one pickup)."
+(defn- spawn-unique-pickups
+  "Seed `n` {:x :y} pickups at random open cells, retrying when
+   `random-spawn` collides with one already placed (otherwise stepping
+   on the shared cell silently consumes multiple pickups for a single
+   reward). Bails after `(* n 6)` attempts so a tight map can't
+   infinite-loop; the caller just gets the ones that fit."
   [grid n]
   (loop [acc [] attempts 0]
     (cond
@@ -216,15 +217,18 @@
       (php/> attempts (php/* n 6)) acc
       :else
       (let [[sx sy] (random-spawn grid)
-            dup?    (loop [xs acc]
-                      (cond
-                        (php/=== xs nil) false
-                        (let [s (first xs)]
-                          (and (php/=== (:x s) sx) (php/=== (:y s) sy))) true
-                        :else (recur (next xs))))]
+            dup?    (some (fn [p] (and (php/=== (:x p) sx) (php/=== (:y p) sy))) acc)]
         (if dup?
           (recur acc (php/+ attempts 1))
           (recur (conj acc {:x sx :y sy}) (php/+ attempts 1)))))))
+
+(defn- spawn-armor-shards
+  "Common armor shards (issue #68): seed `n` of them at random open
+   cells. Each adds +1 armor over the normal `max-armor` cap up to
+   `armor-shard-cap` (10). Skip duplicates so two shards can't share
+   a cell (silently merging into one pickup)."
+  [grid n]
+  (spawn-unique-pickups grid n))
 
 (def armor-shards-per-level
   "Tunable: how many shards seed per level. Three keeps the level
@@ -263,16 +267,23 @@
         (update :armor-shards (fn [v] (conj (or v []) at)))
         (update trophy (fn [v] (conj (or v []) at))))))
 
+(defn- pack->level
+  "Coerce a `pack` arg to a backpack stack level. Accepts the legacy
+   boolean (true = level 1) or the new integer level for back-compat
+   with old callers; anything else reads as 0."
+  [pack]
+  (cond
+    (boolean? pack)   (if pack 1 0)
+    (php/is_int pack) pack
+    :else             0))
+
 (defn- maybe-spawn-backpack
   "Stacking backpack (#68 part 3): L2+ only, ~1 in 5 qualifying
    levels. Skipped once the player is at `max-backpacks`. `pack`
    accepts the legacy boolean (true = level 1) or the new integer
    level for back-compat with old callers."
   [grid level-num pack]
-  (let [lvl (cond
-              (boolean? pack)   (if pack 1 0)
-              (php/is_int pack) pack
-              :else             0)]
+  (let [lvl (pack->level pack)]
     (if (or (php/>= lvl max-backpacks)
             (php/< level-num 2)
             (php/!== 0 (mod (rng/int! 5) 5)))
@@ -285,14 +296,10 @@
    ammo box budget per level — the player needs roughly enough
    bullets to cover every monster's HP."
   [specs]
-  (loop [xs specs total 0]
-    (cond
-      (php/=== xs nil)       total
-      (php/=== (count xs) 0) total
-      :else
-      (let [s (first xs)]
-        (recur (next xs)
-               (php/+ total (php/* (or (:count s) 0) (or (:lives s) 1))))))))
+  (reduce (fn [total s]
+            (php/+ total (php/* (or (:count s) 0) (or (:lives s) 1))))
+          0
+          specs))
 
 (defn- ammo-box-count
   "Per-level ammo-box budget. Scales with the expected shot count
@@ -381,21 +388,7 @@
    map can't infinite-loop; the player just gets the boxes that
    did fit."
   [grid n]
-  (loop [acc [] attempts 0]
-    (cond
-      (php/>= (count acc) n)       acc
-      (php/> attempts (php/* n 6)) acc
-      :else
-      (let [[bx by] (random-spawn grid)
-            dup?    (loop [xs acc]
-                      (cond
-                        (php/=== xs nil) false
-                        (let [b (first xs)]
-                          (and (php/=== (:x b) bx) (php/=== (:y b) by))) true
-                        :else (recur (next xs))))]
-        (if dup?
-          (recur acc (php/+ attempts 1))
-          (recur (conj acc {:x bx :y by}) (php/+ attempts 1)))))))
+  (spawn-unique-pickups grid n))
 
 (defn- build-grid
   "Two paths: hand-authored `:layout` (parsed via map/parse-layout —
@@ -499,12 +492,9 @@
             :level         lv
             :lives         life
             :difficulty    diff'
-            :backpack-level (cond
-                              (boolean? pack)   (if pack 1 0)
-                              (php/is_int pack) pack
-                              :else             0)
+            :backpack-level (pack->level pack)
             :owned-weapons (or owned #{:pistol})
-            :hearts        (maybe-spawn-heart grid life px py)
+            :hearts        (maybe-spawn-heart grid life)
             :armors        (maybe-spawn-armor grid)
             :berserks      (maybe-spawn-berserk grid)
             :invulns       (maybe-spawn-invuln grid)

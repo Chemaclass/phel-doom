@@ -429,6 +429,15 @@
        ";38;5;" (fade-256 fg-code t)
        "m" glyph))
 
+(defn- sprite-h
+  "Screen-space height (rows) of a sprite at depth `d`, multiplied by
+   scale factor `sc` (1.0 for standard enemies, 2.0 for cyberdemons).
+   Clamps to `vh` so the result never exceeds the viewport. Used by
+   all sprite painters that need the projected height — centralises
+   the `proj-dist / (max(0.5, d) * char-aspect)` formula."
+  [^int vh ^float d ^float sc]
+  (php/min vh (php/intval (php/* sc (php// proj-dist (php/* (php/max 0.5 d) char-aspect))))))
+
 (defn- boss-col-paint
   "Per-column body / legs / head string overrides that carve a
    boss-shaped silhouette out of the cyberdemon's 2× rectangle:
@@ -600,26 +609,6 @@
 (defn- enemy-cells [enemies step out-w]
   (scaled-cells enemies step out-w (fn [e] (:alive e))))
 
-(defn- heart-cells [hearts step out-w]
-  (scaled-cells hearts step out-w (fn [_] true)))
-
-(defn- ammo-cells [boxes step out-w]
-  (scaled-cells boxes step out-w (fn [_] true)))
-
-(defn- berserk-cells [bs step out-w]
-  (scaled-cells bs step out-w (fn [_] true)))
-
-(defn- invuln-cells [is step out-w]
-  (scaled-cells is step out-w (fn [_] true)))
-
-(defn- soulsphere-cells [ss step out-w]
-  (scaled-cells ss step out-w (fn [_] true)))
-
-(defn- armor-shard-cells [ss step out-w]
-  (scaled-cells ss step out-w (fn [_] true)))
-
-(defn- backpack-cells [bs step out-w]
-  (scaled-cells bs step out-w (fn [_] true)))
 
 (defn- minimap-rows
   "Render the world's grid into a PHP array of ANSI-coded strings,
@@ -666,13 +655,13 @@
                                           (recur (php/+ dr 1))))))))
         marker              (str "\e[40;93;1m" (direction-char angle) "\e[0m")
         emap                (enemy-cells (:enemies world) step out-w)
-        hmap                (heart-cells (:hearts world) step out-w)
-        amap                (ammo-cells  (:ammo-boxes world) step out-w)
-        bmap                (berserk-cells (:berserks world) step out-w)
-        imap                (invuln-cells  (:invulns world) step out-w)
-        ssmap               (soulsphere-cells (:soulspheres world) step out-w)
-        asmap               (armor-shard-cells (:armor-shards world) step out-w)
-        pmap                (backpack-cells (:backpacks world) step out-w)
+        hmap                (scaled-cells (:hearts world) step out-w (fn [_] true))
+        amap                (scaled-cells (:ammo-boxes world) step out-w (fn [_] true))
+        bmap                (scaled-cells (:berserks world) step out-w (fn [_] true))
+        imap                (scaled-cells (:invulns world) step out-w (fn [_] true))
+        ssmap               (scaled-cells (:soulspheres world) step out-w (fn [_] true))
+        asmap               (scaled-cells (:armor-shards world) step out-w (fn [_] true))
+        pmap                (scaled-cells (:backpacks world) step out-w (fn [_] true))
         kbmap               (scaled-cells (:keycards world) step out-w
                                           (fn [k] (php/=== (:colour k) :blue)))
         krmap               (scaled-cells (:keycards world) step out-w
@@ -1299,8 +1288,7 @@
                         (php/>= col 0)
                         (php/< col vw)
                         (enemy-front-visible-at? d col dists edists))
-               (let [h        (php/min vh (php/intval (php// proj-dist
-                                                             (php/* (php/max 0.5 d) char-aspect))))
+               (let [h        (sprite-h vh d 1.0)
                      face-row (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 6))]
                  (when (and (php/>= face-row 1) (php/<= face-row vh))
                    (buf-push parts
@@ -1956,8 +1944,7 @@
                (when proj
                  (let [col (:col proj)
                        d   (:dist proj)
-                       h   (php/min vh (php/intval (php// proj-dist
-                                                          (php/* (php/max 0.5 d) char-aspect))))
+                       h   (sprite-h vh d 1.0)
                        row (php/max 1 (php/- (php/intdiv (php/- vh h) 2) 1))]
                    (when (and (php/>= col 1) (php/<= col vw))
                      (buf-push parts
@@ -2258,8 +2245,7 @@
                                   :else            blood-dim))
                    c-from (php/max 0 (php/- col hw))
                    c-to   (php/min (php/- vw 1) (php/+ col hw))
-                   h      (php/min vh (php/intval (php// proj-dist
-                                                         (php/* (php/max 0.5 d) char-aspect))))
+                   h      (sprite-h vh d 1.0)
                    r-top  (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv (php/* h 2) 3))
                    r-bot  (php/min vh (php/+ (php/intdiv (php/- vh h) 2) h))]
                (loop [c c-from]
@@ -2300,8 +2286,7 @@
                    d      (:dist proj)
                    c-from (php/max 0 (php/- col hw))
                    c-to   (php/min (php/- vw 1) (php/+ col hw))
-                   h      (php/min vh (php/intval (php// proj-dist
-                                                         (php/* (php/max 0.5 d) char-aspect))))
+                   h      (sprite-h vh d 1.0)
                    mid    (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 2))
                    r-top  (php/max 0 (php/- mid (php/intdiv h 6)))
                    r-bot  (php/min vh (php/+ mid (php/intdiv h 6) 1))]
@@ -2349,8 +2334,7 @@
                    d      (:dist proj)
                    c-from (php/max 0 (php/- col hw))
                    c-to   (php/min (php/- vw 1) (php/+ col hw))
-                   h      (php/min vh (php/intval (php// proj-dist
-                                                         (php/* (php/max 0.5 d) char-aspect))))
+                   h      (sprite-h vh d 1.0)
                    mid    (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 2))
                    r-top  (php/max 0 (php/- mid (php/intdiv h 6)))
                    r-bot  (php/min vh (php/+ mid (php/intdiv h 6) 1))]

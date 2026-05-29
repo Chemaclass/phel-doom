@@ -294,17 +294,12 @@
   "How many enemies in `enemies` are currently alive AND carry `:type`
    matching `t`. Used to enforce :max-concurrent on respawn."
   [enemies t]
-  (loop [es    enemies
-         total 0]
-    (cond
-      (nil? es)          total
-      (zero? (count es)) total
-      :else
-      (let [e (first es)]
-        (recur (next es)
-               (if (and (:alive e) (= (:type e) t))
-                 (php/+ total 1)
-                 total))))))
+  (reduce (fn [total e]
+            (if (and (:alive e) (= (:type e) t))
+              (php/+ total 1)
+              total))
+          0
+          enemies))
 
 (defn- tick-one
   "One frame of update for a single enemy. Alive → run the AI
@@ -455,18 +450,14 @@
    enemy list is empty / all dead — large enough to never read as
    'close' to the scare trigger."
   [enemies ^float px ^float py]
-  (loop [es   enemies
-         best 1.0e9]
-    (cond
-      (empty? es) best
-      :else
-      (let [e (first es)]
-        (if (:alive e)
-          (let [dx (php/- (:x e) px)
-                dy (php/- (:y e) py)
-                d  (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
-            (recur (rest es) (php/min best d)))
-          (recur (rest es) best))))))
+  (reduce (fn [best e]
+            (if (:alive e)
+              (let [dx (php/- (:x e) px)
+                    dy (php/- (:y e) py)]
+                (php/min best (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))))
+              best))
+          1.0e9
+          enemies))
 
 (defn tick-scare
   "Detect inbound crossings of the nearest enemy past two thresholds:

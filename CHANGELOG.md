@@ -23,6 +23,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Fixed
 
+- Weapon felt silent when a shot connected (esp. the shotgun): a hit swapped the gun report for the enemy reaction, so you only heard a quiet thud. Every trigger pull now plays the active weapon's own fire sound, hit or miss, with the kill cue layered on top. Each weapon gets a distinct report (pistol Pop, shotgun Blow, chaingun Morse, chainsaw Purr) via a data-driven `:fire-sfx` spec key.
 - Enemy face / eyes glyph drew over closer sprites (#91). The face overlay was gated only by walls, not by nearer enemies, so a far enemy's eyes floated on top of one in front. Now gated by the same front-most-enemy check as the grounding shadow.
 - Grid mutations (#61 secrets, doors, switches) left the raycaster's `:pgrid` stale - player walked through visually solid walls. New `state/rebuild-pgrid` resyncs after every mutation.
 - SHIFT+WASD sprint silently no-op on Terminal.app / xterm / GNOME Terminal (any non-kitty terminal). Capital W/A/S/D bytes now refresh both the matching movement slot AND `:sprint`, so SHIFT+WASD sprints universally instead of being kitty-only.

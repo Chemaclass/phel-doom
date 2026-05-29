@@ -116,6 +116,12 @@ Iterates visible enemies after the main frame composes; paints one face glyph (`
 
 Blood splatters from kills + heart pickups paint into a PHP array `blood-paint` indexed by `row * vw + col`. Inner loop reads first via `(or (php/aget blood-paint ...) main-cond)` so overlays override wall/floor/enemy paint.
 
+### Enemy grounding shadows (two-pass, issue #86)
+
+Each enemy drops a dark `sprite-shadow` cell into `blood-paint` at its foot row to read as grounded. Because `blood-paint` is the top-priority layer, the shadow can NOT be written inline during the back-to-front enemy zone pass: a farther enemy's foot-row shadow would sit over a nearer enemy's body (which lives in the lower-priority enemy-zone layer) and bleed through.
+
+So shadows are deferred to a second pass after the zone pass, once `edists` (nearest enemy depth per column) is complete. `enemy-shadow-visible-at?` gates each shadow cell on wall depth (`d < dists[c]`) AND front-most-enemy depth (`d <= edists[c]`, inclusive so the column's own front enemy still grounds). Only the nearest enemy at a column drops its shadow; farther ones skip. Enemies are projected + depth-sorted once (`enemy-projs`) and reused across both passes.
+
 ## Run-length encoding
 
 Consecutive cells with the same ANSI escape coalesce into one paint + N spaces:

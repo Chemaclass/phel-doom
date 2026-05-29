@@ -2237,6 +2237,22 @@
     (and (php/< d wd)
          (or (php/=== ed nil) (php/< d ed)))))
 
+(defn enemy-shadow-visible-at?
+  "True when an enemy at depth `d` may ground its shadow at screen
+   column `c`: in front of the wall (dists) AND the front-most enemy
+   there (`d <= edists[c]`, where edists holds the nearest enemy depth
+   per column after the zone pass). Unlike `pickup-visible-at?` the
+   enemy compare is inclusive (`<=`) so the column's own front enemy —
+   whose depth equals the stored nearest — still draws; only enemies
+   strictly behind it skip. Keeps one farther sprite's shadow row from
+   bleeding over a nearer sprite's body (issue #86). Exported for
+   tests."
+  [^float d c dists edists]
+  (let [wd (buf-get dists c)
+        ed (buf-get edists c)]
+    (and (php/< d wd)
+         (or (php/=== ed nil) (php/<= d ed)))))
+
 (defn- paint-pickups-into
   "Project each pickup (heart / armor) to screen and write its
    coloured BG glow into `blood-paint`, then drop the icon glyph at
@@ -2542,6 +2558,10 @@
         ;; way `dists` occludes them behind walls.
         edists                             (buf-mk)
         blood-paint                        (buf-mk)
+        ;; Project + depth-sort enemies once: the zone pass paints them
+        ;; back-to-front, then a second pass grounds the shadows reading
+        ;; the completed `edists` (see below).
+        enemy-projs                        (collect-enemy-projs (:enemies world) (:player world) vw)
         ;; Pulse the minimap door glyph on the same beat as the 3D
         ;; door shade so the exit catches the eye both in first-person
         ;; and on the overhead map.
@@ -2558,7 +2578,7 @@
         mini-col0                          (if (php/> visible-mh 0)
                                              (php/max 0 (php/- map-col 1))
                                              vw)]
-    (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
+    (doseq [proj enemy-projs]
            (let [col (:col proj)
                  hw  (:half-width proj)
                  d   (:dist proj)
@@ -2647,17 +2667,39 @@
                          ;; Track nearest enemy distance for this col so
                          ;; pickups behind it occlude properly. Multiple
                          ;; enemies on the same col → keep the closest.
+                         ;; The shadow pass below also reads this to keep
+                         ;; only the front enemy's grounding shadow.
                          (let [prev (buf-get edists c)]
                            (when (or (php/=== prev nil) (php/< d prev))
-                             (buf-set edists c d)))
-                         ;; Grounding shadow: write one dark cell into
-                         ;; the blood-paint overlay at the row beneath
-                         ;; the sprite. Skips if outside the viewport.
-                         (when (php/< e-bot vh)
-                           (buf-set blood-paint
-                                    (php/+ (php/* e-bot vw) c)
-                                    sprite-shadow)))
+                             (buf-set edists c d))))
                        (recur (php/+ c 1)))))))))
+    ;; Grounding shadows, second pass. The shadow goes into blood-paint
+    ;; (top-priority overlay), so it can't be painted inline during the
+    ;; back-to-front zone pass: a FAR enemy's shadow row would sit over a
+    ;; NEAR enemy's body (which lives in the lower-priority enemy-zone
+    ;; layer) and bleed through. Deferring until `edists` holds the
+    ;; nearest dist per column lets us drop a shadow cell only for the
+    ;; column's front-most enemy (d <= edists[c]); farther enemies skip
+    ;; it. Still wall-gated (d < dists[c]). (issue #86)
+    (doseq [proj enemy-projs]
+           (let [col    (:col proj)
+                 hw     (:half-width proj)
+                 d      (:dist proj)
+                 sc     (or (:scale proj) 1.0)
+                 h      (php/min vh (php/intval (php/* sc
+                                                       (php// proj-dist
+                                                              (php/* (php/max 0.5 d) char-aspect)))))
+                 e-bot  (php/+ (php/intdiv (php/- vh h) 2) h)
+                 c-from (php/max 0 (php/- col hw))
+                 c-to   (php/min (php/- vw 1) (php/+ col hw))]
+             (when (php/< e-bot vh)
+               (loop [c c-from]
+                 (when (php/<= c c-to)
+                   (when (enemy-shadow-visible-at? d c dists edists)
+                     (buf-set blood-paint
+                              (php/+ (php/* e-bot vw) c)
+                              sprite-shadow))
+                   (recur (php/+ c 1)))))))
     ;; Chain the fx + pickup painters: each one takes the current
     ;; blood-paint, returns a new buffer (PHP arrays pass by value, so
     ;; the helper owns the allocation). Rename per step to keep phel

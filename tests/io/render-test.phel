@@ -1,6 +1,6 @@
 (ns phel-doom-tests.io.render-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.io.render :refer [direction-char project-enemy]))
+  (:require phel-doom.io.render :refer [direction-char project-enemy enemy-shadow-visible-at?]))
 
 (deftest test-direction-char-cardinal
   (is (= "→" (direction-char 0.0)))
@@ -44,3 +44,40 @@
                             {:x 3.0 :y 3.0 :angle 0.0}
                             80)]
     (is (> (:col proj) 40))))
+
+;; ---------------------------------------------------------------------
+;; enemy-shadow-visible-at?: grounding-shadow occlusion gate (issue #86).
+;; Only the front-most enemy at a column drops its shadow; farther ones
+;; and wall-occluded ones skip, so a rear shadow can't bleed over a
+;; nearer sprite.
+;; ---------------------------------------------------------------------
+
+(deftest test-enemy-shadow-hidden-behind-wall
+  (let [dists  (php/array 3.0)
+        edists (php/array 4.0)]
+    (is (= false (enemy-shadow-visible-at? 6.0 0 dists edists))
+        "behind a closer wall -> no shadow")))
+
+(deftest test-enemy-shadow-front-enemy-grounds
+  ;; This enemy IS the nearest at the column (d == edists). Inclusive
+  ;; compare keeps its own shadow.
+  (let [dists  (php/array 10.0)
+        edists (php/array 4.0)]
+    (is (= true (enemy-shadow-visible-at? 4.0 0 dists edists))
+        "front enemy grounds its shadow")))
+
+(deftest test-enemy-shadow-rear-enemy-skips
+  ;; A farther enemy sharing the column with a nearer one (edists=4):
+  ;; its shadow must NOT draw (would bleed over the front sprite).
+  (let [dists  (php/array 10.0)
+        edists (php/array 4.0)]
+    (is (= false (enemy-shadow-visible-at? 6.0 0 dists edists))
+        "rear enemy's shadow is suppressed")))
+
+(deftest test-enemy-shadow-no-enemy-recorded-at-column
+  ;; edists empty at this column (no sprite painted there) -> the
+  ;; enemy's own shadow may draw, still wall-gated.
+  (let [dists  (php/array 10.0)
+        edists (php/array)]
+    (is (= true (enemy-shadow-visible-at? 4.0 0 dists edists))
+        "no nearer enemy -> shadow allowed")))

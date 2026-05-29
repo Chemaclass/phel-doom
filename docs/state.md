@@ -118,11 +118,11 @@ Each input byte from `glue/controls.phel` refreshes the matching counter. Each f
 
 Hold-frame size is the only "feel" knob: shorter = snappier stop, longer = smoother sustained-hold (bridges OS auto-repeat gaps). Current: `move-hold-frames=12`, `turn-hold-frames=3`.
 
-## Lives
+## Lives (half-heart HP pool)
 
-Capped by `max-lives` (default 5). New worlds start at `max-lives`. Heart pickups increment via `gain-life` (clamped). Contact damage decrements via `take-damage` in `core/combat.phel`.
+`:lives` is an HP pool capped by `max-lives` (10), drawn as 5 hearts of 2 HP each, so a hit can cost half a heart. New worlds start at `max-lives` (full). Heart pickups heal a whole heart (`gain-life` adds 2, clamped). Damage decrements via `take-damage` (contact) / `hit-player-at` (bolt) in `core/combat.phel`, by the attacker's `enemy-hit-damage` (1 light / 2 heavy + caster / 3 boss); armor absorbs a whole hit regardless of size. Soulsphere pushes the pool over the cap toward `soulsphere-cap` (14), decaying back down over time.
 
-HUD shows `♥` per remaining life and `♡` for spent slots up to `max-lives`. Sized from `:max-lives` in the stats map so the cap can change without touching the renderer.
+HUD draws 5 heart slots from the pool: `♥` full, `◖` half, `·` empty (over-cap soul HP shows as extra full hearts). Sized from `:max-lives` in the stats map so the cap can change without touching the renderer.
 
 ## Timers
 

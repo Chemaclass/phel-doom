@@ -13,9 +13,9 @@ See [rendering.md](rendering.md), [raycaster.md](raycaster.md), [performance.md]
 
 ## Levels + map
 
-- 10 levels: L1-L5 procgen single-type, L6-L9 procgen mixed-type, L10 hand-authored boss arena (cyber 50 HP + 2 imps, cap 1 alive)
+- 10 levels: L1 pure imps (tutorial), L2-L9 procgen mixed-type (headline monster + secondaries), L10 hand-authored boss arena (cyber 50 HP + 2 imps, cap 1 alive)
 - Per-level wall, sky, floor palette
-- Pickups: hearts (cap 5), armor (cap 5, one-hit absorb), armor shards (+1 over-cap to 10), soulsphere (+1 over-cap, decay), ammo boxes, berserk (20s 2x dmg), invuln (10s immune), stacking backpack (L2+, reserve tier per pickup)
+- Pickups: hearts (heal one full heart; pool is 5 hearts / 10 HP), armor (cap 5, absorbs one whole hit), armor shards (+1 over-cap to 10), soulsphere (over-cap to 14 HP, decays), ammo boxes, berserk (20s 2x dmg), invuln (10s immune), stacking backpack (L2+, reserve tier per pickup)
 - Keycards: L4 blue, L5 red. Locked door pulses on bump without key. L10 boss door unlocks via synthetic :boss keycard after cyber kill. Compass tints facing letter in lock color.
 - Secrets: up to 2 per procgen level (L10 has hand-authored pair). Bump with F to reveal ammo + shard + rotating powerup. Skipped on locked levels.
 - Walk-into-door auto-advance. Pulsing minimap + bright 3D glyph.
@@ -42,7 +42,7 @@ See [level-system.md](level-system.md), [map.md](map.md).
   - 5: BFG (10+6 splash, 1.2s cd, mag 1, plasma AoE 3-cell, rare L7)
 - Pistol + chaingun + chainsaw auto-spray while held. Shotgun + BFG single-action. Pistol overheats. Mag/reserve persist across switches, auto-switch on first pickup.
 - Kill-loot skips pistol when other weapons owned, biases shotgun/chaingun. Level boxes refill active weapon.
-- 5 lives, 1s i-frame, 4-way directional red hurt band, knockback on contact.
+- Half-heart health: 10 HP drawn as 5 hearts (2 HP each), starting full. Hits cost by attacker type - 1 (half heart) for light melee, 2 (full heart) for heavy bruisers + casters, 3 for the cyberdemon boss. 1s i-frame, 4-way directional red hurt band, knockback on contact. Armor absorbs a whole hit.
 
 See [monsters.md](monsters.md), [combat.md](combat.md).
 
@@ -63,12 +63,12 @@ See [monsters.md](monsters.md), [combat.md](combat.md).
 
 Triggered on life drop or enemy proximity:
 
-- Heartbeat (<=2 lives): red edge vignette + low thump every 0.85s, accelerating to 0.55s at 1 life.
-- Lights flicker: brief scanline darken every 20-30s (calm), 6-12s at 1-2 lives.
+- Heartbeat (last 2 hearts, <=4 HP): red edge vignette + low thump every 0.85s, accelerating to 0.55s in the last heart.
+- Lights flicker: brief scanline darken every 20-30s (calm), 6-12s in the last 2 hearts.
 - Jump-scare (enemy 3.5 units): magenta wide-eyed skull on face for 600ms.
 - Sudden silence (enemy 1.5 units): all sfx muted 400ms.
-- Wall haze (<=3 lives): wall shades darken as lives drop, doors stay bright (nav cue).
-- Blood drops (<=3 lives): random red trails from ceiling.
+- Wall haze (last 3 hearts, <=6 HP): wall shades darken as health drops, doors stay bright (nav cue).
+- Blood drops (last 3 hearts, <=6 HP): random red trails from ceiling.
 - Door eye: blinking red o flashes on every visible door every 8-18s for 500ms.
 - Behind: dim red blinker below compass when alive enemy in rear 90° wedge, 10 units.
 

@@ -36,7 +36,7 @@
   ;; Lives, kills, pause, minimap, enemies, fx all start in a known state
   ;; so a fresh run is always the same shape.
   (let [w (new-world grid (new-player 1.0 1.0 0.0))]
-    (is (= 5 (:lives w)))
+    (is (= 10 (:lives w)))
     (is (= 0 (:kills w)))
     (is (= false (:paused w)))
     (is (= false (:show-map w)))
@@ -53,14 +53,15 @@
     (is (= true (:paused w')))
     (is (= false (:paused (toggle-pause w'))))))
 
-(deftest test-max-lives-is-five
-  (is (= 5 max-lives)))
+(deftest test-max-lives-is-ten
+  ;; 10 HP = 5 hearts of 2 HP each (half-heart granularity).
+  (is (= 10 max-lives)))
 
-(deftest test-gain-life-increments-but-caps-at-max
+(deftest test-gain-life-heals-a-full-heart-but-caps-at-max
   (let [w (assoc (new-world grid (new-player 1.0 1.0 0.0)) :lives 2)]
-    (is (= 3 (:lives (gain-life w))))
-    (is (= 5 (:lives (gain-life (assoc w :lives 5))))) ;; clamps
-    (is (= 5 (:lives (gain-life (assoc w :lives 4)))))))
+    (is (= 4 (:lives (gain-life w))))                    ;; +2 = one heart
+    (is (= 10 (:lives (gain-life (assoc w :lives 10))))) ;; clamps at max
+    (is (= 10 (:lives (gain-life (assoc w :lives 9))))))) ;; clamp on overshoot
 
 (deftest test-with-enemies-replaces-list
   (let [w (with-enemies (new-world grid (new-player 1.0 1.0 0.0))
@@ -106,21 +107,21 @@
 ;; ---------------------------------------------------------------------
 
 (deftest test-soulsphere-cap-is-max-plus-overcap
-  (is (= 7 soulsphere-cap)))
+  (is (= 14 soulsphere-cap)))
 
 (deftest test-gain-soulsphere-bumps-fresh-player-to-cap
-  ;; A fresh player at 5 lives picking up a soulsphere gets 5 more
-  ;; (clamped to soulsphere-cap = 7).
-  (let [w (gain-soulsphere {:lives 5})]
-    (is (= 7 (:lives w)))
+  ;; A full player (10 HP) picking up a soulsphere gains max-lives (10)
+  ;; more, clamped to soulsphere-cap = 14.
+  (let [w (gain-soulsphere {:lives 10})]
+    (is (= 14 (:lives w)))
     (is (= 0.0 (:soul-decay-secs w)))))
 
 (deftest test-gain-soulsphere-from-low-lives
-  ;; 1 + max-lives = 6, capped to 7. Lower starting health benefits
-  ;; less than full-health pickup so the buff feels valuable AT all
-  ;; health levels.
+  ;; 1 + max-lives (10) = 11, under the cap of 14. Lower starting health
+  ;; benefits less than a full-health pickup so the buff feels valuable
+  ;; AT all health levels.
   (let [w (gain-soulsphere {:lives 1})]
-    (is (= 6 (:lives w)))))
+    (is (= 11 (:lives w)))))
 
 (deftest test-gain-soulsphere-resets-decay-clock
   ;; Picking up a sphere mid-decay rearms the timer so the new lives
@@ -135,13 +136,14 @@
     (is (= 0.0 (:soul-decay-secs w)))))
 
 (deftest test-decay-soul-overcap-accumulates-and-decrements
-  ;; Below the threshold: clock advances, lives untouched.
-  (let [w (decay-soul-overcap {:lives 7 :soul-decay-secs 0.0} 1.0)]
-    (is (= 7 (:lives w)))
+  ;; Below the threshold: clock advances, lives untouched. Lives must be
+  ;; over max-lives (10) to be in the over-cap decay band.
+  (let [w (decay-soul-overcap {:lives 12 :soul-decay-secs 0.0} 1.0)]
+    (is (= 12 (:lives w)))
     (is (= 1.0 (:soul-decay-secs w))))
   ;; At the threshold: clock resets, lives drop by one.
-  (let [w (decay-soul-overcap {:lives 7 :soul-decay-secs (php/- soul-overcap-decay-secs 0.01)} 0.1)]
-    (is (= 6 (:lives w)))
+  (let [w (decay-soul-overcap {:lives 12 :soul-decay-secs (php/- soul-overcap-decay-secs 0.01)} 0.1)]
+    (is (= 11 (:lives w)))
     (is (= 0.0 (:soul-decay-secs w)))))
 
 (deftest test-decay-soul-overcap-stops-at-max-lives

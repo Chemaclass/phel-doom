@@ -27,6 +27,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 ### Changed
 
 - Enemy fireballs (cacodemon / baron) fly slower and telegraph a touch longer (#94), so they read as a dodge-able threat you can strafe out of instead of a near-hitscan hit.
+- Caster pressure rebalanced: cacodemons / barons now fire on a shorter cooldown (smaller gap between bolts) but move slower than the melee rushers. A ranged threat you can't simply outrun stays fair - keep your distance and strafe the bolts, or close in and trade the dodge window for melee range.
 
 ### Fixed
 

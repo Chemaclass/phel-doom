@@ -11,6 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+- Projectile enemies. Cacodemons and barons now fire homing-less fireballs across the room instead of only meleeing: they freeze, telegraph (attack-face windup), then launch an orange bolt at your current position. Bolts travel through doorways but stop at walls, so you dodge by strafing or breaking line of fire with geometry. Impact costs one armor/life unit; i-frames gate a burst to one hit per frame.
 - Wandering idle enemies. Half the freshly spawned monsters start pacing random directions; LOS flips them to chase.
 - Backpack capacity expansion (#68 part 3). Stacks up to 3; reserve cap scales `base * (1 + level)`. HUD shows `+pack xN`.
 - Armor shards (#68 part 2). +1 armor pickup that banks past `max-armor` up to 2x (no decay). Three per level.

@@ -342,8 +342,10 @@
    is the seconds spent in :aware afterwards before the next attack
    can arm. Bosses telegraph slower and rest longer; fragile fast
    enemies (pinky) chain hits."
+  ;; Melee profiles only. Ranged casters (caco, baron) live in
+  ;; `caster-spec`, which `attack-spec-of` consults first — keep them
+  ;; OUT of this map so there's no shadowed/dead entry to drift.
   {:imp      {:range 1.4 :windup 0.4 :cooldown 1.0}
-   :baron    {:range 1.6 :windup 0.6 :cooldown 1.4}
    :cyber    {:range 1.8 :windup 0.8 :cooldown 1.8}
    :pinky    {:range 1.4 :windup 0.3 :cooldown 0.8}
    :mancubus {:range 1.6 :windup 0.5 :cooldown 1.3}})
@@ -355,12 +357,35 @@
    delay."
   {:range 1.4 :windup 0.4 :cooldown 1.0})
 
-(defn attack-spec-of
-  "Pull the per-type spec or fall back to the default. Pure lookup —
-   `maybe-start-attack` + `tick-attack` consult it on every alive
-   enemy."
+(def caster-spec
+  "Ranged casters: instead of a melee strike on windup-release they
+   launch a projectile (see core/projectile) toward the player's
+   position at fire time. `:range` is much longer so they commit from
+   across the room; `:windup` is the telegraph (frozen, face flips to
+   the attack glyph) before the bolt leaves; `:speed` is the bolt's
+   world-units/sec. Impact costs one life/armor unit, same as a contact
+   hit. A caster still melees on contact (the touch test in combat
+   ignores range), so cornering one is still dangerous."
+  {:caco  {:range 7.0 :windup 0.5 :cooldown 1.6 :speed 4.5}
+   :baron {:range 8.0 :windup 0.7 :cooldown 2.0 :speed 5.5}})
+
+(defn caster?
+  "True when this enemy's `:type` fires projectiles rather than meleeing
+   on windup-release (i.e. has a `caster-spec` entry). Takes the enemy
+   map, not a bare type keyword. Drives both the spec lookup and the
+   `:fire-now` flag `tick-attack` raises for the projectile-spawn pass."
   [enemy]
-  (or (get attack-spec (:type enemy)) default-attack-spec))
+  (contains? caster-spec (:type enemy)))
+
+(defn attack-spec-of
+  "Pull the per-type spec or fall back to the default. Casters use
+   their long-range projectile profile so `maybe-start-attack` +
+   `tick-attack` commit them from across the room. Pure lookup —
+   consulted on every alive enemy each frame."
+  [enemy]
+  (or (get caster-spec (:type enemy))
+      (get attack-spec (:type enemy))
+      default-attack-spec))
 
 (defn in-attack-range?
   "True when the player is within this enemy's attack `:range`.
@@ -414,7 +439,13 @@
           (assoc enemy
                  :state                :aware
                  :attack-windup-secs   0.0
-                 :attack-cooldown-secs (:cooldown (attack-spec-of enemy)))
+                 :attack-cooldown-secs (:cooldown (attack-spec-of enemy))
+                 ;; Casters release a projectile on windup-expiry. The
+                 ;; spawn pass (core/projectile) harvests this flag,
+                 ;; aims a bolt at the player, then clears it. Melee
+                 ;; enemies leave it false — their hit already landed
+                 ;; via the contact test during the windup window.
+                 :fire-now             (caster? enemy))
           (assoc enemy
                  :attack-windup-secs   w'
                  :attack-cooldown-secs cd')))

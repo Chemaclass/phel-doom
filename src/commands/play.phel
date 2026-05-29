@@ -13,6 +13,7 @@
   (:require phel-doom.core.engine   :refer [mark-visible-cells])
   (:require phel-doom.core.combat   :refer [ammo-per-box arm-berserk berserk-seconds damage-step fire-anim-seconds invuln-seconds max-reserve reload reloading? reload-cooldown-seconds tick-armory tick-shooting])
   (:require phel-doom.core.enemy    :refer [advance tick-scare rear-attacker?])
+  (:require phel-doom.core.projectile :refer [tick-projectiles])
   (:require phel-doom.core.weapons  :refer [effective-reserve-cap give-weapon switch-weapon weapon-spec weapon-order weapons])
   (:require phel-doom.io.sound    :refer [play-sfx! mute-for!])
   (:require phel-doom.core.level    :refer [build-world num-levels])
@@ -506,11 +507,17 @@
             w4f  (pickup-keycards w4e)
             w4g  (pickup-weapon-pickups w4f)
             w5   (tick-enemies  w4g dt)
+            ;; Casters that released this frame have :fire-now set;
+            ;; spawn + march their bolts and resolve player impacts
+            ;; before damage-step so a bolt hit and a contact hit can't
+            ;; both land in one frame (the bolt's i-frames gate the
+            ;; touch test).
+            wp   (tick-projectiles w5 dt)
             w5b  (if (:reload edges)
                    (do
-                     (when (and (:sound-on w5) (reloading? w5)) (play-sfx! :reload 0.3))
-                     (reload w5))
-                   w5)
+                     (when (and (:sound-on wp) (reloading? wp)) (play-sfx! :reload 0.3))
+                     (reload wp))
+                   wp)
             w5c  (tick-armory w5b)
             w6   (tick-shooting w5c (:fire edges) (:fire-held edges))
             w7   (damage-step   w6 dt)

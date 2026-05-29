@@ -1,0 +1,145 @@
+(ns phel-doom-tests.core.projectile-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.state :refer [new-world new-player])
+  (:require phel-doom.core.projectile
+            :refer [spawn-from-enemies step resolve-hits tick-projectiles hit-radius projectile-ttl spawn-offset]))
+
+;; A roomy open arena so bolts have floor to travel across. Wall ring,
+;; floor interior.
+(def open-grid
+  [[1 1 1 1 1 1 1]
+   [1 0 0 0 0 0 1]
+   [1 0 0 0 0 0 1]
+   [1 0 0 0 0 0 1]
+   [1 0 0 0 0 0 1]
+   [1 0 0 0 0 0 1]
+   [1 1 1 1 1 1 1]])
+
+;; ---------------------------------------------------------------------
+;; step: march + cull.
+;; ---------------------------------------------------------------------
+
+(deftest test-step-advances-position
+  (let [out (step [{:x 3.0 :y 3.0 :vx 2.0 :vy 0.0 :ttl 4.0 :type :fireball}]
+                  open-grid 0.5)]
+    (is (= 1 (count out)) "bolt in open floor survives")
+    (is (= 4.0 (:x (first out))) "x advanced by vx*dt")
+    (is (= 3.0 (:y (first out))) "y unchanged")
+    (is (= 3.5 (:ttl (first out))) "ttl decayed by dt")))
+
+(deftest test-step-culls-on-wall
+  (let [out (step [{:x 5.5 :y 3.0 :vx 4.0 :vy 0.0 :ttl 4.0 :type :fireball}]
+                  open-grid 0.5)]
+    (is (= 0 (count out)) "bolt crossing into the east wall column is dropped")))
+
+(deftest test-step-culls-on-ttl-expiry
+  (let [out (step [{:x 3.0 :y 3.0 :vx 0.0 :vy 0.0 :ttl 0.1 :type :fireball}]
+                  open-grid 0.5)]
+    (is (= 0 (count out)) "bolt whose lifetime ran out is dropped")))
+
+(deftest test-step-keeps-multiple
+  (let [out (step [{:x 2.0 :y 2.0 :vx 1.0 :vy 0.0 :ttl 4.0 :type :fireball}
+                   {:x 4.0 :y 4.0 :vx 0.0 :vy 1.0 :ttl 4.0 :type :fireball}]
+                  open-grid 0.5)]
+    (is (= 2 (count out)) "both live bolts survive a step")))
+
+;; ---------------------------------------------------------------------
+;; spawn-from-enemies: harvest :fire-now flags into bolts.
+;; ---------------------------------------------------------------------
+
+(deftest test-spawn-noop-without-fire
+  (let [w  (assoc (new-world open-grid (new-player 3.5 3.5 0.0))
+                  :enemies [{:x 2.0 :y 2.0 :type :caco :alive true}])
+        w' (spawn-from-enemies w)]
+    (is (= 0 (count (:projectiles w'))) "no :fire-now -> no bolts")))
+
+(deftest test-spawn-creates-bolt-and-clears-flag
+  (let [w  (assoc (new-world open-grid (new-player 5.0 3.0 0.0))
+                  :enemies [{:x 2.0 :y 3.0 :type :caco :alive true :fire-now true}])
+        w' (spawn-from-enemies w)]
+    (is (= 1 (count (:projectiles w'))) "one caster fired -> one bolt")
+    (is (= false (:fire-now (first (:enemies w')))) ":fire-now cleared after harvest")
+    ;; player is due east of the caster -> bolt travels +x.
+    (is (php/> (:vx (first (:projectiles w'))) 0.0) "bolt aimed toward the player (+x)")
+    (is (= projectile-ttl (:ttl (first (:projectiles w')))) "fresh bolt full ttl")))
+
+(deftest test-spawn-nudges-bolt-out-by-spawn-offset
+  ;; Caster at (2,3), player due east -> bolt spawns spawn-offset units
+  ;; ahead so it clears the caster's own cell on frame one.
+  (let [w    (assoc (new-world open-grid (new-player 5.0 3.0 0.0))
+                    :enemies [{:x 2.0 :y 3.0 :type :caco :alive true :fire-now true}])
+        bolt (first (:projectiles (spawn-from-enemies w)))
+        dx   (php/- (:x bolt) 2.0)
+        dy   (php/- (:y bolt) 3.0)
+        dist (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
+    (is (php/< (php/abs (php/- dist spawn-offset)) 0.0001)
+        "bolt spawns spawn-offset from the caster centre")))
+
+;; ---------------------------------------------------------------------
+;; resolve-hits: player impact + immunity.
+;; ---------------------------------------------------------------------
+
+(defn- world-with-bolt-on-player [extra]
+  ;; Bolt sitting on the player's cell so the proximity test fires.
+  (merge (assoc (new-world open-grid (new-player 3.5 3.5 0.0))
+                :sound-on false
+                :lives 5 :armor 0 :iframes 0.0
+                :projectiles [{:x 3.5 :y 3.5 :vx 1.0 :vy 0.0 :ttl 4.0 :type :fireball}])
+         extra))
+
+(deftest test-resolve-hits-damages-player
+  (let [w' (resolve-hits (world-with-bolt-on-player {}))]
+    (is (= 4 (:lives w')) "bolt on the player costs one life")
+    (is (= 0 (count (:projectiles w'))) "the struck bolt is consumed")
+    (is (php/> (:iframes w') 0.0) "impact arms i-frames")))
+
+(deftest test-resolve-hits-respects-iframes
+  (let [w' (resolve-hits (world-with-bolt-on-player {:iframes 0.5}))]
+    (is (= 5 (:lives w')) "i-frames absorb the hit")
+    (is (= 0 (count (:projectiles w'))) "bolt still fizzles on the shield")))
+
+(deftest test-resolve-hits-respects-god
+  (let [w' (resolve-hits (world-with-bolt-on-player {:god? true}))]
+    (is (= 5 (:lives w')) "god mode takes no damage")))
+
+(deftest test-resolve-hits-respects-invuln-sphere
+  (let [w' (resolve-hits (world-with-bolt-on-player {:invuln-secs 2.0}))]
+    (is (= 5 (:lives w')) "invuln sphere absorbs the hit")
+    (is (= 0 (count (:projectiles w'))) "bolt still fizzles")))
+
+(deftest test-resolve-hits-armor-absorbs-before-life
+  (let [w' (resolve-hits (world-with-bolt-on-player {:armor 2}))]
+    (is (= 1 (:armor w')) "armor drops a unit")
+    (is (= 5 (:lives w')) "life untouched while armor remains")))
+
+(deftest test-resolve-hits-burst-costs-one-life
+  ;; Two bolts land on the player the same frame. The first arms
+  ;; i-frames; the second must NOT drain a second life — but both are
+  ;; consumed (neither phases through the shield).
+  (let [w  (assoc (new-world open-grid (new-player 3.5 3.5 0.0))
+                  :sound-on false :lives 5 :armor 0 :iframes 0.0
+                  :projectiles [{:x 3.5 :y 3.5 :vx 1.0 :vy 0.0 :ttl 4.0 :type :fireball}
+                                {:x 3.6 :y 3.5 :vx 1.0 :vy 0.0 :ttl 4.0 :type :fireball}])
+        w' (resolve-hits w)]
+    (is (= 4 (:lives w')) "a burst costs exactly one life")
+    (is (= 0 (count (:projectiles w'))) "both bolts consumed")))
+
+(deftest test-resolve-hits-misses-far-bolt
+  (let [w  (assoc (new-world open-grid (new-player 3.5 3.5 0.0))
+                  :sound-on false :lives 5
+                  :projectiles [{:x 1.2 :y 1.2 :vx 1.0 :vy 0.0 :ttl 4.0 :type :fireball}])
+        w' (resolve-hits w)]
+    (is (= 5 (:lives w')) "a far bolt deals no damage")
+    (is (= 1 (count (:projectiles w'))) "and is not consumed")))
+
+;; ---------------------------------------------------------------------
+;; tick-projectiles: full frame integration.
+;; ---------------------------------------------------------------------
+
+(deftest test-tick-spawns-then-marches
+  (let [w  (assoc (new-world open-grid (new-player 5.0 3.0 0.0))
+                  :sound-on false
+                  :enemies [{:x 2.0 :y 3.0 :type :caco :alive true :fire-now true}])
+        w' (tick-projectiles w 0.1)]
+    (is (= 1 (count (:projectiles w'))) "bolt spawned and survived the frame")
+    (is (php/> (:x (first (:projectiles w'))) 2.0) "bolt moved east toward the player")))

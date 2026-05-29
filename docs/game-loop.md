@@ -82,6 +82,7 @@ Four lifecycle layers:
           (pickup-berserks) (pickup-invulns) (pickup-soulspheres)
           (pickup-backpacks) (pickup-keycards) (pickup-weapon-pickups)
           (tick-enemies dt)
+          (tick-projectiles dt)
           (maybe-reload edges)
           (tick-armory)
           (tick-shooting (:fire edges) (:fire-held edges))
@@ -102,6 +103,7 @@ Four lifecycle layers:
 | `tick-stamina` + `apply-physics` | Drain sprint pool, then rotate + translate + decay counters | `core/physics` |
 | `pickup-*` | Hearts, armor + shards, ammo, berserk, invuln, soulsphere, backpack, keycards, weapon pickups | `commands/play` |
 | `tick-enemies` | Step alive enemies; tick respawn + AI + hit-flash | `core/enemy`, `enemy_ai` |
+| `tick-projectiles` | Spawn caster fireballs, march + cull bolts, resolve player impacts | `core/projectile` |
 | `reload` | R edge: drain `:ammo-reserve` into `:mag`, arm cooldown + anim | `core/combat` |
 | `tick-armory` | `--armory` flag: refill reserves to `armory-reserve` per frame | `core/combat` |
 | `tick-shooting` | Fire edge: resolve hitscan; empty mag arms CLICK prompt | `core/combat` |

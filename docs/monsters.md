@@ -39,21 +39,21 @@ Combat numbers per type. HP is the catalog `:default-lives` (a level may overrid
 | `:cyber`    | L5    | 5 | 0.55 | melee  | 1.8 | 0.8 | 1.8 | -   | -      |
 | `:spectre`  | L6    | 3 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | -      |
 | `:revenant` | L7    | 4 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | -      |
-| `:archvile` | L8    | 5 | 1.0  | ranged | 6.5 | 0.5 | 1.1 | 4.0 | `:fire` |
+| `:archvile` | L8    | 5 | 1.0  | ranged | 6.5 | 0.6 | 1.1 | 3.4 | `:fire` |
 | `:mancubus` | L8    | 4 | 1.0  | melee  | 1.6 | 0.5 | 1.3 | -   | `:fire` |
 | `:pinky`    | L9    | 2 | 1.0  | melee  | 1.4 | 0.3 | 0.8 | -   | -      |
 
 Reading it:
 
 - **Range** is melee reach (~1 cell) for everyone except the casters, who commit from across the room. **Windup** is the frozen telegraph before the strike/bolt; **cooldown** is the gap before they can attack again (smaller = more pressure).
-- **Casters** (`:caco`, `:baron`, `:archvile`) are the types that fire projectiles (`caster-spec`). They move slower than the melee rushers to stay fair: keep distance and strafe the bolts, or close in and trade the dodge window for melee range. Bolt speed is world-units/sec (deliberately low so a fireball is dodge-able, not near-hitscan). The archvile is the escalated caster: shortest windup, fastest bolt (4.0).
+- **Casters** (`:caco`, `:baron`, `:archvile`) are the types that fire projectiles (`caster-spec`). They move slower than the melee rushers to stay fair: keep distance and strafe the bolts, or close in and trade the dodge window for melee range. Bolt speed is world-units/sec (deliberately low so a fireball is dodge-able, not near-hitscan). The archvile is the escalated caster: fastest bolt (3.4) and tightest range, but its windup matches the caco (0.6s) so the telegraph stays reactable on a laggy terminal.
 - `:cyber` is the heaviest: top HP, slowest move (0.55x), long telegraph. The L10 boss spawns it with 50 HP.
 - `:pinky` is the glass rusher: low HP, full speed, shortest windup + cooldown.
 - **Resists** zeroes incoming damage of that type (`enemy/shoot` checks `enemies/resists?`). `:fire` resistance is why the BFG's `:plasma` shot matters against caco / baron / archvile / mancubus.
 
 ### Depth-scaled aggression
 
-The cooldowns above are the level-1 baseline. `build-world` stamps each enemy with an `:aggression` cooldown multiplier from `enemy_ai/aggression-for level`: `1.0` on L1, dropping `aggression-per-level` (0.03) each level and clamped at `aggression-floor` (0.7). `tick-attack` multiplies the per-type cooldown by it, so the same monster recovers faster and attacks more often the deeper you are (L10 ~= 0.73x cooldown). Windup is left alone, so the telegraph stays honest at every depth.
+The cooldowns above are the level-1 baseline. `build-world` stamps each enemy with an `:aggression` cooldown multiplier from `enemy_ai/aggression-for level`: `1.0` on L1, dropping `aggression-per-level` (0.03) each level and clamped at `aggression-floor` (0.8). `tick-attack` multiplies the per-type cooldown by it, so the same monster recovers faster and attacks more often the deeper you are (L7+ hits the 0.8 floor = +25% attack rate). Windup is left alone, so the telegraph stays honest at every depth. The floor sits at 0.8 (not lower) so the deepest levels stay dodgeable on a terminal where turning + repositioning fight key-repeat lag.
 
 ## Spawning
 
@@ -89,7 +89,7 @@ Test defaults to `:aware`. Real spawns use `:dormant` (sneaking-friendly).
 
 ### Ranged casters (projectiles)
 
-`:caco`, `:baron`, and `:archvile` fire projectiles on windup-release instead of meleeing. Each has a longer attack range (caco 7.0, baron 8.0, archvile 6.5), a bolt speed kept low enough to dodge (caco 2.5, baron 3.0, archvile 4.0 world-units/sec), and a tight cooldown (caco 1.0s, baron 1.3s, archvile 1.1s) for sustained pressure. The archvile is the escalated caster: shortest windup (0.5s) and fastest bolt, so L8 ranged steps up from the caco / baron lobs. Telegraphed strike window same as melee: freeze, windup, release → `:fire-now` flag. Melee enemies leave the flag false.
+`:caco`, `:baron`, and `:archvile` fire projectiles on windup-release instead of meleeing. Each has a longer attack range (caco 7.0, baron 8.0, archvile 6.5), a bolt speed kept low enough to dodge (caco 2.5, baron 3.0, archvile 3.4 world-units/sec), and a tight cooldown (caco 1.0s, baron 1.3s, archvile 1.1s) for sustained pressure. The archvile is the escalated caster via its faster bolt, but its windup matches the caco (0.6s) so the telegraph stays reactable on a laggy terminal. Telegraphed strike window same as melee: freeze, windup, release → `:fire-now` flag. Melee enemies leave the flag false.
 
 Speed tuning: `type-speed-mul` scales level chase by 0.7 (caco), 0.65 (baron), 0.55 (cyber). Melee types unlisted → full 1.0 speed. Ranged balance: distance + strafe to dodge bolts; close in to trade dodge window for melee pressure.
 

@@ -28,6 +28,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 - Enemy fireballs (cacodemon / baron) fly slower and telegraph a touch longer (#94), so they read as a dodge-able threat you can strafe out of instead of a near-hitscan hit.
 - Caster pressure rebalanced: cacodemons / barons now fire on a shorter cooldown (smaller gap between bolts) but move slower than the melee rushers. A ranged threat you can't simply outrun stays fair - keep your distance and strafe the bolts, or close in and trade the dodge window for melee range.
+- Progressive difficulty curve. Chase speed now climbs monotonically L1-L9 (was a visible 2.0 -> 1.7 dip at L5 -> L6); L10 eases for the single-boss arena. The archvile (L8) is now a real caster with the fastest bolt + shortest telegraph of the three, instead of being themed-but-inert. L6 + L7 each gain one caster so ranged fire never disappears for the mid-game stretch. Every enemy carries a depth-scaled attack cooldown, so the same monster gets more relentless the deeper you push (windup telegraph stays honest).
 
 ### Fixed
 

@@ -27,12 +27,14 @@ Non-locked procgen levels seed up to 2 secret passages (seen in [map.md](map.md)
 (def levels
   [{:size [22 16] :walls 12 :enemy :imp   :enemies 4 :chase 0.8 :name "imps"}
    {:size [28 20] :walls 22 :enemy :demon :enemies 6 :chase 1.0 :name "demons"}
-   {:size [36 24] :walls 38 :enemy :caco  :enemies 8 :chase 1.3 :name "cacodemons"}
-   {:size [44 28] :walls 55 :enemy :baron :enemies 5 :chase 1.6 :name "barons"      :door-lock :blue}
-   {:size [52 32] :walls 75 :enemy :cyber :enemies 7 :chase 2.0 :name "cyberdemons" :door-lock :red}
+   {:size [36 24] :walls 38 :enemy :caco  :enemies 8 :chase 1.2 :name "cacodemons"}
+   {:size [44 28] :walls 55 :enemy :baron :enemies 5 :chase 1.4 :name "barons"      :door-lock :blue}
+   {:size [52 32] :walls 75 :enemy :cyber :enemies 7 :chase 1.6 :name "cyberdemons" :door-lock :red}
    ;; L6-L9: mixed specs. L10: :layout + :switches, :door-lock :boss.
    ...])
 ```
+
+Chase speed climbs monotonically L1-L9 (`0.8 1.0 1.2 1.4 1.6 1.7 1.8 1.9 2.0`) so difficulty never visibly dips; L10 eases to `1.6` because it is a single-boss dodging arena. L6 + L7 each carry one caster (a caco / baron) so ranged pressure never disappears across the mid-game stretch. Every enemy is also stamped with a depth-scaled `:aggression` cooldown multiplier (see [monsters.md](monsters.md)).
 
 Required fields:
 

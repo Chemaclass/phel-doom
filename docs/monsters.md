@@ -28,7 +28,7 @@ Each enemy carries `:lives` / `:max-lives` / `:type`. `enemy/shoot` drops `:live
 
 ## Stats comparison
 
-Combat numbers per type. HP is the catalog `:default-lives` (a level may override). Speed = level `:chase` x the type's `enemy/type-speed-mul` (1.0 when unlisted). Range / windup / cooldown come from `enemy_ai/attack-spec` (melee) or `enemy_ai/caster-spec` (ranged); types not listed in `attack-spec` use `default-attack-spec` (1.4 / 0.4 / 1.0). Every hit, melee or bolt, costs the player exactly 1 unit (armor first, else a life).
+Combat numbers per type. HP is the catalog `:default-lives` (a level may override). Speed = level `:chase` x the type's `enemy/type-speed-mul` (1.0 when unlisted). Range / windup / cooldown come from `enemy_ai/attack-spec` (melee) or `enemy_ai/caster-spec` (ranged); types not listed in `attack-spec` use `default-attack-spec` (1.4 / 0.4 / 1.0). Cooldown shown is the level-1 value: it shrinks with depth (see "Depth-scaled aggression" below). Every hit, melee or bolt, costs the player exactly 1 unit (armor first, else a life).
 
 | Type | Debut | HP | Speed x | Attack | Range (u) | Windup (s) | Cooldown (s) | Bolt spd | Resists |
 |---|---|---|---|---|---|---|---|---|---|
@@ -39,19 +39,21 @@ Combat numbers per type. HP is the catalog `:default-lives` (a level may overrid
 | `:cyber`    | L5    | 5 | 0.55 | melee  | 1.8 | 0.8 | 1.8 | -   | -      |
 | `:spectre`  | L6    | 3 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | -      |
 | `:revenant` | L7    | 4 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | -      |
-| `:archvile` | L8    | 5 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | `:fire` |
+| `:archvile` | L8    | 5 | 1.0  | ranged | 6.5 | 0.5 | 1.1 | 4.0 | `:fire` |
 | `:mancubus` | L8    | 4 | 1.0  | melee  | 1.6 | 0.5 | 1.3 | -   | `:fire` |
 | `:pinky`    | L9    | 2 | 1.0  | melee  | 1.4 | 0.3 | 0.8 | -   | -      |
 
 Reading it:
 
-- **Range** is melee reach (~1 cell) for everyone except the two casters, who commit from across the room. **Windup** is the frozen telegraph before the strike/bolt; **cooldown** is the gap before they can attack again (smaller = more pressure).
-- **Casters** (`:caco`, `:baron`) are the only types that fire projectiles (`caster-spec`). They move slower than the melee rushers to stay fair: keep distance and strafe the bolts, or close in and trade the dodge window for melee range. Bolt speed is world-units/sec (deliberately low so a fireball is dodge-able, not near-hitscan).
+- **Range** is melee reach (~1 cell) for everyone except the casters, who commit from across the room. **Windup** is the frozen telegraph before the strike/bolt; **cooldown** is the gap before they can attack again (smaller = more pressure).
+- **Casters** (`:caco`, `:baron`, `:archvile`) are the types that fire projectiles (`caster-spec`). They move slower than the melee rushers to stay fair: keep distance and strafe the bolts, or close in and trade the dodge window for melee range. Bolt speed is world-units/sec (deliberately low so a fireball is dodge-able, not near-hitscan). The archvile is the escalated caster: shortest windup, fastest bolt (4.0).
 - `:cyber` is the heaviest: top HP, slowest move (0.55x), long telegraph. The L10 boss spawns it with 50 HP.
 - `:pinky` is the glass rusher: low HP, full speed, shortest windup + cooldown.
 - **Resists** zeroes incoming damage of that type (`enemy/shoot` checks `enemies/resists?`). `:fire` resistance is why the BFG's `:plasma` shot matters against caco / baron / archvile / mancubus.
 
-Note: `:archvile` is themed as a caster (orange flame face) and the L8 level comment calls it one, but it has no `caster-spec` entry yet, so mechanically it melees like the default profile.
+### Depth-scaled aggression
+
+The cooldowns above are the level-1 baseline. `build-world` stamps each enemy with an `:aggression` cooldown multiplier from `enemy_ai/aggression-for level`: `1.0` on L1, dropping `aggression-per-level` (0.03) each level and clamped at `aggression-floor` (0.7). `tick-attack` multiplies the per-type cooldown by it, so the same monster recovers faster and attacks more often the deeper you are (L10 ~= 0.73x cooldown). Windup is left alone, so the telegraph stays honest at every depth.
 
 ## Spawning
 
@@ -87,7 +89,7 @@ Test defaults to `:aware`. Real spawns use `:dormant` (sneaking-friendly).
 
 ### Ranged casters (projectiles)
 
-`:caco` and `:baron` fire projectiles on windup-release instead of meleeing. Each has a longer attack range (caco 7.0, baron 8.0), slower bolt speed (caco 2.5, baron 3.0 world-units/sec) for dodge-ability, and tighter cooldown (caco 1.0s, baron 1.3s) for sustained pressure. Telegraphed strike window same as melee: freeze, windup, release → `:fire-now` flag. Melee enemies leave the flag false.
+`:caco`, `:baron`, and `:archvile` fire projectiles on windup-release instead of meleeing. Each has a longer attack range (caco 7.0, baron 8.0, archvile 6.5), a bolt speed kept low enough to dodge (caco 2.5, baron 3.0, archvile 4.0 world-units/sec), and a tight cooldown (caco 1.0s, baron 1.3s, archvile 1.1s) for sustained pressure. The archvile is the escalated caster: shortest windup (0.5s) and fastest bolt, so L8 ranged steps up from the caco / baron lobs. Telegraphed strike window same as melee: freeze, windup, release → `:fire-now` flag. Melee enemies leave the flag false.
 
 Speed tuning: `type-speed-mul` scales level chase by 0.7 (caco), 0.65 (baron), 0.55 (cyber). Melee types unlisted → full 1.0 speed. Ranged balance: distance + strafe to dodge bolts; close in to trade dodge window for melee pressure.
 

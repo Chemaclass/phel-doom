@@ -3,6 +3,7 @@
   (:require phel-doom.core.state      :refer [max-backpacks max-lives new-player new-world with-enemies])
   (:require phel-doom.core.map        :refer [cell-door cell-door-blue cell-door-red count-secrets parse-layout random-grid random-spawn seed-doors seed-secrets])
   (:require phel-doom.core.enemy      :refer [default-wander-fraction promote-wanderers spawn-enemies spawn-enemies-mixed])
+  (:require phel-doom.core.enemy-ai   :refer [aggression-for])
   (:require phel-doom.core.enemies    :refer [enemy-types type-spec default-lives-for])
   (:require phel-doom.core.difficulty :refer [normalise scale-cfg]))
 
@@ -46,11 +47,15 @@
                    bypasses random-grid for hand-authored arenas
 
    Adding a new room = append one map literal here."
+  ;; Chase speed climbs monotonically L1-L9 (no level slower than the
+  ;; one before, so difficulty never visibly regresses) and peaks at the
+  ;; L9 brood; L10 eases to 1.6 because it is a single-boss dodging arena,
+  ;; not a swarm. Pre-overhaul the curve dipped 2.0 -> 1.7 at L5 -> L6.
   [{:size [22 16] :walls 12 :enemy :imp   :enemies 4 :chase 0.8 :name "imps"}
    {:size [28 20] :walls 22 :enemy :demon :enemies 6 :chase 1.0 :name "demons"}
-   {:size [36 24] :walls 38 :enemy :caco  :enemies 8 :chase 1.3 :name "cacodemons"}
-   {:size [44 28] :walls 55 :enemy :baron :enemies 5 :chase 1.6 :name "barons"     :door-lock :blue}
-   {:size [52 32] :walls 75 :enemy :cyber :enemies 7 :chase 2.0 :name "cyberdemons" :door-lock :red}
+   {:size [36 24] :walls 38 :enemy :caco  :enemies 8 :chase 1.2 :name "cacodemons"}
+   {:size [44 28] :walls 55 :enemy :baron :enemies 5 :chase 1.4 :name "barons"     :door-lock :blue}
+   {:size [52 32] :walls 75 :enemy :cyber :enemies 7 :chase 1.6 :name "cyberdemons" :door-lock :red}
 
    ;; --- L6-L10 ----------------------------------------------------
    ;; Progressive mixed-monster rooms; L10 hand-authored boss arena.
@@ -59,23 +64,27 @@
    ;; specs so render reads visuals per-sprite.
 
    ;; L6 — spectres debut. Mostly spectres (HP 3, agile), a couple of
-   ;; imps mixed in to keep the early-game vocabulary.
+   ;; imps mixed in to keep the early-game vocabulary, plus one caco so
+   ;; ranged pressure doesn't vanish for the whole L5-L7 stretch.
    {:size    [42 26]
     :walls   58
     :enemy   :spectre
     :chase   1.7
     :name    "spectres"
     :enemies [{:type :spectre :count 4}
-              {:type :imp     :count 2}]}
+              {:type :imp     :count 2}
+              {:type :caco    :count 1}]}
 
-   ;; L7 — revenants (HP 4) leading a small demon escort.
+   ;; L7 — revenants (HP 4) leading a small demon escort, with a lone
+   ;; baron lobbing fireballs to keep a ranged threat in the room.
    {:size    [46 28]
     :walls   66
     :enemy   :revenant
     :chase   1.8
     :name    "revenants"
     :enemies [{:type :revenant :count 4}
-              {:type :demon    :count 2}]}
+              {:type :demon    :count 2}
+              {:type :baron    :count 1}]}
 
    ;; L8 — archvile court: two casters backed by mixed mid-tier mass.
    {:size    [50 30]
@@ -108,7 +117,7 @@
    ;; :held-keys when the cyberdemon dies. Walk through after the
    ;; kill to win the run.
    {:enemy     :cyber
-    :chase     1.5
+    :chase     1.6
     :name      "the final"
     :door-lock :boss
     :enemies   [{:type :cyber :count 1 :lives 50}
@@ -480,13 +489,18 @@
          tagged-foes (if (php/=== :nightmare diff')
                        (apply vector (map (fn [e] (assoc e :nightmare? true)) spawned))
                        spawned)
+         ;; Depth-scaled aggression: every enemy carries a cooldown
+         ;; multiplier derived from the level number, so the same type
+         ;; attacks more often deeper in (enemy-ai/tick-attack reads it).
+         aggr        (aggression-for lv)
+         aggro-foes  (apply vector (map (fn [e] (assoc e :aggression aggr)) tagged-foes))
          ;; Half the freshly-spawned dormant enemies start pacing
          ;; instead of sleeping. Wanderers can stumble into the
          ;; player's LOS by accident — that's the "rooms feel alive"
          ;; cue. Tests opting out pass through 0.0 via fixtures that
          ;; never run through build-world (they construct enemies
          ;; directly).
-         lively-foes (promote-wanderers tagged-foes default-wander-fraction)
+         lively-foes (promote-wanderers aggro-foes default-wander-fraction)
          with-foes   (with-enemies world lively-foes)]
      (assoc with-foes
             :level         lv

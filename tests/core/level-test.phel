@@ -26,6 +26,28 @@
     (is (not (= (:grid a) (:grid (build-world 1 5))))
         "different seeds -> different maps")))
 
+(deftest test-chase-speed-climbs-without-regression
+  ;; Difficulty curve overhaul: chase speed must be non-decreasing
+  ;; L1->L9 (no level slower than the one before) so the ramp never
+  ;; visibly dips. L10 is allowed to ease (single-boss arena).
+  (let [speeds (map (fn [n] (:chase-speed (build-world n 5))) (range 1 10))]
+    (is (= speeds (sort speeds)) "L1-L9 chase speed is monotonic non-decreasing")))
+
+(deftest test-ranged-pressure-present-l6-l7
+  ;; The old curve had a 3-level ranged gap (L5-L7). L6 + L7 now each
+  ;; carry a caster so fireballs never disappear for the whole stretch.
+  (let [types-at (fn [n] (set (map :type (:enemies (build-world n 5)))))]
+    (is (contains? (types-at 6) :caco)  "L6 has a cacodemon")
+    (is (contains? (types-at 7) :baron) "L7 has a baron")))
+
+(deftest test-enemies-carry-depth-aggression
+  ;; Every built enemy is stamped with a cooldown :aggression scalar
+  ;; (enemy-ai/aggression-for), and a deeper level stamps a smaller one.
+  (let [a1  (:aggression (first (:enemies (build-world 1 5))))
+        a10 (:aggression (first (:enemies (build-world 10 5))))]
+    (is (= 1.0 a1) "level 1 enemies attack at the full cooldown")
+    (is (php/< a10 a1) "level 10 enemies recover faster between strikes")))
+
 (deftest test-config-for-returns-each-level
   (is (= "imps"        (:name (config-for 1))))
   (is (= "demons"      (:name (config-for 2))))
@@ -46,7 +68,7 @@
   (let [w (build-world 3 5)]
     (is (= 3 (:level w)))
     (is (= "cacodemons" (:level-name w)))
-    (is (= 1.3 (:chase-speed w)))
+    (is (= 1.2 (:chase-speed w)))
     (is (>= (count (:enemies w)) 1))
     ;; grid + pgrid both present and the same dimensions.
     (is (>= (count (:grid w)) 24))))

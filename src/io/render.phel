@@ -2283,16 +2283,19 @@
 
 (defn- paint-projectiles-into
   "Project each enemy fireball to screen and write its orange glow plus
-   a white-hot core glyph into `blood-paint`. Same projection pipeline
-   as enemies / pickups; occlusion checks walls only (`dists`) so a
-   bolt always reads in front of the monster that fired it as it closes
-   on the player. The glow is a tight square (half the projected
-   half-width, a few rows tall) so a bolt stays a compact dot rather
-   than a wall-sized blob up close.
+   a white-hot core glyph into `blood-paint`. Same projection +
+   visibility pipeline as pickups: `pickup-visible-at?` occludes the
+   bolt behind both walls (`dists`) AND nearer enemies (`edists`), so a
+   bolt flying past a closer monster is hidden by it instead of bleeding
+   through. The firing caster never hides its own bolt — the bolt
+   spawns ahead of the caster and only moves closer, so its depth stays
+   under the caster's at every column. The glow is a tight square (half
+   the projected half-width, a few rows tall) so a bolt stays a compact
+   dot rather than a wall-sized blob up close.
 
    Returns the mutated buffer — PHP arrays pass by value, so the caller
    must rebind to see the writes."
-  [blood-paint projectiles player dists vw vh]
+  [blood-paint projectiles player dists edists vw vh]
   (doseq [pr (or projectiles [])]
          (let [proj (project-enemy pr player vw)]
            (when proj
@@ -2308,7 +2311,7 @@
                    r-bot  (php/min vh (php/+ mid (php/intdiv h 6) 1))]
                (loop [c c-from]
                  (when (php/<= c c-to)
-                   (when (php/< d (buf-get dists c))
+                   (when (pickup-visible-at? d c dists edists)
                      (loop [r r-top]
                        (when (php/< r r-bot)
                          (buf-set blood-paint (php/+ (php/* r vw) c) fireball-shade)
@@ -2318,7 +2321,7 @@
                           (php/< col vw)
                           (php/>= mid 0)
                           (php/< mid vh)
-                          (php/< d (buf-get dists col)))
+                          (pickup-visible-at? d col dists edists))
                  (buf-set blood-paint
                           (php/+ (php/* mid vw) col)
                           fireball-glyph))))))
@@ -2712,7 +2715,7 @@
           ;; Fireballs paint last into the overlay so an incoming bolt
           ;; sits on top of every pickup glow it crosses.
           bp-proj   (paint-projectiles-into bp-wc (or (:projectiles world) [])
-                                            (:player world) dists vw vh)
+                                            (:player world) dists edists vw vh)
           parts     (buf-mk)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]

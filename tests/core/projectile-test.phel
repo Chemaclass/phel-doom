@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.state :refer [new-world new-player])
   (:require phel-doom.core.projectile
-            :refer [spawn-from-enemies step resolve-hits tick-projectiles hit-radius projectile-ttl]))
+            :refer [spawn-from-enemies step resolve-hits tick-projectiles hit-radius projectile-ttl spawn-offset]))
 
 ;; A roomy open arena so bolts have floor to travel across. Wall ring,
 ;; floor interior.
@@ -63,6 +63,18 @@
     (is (php/> (:vx (first (:projectiles w'))) 0.0) "bolt aimed toward the player (+x)")
     (is (= projectile-ttl (:ttl (first (:projectiles w')))) "fresh bolt full ttl")))
 
+(deftest test-spawn-nudges-bolt-out-by-spawn-offset
+  ;; Caster at (2,3), player due east -> bolt spawns spawn-offset units
+  ;; ahead so it clears the caster's own cell on frame one.
+  (let [w    (assoc (new-world open-grid (new-player 5.0 3.0 0.0))
+                    :enemies [{:x 2.0 :y 3.0 :type :caco :alive true :fire-now true}])
+        bolt (first (:projectiles (spawn-from-enemies w)))
+        dx   (php/- (:x bolt) 2.0)
+        dy   (php/- (:y bolt) 3.0)
+        dist (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
+    (is (php/< (php/abs (php/- dist spawn-offset)) 0.0001)
+        "bolt spawns spawn-offset from the caster centre")))
+
 ;; ---------------------------------------------------------------------
 ;; resolve-hits: player impact + immunity.
 ;; ---------------------------------------------------------------------
@@ -89,6 +101,28 @@
 (deftest test-resolve-hits-respects-god
   (let [w' (resolve-hits (world-with-bolt-on-player {:god? true}))]
     (is (= 5 (:lives w')) "god mode takes no damage")))
+
+(deftest test-resolve-hits-respects-invuln-sphere
+  (let [w' (resolve-hits (world-with-bolt-on-player {:invuln-secs 2.0}))]
+    (is (= 5 (:lives w')) "invuln sphere absorbs the hit")
+    (is (= 0 (count (:projectiles w'))) "bolt still fizzles")))
+
+(deftest test-resolve-hits-armor-absorbs-before-life
+  (let [w' (resolve-hits (world-with-bolt-on-player {:armor 2}))]
+    (is (= 1 (:armor w')) "armor drops a unit")
+    (is (= 5 (:lives w')) "life untouched while armor remains")))
+
+(deftest test-resolve-hits-burst-costs-one-life
+  ;; Two bolts land on the player the same frame. The first arms
+  ;; i-frames; the second must NOT drain a second life — but both are
+  ;; consumed (neither phases through the shield).
+  (let [w  (assoc (new-world open-grid (new-player 3.5 3.5 0.0))
+                  :sound-on false :lives 5 :armor 0 :iframes 0.0
+                  :projectiles [{:x 3.5 :y 3.5 :vx 1.0 :vy 0.0 :ttl 4.0 :type :fireball}
+                                {:x 3.6 :y 3.5 :vx 1.0 :vy 0.0 :ttl 4.0 :type :fireball}])
+        w' (resolve-hits w)]
+    (is (= 4 (:lives w')) "a burst costs exactly one life")
+    (is (= 0 (count (:projectiles w'))) "both bolts consumed")))
 
 (deftest test-resolve-hits-misses-far-bolt
   (let [w  (assoc (new-world open-grid (new-player 3.5 3.5 0.0))

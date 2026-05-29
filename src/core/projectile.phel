@@ -34,6 +34,18 @@
    normal speeds."
   0.6)
 
+(defn- any-firing?
+  "True if any enemy in the vector has `:fire-now` set. Short-circuits
+   on the first match so the common no-fire frame pays a partial scan,
+   not a full one. Lets `spawn-from-enemies` skip all allocation when
+   nobody fired this frame."
+  [enemies]
+  (loop [es enemies]
+    (cond
+      (nil? es)              false
+      (:fire-now (first es)) true
+      :else                  (recur (next es)))))
+
 (defn spawn-from-enemies
   "Harvest every enemy whose `:fire-now` flag is set (raised by
    enemy-ai/tick-attack on a caster's windup-release): launch one bolt
@@ -41,36 +53,45 @@
    world with the new bolts appended to `:projectiles` and the enemies
    un-flagged. No-op (and no allocation) on a frame where nobody fired."
   [world]
-  (let [enemies (or (:enemies world) [])
-        firing  (apply vector (filter (fn [e] (:fire-now e)) enemies))]
-    (if (empty? firing)
+  (let [enemies (or (:enemies world) [])]
+    (if (not (any-firing? enemies))
+      ;; Hot path: most frames nobody fires. Short-circuit before any
+      ;; allocation so the per-frame call costs one scan, not a rebuild
+      ;; of the enemies + projectiles vectors.
       world
-      (let [p         (:player world)
-            px        (:x p)
-            py        (:y p)
-            new-bolts
-            (apply vector
-                   (map (fn [e]
-                          (let [spec (get caster-spec (:type e))
-                                spd  (or (:speed spec) 4.0)
-                                ang  (php/atan2 (php/- py (:y e))
-                                                (php/- px (:x e)))
-                                ca   (php/cos ang)
-                                sa   (php/sin ang)]
-                            {:x    (php/+ (:x e) (php/* ca spawn-offset))
-                             :y    (php/+ (:y e) (php/* sa spawn-offset))
-                             :vx   (php/* spd ca)
-                             :vy   (php/* spd sa)
-                             :ttl  projectile-ttl
-                             :type :fireball}))
-                        firing))
-            cleared
-            (apply vector
-                   (map (fn [e] (if (:fire-now e) (assoc e :fire-now false) e))
-                        enemies))]
+      (let [p   (:player world)
+            px  (:x p)
+            py  (:y p)
+            ;; One walk produces both the new bolts and the un-flagged
+            ;; enemies — no second pass to clear :fire-now. :speed is
+            ;; read straight from caster-spec (no fallback): only a
+            ;; caster ever carries :fire-now, so the entry always
+            ;; exists, and a future type that fires without a spec
+            ;; should fail loudly rather than spawn a default bolt.
+            acc (reduce
+                 (fn [a e]
+                   (if (:fire-now e)
+                     (let [spec (get caster-spec (:type e))
+                           spd  (:speed spec)
+                           ang  (php/atan2 (php/- py (:y e))
+                                           (php/- px (:x e)))
+                           ca   (php/cos ang)
+                           sa   (php/sin ang)
+                           bolt {:x    (php/+ (:x e) (php/* ca spawn-offset))
+                                 :y    (php/+ (:y e) (php/* sa spawn-offset))
+                                 :vx   (php/* spd ca)
+                                 :vy   (php/* spd sa)
+                                 :ttl  projectile-ttl
+                                 :type :fireball}]
+                       {:bolts   (conj (:bolts a) bolt)
+                        :enemies (conj (:enemies a) (assoc e :fire-now false))})
+                     {:bolts   (:bolts a)
+                      :enemies (conj (:enemies a) e)}))
+                 {:bolts [] :enemies []}
+                 enemies)]
         (-> world
-            (assoc :enemies cleared)
-            (update :projectiles (fn [ps] (into (or ps []) new-bolts))))))))
+            (assoc :enemies (:enemies acc))
+            (update :projectiles (fn [ps] (into (or ps []) (:bolts acc)))))))))
 
 (defn step
   "March each bolt one dt-scaled frame along its velocity. Drop a bolt
@@ -99,18 +120,26 @@
    whether or not they dealt damage (they fizzle on the i-frame shield
    rather than phasing through)."
   [world]
-  (let [p         (:player world)
-        px        (:x p)
-        py        (:y p)
-        r2        (php/* hit-radius hit-radius)
-        projs     (or (:projectiles world) [])
-        hit?      (fn [pr]
-                    (let [dx (php/- (:x pr) px)
-                          dy (php/- (:y pr) py)]
-                      (php/<= (php/+ (php/* dx dx) (php/* dy dy)) r2)))
-        struck    (apply vector (filter hit? projs))
-        remaining (apply vector (filter (fn [pr] (not (hit? pr))) projs))
-        w'        (assoc world :projectiles remaining)]
+  (let [p      (:player world)
+        px     (:x p)
+        py     (:y p)
+        r2     (php/* hit-radius hit-radius)
+        projs  (or (:projectiles world) [])
+        hit?   (fn [pr]
+                 (let [dx (php/- (:x pr) px)
+                       dy (php/- (:y pr) py)]
+                   (php/<= (php/+ (php/* dx dx) (php/* dy dy)) r2)))
+        ;; One walk partitions into struck (consumed) vs remaining so
+        ;; `hit?` is evaluated once per bolt, not twice.
+        parts  (reduce
+                (fn [a pr]
+                  (if (hit? pr)
+                    {:struck (conj (:struck a) pr) :rest (:rest a)}
+                    {:struck (:struck a) :rest (conj (:rest a) pr)}))
+                {:struck [] :rest []}
+                projs)
+        struck (:struck parts)
+        w'     (assoc world :projectiles (:rest parts))]
     (if (and (not (empty? struck))
              (not (player-immune? world)))
       (let [b (first struck)]
@@ -122,9 +151,7 @@
    them, then resolve player impacts. Single entry point for the game
    loop."
   [world ^float dt]
-  ;; Sequential lets, not `->`: the lint pass doesn't macro-expand the
-  ;; thread macro and false-positives arity on the trailing
-  ;; (resolve-hits) call. Same convention as play/tick-world.
+  ;; Sequential lets, not `->` — same lint workaround as play/tick-world.
   (let [spawned (spawn-from-enemies world)
         marched (update spawned :projectiles step (:grid spawned) dt)]
     (resolve-hits marched)))

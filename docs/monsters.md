@@ -58,7 +58,7 @@ The cooldowns above are the level-1 baseline. `build-world` stamps each enemy wi
 ## Spawning
 
 - `spawn-enemies grid n min-dist px py [max-lives [type-kw]]` - single-type rooms.
-- `spawn-enemies-mixed grid specs min-dist px py` - multi-type. Spec shape: `{:type :count [:lives N] [:max-concurrent K]}`. Each enemy carries `:type` for render lookup and optional `:max-concurrent` cap. Used by `build-world` whenever a level's `:enemies` field is a vector (and for the L10 boss arena where `{:type :cyber :count 1 :lives 50}` + `{:type :imp :count 2 :max-concurrent 1}` paints one boss with 2 minions but only 1 alive at a time).
+- `spawn-enemies-mixed grid specs min-dist px py` - multi-type. Spec shape: `{:type :count [:lives N] [:max-concurrent K]}`. Omit `:lives` and the type's catalog `default-lives-for` applies (a mixed-room caco is a 3-HP caco, same as a single-type one). Each enemy carries `:type` for render lookup and optional `:max-concurrent` cap. Used by `build-world` whenever a level's `:enemies` field is a vector (e.g. the L2-L9 mixes, and the L10 boss arena where `{:type :cyber :count 1 :lives 50}` + `{:type :imp :count 2 :max-concurrent 1}` paints one boss with 2 minions but only 1 alive at a time).
 
 ## AI state machine
 

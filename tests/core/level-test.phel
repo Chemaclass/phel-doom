@@ -33,6 +33,19 @@
   (let [speeds (map (fn [n] (:chase-speed (build-world n 5))) (range 1 10))]
     (is (= speeds (sort speeds)) "L1-L9 chase speed is monotonic non-decreasing")))
 
+(deftest test-early-levels-mix-shooter-and-melee
+  ;; L1 stays a pure melee tutorial; L2-L5 salt a melee secondary into
+  ;; the headline type so no early room is single-type monotony. L3
+  ;; pairs the caco shooter with a body-attacker melee half.
+  (let [types-at (fn [n] (set (map :type (:enemies (build-world n 5)))))]
+    (is (= #{:imp} (types-at 1)) "L1 is pure imp (tutorial)")
+    (is (contains? (types-at 2) :imp)   "L2 demons mix in imps")
+    (is (contains? (types-at 3) :caco)  "L3 keeps the caco shooter")
+    (is (contains? (types-at 3) :imp)   "L3 adds a melee body-attacker")
+    (is (php/> (count (types-at 3)) 1)  "L3 is no longer single-type")
+    (is (contains? (types-at 4) :demon) "L4 barons get a melee escort")
+    (is (contains? (types-at 5) :imp)   "L5 cyberdemons get fodder")))
+
 (deftest test-ranged-pressure-present-l6-l7
   ;; The old curve had a 3-level ranged gap (L5-L7). L6 + L7 now each
   ;; carry a caster so fireballs never disappear for the whole stretch.
@@ -129,9 +142,10 @@
   (let [w (build-world 1 5)
         e (first (:enemies w))]
     (is (= 1 (:lives e))))
-  ;; L5 :cyber has :default-lives 5 — same path.
+  ;; L5 :cyber has :default-lives 5 — same path. L5 is now a mix
+  ;; (cyber + imp), so pick a cyber out rather than assuming spawn order.
   (let [w (build-world 5 5)
-        e (first (:enemies w))]
+        e (first (filter (fn [x] (= :cyber (:type x))) (:enemies w)))]
     (is (= 5 (:lives e)))))
 
 (deftest test-build-world-drops-world-level-enemy-visual-fields

@@ -36,6 +36,8 @@ Non-locked procgen levels seed up to 2 secret passages (seen in [map.md](map.md)
 
 Chase speed climbs monotonically L1-L9 (`0.8 1.0 1.2 1.4 1.6 1.7 1.8 1.9 2.0`) so difficulty never visibly dips; L10 eases to `1.6` because it is a single-boss dodging arena. L6 + L7 each carry one caster (a caco / baron) so ranged pressure never disappears across the mid-game stretch. Every enemy is also stamped with a depth-scaled `:aggression` cooldown multiplier (see [monsters.md](monsters.md)).
 
+Only the headline `:enemies` count is shown above; in practice L2-L5 are now mixed-spec vectors (a melee secondary salted into the headline type) so no early room is single-type, and L1 stays pure imps as the tutorial. Mixed specs that omit `:lives` inherit the type's catalog HP.
+
 Required fields:
 
 | Field | Meaning |

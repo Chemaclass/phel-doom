@@ -26,6 +26,33 @@ Adding a new type = append one entry to `enemy-types`. Adding a level that uses 
 
 Each enemy carries `:lives` / `:max-lives` / `:type`. `enemy/shoot` drops `:lives` per hit; only flips `:alive false` and arms respawn when 0. `damage-ratio = 1 - lives/max-lives` darkens the body shade - wounded enemies read as "bloodied" from across the room without a HUD bar. Non-killing hits also stamp `:hit-flash-secs 1.2` so a yellow HP digit floats above the head.
 
+## Stats comparison
+
+Combat numbers per type. HP is the catalog `:default-lives` (a level may override). Speed = level `:chase` x the type's `enemy/type-speed-mul` (1.0 when unlisted). Range / windup / cooldown come from `enemy_ai/attack-spec` (melee) or `enemy_ai/caster-spec` (ranged); types not listed in `attack-spec` use `default-attack-spec` (1.4 / 0.4 / 1.0). Every hit, melee or bolt, costs the player exactly 1 unit (armor first, else a life).
+
+| Type | Debut | HP | Speed x | Attack | Range (u) | Windup (s) | Cooldown (s) | Bolt spd | Resists |
+|---|---|---|---|---|---|---|---|---|---|
+| `:imp`      | L1    | 1 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | -      |
+| `:demon`    | L2    | 2 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | -      |
+| `:caco`     | L3    | 3 | 0.70 | ranged | 7.0 | 0.6 | 1.0 | 2.5 | `:fire` |
+| `:baron`    | L4    | 4 | 0.65 | ranged | 8.0 | 0.8 | 1.3 | 3.0 | `:fire` |
+| `:cyber`    | L5    | 5 | 0.55 | melee  | 1.8 | 0.8 | 1.8 | -   | -      |
+| `:spectre`  | L6    | 3 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | -      |
+| `:revenant` | L7    | 4 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | -      |
+| `:archvile` | L8    | 5 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | `:fire` |
+| `:mancubus` | L8    | 4 | 1.0  | melee  | 1.6 | 0.5 | 1.3 | -   | `:fire` |
+| `:pinky`    | L9    | 2 | 1.0  | melee  | 1.4 | 0.3 | 0.8 | -   | -      |
+
+Reading it:
+
+- **Range** is melee reach (~1 cell) for everyone except the two casters, who commit from across the room. **Windup** is the frozen telegraph before the strike/bolt; **cooldown** is the gap before they can attack again (smaller = more pressure).
+- **Casters** (`:caco`, `:baron`) are the only types that fire projectiles (`caster-spec`). They move slower than the melee rushers to stay fair: keep distance and strafe the bolts, or close in and trade the dodge window for melee range. Bolt speed is world-units/sec (deliberately low so a fireball is dodge-able, not near-hitscan).
+- `:cyber` is the heaviest: top HP, slowest move (0.55x), long telegraph. The L10 boss spawns it with 50 HP.
+- `:pinky` is the glass rusher: low HP, full speed, shortest windup + cooldown.
+- **Resists** zeroes incoming damage of that type (`enemy/shoot` checks `enemies/resists?`). `:fire` resistance is why the BFG's `:plasma` shot matters against caco / baron / archvile / mancubus.
+
+Note: `:archvile` is themed as a caster (orange flame face) and the L8 level comment calls it one, but it has no `caster-spec` entry yet, so mechanically it melees like the default profile.
+
 ## Spawning
 
 - `spawn-enemies grid n min-dist px py [max-lives [type-kw]]` - single-type rooms.

@@ -298,7 +298,7 @@
                 dy (php/- (:y e) py)
                 d2 (php/+ (php/* dx dx) (php/* dy dy))]
             (if (php/< d2 best-d)
-              (recur (next es) d2 {:x (:x e) :y (:y e) :d2 d2})
+              (recur (next es) d2 {:x (:x e) :y (:y e) :d2 d2 :type (:type e)})
               (recur (next es) best-d best)))
           (recur (next es) best-d best))))))
 
@@ -354,21 +354,40 @@
   [^float dist]
   (php/max 0.1 (php/- 1.0 (php/min 1.0 (php// dist shot-max-range)))))
 
+(def enemy-hit-damage
+  "Half-heart HP an enemy's attack costs the player (the health pool is
+   `state/max-lives` = 10, drawn as 5 hearts of 2 HP each). Light melee
+   rushers chip a half heart; heavy bruisers + casters take a full
+   heart; the cyberdemon boss hits for 1.5 hearts. Anything not listed
+   defaults to 1 (half heart) via `hit-damage-for`."
+  {:caco     2
+   :baron    2
+   :archvile 2
+   :mancubus 2
+   :cyber    3})
+
+(defn hit-damage-for
+  "HP one hit from an enemy of `type-kw` costs. Falls back to 1 (half
+   heart) for unlisted / nil types, so a typeless test fixture or a
+   light melee enemy lands the minimum."
+  [type-kw]
+  (or (get enemy-hit-damage type-kw) 1))
+
 (defn- apply-hit
-  "Land one hit on the player from attacker `att` ({:x :y :d2} or nil),
-   `vol`-scaled pain sfx included. Armor absorbs the hit (drop a unit
-   instead of a life) but still triggers i-frames + the white flash so
-   the player sees the armor consumed. Knockback shoves away from the
-   attacker first, then the timers + hurt-side stamp onto the shoved
-   world so render reads the new position next frame. Shared by the
-   contact path (`take-damage`) and the projectile path
-   (`hit-player-at`)."
-  [world att ^float vol]
+  "Land one hit on the player from attacker `att` ({:x :y :d2 [:type]}
+   or nil) for `dmg` HP, `vol`-scaled pain sfx included. Armor absorbs
+   the whole hit (drop one armor unit, no life lost regardless of dmg)
+   but still triggers i-frames + the white flash so the player sees the
+   armor consumed. Knockback shoves away from the attacker first, then
+   the timers + hurt-side stamp onto the shoved world so render reads
+   the new position next frame. Shared by the contact path
+   (`take-damage`) and the projectile path (`hit-player-at`)."
+  [world att ^float vol ^int dmg]
   (let [p       (:player world)
         armor   (or (:armor world) 0)
         damaged (if (php/> armor 0)
                   (assoc world :armor (php/- armor 1))
-                  (update world :lives (fn [l] (php/max 0 (php/- l 1)))))]
+                  (update world :lives (fn [l] (php/max 0 (php/- l dmg)))))]
     (when (:sound-on world) (play-sfx! :hit vol))
     (assoc (knockback damaged att)
            :iframes    iframe-seconds
@@ -376,17 +395,19 @@
            :hurt-side  (attacker-side att (:x p) (:y p) (:angle p)))))
 
 (defn hit-player-at
-  "Apply one hit from a point source at world `(sx, sy)` — a projectile
-   impact. Same effect as a contact hit (armor/life, i-frames, flash,
-   distance-scaled sfx, knockback + hurt-side away from the source) but
-   the attacker is an arbitrary point rather than the nearest enemy.
-   Caller must gate on `player-immune?` first."
-  [world ^float sx ^float sy]
-  (let [p  (:player world)
-        dx (php/- sx (:x p))
-        dy (php/- sy (:y p))
-        d2 (php/+ (php/* dx dx) (php/* dy dy))]
-    (apply-hit world {:x sx :y sy :d2 d2} (distance-volume (php/sqrt d2)))))
+  "Apply one hit from a point source at world `(sx, sy)` for `dmg` HP —
+   a projectile impact. Same effect as a contact hit (armor/life,
+   i-frames, flash, distance-scaled sfx, knockback + hurt-side away from
+   the source) but the attacker is an arbitrary point rather than the
+   nearest enemy. `dmg` defaults to 1 for older callers. Caller must
+   gate on `player-immune?` first."
+  ([w0 ^float x0 ^float y0] (hit-player-at w0 x0 y0 1))
+  ([world ^float sx ^float sy ^int dmg]
+   (let [p  (:player world)
+         dx (php/- sx (:x p))
+         dy (php/- sy (:y p))
+         d2 (php/+ (php/* dx dx) (php/* dy dy))]
+     (apply-hit world {:x sx :y sy :d2 d2} (distance-volume (php/sqrt d2)) dmg))))
 
 (defn- take-damage [world]
   (let [p   (:player world)
@@ -396,7 +417,7 @@
         ;; should sound as quiet as the final hit that drops a far
         ;; enemy. closest-attacker already cached squared distance.
         vol (if att (distance-volume (php/sqrt (or (:d2 att) 0.0))) 1.0)]
-    (apply-hit world att vol)))
+    (apply-hit world att vol (hit-damage-for (:type att)))))
 
 (defn damage-step
   "Per-frame: decay every timer, then apply a touch hit if i-frames

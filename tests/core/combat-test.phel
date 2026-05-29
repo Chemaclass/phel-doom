@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.state :refer [new-world new-player])
   (:require phel-doom.core.combat
-            :refer [arm-berserk armory-reserve closest-attacker attacker-side berserk? berserk-damage-mul berserk-seconds can-fire? apply-heat damage-step empty-click-seconds hit-stop-for hit-stop-tough-seconds hit-stop-boss-seconds invuln? invuln-seconds knockback mag-size pick-loot-weapon reload reloading? roll-loot-kind tick-armory tick-shooting]))
+            :refer [arm-berserk armory-reserve closest-attacker attacker-side berserk? berserk-damage-mul berserk-seconds can-fire? apply-heat damage-step empty-click-seconds enemy-hit-damage hit-damage-for hit-player-at hit-stop-for hit-stop-tough-seconds hit-stop-boss-seconds invuln? invuln-seconds knockback mag-size pick-loot-weapon reload reloading? roll-loot-kind tick-armory tick-shooting]))
 
 ;; ---------------------------------------------------------------------
 ;; closest-attacker: selection rule.
@@ -309,8 +309,41 @@
   (is (= :heart (roll-loot-kind {:lives 4} 0.249))))
 
 (deftest test-roll-loot-kind-heart-band-suppressed-at-full-lives
-  ;; lives == max-lives (5) -> heart would be wasted, drop nothing.
-  (is (= nil (roll-loot-kind {:lives 5} 0.22))))
+  ;; lives == max-lives (10) -> heart would be wasted, drop nothing.
+  (is (= nil (roll-loot-kind {:lives 10} 0.22))))
+
+;; ---------------------------------------------------------------------
+;; Half-heart damage system: per-enemy-type hit damage, armor absorbs
+;; the whole hit, bolts carry their caster's damage.
+;; ---------------------------------------------------------------------
+
+(deftest test-hit-damage-for-per-type
+  ;; Light melee = 1 (half heart); heavy bruisers + casters = 2 (full
+  ;; heart); cyberdemon boss = 3. Unlisted / nil falls back to 1.
+  (is (= 1 (hit-damage-for :imp)))
+  (is (= 1 (hit-damage-for :demon)))
+  (is (= 1 (hit-damage-for :pinky)))
+  (is (= 2 (hit-damage-for :caco)))
+  (is (= 2 (hit-damage-for :baron)))
+  (is (= 2 (hit-damage-for :archvile)))
+  (is (= 2 (hit-damage-for :mancubus)))
+  (is (= 3 (hit-damage-for :cyber)))
+  (is (= 1 (hit-damage-for :unknown-type)))
+  (is (= 1 (hit-damage-for nil))))
+
+(deftest test-hit-player-at-removes-dmg-from-lives
+  ;; A 3-HP boss bolt drops the pool by 3 (1.5 hearts); a default hit by 1.
+  (let [w {:lives 10 :armor 0 :player (new-player 5.0 5.0 0.0)}]
+    (is (= 7 (:lives (hit-player-at w 6.0 5.0 3))))
+    (is (= 9 (:lives (hit-player-at w 6.0 5.0)))   "default arity = 1 HP")))
+
+(deftest test-armor-absorbs-whole-hit-regardless-of-size
+  ;; One armor unit negates the entire incoming hit (no life lost), even
+  ;; a 3-HP boss strike, dropping exactly one armor.
+  (let [w  {:lives 10 :armor 2 :player (new-player 5.0 5.0 0.0)}
+        w' (hit-player-at w 6.0 5.0 3)]
+    (is (= 10 (:lives w')) "life untouched while armor remains")
+    (is (= 1 (:armor w')) "one armor unit consumed")))
 
 (deftest test-roll-loot-kind-nothing-band
   (is (= nil (roll-loot-kind {:lives 3} 0.25)))

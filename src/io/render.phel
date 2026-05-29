@@ -983,7 +983,7 @@
         sec           (fn [text]
                         (str "│\e[1;93m" (help-pad (str " " text) w) "\e[40;97m│"))
         lives         (or (:lives stats) 0)
-        cap-l         (or (:max-lives stats) 5)
+        cap-l         (or (:max-lives stats) 10)
         armor         (or (:armor stats) 0)
         kills         (or (:kills stats) 0)
         streak        (or (:streak stats) 0)
@@ -1062,8 +1062,8 @@
                          (bord (str "  diff:   " (php/ltrim (php/strval difficulty) ":")))
                          blnk
                          (sec "PLAYER")
-                         (bord (str "  lives:  " (php/min lives cap-l) "/" cap-l))
-                         (bord (str "  armor:  " armor "/3"))
+                         (bord (str "  health: " (php/min lives cap-l) "/" cap-l " hp"))
+                         (bord (str "  armor:  " armor))
                        ;; Literal prefixes are "  keys:   " / "  buffs:  "
                        ;; — both 10 visible cols. Pad = w - (10 + visible
                        ;; len of the coloured value).
@@ -1719,7 +1719,9 @@
    isn't visible this frame so the caller can skip painting."
   [^float phase ^int lives]
   (cond
-    (php/>= lives 3)   nil
+    ;; HP is a half-heart pool (2 HP/heart): pulse only in the last ~2
+    ;; hearts (<= 4 HP), off above that and at death.
+    (php/>= lives 5)   nil
     (php/<= lives 0)   nil
     (php/< phase 0.10) "\e[48;5;160m"
     (php/< phase 0.22) "\e[48;5;124m"
@@ -1728,8 +1730,9 @@
 
 (defn- paint-heartbeat-vignette
   "Pulsing red bar down both screen edges, intensity driven by the
-   heartbeat phase. Active only at 1-2 lives, off otherwise. Painted
-   AFTER the hit-vignette so a fresh hit still dominates."
+   heartbeat phase. Active only in the last ~2 hearts (<= 4 HP), off
+   otherwise. Painted AFTER the hit-vignette so a fresh hit still
+   dominates."
   [parts stats vw vh]
   (let [lives (or (get stats :lives) 0)
         phase (or (get stats :heartbeat-phase) 0.0)
@@ -1963,13 +1966,19 @@
    stays readable on terminals whose default BG is light or
    transparent."
   [parts ^float t stats bloody?]
-  (let [l     (or (get stats :lives) 0)
-        cap   (or (get stats :max-lives) 5)
-        ;; Cap rendered filled hearts at `cap` so dev god mode
-        ;; (lives = thousands) doesn't blow the strip across the
-        ;; whole screen. Engine still tracks the real :lives value
-        ;; for take-damage / heart-pickup math.
-        shown (php/min l cap)
+  (let [hp    (or (get stats :lives) 0)
+        cap   (or (get stats :max-lives) 10)
+        ;; HP is a half-heart pool: 2 HP per heart. Draw `slots` base
+        ;; hearts (10 HP -> 5) as full ♥ / half ◖ / empty ·, with any
+        ;; soulsphere over-cap HP shown as extra full hearts beyond the
+        ;; base row. Clamp the displayed pool (cap + soul headroom) so
+        ;; dev god mode (lives = thousands) can't blow the strip across
+        ;; the screen; the engine still tracks the real :lives value.
+        slots (php/intdiv (php/+ cap 1) 2)
+        disp  (php/max 0 (php/min hp (php/+ cap 4)))
+        full  (php/intdiv disp 2)
+        half? (php/=== 1 (php/% disp 2))
+        empty (php/max 0 (php/- slots (php/+ full (if half? 1 0))))
         armor (or (get stats :armor) 0)
         god?  (:god? stats)
         blink (cond (and bloody? (pulse t 8.0)) "\e[1m"
@@ -1977,9 +1986,10 @@
                     :else                       "\e[1m")]
     (buf-push parts
               (str "\e[1;1H\e[40m" blink "\e[91m"
-                   (php/str_repeat "♥ " shown)
+                   (php/str_repeat "♥ " full)
+                   (if half? "◖ " "")
                    "\e[40;90m"
-                   (php/str_repeat "♡ " (php/max 0 (php/- cap shown)))
+                   (php/str_repeat "· " empty)
                    (if (php/> armor 0)
                      (str "\e[40;94;1m" (php/str_repeat "◆ " armor))
                      "")
@@ -2526,12 +2536,14 @@
         ;; the world reads as 'consumed by darkness' the closer the
         ;; player is to dying. Sky / floor untouched; doors keep their
         ;; full-brightness pulse so the exit stays findable.
+        ;; HP is a half-heart pool (10 = full): haze ramps over the last
+        ;; ~3 hearts, deepening toward the last half-heart.
         haze-shift                         (let [l (or (get stats :lives) 0)]
                                              (cond
                                                (php/<= l 0) 0
-                                               (php/<= l 1) 6
-                                               (php/<= l 2) 3
-                                               (php/<= l 3) 1
+                                               (php/<= l 2) 6
+                                               (php/<= l 4) 3
+                                               (php/<= l 6) 1
                                                :else        0))
         ;; Per-column wall geometry + shade arrays. compute-wall-shades
         ;; CREATES them fresh and returns them (PHP arrays are passed

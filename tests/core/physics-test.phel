@@ -194,10 +194,10 @@
     (is (= 0.0 (:flicker-active-secs w')))))
 
 (deftest test-tick-flicker-fires-when-cooldown-hits-zero
-  (let [w  (assoc empty-world :lives 5 :flicker-cooldown 0.0 :flicker-active-secs 0.0)
+  (let [w  (assoc empty-world :lives 10 :flicker-cooldown 0.0 :flicker-active-secs 0.0)
         w' (tick-flicker w 0.1)]
     (is (php/> (:flicker-active-secs w') 0.0))
-    ;; New cooldown sampled into the lives>=5 band (20..30s).
+    ;; Full health (>8 HP) samples into the calm band (20..30s).
     (is (php/>= (:flicker-cooldown w') 20.0))
     (is (php/<= (:flicker-cooldown w') 30.0))))
 
@@ -216,11 +216,12 @@
     (is (php/>= (:flicker-cooldown w') 6.0))
     (is (php/<= (:flicker-cooldown w') 12.0))))
 
-(deftest test-tick-heartbeat-faster-at-1-life-than-2
-  ;; Same dt, same start phase — 1-life run should be further along
-  ;; (shorter interval = faster phase accumulation).
-  (let [w-low (tick-heartbeat (assoc empty-world :lives 1 :heartbeat-phase 0.0) 0.1)
-        w-mid (tick-heartbeat (assoc empty-world :lives 2 :heartbeat-phase 0.0) 0.1)]
+(deftest test-tick-heartbeat-faster-in-last-heart-than-second-last
+  ;; Same dt, same start phase - the last-heart band (<=2 HP, 0.55s) runs
+  ;; faster than the second-last band (<=4 HP, 0.85s), so it accumulates
+  ;; more phase per frame.
+  (let [w-low (tick-heartbeat (assoc empty-world :lives 2 :heartbeat-phase 0.0) 0.1)
+        w-mid (tick-heartbeat (assoc empty-world :lives 4 :heartbeat-phase 0.0) 0.1)]
     (is (> (:heartbeat-phase w-low) (:heartbeat-phase w-mid)))))
 
 ;; ---------------------------------------------------------------------
@@ -258,10 +259,10 @@
 
 (deftest test-tick-blood-drops-gated-by-lives
   ;; dt 10.0 multiplies spawn-rate (0.35/sec) well past 1.0 so spawn
-  ;; rolls always succeed when allowed. Above the 3-life threshold
-  ;; the gate keeps the drop list at zero; at or below, it grows.
-  (let [w-high (tick-blood-drops (assoc empty-world :lives 5 :blood-drops []) 10.0)
-        w-low  (tick-blood-drops (assoc empty-world :lives 3 :blood-drops []) 10.0)]
+  ;; rolls always succeed when allowed. Above the 6-HP threshold the
+  ;; gate keeps the drop list at zero; at or below, it grows.
+  (let [w-high (tick-blood-drops (assoc empty-world :lives 10 :blood-drops []) 10.0)
+        w-low  (tick-blood-drops (assoc empty-world :lives 6 :blood-drops []) 10.0)]
     (is (= 0 (count (:blood-drops w-high))))
     (is (= 1 (count (:blood-drops w-low))))))
 

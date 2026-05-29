@@ -11,35 +11,34 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Half-heart health + per-enemy hit damage. Health is now a 10 HP pool drawn as 5 hearts of 2 HP each (full `♥`, half `◖`, empty `·`), starting full. Most hits cost half a heart, but the threat escalates by attacker type: light melee (imp/demon/pinky/spectre/revenant) take a half heart, heavy bruisers + casters (caco/baron/archvile/mancubus) a full heart, and the cyberdemon boss 1.5 hearts. Bolts carry their caster's damage; armor absorbs a whole hit regardless of size; heart pickups heal a full heart; the soulsphere over-caps to 14 HP. The low-health dread cues (heartbeat, wall haze, blood drops, flicker) re-tuned to the new pool.
-- Demo recording + replay (#64). `--record=FILE` captures a run (seed + per-frame input); `--demo=FILE` replays it deterministically. Built on a new seeded RNG (`core/rng`) that every gameplay draw flows through, replacing the unseedable `random_int` / `mt_rand`.
-- Mid-level save / load (#63). `F5` quick-saves the whole `:world` to `$HOME/.phel-doom/saves/slot-1.json`, `F9` loads it back, with a `SAVED` / `LOADED` HUD cue. A tagged JSON codec round-trips Phel keywords / sets / vectors / maps; `:pgrid` is rebuilt and fog re-reveals on load. Versioned: a save from an incompatible build is refused. Slots 1-9 exist in `io/savegame`.
-- BFG splash weapon (#58). Slot 5, found on L7. A heavy `:plasma` shot: the beam lands on the nearest enemy or wall, then a 3-cell-radius blast damages every enemy around the impact - a multi-kill room-clearer that also bypasses the fire-resistant caco / baron / archvile / mancubus. Single-action, slow cadence, expensive cells. Distinct green plasma report (Glass).
-- Secret reward passages. Every non-locked procgen level now hides up to 2 secret walls; revealing one (bump + `F`) drops a reward stash: an ammo box, an armor shard, and a rotating trophy powerup (soulsphere / berserk / invuln). Locked levels are skipped so a secret shortcut can't bypass a keycard door. Makes exploration pay off and turns the rare powerups into a reliable find.
-- Hit-stop on meaty kills. Killing a tough enemy (caco / baron, ~70ms) or the boss (~160ms) briefly freezes the gameplay step so the blow lands with weight. Trash mobs (imps / demons) kill clean with no freeze, so chaingun spray stays fast.
-- Ambient drone loop. A low, slow-pulsing background bed now runs under the whole gameplay session for dread. Synthesised at runtime (no shipped audio asset), looped by a crash-safe background process that self-terminates if the game dies, and gated by the N sound toggle.
-- Projectile enemies. Cacodemons and barons now fire homing-less fireballs across the room instead of only meleeing: they freeze, telegraph (attack-face windup), then launch an orange bolt at your current position. Bolts travel through doorways but stop at walls, so you dodge by strafing or breaking line of fire with geometry. Impact costs one armor/life unit; i-frames gate a burst to one hit per frame.
-- Wandering idle enemies. Half the freshly spawned monsters start pacing random directions; LOS flips them to chase.
-- Backpack capacity expansion (#68 part 3). Stacks up to 3; reserve cap scales `base * (1 + level)`. HUD shows `+pack xN`.
-- Armor shards (#68 part 2). +1 armor pickup that banks past `max-armor` up to 2x (no decay). Three per level.
-- Soulsphere pickup (#68 part 1). Rare cyan sphere; pushes lives 2 over cap, decays back at 1 life / 5s.
-- Switches that toggle remote cells (#62). `F` on a switch flips linked target cells (wall <-> floor). L10 uses two.
+- Half-heart health + per-type hit damage. 10 HP pool drawn as 5 hearts (`♥`/`◖`/`·`). Hits cost by attacker: light melee 1 (half heart), heavy + casters 2, cyber boss 3. Armor absorbs a whole hit; heart pickup heals a full heart; soulsphere over-caps to 14.
+- Deterministic demo record / replay (#64). `--record=FILE` / `--demo=FILE`, on a new seeded Park-Miller RNG (`core/rng`) replacing the unseedable `random_int` / `mt_rand`.
+- Mid-level quick-save / load (#63). `F5` / `F9`, whole world to a versioned tagged-JSON slot (1-9), fog re-reveals on load.
+- BFG splash weapon (#58). Slot 5 (found L7): `:plasma` beam + 3-cell AoE blast that bypasses fire-resists. Single-action, slow, expensive.
+- Secret reward passages. Procgen levels hide up to 2 secret walls; reveal (bump + `F`) drops ammo + shard + a rotating powerup. Locked levels skipped.
+- Hit-stop on meaty kills. Tough kills (~70ms) / boss (~160ms) briefly freeze the step; trash mobs don't, so spray stays fast.
+- Ambient drone loop. Synthesised low background bed, crash-safe loop, gated by the N toggle.
+- Projectile casters. Cacodemons + barons fire telegraphed, dodgeable fireballs (pass doors, stop at walls).
+- Wandering idle enemies. Half of fresh spawns pace random directions until LOS flips them to chase.
+- Backpack stacking (#68). Up to 3; reserve cap scales `base * (1 + level)`; HUD `+pack xN`.
+- Armor shards (#68). +1 armor banking past `max-armor` to 2x (no decay), three per level.
+- Soulsphere pickup (#68). Rare cyan sphere; over-caps lives, decays back over time.
+- Remote switches (#62). `F` on a switch flips linked cells (wall <-> floor); L10 uses two.
 
 ### Changed
 
-- Enemy fireballs (cacodemon / baron) fly slower and telegraph a touch longer (#94), so they read as a dodge-able threat you can strafe out of instead of a near-hitscan hit.
-- Caster pressure rebalanced: cacodemons / barons now fire on a shorter cooldown (smaller gap between bolts) but move slower than the melee rushers. A ranged threat you can't simply outrun stays fair - keep your distance and strafe the bolts, or close in and trade the dodge window for melee range.
-- Progressive difficulty curve. Chase speed now climbs monotonically L1-L9 (was a visible 2.0 -> 1.7 dip at L5 -> L6); L10 eases for the single-boss arena. The archvile (L8) is now a real caster with the fastest bolt of the three (its windup matches the caco so the telegraph stays reactable on a laggy terminal), instead of being themed-but-inert. L6 + L7 each gain one caster so ranged fire never disappears for the mid-game stretch. Every enemy carries a depth-scaled attack cooldown (clamped so the deepest levels stay dodgeable with terminal-input lag), so the same monster gets more relentless the deeper you push while the windup telegraph stays honest.
-- Per-level monster variety. The early single-type rooms now mix in a melee secondary so no level is one monster on repeat: L2 demons get an imp escort, L3 splits ~50/50 between cacodemon shooters and a demon/imp melee half, L4 barons get a demon escort, L5 cyberdemons get imp fodder. L1 stays pure imps as the clean melee tutorial.
+- Caster tuning (#94). Cacodemon / baron fireballs fly slower and telegraph longer (dodgeable, not near-hitscan) and fire on a shorter cooldown but move slower than melee rushers, so a ranged threat you can't outrun stays fair.
+- Progressive difficulty curve. Chase speed climbs monotonically L1-L9 (fixed the L5 -> L6 dip), L10 eases for the boss arena. Archvile (L8) wired as a real caster (fastest bolt); L6 + L7 gain a caster so ranged pressure never gaps; depth-scaled attack cooldown with the windup telegraph kept honest.
+- Per-level monster variety. L2-L5 mix a melee secondary into the headline type (L3 ~50/50 shooters / melee); L1 stays pure imps as the tutorial.
 
 ### Fixed
 
-- Mixed-level monsters spawned with 1 HP regardless of type. `spawn-enemies-mixed` (and the difficulty scaler) defaulted a spec's omitted `:lives` to 1 instead of the catalog `default-lives-for`, so a cacodemon in a mixed room died in one pistol shot while the same caco in a single-type room had its real 3 HP. Mixed-room enemies now use their catalog HP (caco 3, baron 4, revenant 4, archvile 5, mancubus 4, ...), matching the stats table and making the L6-L10 mixes properly tanky.
-- `R` (restart same map) now actually reproduces the level geometry + enemy spawns. It re-seeded `mt_rand`, but map gen used `random_int` (unseedable), so the "same map" never matched. Both now flow through the seeded `core/rng`.
-- Weapon felt silent when a shot connected (esp. the shotgun): a hit swapped the gun report for the enemy reaction, so you only heard a quiet thud. Every trigger pull now plays the active weapon's own fire sound, hit or miss, with the kill cue layered on top. Each weapon gets a distinct report (pistol Pop, shotgun Blow, chaingun Morse, chainsaw Purr) via a data-driven `:fire-sfx` spec key.
-- Enemy face / eyes glyph drew over closer sprites (#91). The face overlay was gated only by walls, not by nearer enemies, so a far enemy's eyes floated on top of one in front. Now gated by the same front-most-enemy check as the grounding shadow.
-- Grid mutations (#61 secrets, doors, switches) left the raycaster's `:pgrid` stale - player walked through visually solid walls. New `state/rebuild-pgrid` resyncs after every mutation.
-- SHIFT+WASD sprint silently no-op on Terminal.app / xterm / GNOME Terminal (any non-kitty terminal). Capital W/A/S/D bytes now refresh both the matching movement slot AND `:sprint`, so SHIFT+WASD sprints universally instead of being kitty-only.
+- Mixed-level enemies spawned at 1 HP regardless of type; now use catalog HP (`default-lives-for`), so the L6-L10 mixes are properly tanky.
+- `R` (restart same map) now reproduces geometry + spawns. Map gen used unseedable `random_int`; both paths now flow through `core/rng`.
+- Weapon report went silent on a connecting hit (esp. shotgun). Every trigger pull now plays the weapon's own fire sound (distinct per weapon) with the kill cue layered on top.
+- Enemy face / eyes drew over closer sprites (#91). Now gated by the same front-most-enemy check as the grounding shadow.
+- Grid mutations (#61) left `:pgrid` stale (walk through solid walls); `rebuild-pgrid` resyncs after each mutation.
+- SHIFT+WASD sprint was a no-op on non-kitty terminals. Capital WASD bytes now refresh the movement slot AND `:sprint`, so sprint works everywhere.
 
 ## [0.6.0] - 2026-05-27
 

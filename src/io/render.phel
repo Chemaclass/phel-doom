@@ -1537,6 +1537,21 @@
             (buf-push parts (str "\e[" row ";" col "H" label)))))))
   parts)
 
+(defn- paint-save-flash
+  "Brief centred SAVED / LOADED cue near the top after F5 / F9 quick
+   save / load (issue #63). Green chip so it's distinct from the amber
+   ammo nag."
+  [parts stats vw vh]
+  (let [secs (or (get stats :save-flash-secs) 0.0)
+        msg  (get stats :save-flash-msg)]
+    (when (and (php/> secs 0.0) msg (php/>= vh 5))
+      (let [text  (str " " msg " ")
+            label (str "\e[48;5;22;38;5;231;1m" text "\e[0m")
+            col   (php/max 1 (php/- (php/intdiv vw 2)
+                                    (php/intdiv (php/strlen text) 2)))]
+        (buf-push parts (str "\e[3;" col "H" label)))))
+  parts)
+
 (def stamina-bar-cells
   "Width of the STA bar in cells. 10 is wide enough to read the pool
    level at a glance without crowding the HUD strip on narrow
@@ -2891,7 +2906,8 @@
             p18         (paint-empty-click        p17 stats vw vh)
             p19         (paint-reload-reminder    p18 stats vw vh)
             p19b        (paint-locked-bump        p19 stats vw vh)
-            p20         (paint-enemy-hp-flashes   p19b world vw vh)]
+            p19c        (paint-enemy-hp-flashes   p19b world vw vh)
+            p20         (paint-save-flash         p19c stats vw vh)]
         (when (get stats :paused)
           (buf-push p20 (pause-menu-string vw vh (get stats :sound-on))))
         ;; Help overlay paints last so it sits on top of the pause

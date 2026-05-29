@@ -463,12 +463,21 @@
    timers + apply contact damage."
   [world keys ^float dt edges]
   (let [w0 (handle-toggles world edges)]
-    (if (:paused w0)
-      w0
+    (cond
+      (:paused w0)                             w0
+      ;; Hit-stop: a meaty kill stamped `:hit-stop-secs` last frame.
+      ;; Freeze the whole gameplay step (no physics / AI / shooting)
+      ;; while it decays so the blow lands with weight. Toggles above
+      ;; still work; render keeps drawing the frozen frame (so the
+      ;; muzzle flash + blood hold for the duration). ~70ms on a tough
+      ;; kill, ~160ms on a boss. See combat/hit-stop-for.
+      (php/> (or (:hit-stop-secs w0) 0.0) 0.0)
+      (assoc w0 :hit-stop-secs (php/max 0.0 (php/- (:hit-stop-secs w0) dt)))
       ;; Linear pipeline. Each step takes the previous world + its
       ;; own deps and returns a new world. Phel `->` would be nicer
       ;; but the lint pass doesn't macro-expand it (arity-mismatch
       ;; false positives), so stick with sequential let bindings.
+      :else
       (let [w1   (refresh-from-keys w0 keys)
             ;; Weapon swap (1/2/3) routes through weapons/switch-weapon
             ;; — no-op when the player is mid-reload so the lockout

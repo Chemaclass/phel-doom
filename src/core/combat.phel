@@ -65,6 +65,38 @@
    Counter resets to 1 if the player waits longer without a kill."
   4.0)
 
+(def hit-stop-tough-seconds
+  "Hit-stop: brief world freeze on a meaty kill so the blow lands with
+   weight (play/tick-world skips the gameplay step while it decays).
+   Only tough enemies (>= hit-stop-min-lives HP) trigger it — trash
+   mobs would stutter a chaingun spray into a slideshow, so they kill
+   clean with no freeze."
+  0.07)
+
+(def hit-stop-boss-seconds
+  "Longer freeze on a boss kill (>= hit-stop-boss-lives HP) for a
+   punchier finish."
+  0.16)
+
+(def hit-stop-min-lives
+  "Minimum enemy max-HP for a kill to trigger hit-stop. Caco (3) and up;
+   imps (1) and demons (2) kill without a freeze so the flow stays fast."
+  3)
+
+(def hit-stop-boss-lives
+  "Enemy max-HP at / above which a kill triggers the longer boss freeze."
+  10)
+
+(defn hit-stop-for
+  "Hit-stop duration (seconds) for killing an enemy with `max-lives` HP:
+   0.0 for trash (no freeze), `hit-stop-tough-seconds` for tough mobs,
+   `hit-stop-boss-seconds` for bosses. Pure lookup; exported for tests."
+  [^int max-lives]
+  (cond
+    (php/>= max-lives hit-stop-boss-lives) hit-stop-boss-seconds
+    (php/>= max-lives hit-stop-min-lives)  hit-stop-tough-seconds
+    :else                                  0.0))
+
 ;; Per-weapon cadence / capacity now lives in weapons/spec. These
 ;; constants stay as the pistol defaults — every test fixture that
 ;; didn't carry a :weapon used the pistol numbers, so falling back to
@@ -521,8 +553,14 @@
         unlocked  (if killed? (maybe-unlock-boss-door scored killed-e) scored)
         ;; Kill drops a random pickup at the corpse's cell. Wounds
         ;; don't drop — the kill is the reward trigger.
-        with-loot (if killed? (push-kill-loot unlocked hit-pos) unlocked)]
-    (push-blood-fx (assoc with-loot :fire-anim fire-anim-seconds) hit-pos)))
+        with-loot (if killed? (push-kill-loot unlocked hit-pos) unlocked)
+        ;; Hit-stop: stamp a freeze timer on a meaty kill so the blow
+        ;; reads. Trash mobs return 0.0 (no freeze) — see hit-stop-for.
+        juiced    (if killed?
+                    (let [hs (hit-stop-for (or (:max-lives killed-e) 1))]
+                      (if (php/> hs 0.0) (assoc with-loot :hit-stop-secs hs) with-loot))
+                    with-loot)]
+    (push-blood-fx (assoc juiced :fire-anim fire-anim-seconds) hit-pos)))
 
 (defn- on-shot-miss [world]
   (assoc world :fire-anim fire-anim-seconds))

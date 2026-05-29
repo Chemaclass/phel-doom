@@ -67,11 +67,17 @@ Four lifecycle layers:
 ```phel
 (defn tick-world [world keys ^float dt edges]
   (let [w0 (handle-toggles world edges)]
-    (if (:paused w0)
-      w0
+    (cond
+      (:paused w0) w0
+      ;; Hit-stop: a meaty kill stamped :hit-stop-secs last frame. Freeze
+      ;; the whole gameplay step (just decay the timer) so the blow lands
+      ;; with weight; render keeps drawing the frozen frame. See combat.md.
+      (pos? (:hit-stop-secs w0))
+      (assoc w0 :hit-stop-secs (max 0.0 (- (:hit-stop-secs w0) dt)))
       ;; Linear pipeline. Each step takes the previous world + own deps.
       ;; Real code uses sequential `let` bindings, not `->` (Phel lint
       ;; doesn't macro-expand `->`, false arity errors).
+      :else
       (-> (refresh-from-keys w0 keys)
           (switch-weapon-if-edge edges)
           (try-reveal-secret  (:action edges))

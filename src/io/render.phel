@@ -1244,14 +1244,37 @@
       (get enemy-types (or (get stats :enemy) :imp))
       (get enemy-types :imp)))
 
+(defn enemy-front-visible-at?
+  "True when an enemy at depth `d` is the front-most thing to draw at
+   screen column `c`: in front of the wall (dists) AND the front-most
+   enemy there (`d <= edists[c]`, where edists holds the nearest enemy
+   depth per column after the zone pass). Unlike `pickup-visible-at?`
+   the enemy compare is inclusive (`<=`) so the column's own front
+   enemy — whose depth equals the stored nearest — still draws; only
+   enemies strictly behind it skip.
+
+   Shared by the per-enemy overlays that paint OVER the zone layer and
+   would otherwise bleed through a nearer sprite: the grounding shadow
+   (issue #86) and the face / eyes glyph (issue #91). Exported for
+   tests."
+  [^float d c dists edists]
+  (let [wd (buf-get dists c)
+        ed (buf-get edists c)]
+    (and (php/< d wd)
+         (or (php/=== ed nil) (php/<= d ed)))))
+
 (defn- paint-face-overlay
   "At each visible alive enemy's centre column paint that enemy's
    catalog face glyph at the upper-third of the sprite. Three modes:
      - scare-secs active  → wide-eyed scare glyph (one-shot beat)
      - d < aggro-distance → :face-attack telegraph
      - else               → resting :face (alternates with :face-alt
-                            on the global face-phase beat)"
-  [parts world stats vw vh dists face-phase]
+                            on the global face-phase beat)
+
+   `edists` (nearest enemy depth per column, built during the zone
+   pass) gates the glyph so a face behind a closer sprite doesn't bleed
+   through — same fix as the grounding shadow (issue #91)."
+  [parts world stats vw vh dists edists face-phase]
   (let [scare? (php/> (or (get stats :scare-secs) 0.0) 0.0)]
     (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
            (let [col         (:col proj)
@@ -1268,7 +1291,7 @@
              (when (and glyph
                         (php/>= col 0)
                         (php/< col vw)
-                        (php/< d (buf-get dists col)))
+                        (enemy-front-visible-at? d col dists edists))
                (let [h        (php/min vh (php/intval (php// proj-dist
                                                              (php/* (php/max 0.5 d) char-aspect))))
                      face-row (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 6))]
@@ -2237,22 +2260,6 @@
     (and (php/< d wd)
          (or (php/=== ed nil) (php/< d ed)))))
 
-(defn enemy-shadow-visible-at?
-  "True when an enemy at depth `d` may ground its shadow at screen
-   column `c`: in front of the wall (dists) AND the front-most enemy
-   there (`d <= edists[c]`, where edists holds the nearest enemy depth
-   per column after the zone pass). Unlike `pickup-visible-at?` the
-   enemy compare is inclusive (`<=`) so the column's own front enemy —
-   whose depth equals the stored nearest — still draws; only enemies
-   strictly behind it skip. Keeps one farther sprite's shadow row from
-   bleeding over a nearer sprite's body (issue #86). Exported for
-   tests."
-  [^float d c dists edists]
-  (let [wd (buf-get dists c)
-        ed (buf-get edists c)]
-    (and (php/< d wd)
-         (or (php/=== ed nil) (php/<= d ed)))))
-
 (defn- paint-pickups-into
   "Project each pickup (heart / armor) to screen and write its
    coloured BG glow into `blood-paint`, then drop the icon glyph at
@@ -2695,7 +2702,7 @@
              (when (php/< e-bot vh)
                (loop [c c-from]
                  (when (php/<= c c-to)
-                   (when (enemy-shadow-visible-at? d c dists edists)
+                   (when (enemy-front-visible-at? d c dists edists)
                      (buf-set blood-paint
                               (php/+ (php/* e-bot vw) c)
                               sprite-shadow))
@@ -2846,7 +2853,7 @@
             ;; Numbered rebinds so phel lint's shadowed-binding stays
             ;; quiet without changing semantics. Threading (->) would
             ;; be cleaner but trips arity-mismatch lint.
-            p1          (paint-face-overlay       parts world stats vw vh dists face-phase)
+            p1          (paint-face-overlay       parts world stats vw vh dists edists face-phase)
             p2          (paint-wall-lights        p1 t vw vh hits hxs hys tops)
             p3          (paint-door-face          p2 stats vw vh hits tops bots)
             p4          (paint-crosshair          p3 stats vw vh center-bg)

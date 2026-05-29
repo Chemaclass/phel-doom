@@ -23,6 +23,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Fixed
 
+- Enemy face / eyes glyph drew over closer sprites (#91). The face overlay was gated only by walls, not by nearer enemies, so a far enemy's eyes floated on top of one in front. Now gated by the same front-most-enemy check as the grounding shadow.
 - Grid mutations (#61 secrets, doors, switches) left the raycaster's `:pgrid` stale - player walked through visually solid walls. New `state/rebuild-pgrid` resyncs after every mutation.
 - SHIFT+WASD sprint silently no-op on Terminal.app / xterm / GNOME Terminal (any non-kitty terminal). Capital W/A/S/D bytes now refresh both the matching movement slot AND `:sprint`, so SHIFT+WASD sprints universally instead of being kitty-only.
 

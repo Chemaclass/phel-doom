@@ -21,6 +21,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Soulsphere pickup (#68 part 1). Rare cyan sphere; pushes lives 2 over cap, decays back at 1 life / 5s.
 - Switches that toggle remote cells (#62). `F` on a switch flips linked target cells (wall <-> floor). L10 uses two.
 
+### Changed
+
+- Enemy fireballs (cacodemon / baron) fly slower and telegraph a touch longer (#94), so they read as a dodge-able threat you can strafe out of instead of a near-hitscan hit.
+
 ### Fixed
 
 - Weapon felt silent when a shot connected (esp. the shotgun): a hit swapped the gun report for the enemy reaction, so you only heard a quiet thud. Every trigger pull now plays the active weapon's own fire sound, hit or miss, with the kill cue layered on top. Each weapon gets a distinct report (pistol Pop, shotgun Blow, chaingun Morse, chainsaw Purr) via a data-driven `:fire-sfx` spec key.

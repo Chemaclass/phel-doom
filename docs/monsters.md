@@ -57,7 +57,7 @@ Each enemy carries a `:state` keyword + an optional `:lkp` (last-known player po
 
 ### Ranged casters (projectiles)
 
-Cacodemons (`:caco`) and barons (`:baron`) are casters: instead of meleeing on windup-release they launch a fireball. `enemy_ai/caster-spec` gives them a much longer `:range` (caco 7.0, baron 8.0) so they commit to an attack from across the room, plus a bolt `:speed`. `attack-spec-of` prefers `caster-spec` over the melee `attack-spec`, so the `:attacking` rhythm above drives them unchanged: freeze, telegraph the windup, release. On release `tick-attack` raises `:fire-now` on the enemy (melee types leave it `false`).
+Cacodemons (`:caco`) and barons (`:baron`) are casters: instead of meleeing on windup-release they launch a fireball. `enemy_ai/caster-spec` gives them a much longer `:range` (caco 7.0, baron 8.0) so they commit to an attack from across the room, plus a deliberately slow bolt `:speed` (caco 2.5, baron 3.0 world-units/sec) so the fireball is dodge-able rather than near-hitscan, and a slightly longer `:windup` than the melee profiles for a clear telegraph (issue #94). `attack-spec-of` prefers `caster-spec` over the melee `attack-spec`, so the `:attacking` rhythm above drives them unchanged: freeze, telegraph the windup, release. On release `tick-attack` raises `:fire-now` on the enemy (melee types leave it `false`).
 
 The projectile pipeline lives in `core/projectile.phel` and runs once per frame between `tick-enemies` and `damage-step` in `play/tick-world`:
 

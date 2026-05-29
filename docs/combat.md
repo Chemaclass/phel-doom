@@ -143,6 +143,18 @@ Internally `take-damage` and the projectile path share `apply-hit`, which takes 
 
 `hit-player-at world sx sy` applies the same hit as a contact touch but from an arbitrary world point - an enemy fireball impact (see [monsters.md](monsters.md) ranged casters + `core/projectile.phel`). `player-immune? world` is the projectile-side gate: i-frames, invuln sphere, or dev god mode - the same guards as `vulnerable?` minus the enemy-touch test. `core/projectile/resolve-hits` checks it before calling `hit-player-at`, so a bolt fizzles on the i-frame shield instead of phasing through.
 
+### Hit-stop (kill weight)
+
+On the killing blow `on-shot-hit` stamps `:hit-stop-secs` via `hit-stop-for (:max-lives killed)`:
+
+| Enemy max-HP | Freeze |
+|---|---|
+| 1-2 (imp, demon) | none - kills clean so chaingun spray stays fluid |
+| 3-9 (caco, baron) | `hit-stop-tough-seconds` (0.07s) |
+| 10+ (boss cyber) | `hit-stop-boss-seconds` (0.16s) |
+
+`play/tick-world` checks `:hit-stop-secs` right after the pause gate: while it's positive the whole gameplay step (physics / AI / projectiles / shooting / damage) is skipped and the timer just decays by `dt`. Render keeps drawing the frozen frame, so the muzzle flash + blood splatter hold for the freeze and the kill lands with weight. Gating on enemy toughness (not every kill) avoids stuttering a rapid-fire weapon into a slideshow.
+
 ### Chainsaw
 
 Slot-4 melee weapon. Spec lives in `weapons/weapons :chainsaw` and carries three flags that the combat path branches on:

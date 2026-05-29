@@ -1,0 +1,153 @@
+(ns phel-doom.io.ambient
+  (:require phel-doom.io.sound :refer [audio-player]))
+
+;; ---------------------------------------------------------------------
+;; Ambient drone loop.
+;;
+;; A low, slow-pulsing drone under the whole run for dread. No asset is
+;; shipped: a few seconds of seamless PCM are synthesised once into a
+;; temp WAV (drone-wav-bytes, pure), then looped by a backgrounded
+;; `sh` that re-runs the player binary forever. The loop guards on
+;; `kill -0 <game-pid>` each iteration, so if the game crashes / is
+;; SIGKILLed without a clean stop, the drone self-terminates within one
+;; clip instead of orphaning a forever-looping afplay.
+;;
+;; Lifecycle is driven from commands/play: start-ambient! when gameplay
+;; begins, stop-ambient! on teardown, sync-ambient! on the N (sound)
+;; toggle. All entry points are no-ops under PHEL_DOOM_SILENT and on
+;; hosts with no audio player (no bell fallback — a once-a-clip bell
+;; would be worse than silence).
+;; ---------------------------------------------------------------------
+
+(def sample-rate 22050)
+
+(def loop-seconds
+  "Drone clip length. Frequencies + tremolo are chosen to complete a
+   whole number of cycles in this window so the loop is seamless (no
+   click at the wrap)."
+  2.0)
+
+(def gain
+  "Peak amplitude as a fraction of full scale. Low — this sits under
+   the sfx, not over them."
+  0.18)
+
+(def afplay-volume
+  "Playback volume passed to afplay's -v (other players ignore it).
+   Quieter than the synthesised gain so the bed never masks footsteps
+   / shots."
+  "0.30")
+
+(def proc
+  "Session state for the loop process: `:pid` of the backgrounded
+   shell, or nil when not running."
+  (atom {:pid nil}))
+
+(defn- silent? []
+  (php/=== "1" (php/getenv "PHEL_DOOM_SILENT")))
+
+(defn drone-wav-bytes
+  "Synthesise `secs` seconds of a seamless low drone as a complete
+   16-bit mono PCM WAV (header + data) at `sr` Hz. Pure: same args →
+   same bytes, no IO. Three low partials (55 / 82 / 110 Hz — all
+   integer cycles in `loop-seconds`) under a slow 0.5 Hz tremolo, scaled
+   by `gain`. Exposed for unit tests (header + length pins)."
+  [^int sr ^float secs]
+  (let [n      (php/intval (php/* sr secs))
+        two-pi (php/* 2.0 php/M_PI)
+        buf    (php/array)]
+    (dotimes [i n]
+             (let [t   (php// i sr)
+                   sig (php/+ (php/* 1.0 (php/sin (php/* two-pi 55.0 t)))
+                              (php/* 0.4 (php/sin (php/* two-pi 82.0 t)))
+                              (php/* 0.3 (php/sin (php/* two-pi 110.0 t))))
+                   ;; 0.5 Hz tremolo → exactly one cycle per 2s window.
+                   lfo (php/+ 0.85 (php/* 0.15 (php/sin (php/* two-pi 0.5 t))))
+                   amp (php// gain 1.7)
+                   v   (php/intval (php/round (php/* (php/* sig lfo) amp 32767.0)))
+                   ;; Clamp into signed-16 range, then to unsigned for
+                   ;; little-endian 'v' packing.
+                   c   (php/max -32767 (php/min 32767 v))
+                   u   (if (php/< c 0) (php/+ 65536 c) c)]
+               (php/array_push buf (php/pack "v" u))))
+    (let [data     (php/implode "" buf)
+          data-len (php/strlen data)]
+      (str "RIFF"
+           (php/pack "V" (php/+ 36 data-len))
+           "WAVE"
+           "fmt "
+           (php/pack "V" 16)
+           (php/pack "v" 1)               ; PCM
+           (php/pack "v" 1)               ; mono
+           (php/pack "V" sr)
+           (php/pack "V" (php/* sr 2))    ; byte rate (1ch * 2 bytes)
+           (php/pack "v" 2)               ; block align
+           (php/pack "v" 16)              ; bits per sample
+           "data"
+           (php/pack "V" data-len)
+           data))))
+
+(defn- drone-path []
+  (str (php/sys_get_temp_dir) "/phel-doom-ambient.wav"))
+
+(defn- ensure-wav!
+  "Write the drone WAV to the temp path once per host (content is
+   fixed, so an existing file is reused). Returns the path, or nil if
+   the write failed."
+  []
+  (let [path (drone-path)]
+    (if (php/file_exists path)
+      path
+      (let [ok (php/file_put_contents path (drone-wav-bytes sample-rate loop-seconds))]
+        (if (php/=== false ok) nil path)))))
+
+(defn- loop-command
+  "The backgrounded shell that re-plays `path` forever while the game
+   process (`ppid`) is alive. afplay gets a -v volume; others just play
+   the file. `& echo $!` prints the shell's PID so the caller can track
+   + kill it."
+  [player path ^int ppid]
+  (let [vol (if (php/=== player "afplay") (str " -v " afplay-volume) "")]
+    (str "sh -c 'while kill -0 " ppid " 2>/dev/null; do "
+         player vol " " (php/escapeshellarg path) " >/dev/null 2>&1; "
+         "done' >/dev/null 2>&1 & echo $!")))
+
+(defn start-ambient!
+  "Begin the drone loop if it isn't already running. No-op under
+   PHEL_DOOM_SILENT, when no audio player is on PATH, or when the WAV
+   can't be written. Idempotent: a second call while running does
+   nothing."
+  []
+  (when (and (not (silent?))
+             (nil? (:pid @proc)))
+    (let [player (audio-player)]
+      (when player
+        (let [path (ensure-wav!)]
+          (when path
+            (let [out (php/array)]
+              (php/exec (loop-command player path (php/getmypid)) out)
+              (let [pid (php/intval (or (php/aget out 0) 0))]
+                (when (php/> pid 0)
+                  (swap! proc assoc :pid pid))))))))))
+
+(defn stop-ambient!
+  "Stop the drone loop immediately: kill the loop shell (so it can't
+   relaunch) then any player still playing our temp file. No-op when
+   nothing is running. Safe to call on every teardown path."
+  []
+  (let [pid (:pid @proc)]
+    (when pid
+      ;; Kill the loop shell first so no new clip spawns, then the
+      ;; in-flight player. pkill -f matches only our unique temp path,
+      ;; so per-event sfx (system sounds) are untouched.
+      (php/exec (str "kill " pid " 2>/dev/null"))
+      (php/exec (str "pkill -f " (php/escapeshellarg (drone-path)) " 2>/dev/null"))
+      (swap! proc assoc :pid nil))))
+
+(defn sync-ambient!
+  "Start or stop the drone to match the sound-on flag. Called when the
+   player toggles sound (N)."
+  [sound-on?]
+  (if sound-on?
+    (start-ambient!)
+    (stop-ambient!)))

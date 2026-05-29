@@ -25,7 +25,8 @@ src/
 └── io/                              ; effects, touch the OS
     ├── input.phel                   ; raw STDIN, alt screen buffer
     ├── render.phel                  ; ANSI escape composition + flush
-    ├── sound.phel                   ; afplay/paplay/aplay shell-out
+    ├── sound.phel                   ; afplay/paplay/aplay shell-out (one-shot sfx)
+    ├── ambient.phel                 ; synthesised drone loop (crash-safe bg process)
     ├── scores.phel                  ; JSON in $HOME
     └── wad.phel                     ; .wad file format parser
 ```

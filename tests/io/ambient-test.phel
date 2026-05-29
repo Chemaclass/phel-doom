@@ -1,0 +1,37 @@
+(ns phel-doom-tests.io.ambient-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.io.ambient :refer [drone-wav-bytes sync-ambient! proc]))
+
+;; ---------------------------------------------------------------------
+;; drone-wav-bytes: pure PCM WAV synthesis. No IO — safe to assert on
+;; the raw bytes. (The loop process itself can't be unit-tested; it is
+;; gated off entirely by PHEL_DOOM_SILENT during the suite.)
+;; ---------------------------------------------------------------------
+
+(deftest test-wav-has-riff-wave-header
+  (let [b (drone-wav-bytes 8000 0.1)]
+    (is (= "RIFF" (php/substr b 0 4)) "starts with the RIFF tag")
+    (is (= "WAVE" (php/substr b 8 4)) "WAVE format tag at offset 8")
+    (is (= "data" (php/substr b 36 4)) "data chunk tag at offset 36")))
+
+(deftest test-wav-length-matches-sample-count
+  ;; 8000 Hz * 0.1s = 800 mono 16-bit samples = 1600 data bytes,
+  ;; plus the 44-byte canonical PCM header.
+  (let [b (drone-wav-bytes 8000 0.1)]
+    (is (= (php/+ 44 1600) (php/strlen b)) "header + 2 bytes per sample")))
+
+(deftest test-wav-deterministic
+  (is (= (drone-wav-bytes 8000 0.1) (drone-wav-bytes 8000 0.1))
+      "same args -> identical bytes (pure)"))
+
+;; ---------------------------------------------------------------------
+;; sync-ambient!: under PHEL_DOOM_SILENT (set by the test runner) every
+;; entry point is a no-op, so the process atom never gets a pid. Pins
+;; that the suite can drive the toggle without spawning audio.
+;; ---------------------------------------------------------------------
+
+(deftest test-sync-is-noop-when-silent
+  (sync-ambient! true)
+  (is (nil? (:pid @proc)) "no loop process spawned while silent")
+  (sync-ambient! false)
+  (is (nil? (:pid @proc)) "stop stays a no-op too"))

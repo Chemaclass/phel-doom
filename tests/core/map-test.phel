@@ -9,7 +9,7 @@
                                        switch-on? toggle-switch
                                        toggle-switch-cell toggle-target-cell
                                        parse-layout
-                                       random-grid random-spawn seed-doors]))
+                                       random-grid random-spawn seed-doors seed-secrets]))
 
 (deftest test-walls-on-perimeter
   (is (wall? default-grid 0 0))
@@ -322,3 +322,47 @@
                            "####"])
         g   (:grid out)]
     (is (= cell-switch-off (get-in g [1 1])))))
+
+;; ---------------------------------------------------------------------
+;; seed-secrets: convert 1-thick divider walls into secret passages.
+;; Deterministic top-left-first scan.
+;; ---------------------------------------------------------------------
+
+(deftest test-seed-secrets-converts-divider-wall
+  ;; Middle column is a 1-thick wall with floor on both horizontal
+  ;; sides at row 1 -> qualifies, becomes a secret.
+  (let [g  [[1 1 1 1 1]
+            [1 0 1 0 1]
+            [1 1 1 1 1]]
+        g' (seed-secrets g 1)]
+    (is (= cell-secret (get-in g' [1 2])) "divider wall converted")
+    (is (= 1 (count-secrets g')))))
+
+(deftest test-seed-secrets-respects-count
+  ;; Two separate dividers; ask for only one -> first (top-left) wins.
+  (let [g  [[1 1 1 1 1]
+            [1 0 1 0 1]
+            [1 1 1 1 1]
+            [1 0 1 0 1]
+            [1 1 1 1 1]]
+        g' (seed-secrets g 1)]
+    (is (= 1 (count-secrets g')) "stops at the requested count")
+    (is (= cell-secret (get-in g' [1 2])) "top-most divider chosen")))
+
+(deftest test-seed-secrets-skips-solid-walls
+  ;; A thick wall (no floor on opposite sides) never converts.
+  (let [g  [[1 1 1]
+            [1 1 1]
+            [1 1 1]]
+        g' (seed-secrets g 2)]
+    (is (= 0 (count-secrets g')) "no divider -> no secret")))
+
+(deftest test-seed-secrets-vertical-divider
+  ;; Floor above + below a wall row also qualifies.
+  (let [g  [[1 1 1]
+            [1 0 1]
+            [1 1 1]
+            [1 0 1]
+            [1 1 1]]
+        g' (seed-secrets g 2)]
+    (is (= cell-secret (get-in g' [2 1])) "vertical divider converted")))

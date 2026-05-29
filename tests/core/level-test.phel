@@ -1,6 +1,6 @@
 (ns phel-doom-tests.core.level-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.level :refer [config-for num-levels build-world]))
+  (:require phel-doom.core.level :refer [config-for num-levels build-world place-secret-reward secret-trophies]))
 
 (deftest test-config-for-returns-each-level
   (is (= "imps"        (:name (config-for 1))))
@@ -146,3 +146,36 @@
       ;; respawn step never doubles up minion pressure.
       (is (= 2 (count imps)))
       (is (every? (fn [e] (= 1 (:max-concurrent e))) imps)))))
+
+;; ---------------------------------------------------------------------
+;; place-secret-reward: stash dropped at a revealed secret cell.
+;; Always an ammo box + armor shard; plus one rotating trophy powerup
+;; chosen by reveal index.
+;; ---------------------------------------------------------------------
+
+(def empty-pickups
+  {:ammo-boxes [] :armor-shards [] :soulspheres [] :berserks [] :invulns []})
+
+(deftest test-place-secret-reward-always-ammo-and-shard
+  (let [w (place-secret-reward empty-pickups 5 7 0)]
+    (is (= 1 (count (:ammo-boxes w))) "ammo box dropped")
+    (is (= 1 (count (:armor-shards w))) "armor shard dropped")
+    ;; Cell centre coords.
+    (is (= 5.5 (:x (first (:ammo-boxes w)))))
+    (is (= 7.5 (:y (first (:ammo-boxes w)))))))
+
+(deftest test-place-secret-reward-trophy-rotates-by-index
+  ;; idx 0 -> soulsphere, 1 -> berserk, 2 -> invuln, 3 -> wraps to soul.
+  (is (= 1 (count (:soulspheres (place-secret-reward empty-pickups 1 1 0)))))
+  (is (= 1 (count (:berserks    (place-secret-reward empty-pickups 1 1 1)))))
+  (is (= 1 (count (:invulns     (place-secret-reward empty-pickups 1 1 2)))))
+  (is (= 1 (count (:soulspheres (place-secret-reward empty-pickups 1 1 3))))
+      "index wraps modulo trophy count"))
+
+(deftest test-place-secret-reward-conjs-onto-existing
+  (let [seeded (assoc empty-pickups :ammo-boxes [{:x 0.5 :y 0.5}])
+        w      (place-secret-reward seeded 2 2 0)]
+    (is (= 2 (count (:ammo-boxes w))) "appends, doesn't clobber existing")))
+
+(deftest test-secret-trophies-are-the-rare-powerups
+  (is (= [:soulspheres :berserks :invulns] secret-trophies)))

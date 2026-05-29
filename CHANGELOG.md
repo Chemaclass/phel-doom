@@ -11,6 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+- Secret reward passages. Every non-locked procgen level now hides up to 2 secret walls; revealing one (bump + `F`) drops a reward stash: an ammo box, an armor shard, and a rotating trophy powerup (soulsphere / berserk / invuln). Locked levels are skipped so a secret shortcut can't bypass a keycard door. Makes exploration pay off and turns the rare powerups into a reliable find.
 - Hit-stop on meaty kills. Killing a tough enemy (caco / baron, ~70ms) or the boss (~160ms) briefly freezes the gameplay step so the blow lands with weight. Trash mobs (imps / demons) kill clean with no freeze, so chaingun spray stays fast.
 - Ambient drone loop. A low, slow-pulsing background bed now runs under the whole gameplay session for dread. Synthesised at runtime (no shipped audio asset), looped by a crash-safe background process that self-terminates if the game dies, and gated by the N sound toggle.
 - Projectile enemies. Cacodemons and barons now fire homing-less fireballs across the room instead of only meleeing: they freeze, telegraph (attack-face windup), then launch an orange bolt at your current position. Bolts travel through doorways but stop at walls, so you dodge by strafing or breaking line of fire with geometry. Impact costs one armor/life unit; i-frames gate a burst to one hit per frame.

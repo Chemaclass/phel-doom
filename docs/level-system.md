@@ -21,6 +21,8 @@
 
 L1-L5 are single-type procgen rooms. L6-L9 are mixed-monster procgen rooms. L10 is a hand-authored boss arena with secret walls + switches (see source in `src/core/level.phel`).
 
+Every non-locked procgen level also seeds up to 2 hidden secret passages (`map/seed-secrets`); revealing one drops a reward stash (ammo + armor shard + a rotating trophy powerup) via `place-secret-reward`. Locked levels (L4/L5) are skipped so a secret shortcut can't bypass the keycard door. See [map.md](map.md) secret walls.
+
 ```phel
 (def levels
   [{:size [22 16] :walls 12 :enemy :imp   :enemies 4 :chase 0.8 :name "imps"}

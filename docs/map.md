@@ -73,7 +73,10 @@ Picks until it finds a `cell-floor`. Bordered grid guarantees one exists; loop t
 
 ## Secret walls
 
-Hand-authored only - `cell-secret` is never placed by `random-grid` / `seed-doors`. Author opts a cell in by writing `S` in a `:layout` row; `parse-layout` resolves it to `cell-secret`.
+Two sources:
+
+- **Hand-authored**: write `S` in a `:layout` row; `parse-layout` resolves it to `cell-secret` (L10's pillar secrets).
+- **Procgen-seeded**: `seed-secrets grid n` converts up to `n` *divider walls* (`divider-wall?`: a 1-cell-thick interior wall with floor on both horizontal OR both vertical sides) into `cell-secret`. Deterministic top-left-first scan (testable; the random grid itself varies the spots). `build-world` calls it on non-`:layout` levels, but **skips locked levels** - a secret shortcut there could bypass the keycard door. `secrets-per-level` (level.phel) = 2.
 
 ```phel
 (wall?    grid x y)  ; true for secret cells - the raycaster paints them like normal walls
@@ -81,9 +84,10 @@ Hand-authored only - `cell-secret` is never placed by `random-grid` / `seed-door
 (secret?  grid x y)  ; true only for cell-secret
 (reveal-secret grid x y)  ; swap cell-secret → cell-floor (no-op on non-secret)
 (count-secrets grid)      ; per-level total, stamped at build time
+(seed-secrets grid n)     ; convert up to n divider walls to cell-secret
 ```
 
-The visual cue is deliberately absent (DOOM-style): identical wall shading, no overlay. Discovery is by exploration + bumping. `commands/play.phel/try-reveal-secret` watches the action-key rising edge (`F`); on a press it checks the cell one unit ahead of the player along `:angle` and calls `reveal-secret` if it's a secret. World tracks `:secrets-total` (set by `count-secrets` in `build-world`) + `:secrets-found` (bumped by `try-reveal-secret`); the F3 debug HUD paints `secrets X/Y`.
+The visual cue is deliberately absent (DOOM-style): identical wall shading, no overlay. Discovery is by exploration + bumping. `commands/play.phel/try-reveal-secret` watches the action-key rising edge (`F`); on a press it checks the cell one unit ahead of the player along `:angle`, calls `reveal-secret` if it's a secret, and drops a reward stash via `level/place-secret-reward`: an ammo box + armor shard plus one rotating trophy powerup (soulsphere / berserk / invuln, by reveal index - the rare pickups become a reliable exploration payoff). World tracks `:secrets-total` (set by `count-secrets` in `build-world`) + `:secrets-found` (bumped by `try-reveal-secret`); the F3 debug HUD paints `secrets X/Y`.
 
 ## Switches
 

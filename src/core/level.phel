@@ -1,6 +1,6 @@
 (ns phel-doom.core.level
   (:require phel-doom.core.state      :refer [max-backpacks max-lives new-player new-world with-enemies])
-  (:require phel-doom.core.map        :refer [cell-door cell-door-blue cell-door-red count-secrets parse-layout random-grid random-spawn seed-doors])
+  (:require phel-doom.core.map        :refer [cell-door cell-door-blue cell-door-red count-secrets parse-layout random-grid random-spawn seed-doors seed-secrets])
   (:require phel-doom.core.enemy      :refer [default-wander-fraction promote-wanderers spawn-enemies spawn-enemies-mixed])
   (:require phel-doom.core.enemies    :refer [enemy-types type-spec default-lives-for])
   (:require phel-doom.core.difficulty :refer [normalise scale-cfg]))
@@ -231,6 +231,37 @@
    the heart / armor / ammo balance."
   3)
 
+(def secrets-per-level
+  "Procgen levels seed up to this many secret passages (map/seed-secrets).
+   Two gives the explorer a reason to bump suspicious walls without
+   carving the map into swiss cheese. Hand-authored layouts (L10) keep
+   their own secrets and are NOT auto-seeded."
+  2)
+
+(def secret-trophies
+  "Trophy powerup dropped behind a revealed secret, picked by reveal
+   order so each secret hands out a different rare prize before
+   cycling. These are exactly the powerups that are otherwise low-odds
+   random spawns — secrets become the reliable way to earn them."
+  [:soulspheres :berserks :invulns])
+
+(defn place-secret-reward
+  "Drop a reward stash at a just-revealed secret cell `(cx, cy)`: an
+   ammo box + an armor shard (always) plus one rotating trophy powerup
+   (soulsphere / berserk / invuln, chosen by `idx` = the count of
+   secrets already found). Pure — conj's onto the world's pickup
+   vectors at the cell centre so the normal pickup-* passes collect
+   them when the player steps in. `idx` 0-based."
+  [world ^int cx ^int cy ^int idx]
+  (let [x      (php/+ 0.5 cx)
+        y      (php/+ 0.5 cy)
+        trophy (get secret-trophies (mod idx (count secret-trophies)))
+        at     {:x x :y y}]
+    (-> world
+        (update :ammo-boxes (fn [v] (conj (or v []) at)))
+        (update :armor-shards (fn [v] (conj (or v []) at)))
+        (update trophy (fn [v] (conj (or v []) at))))))
+
 (defn- maybe-spawn-backpack
   "Stacking backpack (#68 part 3): L2+ only, ~1 in 5 qualifying
    levels. Skipped once the player is at `max-backpacks`. `pack`
@@ -421,39 +452,47 @@
   ([n l pack] (build-world n l pack :normal #{:pistol}))
   ([n l pack diff] (build-world n l pack diff #{:pistol}))
   ([lv life pack diff owned]
-   (let [diff'                (normalise diff)
-         raw                  (config-for lv)
+   (let [diff'       (normalise diff)
+         raw         (config-for lv)
          ;; Resolve :enemy-lives from the catalog BEFORE scale-cfg —
          ;; otherwise scale-cfg's missing-field default of 1 masks
          ;; the catalog default and every monster spawns with 1 HP.
-         primed               (if (or (vector? (:enemies raw)) (:enemy-lives raw))
-                                raw
-                                (assoc raw :enemy-lives
-                                       (default-lives-for (or (:enemy raw) :imp))))
-         cfg                  (scale-cfg primed diff')
-         lock                 (:door-lock cfg)
-         {:keys [grid spawn]} (build-grid cfg)
-         [px py]              spawn
-         specs                (normalise-enemies cfg)
-         world                (new-world grid (new-player px py (php/* (rand-int 360)
-                                                                       (php// php/M_PI 180.0))))
-         spawned              (spawn-enemies-mixed grid specs
-                                                   enemy-min-spawn-dist px py)
+         primed      (if (or (vector? (:enemies raw)) (:enemy-lives raw))
+                       raw
+                       (assoc raw :enemy-lives
+                              (default-lives-for (or (:enemy raw) :imp))))
+         cfg         (scale-cfg primed diff')
+         lock        (:door-lock cfg)
+         built       (build-grid cfg)
+         spawn       (:spawn built)
+         ;; Seed hidden reward passages into procgen levels. Skipped on
+         ;; hand-authored layouts (they pin their own secrets) and on
+         ;; locked levels — a secret shortcut there could bypass the
+         ;; keycard door and break the lock gating.
+         grid        (if (and (not (:layout cfg)) (not lock))
+                       (seed-secrets (:grid built) secrets-per-level)
+                       (:grid built))
+         [px py]     spawn
+         specs       (normalise-enemies cfg)
+         world       (new-world grid (new-player px py (php/* (rand-int 360)
+                                                              (php// php/M_PI 180.0))))
+         spawned     (spawn-enemies-mixed grid specs
+                                          enemy-min-spawn-dist px py)
          ;; Nightmare: stamp every spawned enemy so respawn picks the
          ;; shorter delay range AND the :max-concurrent cap is bypassed
          ;; (see core/enemy.phel/tick-one). Other difficulties get no
          ;; stamp -> default respawn behaviour.
-         tagged-foes          (if (php/=== :nightmare diff')
-                                (apply vector (map (fn [e] (assoc e :nightmare? true)) spawned))
-                                spawned)
+         tagged-foes (if (php/=== :nightmare diff')
+                       (apply vector (map (fn [e] (assoc e :nightmare? true)) spawned))
+                       spawned)
          ;; Half the freshly-spawned dormant enemies start pacing
          ;; instead of sleeping. Wanderers can stumble into the
          ;; player's LOS by accident — that's the "rooms feel alive"
          ;; cue. Tests opting out pass through 0.0 via fixtures that
          ;; never run through build-world (they construct enemies
          ;; directly).
-         lively-foes          (promote-wanderers tagged-foes default-wander-fraction)
-         with-foes            (with-enemies world lively-foes)]
+         lively-foes (promote-wanderers tagged-foes default-wander-fraction)
+         with-foes   (with-enemies world lively-foes)]
      (assoc with-foes
             :level         lv
             :lives         life

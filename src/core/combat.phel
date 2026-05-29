@@ -565,21 +565,24 @@
 (defn- on-shot-miss [world]
   (assoc world :fire-anim fire-anim-seconds))
 
-(defn- play-shot-sfx [world hit? killed? hit-pos]
+(defn- play-shot-sfx [world killed? hit-pos]
   (when (:sound-on world)
-    (cond
-      killed? (let [p  (:player world)
-                    dx (php/- (:x hit-pos) (:x p))
-                    dy (php/- (:y hit-pos) (:y p))
-                    d  (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
-                (play-sfx! :kill (distance-volume d)))
-      ;; Wounded but alive: distinct `:wound` event so the player can
-      ;; tell a shot landed without mistaking it for the `:hit` sound
-      ;; that `take-damage` uses when the PLAYER is the one struck.
-      ;; Lower vol (0.4) keeps it as a soft 'thud' under the kill +
-      ;; shoot sfx; the floating HP digit is the primary signal.
-      hit?    (play-sfx! :wound 0.4)
-      :else   (play-sfx! :shoot 1.0))))
+    ;; Always fire the ACTIVE weapon's own report so every trigger pull
+    ;; sounds like the gun going off — hit or miss. Earlier this only
+    ;; played a gun sound on a MISS; a shot that connected swapped in the
+    ;; enemy reaction, so the weapon (esp. the shotgun) felt silent when
+    ;; you actually hit something. Per-weapon `:fire-sfx` (weapons spec)
+    ;; gives each gun a distinct voice; falls back to :shoot.
+    (play-sfx! (or (:fire-sfx (w-spec world)) :shoot) 1.0)
+    ;; Layer the kill cue ON TOP of the fire report so a kill keeps its
+    ;; punch, distance-attenuated. Wounds ride on the fire sound plus
+    ;; the floating HP digit + blood splatter — no separate thud.
+    (when killed?
+      (let [p  (:player world)
+            dx (php/- (:x hit-pos) (:x p))
+            dy (php/- (:y hit-pos) (:y p))
+            d  (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
+        (play-sfx! :kill (distance-volume d))))))
 
 (defn can-fire?
   "True when the active weapon is ready: cooldown elapsed, not jammed,
@@ -675,7 +678,7 @@
         woken                       (noise-wake enemies' (:grid world) (:x p) (:y p))
         killed?                     (and hit?
                                          (false? (:alive (get woken idx))))]
-    (play-shot-sfx world hit? killed? hit-pos)
+    (play-shot-sfx world killed? hit-pos)
     (apply-heat (if hit?
                   (on-shot-hit world woken hit-pos idx)
                   (on-shot-miss (assoc world :enemies woken))))))

@@ -23,18 +23,26 @@ PHP has no portable in-process audio. Lowest-dependency path: call `afplay` / `p
 Combat and other modules raise events by name, not by file:
 
 ```phel
-(play-sfx! :hit)        ; player took damage
-(play-sfx! :shoot)      ; trigger pulled, no hit
-(play-sfx! :kill)       ; trigger pulled, enemy died
-(play-sfx! :wound)      ; trigger pulled, enemy survived (multi-life HP)
-(play-sfx! :reload)     ; reload animation started
-(play-sfx! :click)      ; trigger pulled on empty mag (dry-fire deny)
-(play-sfx! :door)       ; level transition or heart/armor/ammo pickup
-(play-sfx! :heartbeat)  ; low-life pulse
-(play-sfx! :berserk)    ; rage sphere picked up
+(play-sfx! :hit)             ; player took damage
+(play-sfx! :shoot)           ; pistol fire (default fire report)
+(play-sfx! :shoot-shotgun)   ; shotgun fire
+(play-sfx! :shoot-chaingun)  ; chaingun fire
+(play-sfx! :shoot-chainsaw)  ; chainsaw rev
+(play-sfx! :kill)            ; killing blow (layered over the fire report)
+(play-sfx! :reload)          ; reload animation started
+(play-sfx! :click)           ; trigger pulled on empty mag (dry-fire deny)
+(play-sfx! :door)            ; level transition or heart/armor/ammo pickup
+(play-sfx! :heartbeat)       ; low-life pulse
+(play-sfx! :berserk)         ; rage sphere picked up
 ```
 
-`macos-sounds` and Linux equivalents map each tag to a file. Current mapping picks distinct semantic families: `Pop` for shoot + kill, `Submarine` for wound (muted, so it doesn't compete with the floating HP digit), `Sosumi` for player-hurt, `Basso` for empty-click deny, `Funk` for reload, `Tink` for door / pickup, `Bottle` for heartbeat, `Hero` for berserk.
+`macos-sounds` and Linux equivalents map each tag to a file: `Pop` for pistol-fire + kill, `Blow` for shotgun, `Morse` for chaingun, `Purr` for chainsaw, `Sosumi` for player-hurt, `Basso` for empty-click deny, `Funk` for reload, `Tink` for door / pickup, `Bottle` for heartbeat, `Hero` for berserk.
+
+## Per-weapon fire report
+
+Every trigger pull plays the ACTIVE weapon's own fire sound, hit or miss. The event comes from the weapon spec's `:fire-sfx` (weapons.phel), so combat is data-driven: `(play-sfx! (or (:fire-sfx (w-spec world)) :shoot) 1.0)`. On a kill the `:kill` cue is layered on top (distance-attenuated); wounds ride on the fire report plus the floating HP digit + blood, with no separate sound.
+
+Previously a shot that connected swapped the gun sound for the enemy reaction, so a weapon felt silent when you actually hit something (the shotgun especially). Playing the fire report unconditionally fixes that and gives each weapon a distinct voice.
 
 ## Async firing
 

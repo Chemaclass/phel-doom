@@ -62,6 +62,30 @@ N key toggles `:sound-on`. Mute is instant; in-flight sfx finish on their own.
 
 `distance-volume` scales `:wound` / `:kill` sfx by distance to the hit so crowded fights don't drown the channel.
 
+## Ambient drone loop
+
+`src/io/ambient.phel`. A low, slow-pulsing background drone runs under the whole gameplay session for dread.
+
+No asset is shipped. `drone-wav-bytes` synthesises a seamless `loop-seconds` (2s) clip of 16-bit mono PCM at 22050 Hz: three low partials (55 / 82 / 110 Hz, all integer cycles in the window so the loop has no click) under a 0.5 Hz tremolo, scaled to a quiet `gain`. It's a pure function (same args -> same bytes), unit-tested in `tests/io/ambient-test.phel`. The bytes are written once to `sys_get_temp_dir()/phel-doom-ambient.wav` and reused.
+
+`start-ambient!` backgrounds a shell that re-plays the clip forever:
+
+```bash
+sh -c 'while kill -0 <game-pid> 2>/dev/null; do afplay -v 0.30 <wav> >/dev/null 2>&1; done' & echo $!
+```
+
+The `kill -0 <game-pid>` guard is the orphan safety net: if the game crashes or is SIGKILLed without a clean stop, the loop self-terminates within one clip instead of looping forever. `echo $!` returns the shell PID, tracked in the `proc` atom.
+
+`stop-ambient!` kills the loop shell first (so no new clip spawns) then `pkill -f`s the temp path (matches only the drone, never the per-event sfx playing system sounds).
+
+Lifecycle is driven from `commands/play`:
+
+- `start-ambient!` when gameplay begins (after the start menu).
+- `sync-ambient!` on the N (sound) toggle, comparing `:sound-on` across the frame.
+- `stop-ambient!` on every teardown path.
+
+All entry points are no-ops under `PHEL_DOOM_SILENT` and on hosts with no audio player (no bell fallback - a once-a-clip bell would be worse than silence).
+
 ## Why under `io/`
 
-Calls `exec`, talks to OS. Pure side effect. Integration-tested by running the game.
+Calls `exec`, talks to OS. Pure side effect. Integration-tested by running the game. (The drone synthesis is pure and unit-tested; only the loop process is IO.)

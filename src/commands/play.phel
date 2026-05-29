@@ -16,6 +16,7 @@
   (:require phel-doom.core.projectile :refer [tick-projectiles])
   (:require phel-doom.core.weapons  :refer [effective-reserve-cap give-weapon switch-weapon weapon-spec weapon-order weapons])
   (:require phel-doom.io.sound    :refer [play-sfx! mute-for!])
+  (:require phel-doom.io.ambient  :refer [start-ambient! stop-ambient! sync-ambient!])
   (:require phel-doom.core.level    :refer [build-world num-levels])
   (:require phel-doom.core.perf     :refer [target-frame-us])
   (:require phel-doom.io.scores   :refer [update-scores!])
@@ -722,6 +723,11 @@
             (play-sfx! :heartbeat 0.35))
           (when (and (:silence-tick? world') (:sound-on world'))
             (mute-for! 0.4))
+          ;; N toggled sound this frame: start / stop the ambient drone
+          ;; to match. Comparing the flag (not the edge) also catches
+          ;; any other path that flips :sound-on.
+          (when (php/!== (:sound-on world) (:sound-on world'))
+            (sync-ambient! (:sound-on world')))
           (cond
             (str/contains? keys "q")   :quit
             (php/<= (:lives world') 0) (result-game-over world' t-start now)
@@ -937,7 +943,12 @@
           (clear-screen)
           0)
       (do (clear-screen)
+          ;; Ambient drone runs for the whole gameplay session (across
+          ;; levels + end screens). N-toggle starts/stops it mid-run;
+          ;; teardown always stops it so no loop process is orphaned.
+          (start-ambient!)
           (run-levels diff god? armory? full-map? lv)
+          (stop-ambient!)
           (restore!)
           (clear-screen)
           (cli/success ctx "Thanks for playing.")

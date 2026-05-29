@@ -90,6 +90,10 @@ Triggered as the player's lives drop or enemies cross thresholds:
 
 - OS audio via `afplay` (macOS) / `paplay` / `aplay` / `play`
   (Linux) with terminal-bell fallback on bare systems
+- Ambient drone loop: a low, slow-pulsing background bed runs the whole
+  session for dread. Synthesised at runtime (no shipped asset), looped
+  by a crash-safe background process, gated by the N toggle. See
+  `io/ambient.phel`.
 - Distance-scaled kill volume
 - All sfx gated by sound-on toggle (`n`)
 - Tests run with `PHEL_DOOM_SILENT=1` - no audio during the suite

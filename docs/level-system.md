@@ -7,21 +7,21 @@
 | # | Name | Type | Enemies |
 |---|---|---|---|
 | 1 | imps | random | 4 imps |
-| 2 | demons | random | 6 demons (shotgun pickup) |
-| 3 | cacodemons | random | 8 cacos (chaingun pickup) |
+| 2 | demons | random | 6 demons + shotgun |
+| 3 | cacodemons | random | 8 cacos + chaingun |
 | 4 | barons | random + blue lock | 5 barons |
 | 5 | cyberdemons | random + red lock | 7 cyberdemons |
 | 6 | spectres | random mix | 4 spectres + 2 imps |
 | 7 | revenants | random mix | 4 revenants + 2 demons |
 | 8 | archvile court | random mix | 2 archviles + 3 cacos + 2 mancubi |
 | 9 | the brood | random mix | 3 pinkies + 3 barons + 2 mancubi |
-| 10 | the final | **hand-authored arena**, boss-locked north door | 1 cyberdemon BOSS (HP 50) + 2 imps (cap 1 alive). Intro: "KILL THE BOSS TO ESCAPE". Bumping north door without kill: "☠ KILL THE BOSS ☠". Kill triggers victory. |
+| 10 | the final | hand-authored boss arena | 1 cyberdemon boss (50 HP) + 2 imps (max 1 alive) |
 
 ## Catalog
 
-L1-L5 are single-type procgen rooms. L6-L9 are mixed-monster procgen rooms. L10 is a hand-authored boss arena with secret walls + switches (see source in `src/core/level.phel`).
+L1-L5: single-type procgen. L6-L9: mixed-monster procgen. L10: hand-authored arena with secrets + switches.
 
-Every non-locked procgen level also seeds up to 2 hidden secret passages (`map/seed-secrets`); revealing one drops a reward stash (ammo + armor shard + a rotating trophy powerup) via `place-secret-reward`. Locked levels (L4/L5) are skipped so a secret shortcut can't bypass the keycard door. See [map.md](map.md) secret walls.
+Non-locked procgen levels seed up to 2 secret passages (seen in [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4/L5) skip seeding to prevent bypassing the keycard door.
 
 ```phel
 (def levels
@@ -66,23 +66,19 @@ When `:enemies` is a vector, each spec spawns its own count + HP and the enemy c
 
 ### Hand-authored arenas (`:layout`)
 
-`[" ###### " " #....# " " #..@.# " " #....D " " ###### "]` parses via `map/parse-layout`. Char map:
+`[" ###### " " #....# " " #..@.# " " #....D " " ###### "]` parses via `map/parse-layout`:
 
-| Char | Cell |
+| Char | Meaning |
 |---|---|
-| `#` | wall |
-| `.` | floor |
-| `@` | floor + player spawn |
-| `D` | unlocked door |
-| `B` | blue-locked door |
-| `R` | red-locked door |
-| `X` | boss-locked door (synthetic keycard, no pickup) |
-| `S` | secret wall (reveals on adjacent `F`-press) |
-| `T` | switch (toggles linked cells listed in `:switches`) |
+| `#` / `.` | wall / floor |
+| `@` | player spawn |
+| `D` / `B` / `R` / `X` | unlocked / blue / red / boss-locked door |
+| `S` | secret wall (press F to reveal) |
+| `T` | switch (toggles target cells via `:switches` config) |
 
-`:layout` skips `random-grid`, `seed-doors`, and `lock-the-door` - the author placed everything explicitly. Enemy spawn (random / mixed-spec) still applies on top.
+`:layout` supplies all doors + locks directly; skips `random-grid`, `seed-doors`, `lock-the-door`. Enemy spawn still applies.
 
-Switch spec: `:switches [{:at [cx cy] :targets [[tx ty] ...]}]`. F adjacent to `:at` flips every `:targets` cell wall↔floor.
+Switches: `:switches [{:at [cx cy] :targets [[tx ty] ...]}]`. F near `:at` flips targets wall↔floor.
 
 ### Adding a new room
 
@@ -99,24 +95,17 @@ Level N config (1-indexed). Clamps out-of-range to nearest valid.
 
 ## `build-world`
 
-Signature: `(build-world level-num lives backpack-level diff owned)`. Per build:
+Signature: `(build-world level-num lives backpack-level diff owned)` → new world state.
 
-1. Grid: hand-authored (`map/parse-layout` of `:layout`) OR procedural (`random-grid` + `seed-doors` + `lock-the-door`).
-2. Player spawn: `:layout`'s `@` cell OR `random-spawn`. Random angle either way.
-3. Enemies: `spawn-enemies-mixed` from the normalised spec vector. Each enemy carries `:type` for per-sprite visuals.
-4. `maybe-spawn-heart` only if `lives < max-lives`.
-5. `maybe-spawn-armor` (50%); `maybe-spawn-berserk` (1/8); `maybe-spawn-invuln` (1/12); `maybe-spawn-soulsphere` (1/10); `maybe-spawn-backpack` (L2+, 1/5, until `max-backpacks`).
-6. `spawn-armor-shards` seeds `armor-shards-per-level` (3) shards per level.
-7. `maybe-spawn-keycard` when `:door-lock` is set (skips `:boss`).
-8. `maybe-spawn-weapon-pickups`: shotgun on L2 / chaingun on L3, skipped when already owned.
-9. `spawn-ammo-boxes` count = `max(2, ceil(sum(count × lives) / 8))`.
-10. Stamp `:enemy` (primary type), `:level-name`, `:difficulty`, 1.5s `:intro-secs`.
+Per build: grid (hand-authored or random), player spawn + angle, enemies from mixed specs. Pickups seeded:
+- Heart: only if `lives < max-lives` (avoid wasted pickups).
+- Armor (50%), berserk (1/8), invuln (1/12), soulsphere (1/10), backpack (L2+, 1/5).
+- 3 armor shards per level. Keycard (if locked, not `:boss`). Shotgun (L2) / chaingun (L3) if not owned.
+- Ammo boxes: `max(2, ceil(total_hp / 8))` where `total_hp = sum(count * lives)`.
 
-`run-levels` (in `commands/play.phel`) overlays cross-level carries on the fresh world: **active weapon + per-weapon mag/reserve state**, backpack level, minimap + sound toggles, `:god?` + `:armory?` flags.
+Stamps: `:enemy` (primary type fallback), `:level-name`, `:difficulty`, `:intro-secs` (1.5s).
 
-## Why hearts only when lives < max-lives
-
-Wasted pickups clutter the minimap; seeing a heart signals "below cap" without text.
+`run-levels` (in `commands/play.phel`) overlays cross-level state: active weapon + mag/reserve, backpack level, minimap + audio toggles, `:god?` + `:armory?` flags.
 
 ## Reading order through a run
 
@@ -133,6 +122,6 @@ build-world 3 5     → L3 cacodemons, no heart
 
 `run-levels` in `commands/play.phel` calls `build-world` per iteration.
 
-## Restart with the same seed
+## Replay with same seed
 
-`run-levels` captures `(php/mt_rand)` before each `build-world` and `mt_srand`s it. On `R` (capital) from an end screen the seed is reused. `random-grid` / `random-spawn` / `seed-doors` / `spawn-enemies` all draw from the same PRNG, so the sequence is bit-identical. Lets the player replay a tough spawn.
+`run-levels` captures `(php/mt_rand)` before each `build-world` and reuses on capital `R` from an end screen. All randomness (grid, spawn, doors, enemies) draws from the same PRNG, so sequences are deterministic.

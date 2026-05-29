@@ -1,63 +1,68 @@
 # phel-doom internals
 
-One doc per subsystem. Each points to its source files + functions.
+Per-subsystem docs, each linked to source files and key functions.
 
 ## Map
 
 | Topic | File |
 |---|---|
-| Feature catalogue (what the game does) | [features.md](features.md) |
-| Module layout + dependency rules | [architecture.md](architecture.md) |
-| Per-frame state transition | [game-loop.md](game-loop.md) |
-| World + player data model | [state.md](state.md) |
-| Grid + cell semantics | [map.md](map.md) |
-| Raycaster: how walls get distances | [raycaster.md](raycaster.md) |
-| ANSI render pipeline | [rendering.md](rendering.md) |
-| Enemies: chase AI, faces, fades, aggro | [monsters.md](monsters.md) |
-| Hitscan + damage + respawn | [combat.md](combat.md) |
-| 10-level progression + L10 boss arena | [level-system.md](level-system.md) |
+| Feature catalogue | [features.md](features.md) |
+| Module layout + rules | [architecture.md](architecture.md) |
+| Per-frame transitions | [game-loop.md](game-loop.md) |
+| World + player data | [state.md](state.md) |
+| Grid + cells | [map.md](map.md) |
+| Raycaster | [raycaster.md](raycaster.md) |
+| ANSI render | [rendering.md](rendering.md) |
+| Enemies + AI | [monsters.md](monsters.md) |
+| Combat + hitscan | [combat.md](combat.md) |
+| Levels + boss arena | [level-system.md](level-system.md) |
 | Terminal input | [input.md](input.md) |
 | Audio | [audio.md](audio.md) |
-| High-scores persistence | [scores.md](scores.md) |
-| DOOM .wad parser | [wad-parser.md](wad-parser.md) |
-| Hot-loop optimizations | [performance.md](performance.md) |
-| Contributing + Phel gotchas | [contributing.md](contributing.md) |
+| Scores | [scores.md](scores.md) |
+| WAD parser | [wad-parser.md](wad-parser.md) |
+| Performance | [performance.md](performance.md) |
+| Contributing | [contributing.md](contributing.md) |
 
-## Reading order for newcomers
+## Quick start: new contributor
 
-1. `architecture.md`: what's where + why
-2. `game-loop.md`: per-frame story end to end
-3. `raycaster.md` + `rendering.md`: pixels on screen
-4. `contributing.md`: dev workflow, test conventions, Phel quirks
-5. Pick any subsystem as needed
+1. `architecture.md` - layout + dependency rules
+2. `game-loop.md` - frame-to-frame flow
+3. `raycaster.md` + `rendering.md` - how pixels reach the screen
+4. `contributing.md` - dev workflow + Phel quirks
+5. Pick subsystems as needed
 
-## Quick orientation
+## File layout
 
 ```
-src/main.phel                ; CLI entrypoint (phel.cli)
-src/commands/play.phel       ; tick-world + run-levels lifecycle
-src/core/                    ; pure logic, no IO
-  state.phel       world data model
-  map.phel         grid + procgen + cell semantics
-  engine.phel      raycaster (cast-frame, cast-ray)
-  physics.phel     player movement + counter decay + stamina
-  combat.phel      hitscan + damage + heat/jam + knockback + berserk/invuln
-  enemy.phel       spawn + chase step + shoot resolution + respawn
-  enemy_ai.phel    AI state machine (dormant/wander/aware/hunting/pain/attacking)
-  enemies.phel     enemy-types catalog (visuals + default HP per kw)
-  level.phel       10-level catalog + build-world (procgen or hand-authored)
-  weapons.phel     weapon catalog + per-weapon ammo state + switch
-  perf.phel        big-screen perf-mode predicates
-  difficulty.phel  easy/normal/hard/nightmare multipliers
-src/glue/                    ; wires core + io, stays pure
-  controls.phel    bytes -> :moves counters + rising edges
-src/io/                      ; side effects only
-  input.phel       stty raw mode + kitty protocol opt-in
-  render.phel      frame->string + paint-* overlays + ANSI
-  sound.phel       afplay/paplay/aplay shell-out
-  scores.phel      $HOME/.phel-doom-scores.json
-  wad.phel         WAD lump-directory parser
-tests/                       ; mirrors src/
+src/main.phel                ; CLI entry (phel.cli)
+src/commands/play.phel       ; tick-world + run-levels
+src/core/                    ; pure logic (no IO)
+  state.phel                 world + player + stats
+  map.phel                   grid + procgen + cells
+  engine.phel                raycaster: cast-frame, cast-ray
+  physics.phel               player move + physics tick
+  combat.phel                hitscan + damage
+  enemy.phel                 spawn + step + respawn
+  enemy_ai.phel              idle/wander/aware/hunting/pain
+  enemies.phel               enemy catalog + stats
+  level.phel                 level 1-10 + build-world
+  weapons.phel               weapon catalog + ammo state
+  projectile.phel            projectiles (not used yet)
+  perf.phel                  big-screen perf checks
+  difficulty.phel            easy/normal/hard/nightmare
+  rng.phel                   deterministic seeding
+src/glue/                    ; pure wiring (core + io)
+  controls.phel              bytes to move commands
+src/io/                      ; side effects
+  input.phel                 stty + kitty protocol
+  render.phel                ANSI emit + overlays
+  sound.phel                 afplay/paplay shell-out
+  scores.phel                JSON persistence
+  savegame.phel              game state save/load
+  ambient.phel               background loops
+  demo.phel                  attract mode
+  wad.phel                   WAD parser
+tests/                       ; unit tests (mirrors src/)
 ```
 
-Hot-loop boundary: `core/` is pure data-in / data-out, same in tests as prod. `io/` is where side effects live. `glue/` reads both but stays effect-free (pure byte → world transform).
+Rules: `core/` is pure, same in tests as prod. `io/` has side effects. `glue/` wires both, stays pure.

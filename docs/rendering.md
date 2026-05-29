@@ -1,150 +1,117 @@
 # Rendering
 
-`src/io/render.phel`. Composes one ANSI string per frame and writes to stdout. Side-effecting, hence `io/`.
+`src/io/render.phel`. Composes one ANSI string per frame, writes to stdout. Side-effecting IO layer.
 
-## Entry point
+Entry point: `render! [world stats cols rows]` - cursor home, pick impact flash or normal frame, flush.
 
 ```phel
-(defn render! [world stats cols rows]
-  (print "\e[H")                                  ; cursor home
-  (if (php/> (or (get stats :flash-secs) 0.0) 0.0)
-    (print (white-flash-frame cols rows))         ; on-hit jolt
-    (print (frame->string world stats cols rows)))
-  (php/flush))
+(print "\e[H")                      ; cursor home
+(if (php/> (get stats :flash-secs) 0.0)
+  (print (white-flash-frame ...))   ; hit flash overlay
+  (print (frame->string ...)))
+(php/flush)
 ```
-
-`render!` picks normal frame vs the 1-frame all-white impact flash.
 
 ## frame->string pipeline
 
-```
-(frame->string world stats cols rows)
-  │
-  ├── layout cols rows grid-w → vw, vh, map-col, map-row, map-step, map-mw
-  │     (map-step >= 2 collapses every step×step grid block into one
-  │      minimap cell so the map stays under ~1/3 of the screen width)
-  ├── cast-frame world vw → :dists :hits :hxs :hys :sides
-  ├── build per-column wall shades (3 strings × vw cols)
-  │     - shades-normal     interior wall cell
-  │     - shades-top-edge   ▀ char mixing wall + sky (anti-alias)
-  │     - shades-bot-edge   ▀ char mixing wall + floor (anti-alias)
-  ├── project enemies → write to per-column arrays:
-  │     tops, bots, mids, lowers, emask, eheads, ebodys, elegss
-  ├── project blood fx → write to blood-paint overlay
-  ├── project heart pickups → write to blood-paint overlay
-  ├── walk vh rows × vw cols, emit one cell per (row, col):
-  │     - blood-paint overlay wins first
-  │     - enemy mask: head/body/legs by row vs mids/lowers
-  │     - else wall: top-edge / bot-edge / normal by row vs tops/bots
-  │     - sky / floor for rows outside [tops, bots)
-  ├── overlay layers via absolute cursor positioning:
-  │     - bottom HUD line (hud-line - dim tagline)
-  │     - F3 debug row (hud-debug-line, when :debug? is on)
-  │     - minimap (top-right rows, auto-scaled to ≤ 1/3 vw, fog-of-war gated)
-  │     - face glyphs (per enemy, occluded by walls)
-  │     - wall-mounted torches, door-face indicator
-  │     - crosshair (centre), kill-streak counter, compass
-  │     - rear-warning (centre row 2 when :rear-warning?)
-  │     - LOW AMMO N pulse (right row 1 when firepower ≤ 3)
-  │     - game-info strip (top-left row 2: L# · kills · weapon · ammo · +pack · STA bar · keys · [diff])
-  │     - top-left hearts + armor HUD (row 1)
-  │     - pistol sprite + reload-drop animation (centre-bottom)
-  │     - muzzle flash (when :fire-anim > 0 and drop = 0)
-  │     - dry-fire CLICK prompt (above pistol on empty trigger)
-  │     - periodic press-R-to-RELOAD reminder (mag-keyed cadence)
-  │     - floating HP digits above wounded multi-life enemies
-  │     - pause menu (if :paused)
-  └── concat everything via php/implode into one string
-```
+Base: raycast frame (run-length encoded). Overlays paint on top via absolute cursor positioning (`\e[r;cH`).
 
-Base layer is the raycast frame encoded as run-length-coalesced ANSI cells. Overlays paint on top via absolute cursor positioning.
+```
+cast-frame            -> dists, sides, hxs, hys
+build wall shades     -> shades-normal, shades-top-edge, shades-bot-edge per col
+project enemies       -> eheads, ebodys, elegss (fade-shaded)
+project pickups       -> blood-paint overlay buffer
+project blood FX      -> blood-paint overlay buffer
+layout                -> minimap scale/position
+main row loop:        -> base frame (wall/sky/floor, enemy priority, blood overlay)
+concat via php/implode
+overlays (cursor-positioned):
+  - bottom HUD tagline
+  - F3 debug row (if :debug?)
+  - minimap + fog-of-war
+  - enemy faces (depth-culled)
+  - crosshair, kill-streak, compass
+  - game-info strip (level, kills, weapon, ammo, keys, diff)
+  - health + armor HUD
+  - pistol sprite + reload animation
+  - muzzle flash (when firing)
+  - dry-fire CLICK (out of ammo)
+  - reload reminder (cadence)
+  - HP digits (wounded multi-life enemies)
+  - pause menu (if paused)
+```
 
 ## Per-column shade composition
 
-```phel
-idx = clamp(0, 23,
-            distance-to-shade(dist)        ; base by distance
-            + (side == 0 ? 1 : 0)          ; vertical-face darken
-            + cell-variation-hash(hx, hy)) ; ±1 mottling
+```
+shade-idx = clamp(0, 23,
+  distance-to-shade(dist)         ; base by distance
+  + (side == 0 ? 1 : 0)           ; vertical face darker
+  + cell-variation-hash(hx, hy))  ; ±1 mottling
 ```
 
-Indexes `shade-table[0..23]`: pre-baked ANSI strings for the 256-color grayscale palette (232..255). One PHP-array lookup per column.
+Indexes `shade-table[0..23]`: pre-baked ANSI for 256-color grays (codes 232-255). One lookup per column.
 
-Door columns get solid `door-shade` (orange for unlocked, blue/red for locked keycards, bright red for boss-lock) in `shades-normal` and a half-block edge mix in `shades-top-edge`/`shades-bot-edge`. Paint function `paint-locked-bump` handles door-locked state messaging (e.g. "NEED BLUE KEY" or "KILL THE BOSS").
+Doors: `door-shade` (orange for unlocked, blue/red for keycards, bright red for boss-lock). Half-block edges mix door with sky/floor. Locked messages ("NEED BLUE KEY", "KILL THE BOSS") painted separately.
 
 ## Half-block edge anti-aliasing
 
-Wall tops/bottoms emit `▀` (UPPER HALF BLOCK) with FG painting the top half and BG the bottom half:
+Wall top/bottom: `▀` (upper half block) with BG for one zone, FG for the other:
 
-```phel
-;; Top of wall column: sky above, wall below in the same cell
-"\e[48;5;<wall-code>;38;5;<sky-code>m▀"
-
-;; Bottom of wall column: wall above, floor below in the same cell
-"\e[48;5;<floor-code>;38;5;<wall-code>m▀"
+```
+Top:    \e[48;5;<wall>;38;5;<sky>m▀      (wall BG, sky FG)
+Bottom: \e[48;5;<floor>;38;5;<wall>m▀    (floor BG, wall FG)
 ```
 
-Sub-cell wall boundary instead of flat stair. Halves vertical aliasing.
+Sub-cell boundary, halves vertical aliasing.
 
-## Distance-shaded sky + floor
+## Distance-shaded sky and floor
 
-```phel
-(build-horizon-gradient vh shade-table)
-```
-
-Each row gets a pre-baked sky/floor shade by distance from horizon (`vh/2`). Rows near horizon darkest (atmospheric haze); overhead and feet brightest. Sky and floor share the gradient.
+Per-row shade by distance from horizon (`vh/2`): rows near horizon darkest (atmospheric haze), overhead/feet brightest. Sky and floor share the gradient, pre-baked per viewport height in `build-horizon-gradient`.
 
 ## Enemy sprite paint
 
-Each visible enemy projects to centre column + half-width (`collect-enemy-projs`):
+Per enemy in `collect-enemy-projs`:
 
-1. Fade factor `t = (dist/max-depth)²` capped at 0.85.
-2. Three fade-shaded ANSI strings (`fhead`, `fbody`, `flegs`) via `fade-256` on `:head-code` / `:body-code` / `:legs-code`.
-3. Body embeds `:body-glyph` (e.g. `▒`) in a darker FG so each monster has a distinct material pattern.
-4. Writes into per-column arrays `eheads` / `ebodys` / `elegss`.
+1. Fade `t = (dist/max-depth)²` capped at 0.85
+2. Three fade-shaded strings (head/body/legs) via `fade-256` on color codes
+3. Body glyph (e.g. `▒`) distinct per type for material texture
+4. Writes to `eheads`, `ebodys`, `elegss` arrays per column
 
-`project-enemy` carries a `:scale` factor (1.0 default, 2.0 for `:cyber`). Painter multiplies both `:half-width` and projected sprite height `h` by `:scale` so cyberdemons render twice as wide AND tall - proportional, not stretched. Centred vertically so feet hover one half-sprite below the player's horizon at full scale.
-5. Records `tops` / `bots` / `mids` / `lowers` so the inner row loop picks head/body/legs per row.
+`project-enemy` scale factor (1.0 default, 2.0 for `:cyber`): multiplies both half-width and sprite height, so cyberdemons 2x wider AND taller (proportional). Centred vertically: feet at player horizon.
 
-Aggro branch swaps in a blink-attributed cell within `aggro-distance` (1.8 world units).
+Stores `tops/bots/mids/lowers` so row loop picks correct zone per row.
+
+Aggro blink at distance < 1.8 units.
 
 ## Face overlay (post-pass)
 
-Iterates visible enemies after the main frame composes; paints one face glyph (`:enemy-face` or `:enemy-face-alt` on a sin wave) at the enemy's centre column, upper-third row. Occluded by walls: paints only when enemy distance < wall distance at that column.
+Per-enemy face glyph (`:enemy-face` or `:enemy-face-alt` on sin wave) at centre column, upper-third row. Depth-culled: paint only if enemy dist < wall dist at that column.
 
 ## blood-paint overlay buffer
 
-Blood splatters from kills + heart pickups paint into a PHP array `blood-paint` indexed by `row * vw + col`. Inner loop reads first via `(or (php/aget blood-paint ...) main-cond)` so overlays override wall/floor/enemy paint.
+Blood splatters + heart pickups paint into PHP array (indexed `row*vw + col`). Inner loop reads first, so overlays override walls/floors/enemies.
 
-### Front-most-enemy gate (shadows + faces, issues #86 / #91)
+### Front-most-enemy gate (shadows + faces)
 
-Two per-enemy overlays paint into top-priority layers and so can't be depth-resolved by the back-to-front zone pass alone:
+Two per-enemy overlays need depth-culling (issues #86, #91):
 
-- **Grounding shadow** - a dark `sprite-shadow` cell at the foot row, written into `blood-paint` (top layer). Painted inline, a farther enemy's foot-row shadow would sit over a nearer enemy's body (lower-priority enemy-zone layer) and bleed through.
-- **Face / eyes glyph** (`paint-face-overlay`) - a cursor-positioned glyph appended after the frame, so it draws over everything unless gated.
+- **Grounding shadow**: `sprite-shadow` at feet, written to `blood-paint` (top layer). Deferred pass after `edists` computed.
+- **Face glyph**: cursor-positioned after frame, gates on front-most enemy.
 
-Both reuse `enemy-front-visible-at?`: a column draws the overlay only when the enemy is in front of the wall (`d < dists[c]`) AND the front-most enemy there (`d <= edists[c]`, inclusive so the column's own front enemy still draws; farther ones skip). `edists` (nearest enemy depth per column) is built during the zone pass. The shadow runs as a deferred second pass once `edists` is complete; the face overlay reads the same `edists` in the post-frame overlay chain. Enemies are projected + depth-sorted once (`enemy-projs`).
+Both use `enemy-front-visible-at?`: paint only if `d < dists[c]` (in front of wall) AND `d <= edists[c]` (nearest enemy at column). `edists` (per-column nearest depth) built during zone pass.
 
 ## Run-length encoding
 
-Consecutive cells with the same ANSI escape coalesce into one paint + N spaces:
-
-```
-\e[48;5;240m     (set BG once)
-"         "      (12 spaces, terminal repeats the BG)
-\e[48;5;238m     (BG change)
-"     "          (5 spaces)
-```
-
-Cuts output 5-10× on same-colour rows. In-line state machine tracks `prev` + `run`, flushes on colour change.
+Consecutive same-color cells coalesce: one escape + N spaces (terminal repeats BG). Cuts output 5-10x on monochrome rows. State machine tracks `prev` + `run`, flushes on color change.
 
 ## Render-scale on big screens
 
-Perf mode (terminals ≥ 200 cols or > 12,000 cell area) engages `render-scale = 2`: each ray is cast once and horizontally replicated into 2 columns. Wall data + distance fade remain accurate (per original ray). Horizontally-stretched but not distorted.
+Perf mode (>= 200 cols or > 12k cell area): `render-scale = 2` - cast once per 2 cols, horizontally replicate. Wall data accurate per original ray; horizontally stretched but not distorted.
 
 ## Responsive help panel
 
-The `h` / `ESC` info menu overlays a panel with margins based on available width + height. On tight screens (< 60 cols) the COMPASS HINT section collapses; on very tight (< 40 cols) CONTROLS section stacks vertically. Content never obscures the viewport entirely.
+H/ESC info menu width-adaptive: max width `help-inner-width` (44), min `help-min-inner-width` (36). Drops CONTROLS section first (largest), then COMPASS HINT on squeeze. Content always fits in viewport.
 
 ## Why so many overlay passes
 

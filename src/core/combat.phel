@@ -1,6 +1,6 @@
 (ns phel-doom.core.combat
   (:require phel-doom.core.engine   :refer [cast-ray])
-  (:require phel-doom.core.enemy    :refer [push-back-enemy shoot])
+  (:require phel-doom.core.enemy    :refer [push-back-enemy shoot beam-impact splash])
   (:require phel-doom.core.enemy-ai :refer [attacks? noise-wake])
   (:require phel-doom.core.physics  :refer [try-move])
   (:require phel-doom.core.state    :refer [max-lives])
@@ -666,22 +666,71 @@
                :ammo-reserve    (php/- reserve drawn)
                :reload-cooldown (:reload-duration sp))))))
 
-(defn fire-shot
-  "Resolve one trigger pull end-to-end. After the hitscan, run a
-   flood-fill sound-wake from the player's cell so dormant enemies
-   in the same room hear the shot and switch to :aware. Doors block
-   the BFS so the wake stays local — same per-sector noise rule
-   DOOM uses."
+(defn- bfg-fire
+  "Resolve a BFG shot (any weapon with a `:splash-radius`). The beam
+   lands at `beam-impact` (nearest enemy along the ray, else the wall);
+   `splash` then damages every enemy within `:splash-radius` of that
+   point — a multi-kill room-clearer. Bumps `:kills` by the body count,
+   chains the streak, unlocks the boss door if a cyber died in the
+   blast, arms hit-stop, and (like every shot) wakes the room by noise.
+   No per-enemy loot drops: the blast is its own reward (issue #58)."
   [world]
-  (let [[enemies' hit? hit-pos idx] (resolve-shot world)
-        p                           (:player world)
-        woken                       (noise-wake enemies' (:grid world) (:x p) (:y p))
-        killed?                     (and hit?
-                                         (false? (:alive (get woken idx))))]
+  (let [p            (:player world)
+        spec         (w-spec world)
+        radius       (:splash-radius spec)
+        base         (or (:splash-damage spec) 1)
+        dmg          (if (berserk? world) (php/* base berserk-damage-mul) base)
+        dtype        (:damage-type spec)
+        max-r        (or (:max-range spec) shot-max-range)
+        wall-d       (cast-wall-distance world)
+        [ix iy]      (beam-impact (:enemies world) (:x p) (:y p) (:angle p)
+                                  wall-d shot-hit-radius max-r)
+        [es' killed] (splash (:enemies world) ix iy radius dmg dtype)
+        woken        (noise-wake es' (:grid world) (:x p) (:y p))
+        hit-pos      {:x ix :y iy}
+        killed?      (php/> killed 0)
+        chain?       (pos? (or (:streak-secs world) 0.0))
+        boss-killed? (and (= (:door-lock world) :boss)
+                          (some (fn [e] (and (= (:type e) :cyber)
+                                             (false? (:alive e))))
+                                woken))
+        scored       (assoc world
+                            :enemies     woken
+                            :kills       (php/+ (or (:kills world) 0) killed)
+                            :streak      (if killed?
+                                           (php/+ (if chain? (or (:streak world) 0) 0) killed)
+                                           (or (:streak world) 0))
+                            :streak-secs (if killed? streak-window-seconds
+                                             (or (:streak-secs world) 0.0)))
+        unlocked     (if boss-killed?
+                       (assoc scored :held-keys (conj (or (:held-keys scored) #{}) :boss))
+                       scored)
+        juiced       (if killed?
+                       (assoc unlocked :hit-stop-secs
+                              (if boss-killed? hit-stop-boss-seconds hit-stop-tough-seconds))
+                       unlocked)]
     (play-shot-sfx world killed? hit-pos)
-    (apply-heat (if hit?
-                  (on-shot-hit world woken hit-pos idx)
-                  (on-shot-miss (assoc world :enemies woken))))))
+    (apply-heat (push-blood-fx (assoc juiced :fire-anim fire-anim-seconds) hit-pos))))
+
+(defn fire-shot
+  "Resolve one trigger pull end-to-end. Splash weapons (BFG) route to
+   `bfg-fire`; everything else is a single-target hitscan. After the
+   shot, run a flood-fill sound-wake from the player's cell so dormant
+   enemies in the same room hear it and switch to :aware. Doors block
+   the BFS so the wake stays local — same per-sector noise rule DOOM
+   uses."
+  [world]
+  (if (:splash-radius (w-spec world))
+    (bfg-fire world)
+    (let [[enemies' hit? hit-pos idx] (resolve-shot world)
+          p                           (:player world)
+          woken                       (noise-wake enemies' (:grid world) (:x p) (:y p))
+          killed?                     (and hit?
+                                           (false? (:alive (get woken idx))))]
+      (play-shot-sfx world killed? hit-pos)
+      (apply-heat (if hit?
+                    (on-shot-hit world woken hit-pos idx)
+                    (on-shot-miss (assoc world :enemies woken)))))))
 
 (defn- empty-trigger-pull
   "Trigger pulled while mag = 0 AND no cooldown / jam in the way. Arm

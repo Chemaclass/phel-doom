@@ -152,7 +152,8 @@ One-shot actions (toggles, modals, weapon switch, reload) need rising edges, not
    :select-weapon1 (and (:k1 now) (not (:k1 prev)))     ; pistol
    :select-weapon2 (and (:k2 now) (not (:k2 prev)))     ; shotgun
    :select-weapon3 (and (:k3 now) (not (:k3 prev)))     ; chaingun
-   :select-weapon4 (and (:k4 now) (not (:k4 prev)))})   ; chainsaw
+   :select-weapon4 (and (:k4 now) (not (:k4 prev)))      ; chainsaw
+   :select-weapon5 (and (:k5 now) (not (:k5 prev)))})   ; BFG
 ```
 
 `game-loop` carries `prev-keys` across iterations; `rising-edges` runs each frame. `tick-world` consumes the edges map. Pure data.

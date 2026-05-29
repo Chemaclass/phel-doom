@@ -28,6 +28,7 @@ Combat and other modules raise events by name, not by file:
 (play-sfx! :shoot-shotgun)   ; shotgun fire
 (play-sfx! :shoot-chaingun)  ; chaingun fire
 (play-sfx! :shoot-chainsaw)  ; chainsaw rev
+(play-sfx! :shoot-bfg)       ; BFG plasma discharge
 (play-sfx! :kill)            ; killing blow (layered over the fire report)
 (play-sfx! :reload)          ; reload animation started
 (play-sfx! :click)           ; trigger pulled on empty mag (dry-fire deny)
@@ -36,7 +37,7 @@ Combat and other modules raise events by name, not by file:
 (play-sfx! :berserk)         ; rage sphere picked up
 ```
 
-`macos-sounds` and Linux equivalents map each tag to a file: `Pop` for pistol-fire + kill, `Blow` for shotgun, `Morse` for chaingun, `Purr` for chainsaw, `Sosumi` for player-hurt, `Basso` for empty-click deny, `Funk` for reload, `Tink` for door / pickup, `Bottle` for heartbeat, `Hero` for berserk.
+`macos-sounds` and Linux equivalents map each tag to a file: `Pop` for pistol-fire + kill, `Blow` for shotgun, `Morse` for chaingun, `Purr` for chainsaw, `Glass` for BFG, `Sosumi` for player-hurt, `Basso` for empty-click deny, `Funk` for reload, `Tink` for door / pickup, `Bottle` for heartbeat, `Hero` for berserk.
 
 ## Per-weapon fire report
 

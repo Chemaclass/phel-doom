@@ -190,6 +190,67 @@
                                   (apply-pain (get flashed best) roll))]
                [final true hit-pos best]))))))))
 
+(defn beam-impact
+  "Where a hitscan beam from (px, py) along `angle` lands: the nearest
+   alive enemy struck along the ray, else the wall at `wall-dist`
+   (both capped at `max-range`). Returns `[ix iy]` world point. The BFG
+   centres its `splash` on this impact. Pure projection scan — no
+   mutation (unlike `shoot`)."
+  [enemies ^float px ^float py ^float angle ^float wall-dist ^float hit-radius ^float max-range]
+  (let [cos-a (php/cos angle)
+        sin-a (php/sin angle)
+        cap   (php/min wall-dist max-range)
+        pd    (loop [i 0 best cap]
+                (if (php/>= i (count enemies))
+                  best
+                  (let [e (get enemies i)]
+                    (if (not (:alive e))
+                      (recur (php/+ i 1) best)
+                      (let [dx   (php/- (:x e) px)
+                            dy   (php/- (:y e) py)
+                            proj (php/+ (php/* dx cos-a) (php/* dy sin-a))]
+                        (if (and (php/> proj 0.0) (php/< proj best))
+                          (let [perp-x (php/- dx (php/* proj cos-a))
+                                perp-y (php/- dy (php/* proj sin-a))
+                                perp2  (php/+ (php/* perp-x perp-x) (php/* perp-y perp-y))]
+                            (if (php/<= perp2 (php/* hit-radius hit-radius))
+                              (recur (php/+ i 1) proj)
+                              (recur (php/+ i 1) best)))
+                          (recur (php/+ i 1) best)))))))]
+    [(php/+ px (php/* pd cos-a)) (php/+ py (php/* pd sin-a))]))
+
+(defn splash
+  "Area blast: damage every alive enemy within `radius` world units of
+   `(cx, cy)` by `damage` (0 if it resists `dmg-type`). Returns
+   `[new-enemies killed-count]`. Enemies reduced to 0 lives flip
+   `:alive false` + arm a respawn timer; survivors wake (`:aware`) and
+   take a hit-flash. No pain roll — a room-clearing blast shouldn't
+   stagger-lock the survivors. Pure given the inputs (BFG, issue #58)."
+  [enemies ^float cx ^float cy ^float radius ^int damage dmg-type]
+  (let [r2 (php/* radius radius)]
+    (loop [i 0 acc [] killed 0]
+      (if (php/>= i (count enemies))
+        [acc killed]
+        (let [e   (get enemies i)
+              dx  (php/- (:x e) cx)
+              dy  (php/- (:y e) cy)
+              in? (and (:alive e)
+                       (php/<= (php/+ (php/* dx dx) (php/* dy dy)) r2))]
+          (if (not in?)
+            (recur (php/+ i 1) (conj acc e) killed)
+            (let [eff   (if (resists? (:type e) dmg-type) 0 damage)
+                  lives (php/max 0 (php/- (or (:lives e) 1) eff))
+                  woke  (assoc e :state :aware :lives lives)]
+              (if (php/<= lives 0)
+                (recur (php/+ i 1)
+                       (conj acc (assoc woke
+                                        :alive false
+                                        :respawn-after (respawn-delay-for e)))
+                       (php/+ killed 1))
+                (recur (php/+ i 1)
+                       (conj acc (assoc woke :hit-flash-secs hit-flash-seconds))
+                       killed)))))))))
+
 (defn push-back-enemy
   "Shove the enemy at `idx` along `(cos-a, sin-a)` by `dist` world
    units; on wall collision try a half then a quarter step before

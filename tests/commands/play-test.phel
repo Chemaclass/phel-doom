@@ -111,6 +111,28 @@
     ;; reward sits at the revealed cell centre (2.5, 1.5).
     (is (= 2.5 (:x (first (:soulspheres w')))))))
 
+(deftest test-tick-world-select-weapon5-switches-to-bfg
+  ;; Player owns the BFG and presses 5 -> active weapon becomes :bfg.
+  (let [w0 (assoc (new-world open-grid (new-player 5.0 5.0 0.0))
+                  :owned-weapons #{:pistol :bfg})
+        w' (tick-world w0 "" 0.016 (assoc no-edges :select-weapon5 true))]
+    (is (= :bfg (:weapon w')))))
+
+(deftest test-tick-world-bfg-blast-multi-kills
+  ;; Player at (2,5) facing east with the BFG; three 1-HP imps clustered
+  ;; near (5,5). One blast wipes the cluster and bumps :kills by 3.
+  (let [w0 (assoc (with-enemies (new-world open-grid (new-player 2.0 5.0 0.0))
+                                [(new-enemy 5.0 5.0 1 :imp)
+                                 (new-enemy 5.0 6.0 1 :imp)
+                                 (new-enemy 6.0 5.0 1 :imp)])
+                  :weapon :bfg
+                  :owned-weapons #{:pistol :bfg}
+                  :mag 1 :ammo-reserve 5)
+        w' (tick-world w0 "" 0.016 (assoc no-edges :fire true))]
+    (is (= 3 (:kills w')) "blast counts all three kills")
+    (is (every? (fn [e] (false? (:alive e))) (:enemies w')))
+    (is (= 0 (:mag w')) "one cell consumed")))
+
 (deftest test-tick-world-toggle-map-edge-flips-show-map
   (let [w' (tick-world (new-world open-grid (new-player 5.0 5.0 0.0))
                        "" 0.016 (assoc no-edges :toggle-map true))]

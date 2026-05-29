@@ -39,7 +39,7 @@ See [level-system.md](level-system.md), [map.md](map.md).
 - Projectile casters: cacodemons + barons fire dodgeable fireballs (long-range telegraphed windup, then an orange bolt aimed at your position). Bolts pass doorways, stop at walls, cost one armor/life on impact (i-frames gate a burst to one hit). Strafe or break line of fire to dodge. See `core/projectile.phel`.
 - Cyberdemon chase speed scaled to 0.55× for playability
 - Hitscan combat: distance-attenuated kill/wound sfx, blood splatter, muzzle flash, 5-stage death anim, 3-6s respawn cooldown
-- 4-slot loadout (1/2/3/4), DPS-balanced niches. Pistol on every run; rest must be found.
+- 5-slot loadout (1/2/3/4/5), DPS-balanced niches. Pistol on every run; rest must be found.
 
   | Slot | Weapon | Dmg | Cd | Mag | DPS | Tier |
   |---|---|---|---|---|---|---|
@@ -47,8 +47,11 @@ See [level-system.md](level-system.md), [map.md](map.md).
   | 2 | shotgun | 3 | 0.6s | 4 | 5 | L2 (single-action) |
   | 3 | chaingun | 1 | 0.05s | 30 | 20 | L3 (auto-fire) |
   | 4 | chainsaw | 1 (`:melee`) | 0.10s | ∞ | 10 | melee 1.5-cell range, halves movement while ticking |
+  | 5 | BFG | 10 + 6 splash | 1.2s | 1 | - | L7 rare; `:plasma` AoE (3-cell radius), bypasses fire-resist mobs |
 
-  Pistol + chaingun + chainsaw spray while space is held; shotgun needs a fresh pull per shell. Pistol is the only weapon that overheats / jams. Distinct silhouette + palette per slot. Per-weapon mag/reserve persists across switches. First-time pickup auto-switches. Drop/refill/raise reload anim; sprite recoils 2 rows per shot.
+  The BFG (slot 5, found on L7) fires a heavy `:plasma` shot: a beam lands on the nearest enemy or wall, then a 3-cell-radius blast damages every enemy around the impact - a multi-kill room-clearer that also bypasses the fire-resistant caco/baron/archvile/mancubus. Expensive cells, slow cadence.
+
+  Pistol + chaingun + chainsaw spray while space is held; shotgun + BFG need a fresh pull per shot. Pistol is the only weapon that overheats / jams. Distinct silhouette + palette per slot. Per-weapon mag/reserve persists across switches. First-time pickup auto-switches. Drop/refill/raise reload anim; sprite recoils 2 rows per shot.
 - Kill-loot ammo skips the pistol when other weapons are owned - biases toward the scarce shotgun + chaingun the player had to hunt for. Level-spawn boxes still refill the active weapon.
 - 5 lives, 1s i-frame, 4-way directional red hurt-side band (left / right edge bar OR top / bottom row depending on attacker bearing), knockback shove on contact damage.
 

@@ -11,6 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+- BFG splash weapon (#58). Slot 5, found on L7. A heavy `:plasma` shot: the beam lands on the nearest enemy or wall, then a 3-cell-radius blast damages every enemy around the impact - a multi-kill room-clearer that also bypasses the fire-resistant caco / baron / archvile / mancubus. Single-action, slow cadence, expensive cells. Distinct green plasma report (Glass).
 - Secret reward passages. Every non-locked procgen level now hides up to 2 secret walls; revealing one (bump + `F`) drops a reward stash: an ammo box, an armor shard, and a rotating trophy powerup (soulsphere / berserk / invuln). Locked levels are skipped so a secret shortcut can't bypass a keycard door. Makes exploration pay off and turns the rare powerups into a reliable find.
 - Hit-stop on meaty kills. Killing a tough enemy (caco / baron, ~70ms) or the boss (~160ms) briefly freezes the gameplay step so the blow lands with weight. Trash mobs (imps / demons) kill clean with no freeze, so chaingun spray stays fast.
 - Ambient drone loop. A low, slow-pulsing background bed now runs under the whole gameplay session for dread. Synthesised at runtime (no shipped audio asset), looped by a crash-safe background process that self-terminates if the game dies, and gated by the N sound toggle.

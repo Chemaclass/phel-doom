@@ -150,6 +150,19 @@
            :settings        settings
            :show-map        (boolean (:minimap settings)))))
 
+(defn resumed-pause?
+  "True when the pause/settings page just closed this frame (was paused,
+   now isn't). The cue to persist the player's settings to disk."
+  [before after]
+  (and (:paused before) (not (:paused after))))
+
+(defn- persist-settings!
+  "Write the world's current settings out. Called whenever the player
+   leaves the pause/settings page (resume or quit) so edits are never
+   lost; volumes were already applied live."
+  [world]
+  (save-settings! (:settings world)))
+
 (defn- boss-down?
   "True on a boss-locked level once the cyberdemon is dead — combat
    stamps `:boss` into `:held-keys` on the killing blow. Used to stop
@@ -825,8 +838,11 @@
               now-keys  (key-states keys)
               edges     (rising-edges now-keys prev-keys)]
           (cond
-            (:end? frame)            :quit
-            (str/contains? keys "q") :quit
+            ;; Quitting straight from the pause/settings page still
+            ;; persists edits (q never hits the resume transition).
+            (or (:end? frame) (str/contains? keys "q"))
+            (do (when (:paused world) (persist-settings! world))
+                :quit)
 
             :else
             (let [ticked0 (tick-world world keys (php// ms 1000.0) edges)
@@ -844,8 +860,8 @@
                   world'  (handle-save-load ticked edges)]
               ;; Resuming out of the pause/settings page persists the
               ;; player's choices (volumes were already applied live).
-              (when (and (:paused world) (not (:paused world')))
-                (save-settings! (:settings world')))
+              (when (resumed-pause? world world')
+                (persist-settings! world'))
               (when (and (:heartbeat-tick? world') (:sound-on world'))
                 (play-sfx! :heartbeat 0.35))
               (when (and (:silence-tick? world') (:sound-on world'))

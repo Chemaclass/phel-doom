@@ -1,0 +1,145 @@
+(ns phel-doom-tests.core.settings-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.settings :refer [default-settings difficulty-choices
+                                            page-fields field-count field-at
+                                            coerce-settings move-cursor adjust
+                                            navigate valid-difficulty?
+                                            music-volume sfx-scalar music-ceiling]))
+
+;; ---------------------------------------------------------------------
+;; Defaults + page shape
+;; ---------------------------------------------------------------------
+
+(deftest test-default-settings-shape
+  (is (= 60 (:music default-settings)))
+  (is (= 90 (:sfx default-settings)))
+  (is (= false (:minimap default-settings)))
+  (is (= :normal (:difficulty default-settings))))
+
+(deftest test-page-has-four-fields-in-order
+  (is (= 4 (field-count)))
+  (is (= [:music :sfx :minimap :difficulty]
+         (map :key page-fields))))
+
+(deftest test-field-at-returns-descriptor-or-nil
+  (is (= :music (:key (field-at 0))))
+  (is (= :difficulty (:key (field-at 3))))
+  (is (nil? (field-at 4)))
+  (is (nil? (field-at -1))))
+
+;; ---------------------------------------------------------------------
+;; coerce-settings: clamp + validate loaded values
+;; ---------------------------------------------------------------------
+
+(deftest test-coerce-fills-missing-from-defaults
+  (is (= default-settings (coerce-settings {})))
+  (is (= default-settings (coerce-settings nil))))
+
+(deftest test-coerce-clamps-volumes-into-0-100
+  (let [s (coerce-settings {:music 250 :sfx -40 :minimap true :difficulty :hard})]
+    (is (= 100 (:music s)) "music clamps to 100")
+    (is (= 0 (:sfx s)) "sfx clamps to 0")))
+
+(deftest test-coerce-rejects-unknown-difficulty
+  (is (= :normal (:difficulty (coerce-settings {:difficulty :ultraviolence}))))
+  (is (= :nightmare (:difficulty (coerce-settings {:difficulty :nightmare})))))
+
+(deftest test-coerce-forces-minimap-bool
+  (is (= true  (:minimap (coerce-settings {:minimap 1}))))
+  (is (= false (:minimap (coerce-settings {:minimap nil})))))
+
+;; ---------------------------------------------------------------------
+;; move-cursor: wraps both ends
+;; ---------------------------------------------------------------------
+
+(deftest test-move-cursor-steps-and-wraps
+  (is (= 1 (move-cursor 0 1)))
+  (is (= 0 (move-cursor 1 -1)))
+  (is (= 3 (move-cursor 0 -1)) "up from the first field wraps to the last")
+  (is (= 0 (move-cursor 3 1)) "down from the last field wraps to the first"))
+
+;; ---------------------------------------------------------------------
+;; adjust: per-kind value changes
+;; ---------------------------------------------------------------------
+
+(deftest test-adjust-volume-steps-by-ten-and-clamps
+  (is (= 70 (:music (adjust default-settings :music 1))))
+  (is (= 50 (:music (adjust default-settings :music -1))))
+  ;; From 90, one step up lands on 100; a further step clamps there.
+  (is (= 100 (:music (adjust (assoc default-settings :music 90) :music 1))))
+  (is (= 100 (:music (adjust (assoc default-settings :music 100) :music 1)))
+      "music clamps at 100")
+  (is (= 0 (:sfx (adjust (assoc default-settings :sfx 10) :sfx -1))))
+  (is (= 0 (:sfx (adjust (assoc default-settings :sfx 0) :sfx -1))) "clamps at 0"))
+
+(deftest test-adjust-minimap-toggles-regardless-of-direction
+  (is (= true  (:minimap (adjust default-settings :minimap 1))))
+  (is (= true  (:minimap (adjust default-settings :minimap -1))))
+  (is (= false (:minimap (adjust (assoc default-settings :minimap true) :minimap 1)))))
+
+(deftest test-adjust-difficulty-cycles-and-wraps
+  (is (= :hard      (:difficulty (adjust default-settings :difficulty 1))))
+  (is (= :easy      (:difficulty (adjust default-settings :difficulty -1))))
+  (is (= :easy      (:difficulty (adjust (assoc default-settings :difficulty :nightmare) :difficulty 1)))
+      "nightmare wraps forward to easy")
+  (is (= :nightmare (:difficulty (adjust (assoc default-settings :difficulty :easy) :difficulty -1)))
+      "easy wraps back to nightmare"))
+
+(deftest test-adjust-unknown-field-is-noop
+  (is (= default-settings (adjust default-settings :nope 1))))
+
+;; ---------------------------------------------------------------------
+;; Volume mappings consumed by io/sound + io/ambient
+;; ---------------------------------------------------------------------
+
+(deftest test-music-volume-maps-percent-to-afplay-scalar
+  (is (= 0.0 (music-volume (assoc default-settings :music 0))))
+  (is (= music-ceiling (music-volume (assoc default-settings :music 100))))
+  ;; 60% default keeps parity with the old hardcoded 0.30 ambient level.
+  (is (= 0.3 (music-volume (assoc default-settings :music 60)))))
+
+(deftest test-sfx-scalar-maps-percent-to-unit-interval
+  (is (= 0.0 (sfx-scalar (assoc default-settings :sfx 0))))
+  (is (= 1.0 (sfx-scalar (assoc default-settings :sfx 100))))
+  (is (= 0.9 (sfx-scalar (assoc default-settings :sfx 90)))))
+
+(deftest test-difficulty-choices-easiest-first
+  (is (= [:easy :normal :hard :nightmare] difficulty-choices)))
+
+(deftest test-valid-difficulty-guards-the-keyword-list
+  (is (= true  (valid-difficulty? :nightmare)))
+  (is (= true  (valid-difficulty? :easy)))
+  (is (= false (valid-difficulty? :ultraviolence)))
+  (is (= false (valid-difficulty? nil))))
+
+;; ---------------------------------------------------------------------
+;; navigate: shared cursor-move + value-adjust used by both the start
+;; menu and the in-game overlay.
+;; ---------------------------------------------------------------------
+
+(deftest test-navigate-moves-cursor-without-adjusting
+  (let [r (navigate default-settings 0 1 0)]
+    (is (= 1 (:cursor r)) "cursor-dir +1 steps down")
+    (is (= false (:adjusted? r)) "no value change")
+    (is (= default-settings (:settings r)))))
+
+(deftest test-navigate-adjusts-selected-field
+  ;; cursor 0 = Music; value-dir +1 raises it a step, flags adjusted.
+  (let [r (navigate default-settings 0 0 1)]
+    (is (= 0 (:cursor r)))
+    (is (= 70 (:music (:settings r))))
+    (is (= true (:adjusted? r)))))
+
+(deftest test-navigate-moves-then-adjusts-the-new-field
+  ;; Move to SFX (cursor 1) AND adjust in the same step: the adjust
+  ;; targets the field the cursor lands on, not the one it left.
+  (let [r (navigate default-settings 0 1 -1)]
+    (is (= 1 (:cursor r)))
+    (is (= 80 (:sfx (:settings r))) "SFX 90 -> 80")
+    (is (= 60 (:music (:settings r))) "Music untouched")))
+
+(deftest test-navigate-noop-when-both-dirs-zero
+  (let [r (navigate default-settings 2 0 0)]
+    (is (= 2 (:cursor r)))
+    (is (= false (:adjusted? r)))
+    (is (= default-settings (:settings r)))))

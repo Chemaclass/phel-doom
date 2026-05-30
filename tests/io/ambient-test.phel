@@ -1,6 +1,7 @@
 (ns phel-doom-tests.io.ambient-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.io.ambient :refer [drone-wav-bytes sync-ambient! proc]))
+  (:require phel-doom.io.ambient :refer [drone-wav-bytes sync-ambient! proc
+                                         volume set-music-volume!]))
 
 ;; ---------------------------------------------------------------------
 ;; drone-wav-bytes: pure PCM WAV synthesis. No IO — safe to assert on
@@ -35,3 +36,20 @@
   (is (nil? (:pid @proc)) "no loop process spawned while silent")
   (sync-ambient! false)
   (is (nil? (:pid @proc)) "stop stays a no-op too"))
+
+;; ---------------------------------------------------------------------
+;; set-music-volume!: settings drive the drone -v level. With no loop
+;; running (the suite never spawns one), it just stores a clamped value
+;; in the volume atom; restarts only happen when a pid is live.
+;; ---------------------------------------------------------------------
+
+(deftest test-set-music-volume-stores-clamped-value
+  (set-music-volume! 0.42)
+  (is (= 0.42 @volume) "stores the value")
+  (set-music-volume! 5.0)
+  (is (= 1.0 @volume) "clamps above 1.0")
+  (set-music-volume! -2.0)
+  (is (= 0.0 @volume) "clamps below 0.0")
+  ;; Restore the historical default so test ordering can't leak state.
+  (set-music-volume! 0.30)
+  (is (= 0.30 @volume)))

@@ -50,6 +50,7 @@ src/core/                    ; pure logic (no IO)
   projectile.phel            projectiles (not used yet)
   perf.phel                  big-screen perf checks
   difficulty.phel            easy/normal/hard/nightmare
+  settings.phel              options model (volume, defaults)
   rng.phel                   deterministic seeding
 src/glue/                    ; pure wiring (core + io)
   controls.phel              bytes to move commands
@@ -58,6 +59,7 @@ src/io/                      ; side effects
   render.phel                ANSI emit + overlays
   sound.phel                 afplay/paplay shell-out
   scores.phel                JSON persistence
+  settings.phel              options load/save (JSON)
   savegame.phel              game state save/load
   ambient.phel               background loops
   demo.phel                  attract mode

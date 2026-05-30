@@ -3,6 +3,7 @@
   (:require phel-doom.core.settings :refer [default-settings difficulty-choices
                                             page-fields field-count field-at
                                             coerce-settings move-cursor adjust
+                                            navigate valid-difficulty?
                                             music-volume sfx-scalar music-ceiling]))
 
 ;; ---------------------------------------------------------------------
@@ -104,3 +105,41 @@
 
 (deftest test-difficulty-choices-easiest-first
   (is (= [:easy :normal :hard :nightmare] difficulty-choices)))
+
+(deftest test-valid-difficulty-guards-the-keyword-list
+  (is (= true  (valid-difficulty? :nightmare)))
+  (is (= true  (valid-difficulty? :easy)))
+  (is (= false (valid-difficulty? :ultraviolence)))
+  (is (= false (valid-difficulty? nil))))
+
+;; ---------------------------------------------------------------------
+;; navigate: shared cursor-move + value-adjust used by both the start
+;; menu and the in-game overlay.
+;; ---------------------------------------------------------------------
+
+(deftest test-navigate-moves-cursor-without-adjusting
+  (let [r (navigate default-settings 0 1 0)]
+    (is (= 1 (:cursor r)) "cursor-dir +1 steps down")
+    (is (= false (:adjusted? r)) "no value change")
+    (is (= default-settings (:settings r)))))
+
+(deftest test-navigate-adjusts-selected-field
+  ;; cursor 0 = Music; value-dir +1 raises it a step, flags adjusted.
+  (let [r (navigate default-settings 0 0 1)]
+    (is (= 0 (:cursor r)))
+    (is (= 70 (:music (:settings r))))
+    (is (= true (:adjusted? r)))))
+
+(deftest test-navigate-moves-then-adjusts-the-new-field
+  ;; Move to SFX (cursor 1) AND adjust in the same step: the adjust
+  ;; targets the field the cursor lands on, not the one it left.
+  (let [r (navigate default-settings 0 1 -1)]
+    (is (= 1 (:cursor r)))
+    (is (= 80 (:sfx (:settings r))) "SFX 90 -> 80")
+    (is (= 60 (:music (:settings r))) "Music untouched")))
+
+(deftest test-navigate-noop-when-both-dirs-zero
+  (let [r (navigate default-settings 2 0 0)]
+    (is (= 2 (:cursor r)))
+    (is (= false (:adjusted? r)))
+    (is (= default-settings (:settings r)))))

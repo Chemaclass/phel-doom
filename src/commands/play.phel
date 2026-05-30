@@ -17,7 +17,7 @@
   (:require phel-doom.core.weapons  :refer [effective-reserve-cap give-weapon switch-weapon weapon-spec weapon-order weapons])
   (:require phel-doom.io.sound    :refer [play-sfx! mute-for! set-sfx-scalar!])
   (:require phel-doom.io.ambient  :refer [start-ambient! stop-ambient! sync-ambient! set-music-volume!])
-  (:require phel-doom.core.settings :refer [adjust move-cursor field-at music-volume sfx-scalar])
+  (:require phel-doom.core.settings :refer [navigate music-volume sfx-scalar valid-difficulty?])
   (:require phel-doom.io.settings :refer [load-settings save-settings!])
   (:require phel-doom.io.savegame :refer [save-game! load-game])
   (:require phel-doom.io.demo     :as demo)
@@ -126,38 +126,41 @@
   (set-sfx-scalar!   (sfx-scalar settings))
   (set-music-volume! (music-volume settings)))
 
+(defn- nav-dirs
+  "Translate the nav rising-edges into the [cursor-dir value-dir] pair
+   core/settings.navigate expects (-1 / 0 / +1 each)."
+  [edges]
+  [(cond (:nav-up edges)   -1 (:nav-down edges)  1 :else 0)
+   (cond (:nav-left edges) -1 (:nav-right edges) 1 :else 0)])
+
 (defn- open-settings
-  "Enter the options overlay: freeze the frame and reset the cursor."
+  "Enter the options overlay and freeze the frame. The cursor keeps its
+   previous position (build-world seeds it at 0) so re-opening lands on
+   the field the player last touched."
   [world]
-  (assoc world :settings? true :paused true :settings-cursor 0))
+  (assoc world :settings? true :paused true))
 
 (defn- close-settings!
-  "Leave the overlay, persist the settings to disk, and unfreeze."
+  "Leave the overlay, persist the settings to disk, and unfreeze. Audio
+   was already pushed live on each adjustment, so close only saves."
   [world]
   (save-settings! (:settings world))
   (assoc world :settings? false :paused false))
 
 (defn- step-settings!
-  "Apply one frame of overlay navigation: up/down move the cursor,
-   left/right adjust the selected field. Volume edits take effect
-   immediately; the minimap field mirrors into :show-map so the change
-   is visible the moment it's made."
+  "Apply one frame of overlay navigation via core/settings.navigate:
+   up/down move the cursor, left/right adjust the selected field. Volume
+   edits take effect immediately; the minimap field mirrors into
+   :show-map so the change is visible the moment it's made."
   [world edges]
-  (let [cur       (or (:settings-cursor world) 0)
-        cur'      (cond
-                    (:nav-up edges)   (move-cursor cur -1)
-                    (:nav-down edges) (move-cursor cur 1)
-                    :else             cur)
-        fkey      (:key (field-at cur'))
-        adjust?   (or (:nav-left edges) (:nav-right edges))
-        dir       (if (:nav-right edges) 1 -1)
-        settings  (:settings world)
-        settings' (if adjust? (adjust settings fkey dir) settings)]
-    (when adjust? (apply-audio-settings! settings'))
+  (let [[cursor-dir value-dir]              (nav-dirs edges)
+        {:keys [cursor settings adjusted?]}
+        (navigate (:settings world) (or (:settings-cursor world) 0) cursor-dir value-dir)]
+    (when adjusted? (apply-audio-settings! settings))
     (assoc world
-           :settings-cursor cur'
-           :settings        settings'
-           :show-map        (boolean (:minimap settings')))))
+           :settings-cursor cursor
+           :settings        settings
+           :show-map        (boolean (:minimap settings)))))
 
 (defn- boss-down?
   "True on a boss-locked level once the cyberdemon is dead — combat
@@ -833,8 +836,10 @@
               ms        (or (:ms frame) live-ms)
               now-keys  (key-states keys)
               edges     (rising-edges now-keys prev-keys)
-              ;; ESC has its own edge here (rising-edges folds it into
-              ;; :toggle-help); the settings overlay uses it to close.
+              ;; ESC closes the settings overlay. rising-edges only folds
+              ;; ESC into :toggle-help (the h-aliased info panel), so the
+              ;; overlay needs its own naked-ESC edge to close on ESC
+              ;; without also toggling help.
               esc-edge  (and (:esc now-keys) (not (:esc prev-keys)))
               open?     (boolean (:settings? world))]
           (cond
@@ -1078,21 +1083,18 @@
       (let [keys     (drain-keys)
             now      (key-states keys)
             edges    (rising-edges now prev)
+            ;; ESC closes the page directly. We can't use the :toggle-help
+            ;; edge here: that aliases h+esc for the in-game info panel,
+            ;; which has nothing to do with the options screen.
             esc-edge (and (:esc now) (not (:esc prev)))]
         (if (or (:open-settings edges) esc-edge)
-          (do (save-settings! settings)
-              (apply-audio-settings! settings)
-              settings)
-          (let [cursor'   (cond
-                            (:nav-up edges)   (move-cursor cursor -1)
-                            (:nav-down edges) (move-cursor cursor 1)
-                            :else             cursor)
-                fkey      (:key (field-at cursor'))
-                adjust?   (or (:nav-left edges) (:nav-right edges))
-                dir       (if (:nav-right edges) 1 -1)
-                settings' (if adjust? (adjust settings fkey dir) settings)]
-            (when adjust? (apply-audio-settings! settings'))
-            (recur settings' cursor' now [rows cols])))))))
+          ;; Volumes were applied live on each adjust; close just saves.
+          (save-settings! settings)
+          (let [[cursor-dir value-dir]              (nav-dirs edges)
+                {:keys [cursor settings adjusted?]}
+                (navigate settings cursor cursor-dir value-dir)]
+            (when adjusted? (apply-audio-settings! settings))
+            (recur settings cursor now [rows cols])))))))
 
 (defn- show-start-menu!
   "Block on the start screen until the player starts or quits. Re-draws
@@ -1116,18 +1118,14 @@
           (str/contains? keys "s") (recur (settings-screen! settings) [rows cols])
           :else                    settings)))))
 
-(def difficulty-keywords
-  "Valid --difficulty values; an explicit CLI flag must name one of
-   these to override the settings-page default."
-  #{:easy :normal :hard :nightmare})
-
 (defn- resolve-difficulty
   "Pick the run difficulty: an explicit, valid --difficulty CLI value
    wins; otherwise fall back to the settings-page default. `cli-raw` is
-   the raw option string (\"\" when unset)."
+   the raw option string (\"\" when unset). Validity is checked against
+   core/settings, the single source of truth for the difficulty list."
   [cli-raw settings]
   (let [d (and cli-raw (not (= cli-raw "")) (keyword cli-raw))]
-    (if (contains? difficulty-keywords d)
+    (if (valid-difficulty? d)
       d
       (:difficulty settings))))
 

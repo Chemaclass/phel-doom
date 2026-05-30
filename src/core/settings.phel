@@ -64,7 +64,11 @@
       (= (first cs) v) i
       :else            (recur (php/+ i 1) (rest cs)))))
 
-(defn- valid-difficulty? [d]
+(defn valid-difficulty?
+  "True when `d` is one of the difficulty-choices keywords. Exposed so
+   the CLI override path can validate a --difficulty value against the
+   single source of truth."
+  [d]
   (php/>= (index-of d difficulty-choices) 0))
 
 (defn coerce-settings
@@ -119,6 +123,21 @@
       (update settings field-key (fn [v] (cycle-difficulty v dir)))
 
       :else          settings)))
+
+(defn navigate
+  "Apply one page-navigation step. `cursor-dir` moves the selection
+   (-1 up, +1 down, 0 none, wrapping); `value-dir` adjusts the selected
+   field (-1 left, +1 right, 0 none). Returns
+   `{:cursor _ :settings _ :adjusted? _}` so the caller can push the
+   new volumes only when something actually changed. Pure: the live
+   audio/minimap effects stay in the caller (commands/play)."
+  [settings cursor cursor-dir value-dir]
+  (let [cursor'   (if (php/=== cursor-dir 0) cursor (move-cursor cursor cursor-dir))
+        adjusted? (not (php/=== value-dir 0))
+        settings' (if adjusted?
+                    (adjust settings (:key (field-at cursor')) value-dir)
+                    settings)]
+    {:cursor cursor' :settings settings' :adjusted? adjusted?}))
 
 (defn music-volume
   "afplay -v playback value [0.0, music-ceiling] for the current Music

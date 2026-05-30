@@ -11,35 +11,35 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Settings page (#107). Configurable bg-music + sfx volume, default minimap, default difficulty. It IS the pause screen: press `p` in-game (or `s` on the start menu); arrows adjust, `p` resumes (on the start menu, `esc` goes back). Persists to `$HOME/.phel-doom-settings.json`; volume rides `afplay -v` (macOS).
-- Half-heart health + per-type hit damage. 10 HP pool drawn as 5 hearts (`♥`/`◖`/`·`). Hits cost by attacker: light melee 1 (half heart), heavy + casters 2, cyber boss 3. Armor absorbs a whole hit; heart pickup heals a full heart; soulsphere over-caps to 14.
-- Deterministic demo record / replay (#64). `--record=FILE` / `--demo=FILE`, on a new seeded Park-Miller RNG (`core/rng`) replacing the unseedable `random_int` / `mt_rand`.
-- Mid-level quick-save / load (#63). `F5` / `F9`, whole world to a versioned tagged-JSON slot (1-9), fog re-reveals on load.
-- BFG splash weapon (#58). Slot 5 (found L7): `:plasma` beam + 3-cell AoE blast that bypasses fire-resists. Single-action, slow, expensive.
-- Secret reward passages. Procgen levels hide up to 2 secret walls; reveal (bump + `F`) drops ammo + shard + a rotating powerup. Locked levels skipped.
-- Hit-stop on meaty kills. Tough kills (~70ms) / boss (~160ms) briefly freeze the step; trash mobs don't, so spray stays fast.
-- Ambient drone loop. Synthesised low background bed, crash-safe loop, gated by the N toggle.
-- Projectile casters. Cacodemons + barons fire telegraphed, dodgeable fireballs (pass doors, stop at walls).
-- Wandering idle enemies. Half of fresh spawns pace random directions until LOS flips them to chase.
-- Backpack stacking (#68). Up to 3; reserve cap scales `base * (1 + level)`; HUD `+pack xN`.
-- Armor shards (#68). +1 armor banking past `max-armor` to 2x (no decay), three per level.
-- Soulsphere pickup (#68). Rare cyan sphere; over-caps lives, decays back over time.
-- Remote switches (#62). `F` on a switch flips linked cells (wall <-> floor); L10 uses two.
+- Settings page (#107). Pause screen (`p`, or `s` on the start menu) doubles as options: bg-music / sfx volume, default minimap + difficulty. Persists to `~/.phel-doom-settings.json` (volume via `afplay`, macOS).
+- Half-heart health. 10 HP = 5 hearts (`♥`/`◖`/`·`); per-type hit damage (melee 1, casters 2, cyber 3); armor soaks a whole hit.
+- Demo record / replay (#64). `--record` / `--demo` on a seeded Park-Miller RNG.
+- Quick-save / load (#63). `F5` / `F9` to versioned JSON slots; fog re-reveals.
+- BFG splash weapon (#58). Slot 5: plasma beam + 3-cell AoE that ignores fire-resist.
+- Secret reward passages. Reveal a secret wall (`F`) for ammo + shard + a rotating powerup.
+- Hit-stop on meaty kills (~70ms, boss ~160ms); trash mobs stay fast.
+- Ambient drone loop. Synthesised crash-safe bed, N-gated.
+- Projectile casters. Cacodemons + barons fire dodgeable, telegraphed fireballs.
+- Wandering idle enemies pace until LOS flips them to chase.
+- Backpack stacking (#68). Up to 3; reserve cap scales with level.
+- Armor shards (#68). Bank +1 armor past max to 2x.
+- Soulsphere (#68). Over-caps lives, decays back.
+- Remote switches (#62). `F` flips linked wall/floor cells.
 
 ### Changed
 
-- Caster tuning (#94). Cacodemon / baron fireballs fly slower and telegraph longer (dodgeable, not near-hitscan) and fire on a shorter cooldown but move slower than melee rushers, so a ranged threat you can't outrun stays fair.
-- Progressive difficulty curve. Chase speed climbs monotonically L1-L9 (fixed the L5 -> L6 dip), L10 eases for the boss arena. Archvile (L8) wired as a real caster (fastest bolt); L6 + L7 gain a caster so ranged pressure never gaps; depth-scaled attack cooldown with the windup telegraph kept honest.
-- Per-level monster variety. L2-L5 mix a melee secondary into the headline type (L3 ~50/50 shooters / melee); L1 stays pure imps as the tutorial.
+- Caster tuning (#94). Slower, longer-telegraphed fireballs on a shorter cooldown; casters move slower than melee.
+- Progressive difficulty curve. Chase speed climbs L1-L9, eases at L10; archvile wired as a caster (L8); L6 / L7 gain casters; depth-scaled cooldown.
+- Per-level monster variety. L2-L5 mix melee into the headline type (L3 ~50/50); L1 stays pure imps.
 
 ### Fixed
 
-- Mixed-level enemies spawned at 1 HP regardless of type; now use catalog HP (`default-lives-for`), so the L6-L10 mixes are properly tanky.
-- `R` (restart same map) now reproduces geometry + spawns. Map gen used unseedable `random_int`; both paths now flow through `core/rng`.
-- Weapon report went silent on a connecting hit (esp. shotgun). Every trigger pull now plays the weapon's own fire sound (distinct per weapon) with the kill cue layered on top.
-- Enemy face / eyes drew over closer sprites (#91). Now gated by the same front-most-enemy check as the grounding shadow.
-- Grid mutations (#61) left `:pgrid` stale (walk through solid walls); `rebuild-pgrid` resyncs after each mutation.
-- SHIFT+WASD sprint was a no-op on non-kitty terminals. Capital WASD bytes now refresh the movement slot AND `:sprint`, so sprint works everywhere.
+- Mixed-level enemies spawned at 1 HP; now use catalog HP (`default-lives-for`).
+- `R` (restart same map) reproduces geometry + spawns via `core/rng`.
+- Weapon report went silent on a connecting hit; every shot now plays its fire sound + kill cue.
+- Enemy face drew over closer sprites (#91); now gated by the front-most check.
+- Stale `:pgrid` after grid mutations (#61) let you walk through walls; `rebuild-pgrid` resyncs.
+- SHIFT+WASD sprint was a no-op on non-kitty terminals; capital WASD now arms `:sprint`.
 
 ## [0.6.0] - 2026-05-27
 

@@ -44,8 +44,7 @@ Override tag: `DOCKER_IMG=mytag make docker-build`. Host PHP is the inner loop; 
 | `r`            | Reload                       |
 | `1` / `2` / `3` | Switch weapon                |
 | `m` / `n`      | Minimap / sound toggle       |
-| `o`            | Settings (volume, minimap)   |
-| `p`            | Pause                        |
+| `p`            | Pause + settings (volume)    |
 | `h` / `ESC`    | Info menu + pause            |
 | `F3`           | Debug overlay                |
 | `q`            | Quit                         |

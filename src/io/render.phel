@@ -885,14 +885,6 @@
                            acc)))))]
     (sort-by (fn [x] (php/- 0.0 (:dist x))) raw)))
 
-(def pause-inner-width
-  "Character width of each interior row of the pause menu (between the
-   left and right borders). Every row pads to this width so the box
-   aligns cleanly regardless of label length. Picked to fit the
-   widest entry in the controls list (`  F3     debug overlay`) plus
-   trailing breathing room."
-  32)
-
 (defn- pause-pad
   "Pad `text` to `width` with trailing spaces. Re-applies the pause
    menu's dark BG before padding so trailing spaces don't fall on
@@ -1098,9 +1090,8 @@
                         (bord "  1 / 2 / 3 / 4 switch weapon slot")
                         (bord "  m             toggle minimap")
                         (bord "  n             toggle sound")
-                        (bord "  o             settings (volume)")
                         (bord "  F3            debug overlay")
-                        (bord "  p             pause / resume")
+                        (bord "  p             pause + settings")
                         (bord "  h / ESC      close this menu")
                         (bord "  q             quit")])
         closer-rows   (to-php-array [blnk (str "└" bar "┘")])
@@ -1127,45 +1118,6 @@
           row0 (php/max 1 (php/intdiv (php/max 1 (php/- vh n)) 2))]
       (loop [i 0 acc ""]
         (if (php/>= i n)
-          acc
-          (recur (php/+ i 1)
-                 (str acc "\e[" (php/+ row0 i) ";" col0 "H\e[40;97m"
-                      (get rows i) "\e[0m")))))))
-
-(defn- pause-menu-string
-  "Build the pause overlay as a single ANSI string with absolute cursor
-   moves. Pure: caller pushes it into the parts array."
-  [vw vh sound-on?]
-  (let [rows
-        (let [w pause-inner-width]
-          (let [bar  (php/str_repeat "─" w)
-                blnk (str "│" (pause-pad "" w) "│")]
-            ;; Minimal post-refactor: PAUSED title + credits. The full
-            ;; controls reference lives in the H info menu now, so the
-            ;; pause overlay stays a quick visual confirmation of the
-            ;; freeze rather than a wall of text. `sound-on?` kept in
-            ;; the signature so callers don't need to change; not used.
-            [(str "┌" bar "┐")
-             blnk
-             (str "│\e[1;93m" (pause-pad "             PAUSED" w) "\e[40;97m│")
-             blnk
-             (str "│\e[2;97m" (pause-pad "   H for info  ·  ESC resumes" w) "\e[22;40;97m│")
-             blnk
-             (str "├" bar "┤")
-             blnk
-             ;; Dim text (\e[2) leaks through pause-pad's \e[40;97m
-             ;; because BG/FG SGR does not reset the intensity attribute.
-             ;; Explicit \e[22 (normal intensity) before the right border
-             ;; keeps the `│` bright white like every other row.
-             (str "│\e[2;97m" (pause-pad "  phel-doom by Chemaclass" w) "\e[22;40;97m│")
-             (str "│\e[2;97m" (pause-pad "  written in Phel Lang"   w) "\e[22;40;97m│")
-             blnk
-             (str "└" bar "┘")]))]
-    (let [col0 (php/max 1 (php/- (php/+ (php/intdiv vw 2) 1)
-                                 (php/intdiv (php/+ pause-inner-width 2) 2)))
-          row0 (php/max 1 (php/- (php/intdiv vh 2) 4))]
-      (loop [i 0 acc ""]
-        (if (php/>= i (count rows))
           acc
           (recur (php/+ i 1)
                  (str acc "\e[" (php/+ row0 i) ";" col0 "H\e[40;97m"
@@ -1225,17 +1177,19 @@
     (str "│" sgr body "\e[40;97m" pad "│")))
 
 (defn- settings-menu-string
-  "Build the settings / options overlay as one ANSI string with
-   absolute cursor moves. `cursor` is the selected field index. Pure:
-   caller pushes the result into the parts array. Reads the field list
-   from core/settings so the page and the model never drift."
-  [vw vh settings cursor]
+  "Build the settings page as one ANSI string with absolute cursor
+   moves, centred in the viewport. `cursor` is the selected field
+   index; `footer` is the context hint row (resume vs back). This is
+   the in-game PAUSE overlay and the start-menu options screen share
+   the same box. Pure: caller pushes the result into the parts array.
+   Reads the field list from core/settings so page + model never drift."
+  [vw vh settings cursor footer]
   (let [w           settings-inner-width
         bar         (php/str_repeat "─" w)
         blnk        (str "│" (pause-pad "" w) "│")
         rows-head   [(str "┌" bar "┐")
                      blnk
-                     (str "│\e[1;93m" (pause-pad "            SETTINGS" w) "\e[40;97m│")
+                     (str "│\e[1;93m" (pause-pad "              SETTINGS" w) "\e[40;97m│")
                      blnk]
         rows-fields (apply vector
                            (map-indexed
@@ -1245,7 +1199,7 @@
         rows-foot   [blnk
                      (str "├" bar "┤")
                      blnk
-                     (str "│\e[2;97m" (pause-pad "  ↑↓ select   ←→ adjust   o/esc close" w) "\e[22;40;97m│")
+                     (str "│\e[2;97m" (pause-pad (str "  " footer) w) "\e[22;40;97m│")
                      blnk
                      (str "└" bar "┘")]
         rows        (apply vector (concat rows-head rows-fields rows-foot))
@@ -2999,19 +2953,17 @@
             p19b        (paint-locked-bump        p19 stats vw vh)
             p19c        (paint-enemy-hp-flashes   p19b world vw vh)
             p20         (paint-save-flash         p19c stats vw vh)]
-        (when (get stats :paused)
-          (buf-push p20 (pause-menu-string vw vh (get stats :sound-on))))
-        ;; Help overlay paints last so it sits on top of the pause
-        ;; menu when both are toggled at once (player paused, then
-        ;; pressed H). H + P are independent flags.
-        (when (get stats :help?)
-          (buf-push p20 (help-menu-string vw vh stats)))
-        ;; Settings overlay sits above everything: while it's open the
-        ;; game is frozen and the options box is the focused surface.
-        (when (get stats :settings?)
+        ;; Pause (P) IS the settings page: freezing the game and the
+        ;; options live in one overlay so there's only one layer to
+        ;; learn. The H info panel can still sit on top of it (player
+        ;; paused, then pressed H); it paints last so it wins.
+        (when (and (get stats :paused) (not (get stats :help?)))
           (buf-push p20 (settings-menu-string vw vh
                                               (get stats :settings)
-                                              (get stats :settings-cursor))))
+                                              (get stats :settings-cursor)
+                                              "↑↓ move   ←→ change   p resume")))
+        (when (get stats :help?)
+          (buf-push p20 (help-menu-string vw vh stats)))
         (php/implode "" p20)))))
 
 ;; --- DO NOT swap `print` / `println` for `php/fwrite` in render! ---
@@ -3294,9 +3246,9 @@
                   (pad-visible "    \e[93mr      \e[40;97m   reload" w)
                   (pad-visible "    \e[93m1 2 3  \e[40;97m   switch weapon slot" w)
                   (pad-visible "    \e[93mh      \e[40;97m   info menu (stats + weapons)" w)
-                  (pad-visible "    \e[93mo      \e[40;97m   settings (volume, minimap)" w)
                   (pad-visible "    \e[93mm  n   \e[40;97m   toggle minimap / sound" w)
-                  (pad-visible "    \e[93mp F3 q \e[40;97m   pause / debug / quit" w)
+                  (pad-visible "    \e[93mp      \e[40;97m   pause + settings (volume)" w)
+                  (pad-visible "    \e[93mF3 q   \e[40;97m   debug / quit" w)
                   blank]
         howto    [:sep blank
                   (pad-visible "  \e[1mHOW TO PLAY\e[40;97m" w)
@@ -3371,8 +3323,8 @@
 (defn render-settings!
   "Full-screen wash + centred settings box, for the start-menu options
    screen (no game frame behind it). `settings` is the live map and
-   `cursor` the selected field index. The in-game overlay reuses the
-   same box via render!'s :settings? branch; this entry just adds the
+   `cursor` the selected field index. The in-game pause overlay reuses
+   the same box via render!'s :paused branch; this entry just adds the
    background wash so it reads as a standalone screen."
   [cols rows settings cursor]
   (let [parts (buf-mk)
@@ -3382,7 +3334,8 @@
       (when (php/<= r rows)
         (buf-push parts (str "\e[" r ";1H" wash (php/str_repeat " " cols)))
         (recur (php/+ r 1))))
-    (buf-push parts (settings-menu-string cols rows settings cursor))
+    (buf-push parts (settings-menu-string cols rows settings cursor
+                                          "↑↓ move   ←→ change   esc back"))
     (print (php/implode "" parts))
     (php/flush)))
 

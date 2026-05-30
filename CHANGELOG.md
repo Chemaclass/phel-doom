@@ -34,6 +34,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Fixed
 
+- Settings page arrows did nothing under SS3 application-cursor mode (tmux / alt-screen); arrow detection + in-game turning now accept both `\eOA` and `\e[A` forms.
 - Mixed-level enemies spawned at 1 HP; now use catalog HP (`default-lives-for`).
 - `R` (restart same map) reproduces geometry + spawns via `core/rng`.
 - Weapon report went silent on a connecting hit; every shot now plays its fire sound + kill cue.

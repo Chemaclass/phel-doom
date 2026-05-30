@@ -97,13 +97,19 @@
       :else                   world)))
 
 (def arrow-escape-keys
-  "Search-side PHP array for php/str_replace: arrow-key CSI escapes."
-  (php/array "\e[A" "\e[B" "\e[D" "\e[C"))
+  "Search-side PHP array for php/str_replace: arrow-key escapes in both
+   the CSI (`\\e[A`) and SS3 application-cursor-key (`\\eOA`) forms, so
+   in-game turning works whether or not the terminal is in app-cursor
+   mode (tmux / the alternate screen flip it on a lot)."
+  (php/array "\e[A" "\e[B" "\e[D" "\e[C"
+             "\eOA" "\eOB" "\eOD" "\eOC"))
 
 (def arrow-escape-replacements
   "Replace-side PHP array for php/str_replace: single-byte stand-ins
-   for ↑↓←→ so refresh-from-keys can walk the input one byte at a time."
-  (php/array "^"    "_"    "<"    ">"))
+   for ↑↓←→ so refresh-from-keys can walk the input one byte at a time.
+   Both arrow encodings collapse to the same four stand-ins."
+  (php/array "^"    "_"    "<"    ">"
+             "^"    "_"    "<"    ">"))
 
 (defn- normalise-arrows [keys]
   (php/str_replace arrow-escape-keys arrow-escape-replacements keys))
@@ -348,15 +354,17 @@
         (= 1 (php/preg_match kitty-re keys)))))
 
 (defn- arrow-pressed?
-  "True when an arrow key with CSI final byte `letter` (A=up B=down
-   C=right D=left) is present in `keys` this frame. Matches the legacy
-   form (`\\e[A`), modified arrows (`\\e[1;2A`), and the kitty-enhanced
-   arrow form (`\\e[1;m:eD`) in one shot — the settings page consumes
-   these as rising-edge menu navigation. Release events (`:3`) are
-   harmless here: a held arrow keeps the key true so no new edge fires
-   until it's let go and pressed again."
+  "True when an arrow key with final byte `letter` (A=up B=down C=right
+   D=left) is present in `keys` this frame. Matches all three encodings
+   a terminal may send: the CSI form (`\\e[A`), modified / kitty-enhanced
+   CSI (`\\e[1;2A`, `\\e[1;m:eD`), AND the SS3 application-cursor-key
+   form (`\\eOA`) that many terminals + tmux emit in the alternate
+   screen. The settings page consumes these as rising-edge menu
+   navigation. Release events (`:3`) are harmless: a held arrow keeps
+   the key true so no new edge fires until it's let go and pressed
+   again."
   [keys letter]
-  (= 1 (php/preg_match (str "/\\x1b\\[[\\d;:]*" letter "/") keys)))
+  (= 1 (php/preg_match (str "/\\x1b(?:\\[[\\d;:]*|O)" letter "/") keys)))
 
 (defn key-states
   "Which of the tracked one-shot keys appear in `keys` this frame.

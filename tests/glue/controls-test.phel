@@ -320,6 +320,26 @@
   (is (= true (:up (key-states "\e[1;2A"))))
   (is (= true (:up (key-states "\e[1;1:1A")))))
 
+(deftest test-ss3-arrow-drives-in-game-turn
+  ;; The same SS3 form must also feed the movement path so turning
+  ;; works under app-cursor mode, not just menu nav.
+  (let [w' (refresh-from-keys blank-world "\eOD")]
+    (is (php/> (:turn-left (:moves w')) 0)))
+  (let [w' (refresh-from-keys blank-world "\eOC")]
+    (is (php/> (:turn-right (:moves w')) 0))))
+
+(deftest test-key-states-detects-ss3-application-cursor-arrows
+  ;; Many terminals / tmux send SS3 arrows (`\eOA`..`\eOD`) in the
+  ;; alternate screen instead of CSI. Menu nav must still work.
+  (is (= true (:up    (key-states "\eOA"))))
+  (is (= true (:down  (key-states "\eOB"))))
+  (is (= true (:right (key-states "\eOC"))))
+  (is (= true (:left  (key-states "\eOD"))))
+  ;; F3's SS3 sequence `\eOR` shares the `\eO` prefix but a different
+  ;; final byte, so it must NOT register as an arrow.
+  (is (= false (:up   (key-states "\eOR"))))
+  (is (= true  (:f3   (key-states "\eOR")))))
+
 (deftest test-key-states-arrows-are-independent
   (let [s (key-states "\e[A")]
     (is (= true  (:up s)))

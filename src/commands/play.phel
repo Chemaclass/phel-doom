@@ -110,14 +110,16 @@
     (if (:about-face edges) (about-face after-help) after-help)))
 
 ;; =====================================================================
-;; § Settings overlay (issue #107)
+;; § Settings page (issue #107)
 ;;
-;; The options page freezes the game (like the H info menu) and routes
-;; the arrow edges to cursor + value navigation. Volume changes apply
-;; live through the io/sound + io/ambient atoms; the minimap default
-;; drives :show-map immediately. Settings live on the world under
-;; :settings / :settings-cursor / :settings? so frame-stats can paint
-;; them and they carry across level cuts; close persists to disk.
+;; The settings page IS the pause screen: pressing P freezes the game
+;; AND shows the adjustable options, so there is only one overlay layer
+;; to learn (the H info panel stays a separate read-only reference).
+;; While paused, the arrows move the cursor / change a value; volumes
+;; apply live through the io/sound + io/ambient atoms and the minimap
+;; field mirrors into :show-map. The settings ride on the world under
+;; :settings / :settings-cursor so frame-stats can paint them and they
+;; carry across level cuts; resuming (P) persists to disk.
 ;; =====================================================================
 
 (defn- apply-audio-settings!
@@ -133,22 +135,8 @@
   [(cond (:nav-up edges)   -1 (:nav-down edges)  1 :else 0)
    (cond (:nav-left edges) -1 (:nav-right edges) 1 :else 0)])
 
-(defn- open-settings
-  "Enter the options overlay and freeze the frame. The cursor keeps its
-   previous position (build-world seeds it at 0) so re-opening lands on
-   the field the player last touched."
-  [world]
-  (assoc world :settings? true :paused true))
-
-(defn- close-settings!
-  "Leave the overlay, persist the settings to disk, and unfreeze. Audio
-   was already pushed live on each adjustment, so close only saves."
-  [world]
-  (save-settings! (:settings world))
-  (assoc world :settings? false :paused false))
-
 (defn- step-settings!
-  "Apply one frame of overlay navigation via core/settings.navigate:
+  "Apply one frame of pause-page navigation via core/settings.navigate:
    up/down move the cursor, left/right adjust the selected field. Volume
    edits take effect immediately; the minimap field mirrors into
    :show-map so the change is visible the moment it's made."
@@ -161,6 +149,19 @@
            :settings-cursor cursor
            :settings        settings
            :show-map        (boolean (:minimap settings)))))
+
+(defn resumed-pause?
+  "True when the pause/settings page just closed this frame (was paused,
+   now isn't). The cue to persist the player's settings to disk."
+  [before after]
+  (and (:paused before) (not (:paused after))))
+
+(defn- persist-settings!
+  "Write the world's current settings out. Called whenever the player
+   leaves the pause/settings page (resume or quit) so edits are never
+   lost; volumes were already applied live."
+  [world]
+  (save-settings! (:settings world)))
 
 (defn- boss-down?
   "True on a boss-locked level once the cyberdemon is dead — combat
@@ -679,9 +680,9 @@
    :enemy                (or (:enemy world) :imp)
    :save-flash-secs      (or (:save-flash-secs world) 0.0)
    :save-flash-msg       (:save-flash-msg world)
-   ;; Settings overlay (issue #107): the render layer paints the box
-   ;; from these when :settings? is set.
-   :settings?            (boolean (:settings? world))
+   ;; Settings page (issue #107): the pause overlay paints the box from
+   ;; these. The page IS the pause screen, so the render layer keys off
+   ;; :paused; the cursor + values ride along here.
    :settings             (:settings world)
    :settings-cursor      (or (:settings-cursor world) 0)})
 
@@ -835,39 +836,32 @@
               keys      (or (:keys frame) "")
               ms        (or (:ms frame) live-ms)
               now-keys  (key-states keys)
-              edges     (rising-edges now-keys prev-keys)
-              ;; ESC closes the settings overlay. rising-edges only folds
-              ;; ESC into :toggle-help (the h-aliased info panel), so the
-              ;; overlay needs its own naked-ESC edge to close on ESC
-              ;; without also toggling help.
-              esc-edge  (and (:esc now-keys) (not (:esc prev-keys)))
-              open?     (boolean (:settings? world))]
+              edges     (rising-edges now-keys prev-keys)]
           (cond
-            (:end? frame)                     :quit
-            (str/contains? keys "q")          :quit
+            ;; Quitting straight from the pause/settings page still
+            ;; persists edits (q never hits the resume transition).
+            (or (:end? frame) (str/contains? keys "q"))
+            (do (when (:paused world) (persist-settings! world))
+                :quit)
 
-            ;; --- Settings overlay: open / navigate / close. While it's
-            ;; up the game is frozen (no tick), so movement + AI hold.
-            (or open? (:open-settings edges))
-            (let [world' (cond
-                           (and open? (or (:open-settings edges) esc-edge))
-                           (close-settings! world)
-
-                           (not open?)
-                           (open-settings world)
-
-                           :else
-                           (step-settings! world edges))]
-              (recur world' now ms (fps-from-ms ms) now-keys [rows cols]))
-
-            ;; --- Normal gameplay frame.
             :else
-            (let [ticked (tick-world world keys (php// ms 1000.0) edges)
+            (let [ticked0 (tick-world world keys (php// ms 1000.0) edges)
+                  ;; Pause IS the settings page: while paused (and not
+                  ;; in the H info panel), the arrows tune the options
+                  ;; shown in the overlay. tick-world already froze the
+                  ;; gameplay step, so this only edits settings.
+                  ticked  (if (and (:paused ticked0) (not (:help? ticked0)))
+                            (step-settings! ticked0 edges)
+                            ticked0)
                   ;; F5 / F9 quick-save / load run here (file IO),
                   ;; outside the pure tick. Load swaps the whole world;
                   ;; both stamp a brief HUD flash so the player sees it
                   ;; took.
-                  world' (handle-save-load ticked edges)]
+                  world'  (handle-save-load ticked edges)]
+              ;; Resuming out of the pause/settings page persists the
+              ;; player's choices (volumes were already applied live).
+              (when (resumed-pause? world world')
+                (persist-settings! world'))
               (when (and (:heartbeat-tick? world') (:sound-on world'))
                 (play-sfx! :heartbeat 0.35))
               (when (and (:silence-tick? world') (:sound-on world'))
@@ -1003,7 +997,7 @@
           w1a    (if armory? (assoc w1 :armory? true) w1)
           w1b    (if full-map? (assoc w1a :full-map? true) w1a)
           w2     (assoc w1b :show-map show-map? :sound-on sound-on?
-                        :settings settings :settings? false :settings-cursor 0)
+                        :settings settings :settings-cursor 0)
           w3     (if (nil? weapon)
                    w2
                    (let [stash  (or wstate (:weapon-state w2))
@@ -1068,7 +1062,7 @@
 (defn- settings-screen!
   "Interactive settings sub-loop reached from the start menu (s).
    Renders the standalone options screen and edits `settings0` until
-   the player presses o/esc to go back. Volume edits apply live; the
+   the player presses ESC to go back. Volume edits apply live; the
    final map is persisted and returned so the caller starts the run
    with the player's choices."
   [settings0]
@@ -1083,11 +1077,11 @@
       (let [keys     (drain-keys)
             now      (key-states keys)
             edges    (rising-edges now prev)
-            ;; ESC closes the page directly. We can't use the :toggle-help
-            ;; edge here: that aliases h+esc for the in-game info panel,
-            ;; which has nothing to do with the options screen.
+            ;; Naked-ESC edge: rising-edges only folds ESC into
+            ;; :toggle-help (the in-game info panel), which has nothing
+            ;; to do with this pre-game screen, so derive it here.
             esc-edge (and (:esc now) (not (:esc prev)))]
-        (if (or (:open-settings edges) esc-edge)
+        (if esc-edge
           ;; Volumes were applied live on each adjust; close just saves.
           (save-settings! settings)
           (let [[cursor-dir value-dir]              (nav-dirs edges)

@@ -21,12 +21,14 @@ Volumes map through `core/settings`: `music-volume` = `(pct / 100) * music-ceili
 
 ## Reaching the page
 
-- Start menu: press `s` to open the settings screen, edit, then `o` / `esc` to return.
-- In game: press `o` to open the overlay. The game freezes (like the H info menu) while it is up.
+The settings page IS the pause screen, so there is only one overlay layer to learn (the `h` info panel stays a separate read-only reference).
 
-Navigation: `up` / `down` move the cursor, `left` / `right` adjust the selected field, `o` / `esc` close. Volume + minimap edits take effect immediately; difficulty applies from the next run (it is baked per level at build time). Closing persists the file.
+- In game: press `p` (pause). The game freezes and the options appear; `p` resumes.
+- Start menu: press `s` to open the settings screen, edit, then `esc` to return.
 
-The settings map rides on the world (`:settings` / `:settings-cursor` / `:settings?`) so `frame-stats` can paint it and edits carry across level cuts.
+Navigation: `up` / `down` move the cursor, `left` / `right` adjust the selected field. Volume + minimap edits take effect immediately; difficulty applies from the next run (it is baked per level at build time). Resuming (`p`, or `esc` on the start-menu screen) persists the file.
+
+The settings map rides on the world (`:settings` / `:settings-cursor`) so `frame-stats` can paint it and edits carry across level cuts. The render layer keys the overlay off `:paused`.
 
 ## Platform note
 

@@ -11,7 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Settings page (#107). Configurable bg-music + sfx volume, default minimap, default difficulty. Reach it from the start menu (`s`) or in-game (`o`, freezes like pause); arrows adjust, `o`/`esc` close. Persists to `$HOME/.phel-doom-settings.json`; volume rides `afplay -v` (macOS).
+- Settings page (#107). Configurable bg-music + sfx volume, default minimap, default difficulty. It IS the pause screen: press `p` in-game (or `s` on the start menu); arrows adjust, `p` resumes (on the start menu, `esc` goes back). Persists to `$HOME/.phel-doom-settings.json`; volume rides `afplay -v` (macOS).
 - Half-heart health + per-type hit damage. 10 HP pool drawn as 5 hearts (`♥`/`◖`/`·`). Hits cost by attacker: light melee 1 (half heart), heavy + casters 2, cyber boss 3. Armor absorbs a whole hit; heart pickup heals a full heart; soulsphere over-caps to 14.
 - Deterministic demo record / replay (#64). `--record=FILE` / `--demo=FILE`, on a new seeded Park-Miller RNG (`core/rng`) replacing the unseedable `random_int` / `mt_rand`.
 - Mid-level quick-save / load (#63). `F5` / `F9`, whole world to a versioned tagged-JSON slot (1-9), fog re-reveals on load.

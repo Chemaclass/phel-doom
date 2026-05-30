@@ -49,8 +49,19 @@
 
 (def state
   "Memoised session state: the resolved player binary and per-event
-   sound files for this host. nil entries mean 'not yet resolved'."
-  (atom {:player nil :sounds nil :probed false}))
+   sound files for this host. nil entries mean 'not yet resolved'.
+   `:sfx-scalar` (default 1.0) is a global volume multiplier the
+   settings page drives via set-sfx-scalar!; every play-sfx! event
+   volume is scaled by it."
+  (atom {:player nil :sounds nil :probed false :sfx-scalar 1.0}))
+
+(defn set-sfx-scalar!
+  "Set the global sfx volume multiplier (clamped to [0.0, 1.0]). Called
+   from the settings page so SFX volume changes take effect on the next
+   sound. 0.0 effectively mutes per-event sfx without touching the N
+   sound toggle."
+  [^float scalar]
+  (swap! state assoc :sfx-scalar (php/max 0.0 (php/min 1.0 scalar))))
 
 (defn- which
   "Return the path of `bin` if it's on PATH, else nil."
@@ -152,10 +163,16 @@
                               (ensure-probed!)
                               (let [s    @state
                                     p    (:player s)
-                                    path (and (:sounds s) (get (:sounds s) evt))]
+                                    path (and (:sounds s) (get (:sounds s) evt))
+                                    vol  (php/* volume (or (:sfx-scalar s) 1.0))]
                                 (cond
+                                  ;; SFX volume turned to 0 in settings:
+                                  ;; stay fully silent, no bell fallback.
+                                  (php/<= vol 0.0)
+                                  nil
+
                                   (and p path (php/file_exists path))
-                                  (play-file-async! p path volume)
+                                  (play-file-async! p path vol)
 
                                   (= evt :heartbeat)
                                   nil

@@ -1,0 +1,134 @@
+(ns phel-doom.core.settings)
+
+;; ---------------------------------------------------------------------
+;; Settings model (pure).
+;;
+;; The player-facing options page: bg-music volume, sfx volume, the
+;; default minimap state, and the default difficulty. Volumes are
+;; stored as 0..100 percentages (step 10) so the slider math is integer
+;; and the persisted JSON is human-readable.
+;;
+;; This namespace owns the DATA: defaults, coercion of loaded values,
+;; cursor movement, value adjustment, and the percent -> playback-scalar
+;; mapping. It performs no IO: io/settings loads + saves the map, and
+;; commands/play applies the resulting volumes to io/sound + io/ambient.
+;; ---------------------------------------------------------------------
+
+(def default-settings
+  "Out-of-the-box options. Music sits under the sfx by default (the
+   drone is a bed, not a lead). Minimap starts hidden; difficulty
+   normal."
+  {:music 60 :sfx 90 :minimap false :difficulty :normal})
+
+(def difficulty-choices
+  "Difficulty keywords the enum field cycles through, easiest first.
+   Mirrors the --difficulty CLI option."
+  [:easy :normal :hard :nightmare])
+
+(def pct-step
+  "Percent a volume field moves per left/right press."
+  10)
+
+(def music-ceiling
+  "afplay -v value the drone plays at when Music is 100%. Capped below
+   1.0 so a maxed bed still never masks footsteps / shots. 60% (the
+   default) maps to 0.30, matching the old hardcoded ambient volume."
+  0.5)
+
+(def page-fields
+  "Ordered field descriptors driving both navigation and rendering.
+   `:kind` selects the adjust + paint behaviour (:pct slider, :bool
+   toggle, :enum cycle)."
+  [{:key :music      :label "Music"      :kind :pct}
+   {:key :sfx        :label "SFX"        :kind :pct}
+   {:key :minimap    :label "Minimap"    :kind :bool}
+   {:key :difficulty :label "Difficulty" :kind :enum}])
+
+(defn field-count
+  "How many rows the settings page has."
+  []
+  (count page-fields))
+
+(defn field-at
+  "Field descriptor at cursor index `idx`, or nil when out of range."
+  [idx]
+  (get page-fields idx))
+
+(defn- clamp-pct [n]
+  (php/max 0 (php/min 100 (php/intval n))))
+
+(defn- index-of [v coll]
+  (loop [i 0 cs coll]
+    (cond
+      (empty? cs)      -1
+      (= (first cs) v) i
+      :else            (recur (php/+ i 1) (rest cs)))))
+
+(defn- valid-difficulty? [d]
+  (php/>= (index-of d difficulty-choices) 0))
+
+(defn coerce-settings
+  "Normalise a loaded (or partial) settings map against the defaults:
+   clamp volumes into 0..100, force minimap to a bool, and fall back to
+   :normal for an unrecognised difficulty. Always returns a complete,
+   valid map, so callers downstream never have to re-validate."
+  [raw]
+  (let [m (or raw {})
+        d (get m :difficulty (:difficulty default-settings))]
+    {:music      (clamp-pct (get m :music (:music default-settings)))
+     :sfx        (clamp-pct (get m :sfx (:sfx default-settings)))
+     :minimap    (boolean (get m :minimap (:minimap default-settings)))
+     :difficulty (if (valid-difficulty? d) d :normal)}))
+
+(defn move-cursor
+  "Step the page cursor by `dir` (+1 down / -1 up), wrapping at both
+   ends so the selection never falls off the page."
+  [idx dir]
+  (let [n (field-count)]
+    (php/% (php/+ (php/+ idx dir) n) n)))
+
+(defn- cycle-difficulty [cur dir]
+  (let [n  (count difficulty-choices)
+        i  (index-of cur difficulty-choices)
+        i' (if (php/< i 0) 0 i)]
+    (get difficulty-choices (php/% (php/+ (php/+ i' dir) n) n))))
+
+(defn- field-kind [field-key]
+  (loop [fs page-fields]
+    (cond
+      (empty? fs)                     nil
+      (= (:key (first fs)) field-key) (:kind (first fs))
+      :else                           (recur (rest fs)))))
+
+(defn adjust
+  "Adjust `field-key` on `settings` by `dir` (+1 right / -1 left):
+   volumes move by `pct-step` (clamped), minimap toggles (dir ignored),
+   difficulty cycles. Returns the new settings map; an unknown field
+   leaves it untouched."
+  [settings field-key dir]
+  (let [kind (field-kind field-key)]
+    (cond
+      (= kind :pct)
+      (update settings field-key
+              (fn [v] (clamp-pct (php/+ (php/intval v) (php/* dir pct-step)))))
+
+      (= kind :bool)
+      (update settings field-key not)
+
+      (= kind :enum)
+      (update settings field-key (fn [v] (cycle-difficulty v dir)))
+
+      :else          settings)))
+
+(defn music-volume
+  "afplay -v playback value [0.0, music-ceiling] for the current Music
+   percent. 0% returns 0.0 (the ambient layer treats that as 'stop the
+   drone')."
+  [settings]
+  (php/* (php// (php/intval (:music settings)) 100.0) music-ceiling))
+
+(defn sfx-scalar
+  "Per-event playback scalar [0.0, 1.0] for the current SFX percent.
+   io/sound multiplies each effect's volume by this."
+  [settings]
+  (php// (php/intval (:sfx settings)) 100.0))

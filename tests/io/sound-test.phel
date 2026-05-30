@@ -1,6 +1,6 @@
 (ns phel-doom-tests.io.sound-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.io.sound :refer [play-sfx!]))
+  (:require phel-doom.io.sound :refer [play-sfx! set-sfx-scalar! state]))
 
 ;; play-sfx! returns nil under PHEL_DOOM_SILENT=1 — that's the
 ;; contract `composer test` relies on so the test suite never shells
@@ -35,3 +35,16 @@
 
 (deftest test-bfg-fire-event-is-silent-under-test-env
   (is (= nil (play-sfx! :shoot-bfg))))
+
+(deftest test-set-sfx-scalar-stores-clamped-multiplier
+  ;; The settings page drives this; play-sfx! multiplies each event's
+  ;; volume by it. Clamp keeps the afplay -v argument well-formed.
+  (set-sfx-scalar! 0.5)
+  (is (= 0.5 (:sfx-scalar @state)))
+  (set-sfx-scalar! 9.0)
+  (is (= 1.0 (:sfx-scalar @state)) "clamps above 1.0")
+  (set-sfx-scalar! -3.0)
+  (is (= 0.0 (:sfx-scalar @state)) "clamps below 0.0")
+  ;; Restore the default so other tests / the live game are unaffected.
+  (set-sfx-scalar! 1.0)
+  (is (= 1.0 (:sfx-scalar @state))))

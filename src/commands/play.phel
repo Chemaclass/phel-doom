@@ -15,8 +15,10 @@
   (:require phel-doom.core.enemy    :refer [advance tick-scare rear-attacker?])
   (:require phel-doom.core.projectile :refer [tick-projectiles])
   (:require phel-doom.core.weapons  :refer [effective-reserve-cap give-weapon switch-weapon weapon-spec weapon-order weapons])
-  (:require phel-doom.io.sound    :refer [play-sfx! mute-for!])
-  (:require phel-doom.io.ambient  :refer [start-ambient! stop-ambient! sync-ambient!])
+  (:require phel-doom.io.sound    :refer [play-sfx! mute-for! set-sfx-scalar!])
+  (:require phel-doom.io.ambient  :refer [start-ambient! stop-ambient! sync-ambient! set-music-volume!])
+  (:require phel-doom.core.settings :refer [adjust move-cursor field-at music-volume sfx-scalar])
+  (:require phel-doom.io.settings :refer [load-settings save-settings!])
   (:require phel-doom.io.savegame :refer [save-game! load-game])
   (:require phel-doom.io.demo     :as demo)
   (:require phel-doom.core.rng    :as rng)
@@ -25,7 +27,7 @@
   (:require phel-doom.io.scores   :refer [update-scores!])
   (:require phel-doom.io.render   :refer [render! clear-screen
                                           read-perf-snapshot
-                                          render-start-menu
+                                          render-start-menu render-settings!
                                           render-death-screen render-victory-screen])
   (:require phel-doom.io.input    :refer [init-input! restore! drain-keys]))
 
@@ -106,6 +108,56 @@
                           (assoc :paused (not (:help? after-debug))))
                       after-debug)]
     (if (:about-face edges) (about-face after-help) after-help)))
+
+;; =====================================================================
+;; § Settings overlay (issue #107)
+;;
+;; The options page freezes the game (like the H info menu) and routes
+;; the arrow edges to cursor + value navigation. Volume changes apply
+;; live through the io/sound + io/ambient atoms; the minimap default
+;; drives :show-map immediately. Settings live on the world under
+;; :settings / :settings-cursor / :settings? so frame-stats can paint
+;; them and they carry across level cuts; close persists to disk.
+;; =====================================================================
+
+(defn- apply-audio-settings!
+  "Push the current settings' volumes into the sfx + ambient layers."
+  [settings]
+  (set-sfx-scalar!   (sfx-scalar settings))
+  (set-music-volume! (music-volume settings)))
+
+(defn- open-settings
+  "Enter the options overlay: freeze the frame and reset the cursor."
+  [world]
+  (assoc world :settings? true :paused true :settings-cursor 0))
+
+(defn- close-settings!
+  "Leave the overlay, persist the settings to disk, and unfreeze."
+  [world]
+  (save-settings! (:settings world))
+  (assoc world :settings? false :paused false))
+
+(defn- step-settings!
+  "Apply one frame of overlay navigation: up/down move the cursor,
+   left/right adjust the selected field. Volume edits take effect
+   immediately; the minimap field mirrors into :show-map so the change
+   is visible the moment it's made."
+  [world edges]
+  (let [cur       (or (:settings-cursor world) 0)
+        cur'      (cond
+                    (:nav-up edges)   (move-cursor cur -1)
+                    (:nav-down edges) (move-cursor cur 1)
+                    :else             cur)
+        fkey      (:key (field-at cur'))
+        adjust?   (or (:nav-left edges) (:nav-right edges))
+        dir       (if (:nav-right edges) 1 -1)
+        settings  (:settings world)
+        settings' (if adjust? (adjust settings fkey dir) settings)]
+    (when adjust? (apply-audio-settings! settings'))
+    (assoc world
+           :settings-cursor cur'
+           :settings        settings'
+           :show-map        (boolean (:minimap settings')))))
 
 (defn- boss-down?
   "True on a boss-locked level once the cyberdemon is dead — combat
@@ -623,7 +675,12 @@
    ;; can branch.
    :enemy                (or (:enemy world) :imp)
    :save-flash-secs      (or (:save-flash-secs world) 0.0)
-   :save-flash-msg       (:save-flash-msg world)})
+   :save-flash-msg       (:save-flash-msg world)
+   ;; Settings overlay (issue #107): the render layer paints the box
+   ;; from these when :settings? is set.
+   :settings?            (boolean (:settings? world))
+   :settings             (:settings world)
+   :settings-cursor      (or (:settings-cursor world) 0)})
 
 (defn- ms-since
   "Whole-millisecond delta between two microtime samples. Args tagged
@@ -681,6 +738,9 @@
      ;; reset every level cut.
      :show-map      (boolean (:show-map world))
      :sound-on      (boolean (:sound-on world))
+     ;; Settings edited mid-run carry to the next level so the options
+     ;; page keeps showing the player's current choices.
+     :settings      (:settings world)
      :survived-s    (php/intval (php/- now t-start))}))
 
 (defn- play-door-sfx [world]
@@ -773,29 +833,52 @@
               ms        (or (:ms frame) live-ms)
               now-keys  (key-states keys)
               edges     (rising-edges now-keys prev-keys)
-              ticked    (tick-world world keys (php// ms 1000.0) edges)
-              ;; F5 / F9 quick-save / load run here (file IO), outside
-              ;; the pure tick. Load swaps the whole world; both stamp a
-              ;; brief HUD flash so the player sees it took.
-              world'    (handle-save-load ticked edges)]
-          (when (and (:heartbeat-tick? world') (:sound-on world'))
-            (play-sfx! :heartbeat 0.35))
-          (when (and (:silence-tick? world') (:sound-on world'))
-            (mute-for! 0.4))
-          ;; N toggled sound this frame: start / stop the ambient drone
-          ;; to match. Comparing the flag (not the edge) also catches
-          ;; any other path that flips :sound-on.
-          (when (php/!== (:sound-on world) (:sound-on world'))
-            (sync-ambient! (:sound-on world')))
+              ;; ESC has its own edge here (rising-edges folds it into
+              ;; :toggle-help); the settings overlay uses it to close.
+              esc-edge  (and (:esc now-keys) (not (:esc prev-keys)))
+              open?     (boolean (:settings? world))]
           (cond
-            (:end? frame)              :quit
-            (str/contains? keys "q")   :quit
-            (php/<= (:lives world') 0) (result-game-over world' t-start now)
-            (on-door? world')          (door-result      world' t-start now)
-            :else                      (recur world' now ms
-                                              (fps-from-ms ms)
-                                              now-keys
-                                              [rows cols])))))))
+            (:end? frame)                     :quit
+            (str/contains? keys "q")          :quit
+
+            ;; --- Settings overlay: open / navigate / close. While it's
+            ;; up the game is frozen (no tick), so movement + AI hold.
+            (or open? (:open-settings edges))
+            (let [world' (cond
+                           (and open? (or (:open-settings edges) esc-edge))
+                           (close-settings! world)
+
+                           (not open?)
+                           (open-settings world)
+
+                           :else
+                           (step-settings! world edges))]
+              (recur world' now ms (fps-from-ms ms) now-keys [rows cols]))
+
+            ;; --- Normal gameplay frame.
+            :else
+            (let [ticked (tick-world world keys (php// ms 1000.0) edges)
+                  ;; F5 / F9 quick-save / load run here (file IO),
+                  ;; outside the pure tick. Load swaps the whole world;
+                  ;; both stamp a brief HUD flash so the player sees it
+                  ;; took.
+                  world' (handle-save-load ticked edges)]
+              (when (and (:heartbeat-tick? world') (:sound-on world'))
+                (play-sfx! :heartbeat 0.35))
+              (when (and (:silence-tick? world') (:sound-on world'))
+                (mute-for! 0.4))
+              ;; N toggled sound this frame: start / stop the ambient
+              ;; drone to match. Comparing the flag (not the edge) also
+              ;; catches any other path that flips :sound-on.
+              (when (php/!== (:sound-on world) (:sound-on world'))
+                (sync-ambient! (:sound-on world')))
+              (cond
+                (php/<= (:lives world') 0) (result-game-over world' t-start now)
+                (on-door? world')          (door-result      world' t-start now)
+                :else                      (recur world' now ms
+                                                  (fps-from-ms ms)
+                                                  now-keys
+                                                  [rows cols])))))))))
 
 ;; =====================================================================
 ;; § End screens (death / victory)
@@ -883,7 +966,7 @@
    (from --level / -l) sets where the run begins — 1..num-levels,
    clamped. Death + retry reset to L1 (the start-level only seeds
    the initial loop entry)."
-  [diff god? armory? full-map? start-level init-seed]
+  [diff god? armory? full-map? start-level init-seed init-settings]
   (loop [level       (php/max 1 (php/min num-levels (or start-level 1)))
          lives       max-lives
          carry-kills 0
@@ -900,8 +983,12 @@
          ;; default (pistol).
          weapon      nil
          wstate      nil
-         show-map?   false
-         sound-on?   true]
+         ;; Minimap starts in the settings-page default; sound starts on.
+         show-map?   (boolean (:minimap init-settings))
+         sound-on?   true
+         ;; Live settings map carried across levels so the options page
+         ;; reflects mid-run edits; restarts reset to the loaded value.
+         settings    init-settings]
     (rng/seed! seed)
     (let [w0     (build-world level lives bp-level diff owned)
           ;; God mode + carried user toggles + weapon ammo are
@@ -910,7 +997,8 @@
           w1     (if god? (assoc w0 :god? true) w0)
           w1a    (if armory? (assoc w1 :armory? true) w1)
           w1b    (if full-map? (assoc w1a :full-map? true) w1a)
-          w2     (assoc w1b :show-map show-map? :sound-on sound-on?)
+          w2     (assoc w1b :show-map show-map? :sound-on sound-on?
+                        :settings settings :settings? false :settings-cursor 0)
           w3     (if (nil? weapon)
                    w2
                    (let [stash  (or wstate (:weapon-state w2))
@@ -940,14 +1028,15 @@
                  (or (:weapon result) :pistol)
                  (or (:weapon-state result) {})
                  (boolean (:show-map result))
-                 (boolean (:sound-on result))))
+                 (boolean (:sound-on result))
+                 (or (:settings result) init-settings)))
 
         (and (map? result) (:victory result))
         (let [[k t]           (carry-on carry-kills carry-time result)
               [kind new-seed] (handle-end victory-loop k t result seed true)]
           (cond
-            (= kind :fresh) (recur 1 max-lives 0 0 (rng/fresh-seed) 0 #{:pistol} nil nil true true)
-            (= kind :same)  (recur 1 max-lives 0 0 new-seed 0 #{:pistol} nil nil true true)
+            (= kind :fresh) (recur 1 max-lives 0 0 (rng/fresh-seed) 0 #{:pistol} nil nil true true init-settings)
+            (= kind :same)  (recur 1 max-lives 0 0 new-seed 0 #{:pistol} nil nil true true init-settings)
             :else           nil))
 
         (and (map? result) (:game-over result))
@@ -956,10 +1045,10 @@
               died-on         (or (:level result) 1)]
           (cond
             ;; r: try the level you died on again with a fresh map.
-            (= kind :fresh) (recur died-on max-lives 0 0 (rng/fresh-seed) 0 #{:pistol} nil nil true true)
+            (= kind :fresh) (recur died-on max-lives 0 0 (rng/fresh-seed) 0 #{:pistol} nil nil true true init-settings)
             ;; R: replay the exact level you died on (same seed + same
             ;; level number reproduces identical geometry + enemies).
-            (= kind :same)  (recur died-on max-lives 0 0 new-seed 0 #{:pistol} nil nil true true)
+            (= kind :same)  (recur died-on max-lives 0 0 new-seed 0 #{:pistol} nil nil true true init-settings)
             :else           nil))
 
         :else
@@ -971,24 +1060,80 @@
   (println "  written in \e[1mPhel Lang\e[0m  https://phel-lang.org/")
   (println))
 
+(defn- settings-screen!
+  "Interactive settings sub-loop reached from the start menu (s).
+   Renders the standalone options screen and edits `settings0` until
+   the player presses o/esc to go back. Volume edits apply live; the
+   final map is persisted and returned so the caller starts the run
+   with the player's choices."
+  [settings0]
+  (loop [settings settings0
+         cursor   0
+         prev     initial-key-snapshot
+         dims     [0 0]]
+    (let [[rows cols] (term-size)]
+      (redraw-if-resized dims rows cols)
+      (render-settings! cols rows settings cursor)
+      (php/usleep menu-frame-us)
+      (let [keys     (drain-keys)
+            now      (key-states keys)
+            edges    (rising-edges now prev)
+            esc-edge (and (:esc now) (not (:esc prev)))]
+        (if (or (:open-settings edges) esc-edge)
+          (do (save-settings! settings)
+              (apply-audio-settings! settings)
+              settings)
+          (let [cursor'   (cond
+                            (:nav-up edges)   (move-cursor cursor -1)
+                            (:nav-down edges) (move-cursor cursor 1)
+                            :else             cursor)
+                fkey      (:key (field-at cursor'))
+                adjust?   (or (:nav-left edges) (:nav-right edges))
+                dir       (if (:nav-right edges) 1 -1)
+                settings' (if adjust? (adjust settings fkey dir) settings)]
+            (when adjust? (apply-audio-settings! settings'))
+            (recur settings' cursor' now [rows cols])))))))
+
 (defn- show-start-menu!
-  "Block until the user presses any key on the start screen. Re-draws
-   each frame so terminal resizes don't leave a stale half-painted box."
-  []
-  (loop [dims [0 0]]
+  "Block on the start screen until the player starts or quits. Re-draws
+   each frame so terminal resizes don't leave a stale half-painted box.
+   `s` opens the settings screen (returning here afterwards); `q` quits;
+   any other key starts the run. Returns :quit, or the (possibly
+   edited) settings map to start with."
+  [settings0]
+  (loop [settings settings0
+         dims     [0 0]]
     (let [[rows cols] (term-size)]
       (redraw-if-resized dims rows cols)
       (render-start-menu cols rows)
       (php/usleep menu-frame-us)
       (let [keys (drain-keys)]
-        (if (= keys "")
-          (recur [rows cols])
-          (when (str/contains? keys "q")
-            :quit))))))
+        (cond
+          (= keys "")              (recur settings [rows cols])
+          (str/contains? keys "q") :quit
+          ;; 's' opens settings, then drops back to the menu so the
+          ;; player still has to press a key to start.
+          (str/contains? keys "s") (recur (settings-screen! settings) [rows cols])
+          :else                    settings)))))
+
+(def difficulty-keywords
+  "Valid --difficulty values; an explicit CLI flag must name one of
+   these to override the settings-page default."
+  #{:easy :normal :hard :nightmare})
+
+(defn- resolve-difficulty
+  "Pick the run difficulty: an explicit, valid --difficulty CLI value
+   wins; otherwise fall back to the settings-page default. `cli-raw` is
+   the raw option string (\"\" when unset)."
+  [cli-raw settings]
+  (let [d (and cli-raw (not (= cli-raw "")) (keyword cli-raw))]
+    (if (contains? difficulty-keywords d)
+      d
+      (:difficulty settings))))
 
 (defn- run-play [ctx]
   (init-input!)
-  (let [diff        (cli/opt ctx "difficulty")
+  (let [diff-raw    (cli/opt ctx "difficulty")
         god?        (cli/opt ctx "god")
         armory?     (cli/opt ctx "armory")
         full-map?   (cli/opt ctx "full-map")
@@ -1008,21 +1153,31 @@
                       (demo/read-demo demo-path))
         ;; Replay reproduces the recorded seed; record / normal start
         ;; from a fresh seed (recorded so the run can be replayed).
-        init-seed   (if replay (:seed replay) (rng/fresh-seed))]
+        init-seed   (if replay (:seed replay) (rng/fresh-seed))
+        ;; Persisted settings (volumes + minimap / difficulty defaults).
+        ;; Apply the volumes up front so the start menu + ambient drone
+        ;; honour them before the first frame.
+        settings0   (load-settings)]
+    (apply-audio-settings! settings0)
     (cond
       replay  (demo/start-replay! (:seed replay) (:frames replay))
       record? (demo/start-record! init-seed)
       :else   (demo/reset-off!))
-    (if (and (nil? replay) (= (show-start-menu!) :quit))
-      (do (restore!)
+    ;; Replay skips the menu (and its settings edits); a normal run goes
+    ;; through the start menu, which may edit + persist the settings.
+    (let [menu (if replay settings0 (show-start-menu! settings0))]
+      (if (= menu :quit)
+        (do (restore!)
+            (clear-screen)
+            0)
+        (let [settings menu
+              diff     (resolve-difficulty diff-raw settings)]
           (clear-screen)
-          0)
-      (do (clear-screen)
           ;; Ambient drone runs for the whole gameplay session (across
           ;; levels + end screens). N-toggle starts/stops it mid-run;
           ;; teardown always stops it so no loop process is orphaned.
           (start-ambient!)
-          (run-levels diff god? armory? full-map? lv init-seed)
+          (run-levels diff god? armory? full-map? lv init-seed settings)
           (stop-ambient!)
           (when record? (demo/save-recording! record-path))
           (demo/reset-off!)
@@ -1030,7 +1185,7 @@
           (clear-screen)
           (cli/success ctx "Thanks for playing.")
           (print-credits)
-          0))))
+          0)))))
 
 (def play-command
   {:name "play"
@@ -1040,9 +1195,8 @@
    :opts [{:name    "difficulty"
            :short   "d"
            :mode    :optional
-           :doc     "easy | normal | hard | nightmare (default normal)"
-           :default "normal"
-           :coerce  :keyword}
+           :doc     "easy | normal | hard | nightmare (overrides the settings-page default)"
+           :default ""}
           {:name "god"
            :short "g"
            :mode  :none

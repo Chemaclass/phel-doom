@@ -18,6 +18,13 @@ Every shot plays the weapon's `:fire-sfx` unconditionally (hit or miss). Kill cu
 
 Each call shells out backgrounded (`&`). N key toggles `:sound-on`; mute is instant, in-flight sfx finish. `PHEL_DOOM_SILENT=1` env var (set by `composer test`) gates all output (deterministic suite).
 
+## Volume
+
+The settings page (see `docs/settings.md`) drives two levels via `afplay -v` (macOS only; other players ignore `-v`):
+
+- SFX: `set-sfx-scalar!` stores a 0..1 multiplier on the sound state atom; `play-sfx!` scales every event volume by it. 0 mutes sfx with no bell fallback.
+- Music: `set-music-volume!` updates the drone `-v` and restarts the loop so the change is immediate. 0 stops the bed.
+
 ## Ambient drone
 
 Low pulsing background loop for dread (no shipped asset).

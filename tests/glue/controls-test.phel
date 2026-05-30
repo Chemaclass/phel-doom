@@ -301,3 +301,59 @@
   (let [w' (refresh-from-keys blank-world "w")]
     (is (php/> (:fwd    (:moves w')) 0))
     (is (= 0 (:sprint (:moves w'))))))
+
+;; ---------------------------------------------------------------------
+;; Settings page (issue #107): the 'o' key opens the options overlay
+;; and the arrow keys drive cursor + slider navigation as rising-edge
+;; one-shots. Arrow detection covers the legacy (`\e[A`), modified
+;; (`\e[1;2A`), and kitty-enhanced (`\e[1;m:eA`) forms.
+;; ---------------------------------------------------------------------
+
+(deftest test-key-states-detects-o
+  (is (= true  (:o (key-states "o"))))
+  (is (= false (:o (key-states ""))))
+  ;; F3's SS3 sequence carries an uppercase 'O' that must NOT match.
+  (is (= false (:o (key-states "\eOR")))))
+
+(deftest test-key-states-detects-arrows
+  (is (= true (:up    (key-states "\e[A"))))
+  (is (= true (:down  (key-states "\e[B"))))
+  (is (= true (:right (key-states "\e[C"))))
+  (is (= true (:left  (key-states "\e[D")))))
+
+(deftest test-key-states-detects-modified-and-kitty-arrows
+  ;; SHIFT+up (`\e[1;2A`) and a kitty-enhanced up press (`\e[1;1:1A`).
+  (is (= true (:up (key-states "\e[1;2A"))))
+  (is (= true (:up (key-states "\e[1;1:1A")))))
+
+(deftest test-key-states-arrows-are-independent
+  (let [s (key-states "\e[A")]
+    (is (= true  (:up s)))
+    (is (= false (:down s)))
+    (is (= false (:left s)))
+    (is (= false (:right s)))))
+
+(deftest test-rising-edges-open-settings-fires-on-fresh-o
+  (let [edges (rising-edges (assoc initial-key-snapshot :o true)
+                            initial-key-snapshot)]
+    (is (= true (:open-settings edges))))
+  ;; Held 'o' must not re-open.
+  (let [held (assoc initial-key-snapshot :o true)]
+    (is (= false (:open-settings (rising-edges held held))))))
+
+(deftest test-rising-edges-nav-keys-fire-once
+  (is (= true (:nav-up    (rising-edges (assoc initial-key-snapshot :up true)    initial-key-snapshot))))
+  (is (= true (:nav-down  (rising-edges (assoc initial-key-snapshot :down true)  initial-key-snapshot))))
+  (is (= true (:nav-left  (rising-edges (assoc initial-key-snapshot :left true)  initial-key-snapshot))))
+  (is (= true (:nav-right (rising-edges (assoc initial-key-snapshot :right true) initial-key-snapshot)))))
+
+(deftest test-rising-edges-nav-does-not-refire-while-held
+  (let [held (assoc initial-key-snapshot :right true)]
+    (is (= false (:nav-right (rising-edges held held))))))
+
+(deftest test-initial-key-snapshot-covers-settings-keys
+  (is (= false (:o     initial-key-snapshot)))
+  (is (= false (:up    initial-key-snapshot)))
+  (is (= false (:down  initial-key-snapshot)))
+  (is (= false (:left  initial-key-snapshot)))
+  (is (= false (:right initial-key-snapshot))))

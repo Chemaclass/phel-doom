@@ -3,7 +3,8 @@
   (:require phel-doom.core.engine  :refer [cast-frame max-depth proj-dist])
   (:require phel-doom.core.perf    :refer [render-scale])
   (:require phel-doom.core.map     :refer [find-door-cell])
-  (:require phel-doom.core.weapons :refer [weapon-order weapons]))
+  (:require phel-doom.core.weapons :refer [weapon-order weapons])
+  (:require phel-doom.core.settings :refer [page-fields]))
 
 ;; =====================================================================
 ;; § Hot-loop buffer macros
@@ -1097,6 +1098,7 @@
                         (bord "  1 / 2 / 3 / 4 switch weapon slot")
                         (bord "  m             toggle minimap")
                         (bord "  n             toggle sound")
+                        (bord "  o             settings (volume)")
                         (bord "  F3            debug overlay")
                         (bord "  p             pause / resume")
                         (bord "  h / ESC      close this menu")
@@ -1168,6 +1170,95 @@
           (recur (php/+ i 1)
                  (str acc "\e[" (php/+ row0 i) ";" col0 "H\e[40;97m"
                       (get rows i) "\e[0m")))))))
+
+(def settings-inner-width
+  "Interior character width of each settings-overlay row. Wide enough
+   to fit the longest value (`Difficulty  ◀ nightmare ▶`) plus the
+   nav-hint footer without wrapping."
+  36)
+
+(def settings-slider-cells
+  "Number of slider cells in a volume row; each cell is 10%."
+  10)
+
+(defn- settings-slider
+  "Render a 0..100 percent as a fixed-width filled/empty bar."
+  [pct]
+  (let [filled (php/intdiv (php/max 0 (php/min 100 pct)) 10)
+        empty  (php/- settings-slider-cells filled)]
+    (str (php/str_repeat "█" filled) (php/str_repeat "░" empty))))
+
+(defn- settings-value-str
+  "Visible (colour-free) value cell for a settings row, framed by the
+   ◀ ▶ adjust arrows: a slider + percent for volumes, ON/OFF for the
+   minimap toggle, the difficulty name for the enum."
+  [kind val]
+  (cond
+    (= kind :pct)
+    (str "◀ " (settings-slider (php/intval val)) " ▶ "
+         (php/str_pad (str (php/intval val) "%") 4 " " php/STR_PAD_LEFT))
+
+    (= kind :bool)
+    (if val "◀  ON  ▶" "◀  OFF ▶")
+
+    (= kind :enum)
+    (str "◀ " (name val) " ▶")
+
+    :else          (php/strval val)))
+
+(defn- settings-row
+  "One settings field as a full bordered row. The selected row paints
+   bold yellow with a ▸ marker; others stay plain white. The visible
+   body carries no inline SGR so the trailing pad math (mb_strlen)
+   counts display columns, not escape bytes."
+  [field settings selected? w]
+  (let [k       (:key field)
+        label   (:label field)
+        marker  (if selected? "▸ " "  ")
+        value   (settings-value-str (:kind field) (get settings k))
+        label-w 11
+        labeled (str " " marker label
+                     (php/str_repeat " " (php/max 0 (php/- label-w (php/mb_strlen label)))))
+        body    (str labeled value)
+        sgr     (if selected? "\e[1;93m" "\e[97m")
+        pad     (php/str_repeat " " (php/max 0 (php/- w (php/mb_strlen body))))]
+    (str "│" sgr body "\e[40;97m" pad "│")))
+
+(defn- settings-menu-string
+  "Build the settings / options overlay as one ANSI string with
+   absolute cursor moves. `cursor` is the selected field index. Pure:
+   caller pushes the result into the parts array. Reads the field list
+   from core/settings so the page and the model never drift."
+  [vw vh settings cursor]
+  (let [w           settings-inner-width
+        bar         (php/str_repeat "─" w)
+        blnk        (str "│" (pause-pad "" w) "│")
+        rows-head   [(str "┌" bar "┐")
+                     blnk
+                     (str "│\e[1;93m" (pause-pad "            SETTINGS" w) "\e[40;97m│")
+                     blnk]
+        rows-fields (apply vector
+                           (map-indexed
+                            (fn [i field]
+                              (settings-row field settings (php/=== i cursor) w))
+                            page-fields))
+        rows-foot   [blnk
+                     (str "├" bar "┤")
+                     blnk
+                     (str "│\e[2;97m" (pause-pad "  ↑↓ select   ←→ adjust   o/esc close" w) "\e[22;40;97m│")
+                     blnk
+                     (str "└" bar "┘")]
+        rows        (apply vector (concat rows-head rows-fields rows-foot))
+        cnt         (count rows)
+        col0        (php/max 1 (php/- (php/+ (php/intdiv vw 2) 1)
+                                      (php/intdiv (php/+ w 2) 2)))
+        row0        (php/max 1 (php/intdiv (php/max 1 (php/- vh cnt)) 2))]
+    (loop [i 0 acc ""]
+      (if (php/>= i cnt)
+        acc
+        (recur (php/+ i 1)
+               (str acc "\e[" (php/+ row0 i) ";" col0 "H\e[40;97m"
+                    (get rows i) "\e[0m"))))))
 
 (defn- layout
   "Viewport fills the whole terminal. The minimap is an overlay in the
@@ -2915,6 +3006,12 @@
         ;; pressed H). H + P are independent flags.
         (when (get stats :help?)
           (buf-push p20 (help-menu-string vw vh stats)))
+        ;; Settings overlay sits above everything: while it's open the
+        ;; game is frozen and the options box is the focused surface.
+        (when (get stats :settings?)
+          (buf-push p20 (settings-menu-string vw vh
+                                              (get stats :settings)
+                                              (get stats :settings-cursor))))
         (php/implode "" p20)))))
 
 ;; --- DO NOT swap `print` / `println` for `php/fwrite` in render! ---
@@ -3197,6 +3294,7 @@
                   (pad-visible "    \e[93mr      \e[40;97m   reload" w)
                   (pad-visible "    \e[93m1 2 3  \e[40;97m   switch weapon slot" w)
                   (pad-visible "    \e[93mh      \e[40;97m   info menu (stats + weapons)" w)
+                  (pad-visible "    \e[93mo      \e[40;97m   settings (volume, minimap)" w)
                   (pad-visible "    \e[93mm  n   \e[40;97m   toggle minimap / sound" w)
                   (pad-visible "    \e[93mp F3 q \e[40;97m   pause / debug / quit" w)
                   blank]
@@ -3218,6 +3316,7 @@
                   blank]
         footer   [:sep blank
                   (pad-visible "      \e[2;97mpress any key to start\e[40;97m" w)
+                  (pad-visible "      \e[2;97m\e[93ms\e[2;97m for settings\e[40;97m" w)
                   blank]]
     (apply vector
            (cond
@@ -3266,6 +3365,24 @@
               (buf-push parts (str "\e[" row ";" col0
                                    "H\e[40;97m│" item "\e[40;97m│\e[0m"))))
           (recur (php/+ i 1)))))
+    (print (php/implode "" parts))
+    (php/flush)))
+
+(defn render-settings!
+  "Full-screen wash + centred settings box, for the start-menu options
+   screen (no game frame behind it). `settings` is the live map and
+   `cursor` the selected field index. The in-game overlay reuses the
+   same box via render!'s :settings? branch; this entry just adds the
+   background wash so it reads as a standalone screen."
+  [cols rows settings cursor]
+  (let [parts (buf-mk)
+        wash  "\e[48;5;233m"]
+    (buf-push parts "\e[H")
+    (loop [r 1]
+      (when (php/<= r rows)
+        (buf-push parts (str "\e[" r ";1H" wash (php/str_repeat " " cols)))
+        (recur (php/+ r 1))))
+    (buf-push parts (settings-menu-string cols rows settings cursor))
     (print (php/implode "" parts))
     (php/flush)))
 

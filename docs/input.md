@@ -67,15 +67,17 @@ In tmux: `set -g extended-keys on` + `setw -g xterm-keys on`.
 
 ## One-shot actions (rising edges)
 
-`key-states` snaps all tracked keys each frame: `m` (map), `sp` (fire), `p` (pause), `n` (sound), `e` (about-face), `f` (action/secret), `f3` (debug), `r` (reload), `h` (help), `esc` (help alias), `k1-k5` (weapon select), `f5` (save), `f9` (load).
+`key-states` snaps all tracked keys each frame: `m` (map), `sp` (fire), `p` (pause), `n` (sound), `e` (about-face), `f` (action/secret), `f3` (debug), `r` (reload), `h` (help), `esc` (help alias), `k1-k5` (weapon select), `f5` (save), `f9` (load), `o` (settings), and the four arrows (`up` / `down` / `left` / `right`) for menu navigation.
 
-`rising-edges` computes deltas: `:fire` (space pressed), `:fire-held` (space held), `:toggle-map`, `:toggle-pause`, `:toggle-sound`, `:toggle-debug`, `:toggle-help` (h or esc), `:reload`, `:about-face`, `:action`, `:select-weapon1-5`, `:save`, `:load`.
+`rising-edges` computes deltas: `:fire` (space pressed), `:fire-held` (space held), `:toggle-map`, `:toggle-pause`, `:toggle-sound`, `:toggle-debug`, `:toggle-help` (h or esc), `:reload`, `:about-face`, `:action`, `:select-weapon1-5`, `:save`, `:load`, `:open-settings` (o), and `:nav-up` / `:nav-down` / `:nav-left` / `:nav-right`.
 
 F5 / F9 fire in `game-loop` (side-effect layer), not `tick-world`, so pure tick stays effect-free. See [savegame.md](savegame.md).
 
 Edges consumed by: `:fire` -> `tick-shooting`; `:reload` -> ammo refill; `:action` -> secrets; `:select-weapon*` -> `switch-weapon`; toggles -> `handle-toggles`.
 
 Note: `h` and `esc` are aliased to `:toggle-help` (pause-coupled info panel).
+
+The settings overlay (see [settings.md](settings.md)) consumes `:open-settings` (toggle) plus the four nav edges while it is open; `o` / `esc` close it. The arrow edges are read as rising-edge one-shots there (one move per press), distinct from the held-counter movement path.
 
 ## Architecture
 

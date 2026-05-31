@@ -8,7 +8,7 @@
                                             rebuild-pgrid toggle-debug toggle-map toggle-pause toggle-sound])
   (:require phel-doom.core.map      :refer [door? reveal-secret secret? switch? toggle-switch])
   (:require phel-doom.glue.controls :refer [refresh-from-keys key-states rising-edges
-                                            initial-key-snapshot])
+                                            initial-key-snapshot nav-deltas])
   (:require phel-doom.core.physics  :refer [apply-physics tick-heartbeat tick-flicker tick-blood-drops tick-door-face tick-stamina])
   (:require phel-doom.core.engine   :refer [mark-visible-cells])
   (:require phel-doom.core.combat   :refer [ammo-per-box arm-berserk berserk-seconds damage-step fire-anim-seconds invuln-seconds max-reserve reload reloading? reload-cooldown-seconds tick-armory tick-shooting])
@@ -128,22 +128,16 @@
   (set-sfx-scalar!   (sfx-scalar settings))
   (set-music-volume! (music-volume settings)))
 
-(defn- nav-dirs
-  "Translate the nav rising-edges into the [cursor-dir value-dir] pair
-   core/settings.navigate expects (-1 / 0 / +1 each)."
-  [edges]
-  [(cond (:nav-up edges)   -1 (:nav-down edges)  1 :else 0)
-   (cond (:nav-left edges) -1 (:nav-right edges) 1 :else 0)])
-
 (defn- step-settings!
-  "Apply one frame of pause-page navigation via core/settings.navigate:
-   up/down move the cursor, left/right adjust the selected field. Volume
-   edits take effect immediately; the minimap field mirrors into
-   :show-map so the change is visible the moment it's made."
-  [world edges]
-  (let [[cursor-dir value-dir]              (nav-dirs edges)
+  "Apply one frame of pause-page navigation from the raw input `keys`
+   via core/settings.navigate: up/down (or W/S) move the cursor,
+   left/right (or A/D) adjust the selected field. A held key ramps
+   through the OS key-repeat. Volume edits take effect immediately;
+   the minimap field mirrors into :show-map so the change shows at once."
+  [world keys]
+  (let [{:cursor cursor-steps :value value-steps} (nav-deltas keys)
         {:keys [cursor settings adjusted?]}
-        (navigate (:settings world) (or (:settings-cursor world) 0) cursor-dir value-dir)]
+        (navigate (:settings world) (or (:settings-cursor world) 0) cursor-steps value-steps)]
     (when adjusted? (apply-audio-settings! settings))
     (assoc world
            :settings-cursor cursor
@@ -847,11 +841,11 @@
             :else
             (let [ticked0 (tick-world world keys (php// ms 1000.0) edges)
                   ;; Pause IS the settings page: while paused (and not
-                  ;; in the H info panel), the arrows tune the options
-                  ;; shown in the overlay. tick-world already froze the
-                  ;; gameplay step, so this only edits settings.
+                  ;; in the H info panel), the arrows / WASD tune the
+                  ;; options shown in the overlay. tick-world already
+                  ;; froze the gameplay step, so this only edits settings.
                   ticked  (if (and (:paused ticked0) (not (:help? ticked0)))
-                            (step-settings! ticked0 edges)
+                            (step-settings! ticked0 keys)
                             ticked0)
                   ;; F5 / F9 quick-save / load run here (file IO),
                   ;; outside the pure tick. Load swaps the whole world;
@@ -1062,9 +1056,9 @@
 (defn- settings-screen!
   "Interactive settings sub-loop reached from the start menu (s).
    Renders the standalone options screen and edits `settings0` until
-   the player presses ESC to go back. Volume edits apply live; the
-   final map is persisted and returned so the caller starts the run
-   with the player's choices."
+   the player presses ESC to go back. Arrows or WASD navigate (held
+   keys ramp); volume edits apply live; the final map is persisted and
+   returned so the caller starts the run with the player's choices."
   [settings0]
   (loop [settings settings0
          cursor   0
@@ -1076,26 +1070,33 @@
       (php/usleep menu-frame-us)
       (let [keys     (drain-keys)
             now      (key-states keys)
-            edges    (rising-edges now prev)
-            ;; Naked-ESC edge: rising-edges only folds ESC into
-            ;; :toggle-help (the in-game info panel), which has nothing
-            ;; to do with this pre-game screen, so derive it here.
+            ;; Naked-ESC edge: key-states folds ESC into the h-aliased
+            ;; info panel in game, but this pre-game screen just needs
+            ;; "did ESC go down this frame" to go back.
             esc-edge (and (:esc now) (not (:esc prev)))]
         (if esc-edge
           ;; Volumes were applied live on each adjust; close just saves.
           (save-settings! settings)
-          (let [[cursor-dir value-dir]              (nav-dirs edges)
+          (let [{:cursor cursor-steps :value value-steps} (nav-deltas keys)
                 {:keys [cursor settings adjusted?]}
-                (navigate settings cursor cursor-dir value-dir)]
+                (navigate settings cursor cursor-steps value-steps)]
             (when adjusted? (apply-audio-settings! settings))
             (recur settings cursor now [rows cols])))))))
 
+(defn- start-pressed?
+  "True when `keys` carries an ENTER / Return (raw mode sends CR; some
+   terminals send LF). Space also starts, as a forgiving second key."
+  [keys]
+  (or (str/contains? keys "\r")
+      (str/contains? keys "\n")
+      (str/contains? keys " ")))
+
 (defn- show-start-menu!
-  "Block on the start screen until the player starts or quits. Re-draws
-   each frame so terminal resizes don't leave a stale half-painted box.
-   `s` opens the settings screen (returning here afterwards); `q` quits;
-   any other key starts the run. Returns :quit, or the (possibly
-   edited) settings map to start with."
+  "Block on the start screen until the player acts. Re-draws each frame
+   so terminal resizes don't leave a stale half-painted box. ENTER (or
+   space) starts; `s` opens settings (returning here after); `q` quits.
+   Other keys are ignored so a stray arrow can't launch the run by
+   accident. Returns :quit, or the (possibly edited) settings map."
   [settings0]
   (loop [settings settings0
          dims     [0 0]]
@@ -1105,12 +1106,10 @@
       (php/usleep menu-frame-us)
       (let [keys (drain-keys)]
         (cond
-          (= keys "")              (recur settings [rows cols])
           (str/contains? keys "q") :quit
-          ;; 's' opens settings, then drops back to the menu so the
-          ;; player still has to press a key to start.
           (str/contains? keys "s") (recur (settings-screen! settings) [rows cols])
-          :else                    settings)))))
+          (start-pressed? keys)    settings
+          :else                    (recur settings [rows cols]))))))
 
 (defn- resolve-difficulty
   "Pick the run difficulty: an explicit, valid --difficulty CLI value

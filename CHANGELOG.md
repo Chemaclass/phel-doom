@@ -11,7 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Settings page (#107). Pause screen (`p`, or `s` on the start menu) doubles as options: bg-music / sfx volume, default minimap + difficulty. Persists to `~/.phel-doom-settings.json` (volume via `afplay`, macOS).
+- Settings page (#107). Pause screen (`p`, or `s` on the start menu) doubles as options: bg-music / sfx volume, default minimap + difficulty. Navigate with arrows or WASD (hold to ramp). Persists to `~/.phel-doom-settings.json` (volume via `afplay`, macOS).
 - Half-heart health. 10 HP = 5 hearts (`♥`/`◖`/`·`); per-type hit damage (melee 1, casters 2, cyber 3); armor soaks a whole hit.
 - Demo record / replay (#64). `--record` / `--demo` on a seeded Park-Miller RNG.
 - Quick-save / load (#63). `F5` / `F9` to versioned JSON slots; fog re-reveals.
@@ -31,10 +31,11 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Caster tuning (#94). Slower, longer-telegraphed fireballs on a shorter cooldown; casters move slower than melee.
 - Progressive difficulty curve. Chase speed climbs L1-L9, eases at L10; archvile wired as a caster (L8); L6 / L7 gain casters; depth-scaled cooldown.
 - Per-level monster variety. L2-L5 mix melee into the headline type (L3 ~50/50); L1 stays pure imps.
+- Start menu uses explicit keys: ENTER starts, `s` settings, `q` quits (a stray key no longer launches the run).
 
 ### Fixed
 
-- Settings page arrows did nothing under SS3 application-cursor mode (tmux / alt-screen); arrow detection + in-game turning now accept both `\eOA` and `\e[A` forms.
+- Settings page navigation was dead on terminals whose arrows aren't plain CSI (SS3 / app-cursor under tmux, etc.). Nav now counts arrows in every encoding (CSI / SS3 / kitty) AND accepts WASD as a fallback; in-game arrow turning handles SS3 too.
 - Mixed-level enemies spawned at 1 HP; now use catalog HP (`default-lives-for`).
 - `R` (restart same map) reproduces geometry + spawns via `core/rng`.
 - Weapon report went silent on a connecting hit; every shot now plays its fire sound + kill cue.

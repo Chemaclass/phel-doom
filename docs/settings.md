@@ -23,12 +23,12 @@ Volumes map through `core/settings`: `music-volume` = `(pct / 100) * music-ceili
 
 The settings page IS the pause screen, so there is only one overlay layer to learn (the `h` info panel stays a separate read-only reference).
 
+- Start menu: ENTER starts the run, `s` opens the settings screen (edit, then `esc` to return), `q` quits.
 - In game: press `p` (pause). The game freezes and the options appear; `p` resumes.
-- Start menu: press `s` to open the settings screen, edit, then `esc` to return.
 
-Navigation: `up` / `down` move the cursor, `left` / `right` adjust the selected field. Volume + minimap edits take effect immediately; difficulty applies from the next run (it is baked per level at build time). Resuming (`p`, or `esc` on the start-menu screen) persists the file.
+Navigation: `up` / `down` (or `w` / `s`) move the cursor, `left` / `right` (or `a` / `d`) adjust the selected field. WASD works as a fallback when a terminal's arrow encoding isn't recognised, and holding a key ramps a slider via OS key-repeat. Volume + minimap edits take effect immediately; difficulty applies from the next run (it is baked per level at build time). Resuming (`p`, or `esc` on the start-menu screen) persists the file.
 
-The settings map rides on the world (`:settings` / `:settings-cursor`) so `frame-stats` can paint it and edits carry across level cuts. The render layer keys the overlay off `:paused`.
+Input is count-based: `glue/controls.nav-deltas` turns the raw drain string into net `{:cursor :value}` steps (arrows in any encoding + WASD), which `core/settings.navigate` applies. The settings map rides on the world (`:settings` / `:settings-cursor`) so `frame-stats` can paint it and edits carry across level cuts. The render layer keys the overlay off `:paused`.
 
 ## Platform note
 

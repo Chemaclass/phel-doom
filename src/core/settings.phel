@@ -84,18 +84,21 @@
      :minimap    (boolean (get m :minimap (:minimap default-settings)))
      :difficulty (if (valid-difficulty? d) d :normal)}))
 
-(defn move-cursor
-  "Step the page cursor by `dir` (+1 down / -1 up), wrapping at both
-   ends so the selection never falls off the page."
-  [idx dir]
-  (let [n (field-count)]
-    (php/% (php/+ (php/+ idx dir) n) n)))
+(defn- wrap [i n]
+  (php/% (php/+ (php/% i n) n) n))
 
-(defn- cycle-difficulty [cur dir]
+(defn move-cursor
+  "Move the page cursor by `steps` (negative = up, positive = down),
+   wrapping at both ends. Any integer magnitude is allowed so a held
+   key's OS-repeat burst can move more than one row in a frame."
+  [idx steps]
+  (wrap (php/+ idx steps) (field-count)))
+
+(defn- cycle-difficulty [cur steps]
   (let [n  (count difficulty-choices)
         i  (index-of cur difficulty-choices)
         i' (if (php/< i 0) 0 i)]
-    (get difficulty-choices (php/% (php/+ (php/+ i' dir) n) n))))
+    (get difficulty-choices (wrap (php/+ i' steps) n))))
 
 (defn- field-kind [field-key]
   (loop [fs page-fields]
@@ -105,37 +108,41 @@
       :else                           (recur (rest fs)))))
 
 (defn adjust
-  "Adjust `field-key` on `settings` by `dir` (+1 right / -1 left):
-   volumes move by `pct-step` (clamped), minimap toggles (dir ignored),
-   difficulty cycles. Returns the new settings map; an unknown field
-   leaves it untouched."
-  [settings field-key dir]
+  "Adjust `field-key` on `settings` by `steps` (negative = left,
+   positive = right): volumes move `steps * pct-step` (clamped), the
+   minimap toggles when `steps` is odd, difficulty cycles by `steps`.
+   Any integer magnitude is allowed (a held key ramps a slider).
+   Returns the new settings map; an unknown field leaves it untouched."
+  [settings field-key steps]
   (let [kind (field-kind field-key)]
     (cond
       (= kind :pct)
       (update settings field-key
-              (fn [v] (clamp-pct (php/+ (php/intval v) (php/* dir pct-step)))))
+              (fn [v] (clamp-pct (php/+ (php/intval v) (php/* steps pct-step)))))
 
       (= kind :bool)
-      (update settings field-key not)
+      (if (php/=== 1 (php/abs (php/% steps 2)))
+        (update settings field-key not)
+        settings)
 
       (= kind :enum)
-      (update settings field-key (fn [v] (cycle-difficulty v dir)))
+      (update settings field-key (fn [v] (cycle-difficulty v steps)))
 
       :else          settings)))
 
 (defn navigate
-  "Apply one page-navigation step. `cursor-dir` moves the selection
-   (-1 up, +1 down, 0 none, wrapping); `value-dir` adjusts the selected
-   field (-1 left, +1 right, 0 none). Returns
-   `{:cursor _ :settings _ :adjusted? _}` so the caller can push the
-   new volumes only when something actually changed. Pure: the live
-   audio/minimap effects stay in the caller (commands/play)."
-  [settings cursor cursor-dir value-dir]
-  (let [cursor'   (if (php/=== cursor-dir 0) cursor (move-cursor cursor cursor-dir))
-        adjusted? (not (php/=== value-dir 0))
+  "Apply one frame of page navigation. `cursor-steps` moves the
+   selection (negative up / positive down, wrapping); `value-steps`
+   adjusts the selected field (negative left / positive right). Both
+   are signed integers, so a held key's repeats ramp a slider. Returns
+   `{:cursor _ :settings _ :adjusted? _}` so the caller pushes the new
+   volumes only when something changed. Pure: the live audio/minimap
+   effects stay in the caller (commands/play)."
+  [settings cursor cursor-steps value-steps]
+  (let [cursor'   (if (php/=== cursor-steps 0) cursor (move-cursor cursor cursor-steps))
+        adjusted? (not (php/=== value-steps 0))
         settings' (if adjusted?
-                    (adjust settings (:key (field-at cursor')) value-dir)
+                    (adjust settings (:key (field-at cursor')) value-steps)
                     settings)]
     {:cursor cursor' :settings settings' :adjusted? adjusted?}))
 

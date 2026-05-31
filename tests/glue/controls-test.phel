@@ -1,7 +1,8 @@
 (ns phel-doom-tests.glue.controls-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.glue.controls
-            :refer [key-states refresh-from-keys rising-edges initial-key-snapshot]))
+            :refer [key-states refresh-from-keys rising-edges initial-key-snapshot
+                    nav-deltas]))
 
 (def blank-moves
   {:fwd          0
@@ -303,62 +304,50 @@
     (is (= 0 (:sprint (:moves w'))))))
 
 ;; ---------------------------------------------------------------------
-;; Settings page (issue #107): the pause overlay is the options page;
-;; the arrow keys drive cursor + slider navigation as rising-edge
-;; one-shots. Arrow detection covers the legacy (`\e[A`), modified
-;; (`\e[1;2A`), and kitty-enhanced (`\e[1;m:eA`) forms.
+;; Settings page (issue #107): nav-deltas turns the raw drain string
+;; into net cursor / value steps. Arrows (CSI / SS3 / kitty) AND WASD
+;; both count, and counting (not a bool) means a held key's OS-repeat
+;; burst ramps a slider.
 ;; ---------------------------------------------------------------------
 
-(deftest test-key-states-detects-arrows
-  (is (= true (:up    (key-states "\e[A"))))
-  (is (= true (:down  (key-states "\e[B"))))
-  (is (= true (:right (key-states "\e[C"))))
-  (is (= true (:left  (key-states "\e[D")))))
+(deftest test-nav-deltas-csi-arrows
+  (is (= {:cursor 1  :value 0}  (nav-deltas "\e[B")) "down")
+  (is (= {:cursor -1 :value 0}  (nav-deltas "\e[A")) "up")
+  (is (= {:cursor 0  :value 1}  (nav-deltas "\e[C")) "right")
+  (is (= {:cursor 0  :value -1} (nav-deltas "\e[D")) "left"))
 
-(deftest test-key-states-detects-modified-and-kitty-arrows
-  ;; SHIFT+up (`\e[1;2A`) and a kitty-enhanced up press (`\e[1;1:1A`).
-  (is (= true (:up (key-states "\e[1;2A"))))
-  (is (= true (:up (key-states "\e[1;1:1A")))))
+(deftest test-nav-deltas-ss3-arrows
+  ;; SS3 application-cursor form (`\eO*`) common under tmux / alt-screen.
+  (is (= {:cursor 1 :value 0}  (nav-deltas "\eOB")))
+  (is (= {:cursor 0 :value -1} (nav-deltas "\eOD"))))
+
+(deftest test-nav-deltas-modified-and-kitty-arrows
+  (is (= {:cursor -1 :value 0} (nav-deltas "\e[1;2A")) "shift+up")
+  (is (= {:cursor -1 :value 0} (nav-deltas "\e[1;1:1A")) "kitty up press"))
+
+(deftest test-nav-deltas-wasd-fallback
+  ;; WASD navigates too, so the page works even when arrows aren't
+  ;; recognised by the terminal.
+  (is (= {:cursor 1  :value 0}  (nav-deltas "s")) "s = down")
+  (is (= {:cursor -1 :value 0}  (nav-deltas "w")) "w = up")
+  (is (= {:cursor 0  :value 1}  (nav-deltas "d")) "d = right")
+  (is (= {:cursor 0  :value -1} (nav-deltas "a")) "a = left"))
+
+(deftest test-nav-deltas-counts-repeats-for-ramp
+  ;; A held key's repeated bytes accumulate so a slider ramps.
+  (is (= {:cursor 0 :value 3}  (nav-deltas "ddd")))
+  (is (= {:cursor -2 :value 0} (nav-deltas "\e[A\e[A"))))
+
+(deftest test-nav-deltas-empty-and-non-nav
+  (is (= {:cursor 0 :value 0} (nav-deltas "")))
+  ;; F3's SS3 (`\eOR`) shares the `\eO` prefix but a different final
+  ;; byte, so it is not mistaken for an arrow.
+  (is (= {:cursor 0 :value 0} (nav-deltas "\eOR"))))
 
 (deftest test-ss3-arrow-drives-in-game-turn
-  ;; The same SS3 form must also feed the movement path so turning
-  ;; works under app-cursor mode, not just menu nav.
+  ;; The SS3 form also feeds the movement path so turning works under
+  ;; app-cursor mode, not just menu nav.
   (let [w' (refresh-from-keys blank-world "\eOD")]
     (is (php/> (:turn-left (:moves w')) 0)))
   (let [w' (refresh-from-keys blank-world "\eOC")]
     (is (php/> (:turn-right (:moves w')) 0))))
-
-(deftest test-key-states-detects-ss3-application-cursor-arrows
-  ;; Many terminals / tmux send SS3 arrows (`\eOA`..`\eOD`) in the
-  ;; alternate screen instead of CSI. Menu nav must still work.
-  (is (= true (:up    (key-states "\eOA"))))
-  (is (= true (:down  (key-states "\eOB"))))
-  (is (= true (:right (key-states "\eOC"))))
-  (is (= true (:left  (key-states "\eOD"))))
-  ;; F3's SS3 sequence `\eOR` shares the `\eO` prefix but a different
-  ;; final byte, so it must NOT register as an arrow.
-  (is (= false (:up   (key-states "\eOR"))))
-  (is (= true  (:f3   (key-states "\eOR")))))
-
-(deftest test-key-states-arrows-are-independent
-  (let [s (key-states "\e[A")]
-    (is (= true  (:up s)))
-    (is (= false (:down s)))
-    (is (= false (:left s)))
-    (is (= false (:right s)))))
-
-(deftest test-rising-edges-nav-keys-fire-once
-  (is (= true (:nav-up    (rising-edges (assoc initial-key-snapshot :up true)    initial-key-snapshot))))
-  (is (= true (:nav-down  (rising-edges (assoc initial-key-snapshot :down true)  initial-key-snapshot))))
-  (is (= true (:nav-left  (rising-edges (assoc initial-key-snapshot :left true)  initial-key-snapshot))))
-  (is (= true (:nav-right (rising-edges (assoc initial-key-snapshot :right true) initial-key-snapshot)))))
-
-(deftest test-rising-edges-nav-does-not-refire-while-held
-  (let [held (assoc initial-key-snapshot :right true)]
-    (is (= false (:nav-right (rising-edges held held))))))
-
-(deftest test-initial-key-snapshot-covers-settings-keys
-  (is (= false (:up    initial-key-snapshot)))
-  (is (= false (:down  initial-key-snapshot)))
-  (is (= false (:left  initial-key-snapshot)))
-  (is (= false (:right initial-key-snapshot))))

@@ -1,0 +1,83 @@
+---
+description: Measure cast/render phase timing before/after a change at 80×24, 120×30, 180×40
+argument-hint: "[baseline-ref] [candidate-ref]"
+disable-model-invocation: true
+allowed-tools: "Read, Bash(vendor/bin/phel *), Bash(composer *), Bash(git *)"
+target: claude
+---
+
+# Perf Bench
+
+Validate or refute a performance hypothesis. Measurement-led — does NOT patch code.
+
+## When to use
+
+- Closing or defending issues #2 (DDA), #3 (differential render), #4 (sprite z-buffer).
+- Suspect regression after a hot-path change.
+- Before/after of any change to `engine.phel`, `render.phel`, `physics.phel`.
+
+## Inputs
+
+- `$ARGUMENTS` parses as `[baseline] [candidate]`. Default: `main HEAD`.
+
+## Procedure
+
+1. Stash any local changes:
+   ```bash
+   git stash --include-untracked
+   ```
+
+2. Check out baseline:
+   ```bash
+   git checkout <baseline>
+   ```
+
+3. Capture metrics — start game with `:debug?` enabled (F3 once issue #9 lands; until then, use `frame-stats` and the debug command if present):
+   - `frame-ms` (mean over 200 frames)
+   - `cast-ms`
+   - `render-ms`
+   - `bytes/frame`
+   - `avg run-length`
+   - `memory peak`
+
+   At each viewport: 80×24, 120×30, 180×40.
+
+4. Check out candidate:
+   ```bash
+   git checkout <candidate>
+   ```
+
+5. Repeat capture with identical scene + seed.
+
+6. Build table:
+
+   ```
+   | Viewport | Metric    | Base | Cand | Δ%  | Verdict |
+   | 120×30   | cast-ms   |  ... | ...  | -42 | improve |
+   | 120×30   | render-ms |  ... | ...  | +3  | noise   |
+   ```
+
+7. Verdict thresholds: >5% slower = regression; >5% faster = improvement; otherwise noise.
+
+8. Restore:
+   ```bash
+   git checkout <original-branch>
+   git stash pop
+   ```
+
+9. Cross-reference `docs/performance.md` *Measured numbers*. Flag any number that should update — do NOT edit the doc here.
+
+## Output
+
+Markdown report:
+1. Hypothesis.
+2. Table.
+3. Recommendation: ship / re-bench / abandon.
+4. Doc updates needed.
+
+## Constraints
+
+- Single >5% data point is signal, not proof. Re-bench before declaring.
+- Use sprite-heavy scenes for #4.
+- Static scenes for #3.
+- Cast-phase work (#2) → measure cast-ms specifically, not just total.

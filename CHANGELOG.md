@@ -11,31 +11,32 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Settings page (#107). Pause screen (`p`, or `s` on the start menu) doubles as options: bg-music / sfx volume, default minimap + difficulty. Navigate with arrows or WASD (hold to ramp). Persists to `~/.phel-doom-settings.json` (volume via `afplay`, macOS).
-- Half-heart health. 10 HP = 5 hearts (`♥`/`◖`/`·`); per-type hit damage (melee 1, casters 2, cyber 3); armor soaks a whole hit.
+- Settings page (#107). Pause (`p`, or `s` on start menu) sets music/sfx volume + default minimap/difficulty; arrows or WASD; persists to `~/.phel-doom-settings.json` (`afplay`, macOS).
+- Half-heart health. 10 HP = 5 hearts; per-type hit damage (melee 1, casters 2, cyber 3); armor soaks a whole hit.
 - Demo record / replay (#64). `--record` / `--demo` on a seeded Park-Miller RNG.
 - Quick-save / load (#63). `F5` / `F9` to versioned JSON slots; fog re-reveals.
 - BFG splash weapon (#58). Slot 5: plasma beam + 3-cell AoE that ignores fire-resist.
-- Secret reward passages. Reveal a secret wall (`F`) for ammo + shard + a rotating powerup.
+- Secret reward passages. Reveal a secret wall (`F`) for ammo + shard + a powerup.
 - Hit-stop on meaty kills (~70ms, boss ~160ms); trash mobs stay fast.
 - Ambient drone loop. Synthesised crash-safe bed, N-gated.
 - Projectile casters. Cacodemons + barons fire dodgeable, telegraphed fireballs.
 - Wandering idle enemies pace until LOS flips them to chase.
 - Backpack stacking (#68). Up to 3; reserve cap scales with level.
-- Armor shards (#68). Bank +1 armor past max to 2x.
+- Armor shards (#68). Bank +1 past max to 2x.
 - Soulsphere (#68). Over-caps lives, decays back.
 - Remote switches (#62). `F` flips linked wall/floor cells.
 
 ### Changed
 
-- Caster tuning (#94). Slower, longer-telegraphed fireballs on a shorter cooldown; casters move slower than melee.
-- Progressive difficulty curve. Chase speed climbs L1-L9, eases at L10; archvile wired as a caster (L8); L6 / L7 gain casters; depth-scaled cooldown.
-- Per-level monster variety. L2-L5 mix melee into the headline type (L3 ~50/50); L1 stays pure imps.
-- Start menu uses explicit keys: ENTER starts, `s` settings, `q` quits (a stray key no longer launches the run).
+- Bump `phel-lang/phel-lang` to `v0.41.0` (first pinned stable; was `dev-main`).
+- Caster tuning (#94). Slower, longer-telegraphed fireballs on a shorter cooldown; casters slower than melee.
+- Progressive difficulty. Chase speed climbs L1-L9, eases at L10; archvile caster (L8); L6 / L7 gain casters.
+- Per-level monster variety. L2-L5 mix melee into the headline type; L1 stays pure imps.
+- Start menu explicit keys: ENTER starts, `s` settings, `q` quits.
 
 ### Fixed
 
-- Settings page navigation was dead on terminals whose arrows aren't plain CSI (SS3 / app-cursor under tmux, etc.). Nav now counts arrows in every encoding (CSI / SS3 / kitty) AND accepts WASD as a fallback; in-game arrow turning handles SS3 too.
+- Settings nav was dead on non-CSI arrows (SS3 / kitty under tmux); now counts every encoding + WASD fallback, in-game turning handles SS3 too.
 - Mixed-level enemies spawned at 1 HP; now use catalog HP (`default-lives-for`).
 - `R` (restart same map) reproduces geometry + spawns via `core/rng`.
 - Weapon report went silent on a connecting hit; every shot now plays its fire sound + kill cue.

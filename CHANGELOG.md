@@ -9,6 +9,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-01
+
 ### Added
 
 - Settings page (#107). Pause (`p`, or `s` on start menu) sets music/sfx volume + default minimap/difficulty; arrows or WASD; persists to `~/.phel-doom-settings.json` (`afplay`, macOS).
@@ -205,7 +207,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `cast + render` under 5 ms per frame at 120×30.
 - Flat PHP arrays on hot paths; `:tag` types for OPcache JIT tracing.
 
-[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/Chemaclass/phel-doom/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Chemaclass/phel-doom/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Chemaclass/phel-doom/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/Chemaclass/phel-doom/compare/v0.4.0...v0.4.1

@@ -17,6 +17,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 - Start-menu settings page (`s`) now applies + persists every edit. The page loop destructured nav results into locals named `settings`/`cursor`, shadowing the loop bindings so `recur` re-bound the originals and silently dropped each change.
 - Chainsaw (slot 4) is now obtainable. It was fully implemented but never granted: no level dropped it and the `--armory` set omitted it, so pressing `4` was always a no-op. L4 now seeds a chainsaw pickup and `--armory` owns every weapon.
+- `rng/int!` is now exclusive (`0..n-1`, like `rand-int`) instead of off-by-one inclusive. Powerup spawn odds were skewed toward spawning (armor 2/3 not 1/2, berserk 2/9 not 1/8, etc.) and map placements could land one cell closer to the edge than intended. Both now match their documented values.
 
 ## [0.7.0] - 2026-06-01
 

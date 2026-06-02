@@ -518,7 +518,10 @@
    physics, collect pickups, advance enemies, resolve a shot, decay
    timers + apply contact damage."
   [world keys ^float dt edges]
-  (let [w0 (handle-toggles world edges)]
+  ;; Reset the per-frame combat sfx queue up front so events from
+  ;; core/combat accumulate fresh each tick; the game loop drains
+  ;; `:sfx` after this returns and emits them via io/sound.
+  (let [w0 (assoc (handle-toggles world edges) :sfx [])]
     (cond
       (:paused w0)                             w0
       ;; Hit-stop: a meaty kill stamped `:hit-stop-secs` last frame.
@@ -856,6 +859,13 @@
               ;; player's choices (volumes were already applied live).
               (when (resumed-pause? world world')
                 (persist-settings! world'))
+              ;; Drain the per-frame combat sfx queue that core/combat
+              ;; built (gun reports, kill cues, pain, dry-fire clicks).
+              ;; core/ stays effect-free; emission lives here, gated on
+              ;; :sound-on like every other cue.
+              (when (:sound-on world')
+                (doseq [ev (:sfx world')]
+                       (play-sfx! (:name ev) (:vol ev))))
               (when (and (:heartbeat-tick? world') (:sound-on world'))
                 (play-sfx! :heartbeat 0.35))
               (when (and (:silence-tick? world') (:sound-on world'))

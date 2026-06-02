@@ -5,8 +5,7 @@
   (:require phel-doom.core.enemy-ai :refer [attacks? noise-wake])
   (:require phel-doom.core.physics  :refer [try-move])
   (:require phel-doom.core.state    :refer [max-lives])
-  (:require phel-doom.core.weapons  :refer [weapon-order weapon-spec weapons])
-  (:require phel-doom.io.sound      :refer [play-sfx!]))
+  (:require phel-doom.core.weapons  :refer [weapon-order weapon-spec weapons]))
 
 (def shot-knockback-distance
   "World units an enemy is shoved AWAY from the player on every shot
@@ -25,9 +24,19 @@
 
 ;; ---------------------------------------------------------------------
 ;; Combat: the hitscan trigger pull (fire-shot) and the damage / i-frame
-;; ticking (damage-step). Both consume and produce a world; only
-;; play-sfx! side-effects, gated by (:sound-on world).
+;; ticking (damage-step). Both consume and produce a world. Pure: sound
+;; effects are not played here. Combat enqueues `{:name :vol}` events on
+;; the world's per-frame `:sfx` queue via `push-sfx`; io (commands/play)
+;; drains it after tick-world and emits them, gated on (:sound-on world).
 ;; ---------------------------------------------------------------------
+
+(defn- push-sfx
+  "Append a sound event to the world's per-frame `:sfx` queue. Keeps
+   core/combat effect-free: the io layer drains `:sfx` after the tick
+   and plays each event (gated on :sound-on). `tick-world` clears the
+   queue at the start of every frame, so events never replay."
+  [world name ^float vol]
+  (update world :sfx (fn [s] (conj (or s []) {:name name :vol vol}))))
 
 ;; =====================================================================
 ;; § Tunables
@@ -388,11 +397,12 @@
         damaged (if (php/> armor 0)
                   (assoc world :armor (php/- armor 1))
                   (update world :lives (fn [l] (php/max 0 (php/- l dmg)))))]
-    (when (:sound-on world) (play-sfx! :hit vol))
-    (assoc (knockback damaged att)
-           :iframes    iframe-seconds
-           :flash-secs flash-seconds
-           :hurt-side  (attacker-side att (:x p) (:y p) (:angle p)))))
+    (push-sfx
+     (assoc (knockback damaged att)
+            :iframes    iframe-seconds
+            :flash-secs flash-seconds
+            :hurt-side  (attacker-side att (:x p) (:y p) (:angle p)))
+     :hit vol)))
 
 (defn hit-player-at
   "Apply one hit from a point source at world `(sx, sy)` for `dmg` HP —
@@ -581,24 +591,29 @@
 (defn- on-shot-miss [world]
   (assoc world :fire-anim fire-anim-seconds))
 
-(defn- play-shot-sfx [world killed? hit-pos]
-  (when (:sound-on world)
-    ;; Always fire the ACTIVE weapon's own report so every trigger pull
-    ;; sounds like the gun going off — hit or miss. Earlier this only
-    ;; played a gun sound on a MISS; a shot that connected swapped in the
-    ;; enemy reaction, so the weapon (esp. the shotgun) felt silent when
-    ;; you actually hit something. Per-weapon `:fire-sfx` (weapons spec)
-    ;; gives each gun a distinct voice; falls back to :shoot.
-    (play-sfx! (or (:fire-sfx (w-spec world)) :shoot) 1.0)
-    ;; Layer the kill cue ON TOP of the fire report so a kill keeps its
-    ;; punch, distance-attenuated. Wounds ride on the fire sound plus
-    ;; the floating HP digit + blood splatter — no separate thud.
-    (when killed?
-      (let [p  (:player world)
+(defn- enqueue-shot-sfx
+  "Append the shot's sound events to `out`'s :sfx queue and return it.
+   `src` is the pre-shot world (active weapon spec + player position).
+
+   Always queue the ACTIVE weapon's own report so every trigger pull
+   sounds like the gun going off — hit or miss. Earlier this only
+   played a gun sound on a MISS; a shot that connected swapped in the
+   enemy reaction, so the weapon (esp. the shotgun) felt silent when
+   you actually hit something. Per-weapon `:fire-sfx` (weapons spec)
+   gives each gun a distinct voice; falls back to :shoot.
+
+   On a kill, layer the kill cue ON TOP of the fire report so a kill
+   keeps its punch, distance-attenuated. Wounds ride on the fire sound
+   plus the floating HP digit + blood splatter — no separate thud."
+  [out src killed? hit-pos]
+  (let [fired (push-sfx out (or (:fire-sfx (w-spec src)) :shoot) 1.0)]
+    (if killed?
+      (let [p  (:player src)
             dx (php/- (:x hit-pos) (:x p))
             dy (php/- (:y hit-pos) (:y p))
             d  (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
-        (play-sfx! :kill (distance-volume d))))))
+        (push-sfx fired :kill (distance-volume d)))
+      fired)))
 
 (defn can-fire?
   "True when the active weapon is ready: cooldown elapsed, not jammed,
@@ -725,8 +740,9 @@
                        (assoc unlocked :hit-stop-secs
                               (if boss-killed? hit-stop-boss-seconds hit-stop-tough-seconds))
                        unlocked)]
-    (play-shot-sfx world killed? hit-pos)
-    (apply-heat (push-blood-fx (assoc juiced :fire-anim fire-anim-seconds) hit-pos))))
+    (enqueue-shot-sfx
+     (apply-heat (push-blood-fx (assoc juiced :fire-anim fire-anim-seconds) hit-pos))
+     world killed? hit-pos)))
 
 (defn fire-shot
   "Resolve one trigger pull end-to-end. Splash weapons (BFG) route to
@@ -743,10 +759,11 @@
           woken                       (noise-wake enemies' (:grid world) (:x p) (:y p))
           killed?                     (and hit?
                                            (false? (:alive (get woken idx))))]
-      (play-shot-sfx world killed? hit-pos)
-      (apply-heat (if hit?
-                    (on-shot-hit world woken hit-pos idx)
-                    (on-shot-miss (assoc world :enemies woken)))))))
+      (enqueue-shot-sfx
+       (apply-heat (if hit?
+                     (on-shot-hit world woken hit-pos idx)
+                     (on-shot-miss (assoc world :enemies woken))))
+       world killed? hit-pos))))
 
 (defn- empty-trigger-pull
   "Trigger pulled while mag = 0 AND no cooldown / jam in the way. Arm
@@ -756,8 +773,7 @@
    states already (jam label / fire-anim) so doubling up would be
    noisy."
   [world]
-  (when (:sound-on world) (play-sfx! :click 0.6))
-  (assoc world :empty-click-secs empty-click-seconds))
+  (push-sfx (assoc world :empty-click-secs empty-click-seconds) :click 0.6))
 
 (defn tick-shooting
   "Resolve a shot when the trigger is active this frame AND the

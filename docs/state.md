@@ -38,7 +38,7 @@ Pure data shapes that every other module operates on. `src/core/state.phel`.
  :difficulty <kw :easy|:normal|:hard|:nightmare>
  :god?       <bool, --god flag; no damage>
  :door-lock  <kw :blue|:red|:boss|nil>     ; lock colour on this level's exit (:boss = synthetic, no keycard pickup)
- :weapon     <kw :pistol|:shotgun|:chaingun>  ; active weapon
+ :weapon     <kw :pistol|:shotgun|:chaingun|:chainsaw|:bfg|:incinerator|:rocket>  ; active weapon
  :owned-weapons <set of kw>                ; pistol owned by default; others must be picked up
  :weapon-pickups <vector of {:x :y :weapon}>
  :weapon-state {<kw> {:mag :reserve}}      ; per-weapon ammo bookkeeping

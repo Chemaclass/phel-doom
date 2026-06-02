@@ -34,12 +34,14 @@ See [level-system.md](level-system.md), [map.md](map.md).
 - Projectile casters: cacodemons + barons fire dodgeable fireballs (telegraphed windup, orange bolt). Bolts pass doors, stop at walls. Cost one armor/life on impact (i-frames cap burst to one hit). Strafe to dodge.
 - Cyber chase speed 0.55x for playability.
 - Hitscan: distance-attenuated kill/wound sfx, blood splatter, muzzle flash, 5-stage death, 3-6s respawn.
-- 5-slot loadout, DPS-balanced:
+- 7-slot loadout, DPS-balanced:
   - 1: pistol (1 dmg, 0.12s cd, mag 10, auto-fire, overheats)
   - 2: shotgun (3 dmg, 0.6s cd, mag 4)
   - 3: chaingun (1 dmg, 0.05s cd, mag 30, auto-fire)
   - 4: chainsaw (1 melee, 0.10s cd, melee 1.5-cell, halves move)
   - 5: BFG (10+6 splash, 1.2s cd, mag 1, plasma AoE 3-cell, rare L7)
+  - 6: incinerator (1 fire dmg, 0.06s cd, mag 40, auto-fire; fire-resist mobs take 0, L6)
+  - 7: rocket launcher (3 splash r2.0, 0.9s cd, mag 1, single-action, ballistic AoE, L5)
 - Pistol + chaingun + chainsaw auto-spray while held. Shotgun + BFG single-action. Pistol overheats. Mag/reserve persist across switches, auto-switch on first pickup.
 - Kill-loot skips pistol when other weapons owned, biases shotgun/chaingun. Level boxes refill active weapon.
 - Half-heart health: 10 HP drawn as 5 hearts (2 HP each), starting full. Hits cost by attacker type - 1 (half heart) for light melee, 2 (full heart) for heavy bruisers + casters, 3 for the cyberdemon boss. 1s i-frame, 4-way directional red hurt band, knockback on contact. Armor absorbs a whole hit.

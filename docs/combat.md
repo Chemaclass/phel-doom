@@ -125,6 +125,10 @@ The only `:fire` weapon (issue #122). Hitscan flame stream: `:damage 1`, fast `:
 
 Its point is the damage type: caco / baron / archvile / mancubus carry `:resists #{:fire}`, so the flame does **zero** to them. The incinerator is the weapon that makes the resist system bite (before it, no player weapon ever emitted a resisted type). Switch off it for fire-resist heavies; use plasma (BFG), ballistic, or melee on those.
 
+### Rocket launcher (splash, slot 7, found L5)
+
+Mid-tier AoE (issue #123): fills the gap between the chaingun (no splash) and the rare BFG nuke. Carries `:splash-radius 2.0` + `:splash-damage 3`, so it routes through the same `bfg-fire` path as the BFG, with smaller numbers (BFG is radius 3.0 / splash 6). Single-action, `:fire-cooldown 0.9`, mag 1 / reserve cap 30. Damage type `:ballistic` (an explosive shell), so no enemy resists it. The everyday crowd tool; the BFG stays the rare panic button.
+
 ## Berserk pickup
 
 Berserk sphere (`Ω` glyph, 1-in-8 levels):

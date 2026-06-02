@@ -11,6 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+- Rocket launcher (#123). Slot 7, found on L5: a single-action mid-tier AoE (splash radius 2.0, splash damage 3) that fills the gap between the chaingun and the rare BFG nuke. Reuses the splash combat path; cheaper and more available than the BFG. Switch keys now span 1-7.
 - Incinerator weapon (#122). Slot 6, found on L6: a fast short-range `:fire` flame stream. It is the first weapon to deal `:fire`, so it activates the previously-inert per-enemy resist system - caco / baron / archvile / mancubus shrug it off (zero damage), everything else burns. Switch keys now span 1-6.
 
 ### Changed

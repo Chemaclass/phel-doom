@@ -1,8 +1,8 @@
 (ns phel-doom-tests.core.combat-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.state :refer [new-world new-player])
+  (:require phel-doom.core.state :refer [new-world new-player max-lives])
   (:require phel-doom.core.combat
-            :refer [arm-berserk armory-reserve closest-attacker attacker-side berserk? berserk-damage-mul berserk-seconds can-fire? apply-heat damage-step empty-click-seconds enemy-hit-damage hit-damage-for hit-player-at hit-stop-for hit-stop-tough-seconds hit-stop-boss-seconds invuln? invuln-seconds knockback mag-size pick-loot-weapon reload reloading? roll-loot-kind tick-armory tick-shooting]))
+            :refer [arm-berserk armory-reserve closest-attacker attacker-side berserk? berserk-damage-mul berserk-melee-mul berserk-mul-for berserk-seconds can-fire? apply-heat damage-step empty-click-seconds enemy-hit-damage hit-damage-for hit-player-at hit-stop-for hit-stop-tough-seconds hit-stop-boss-seconds invuln? invuln-seconds knockback mag-size pick-loot-weapon reload reloading? roll-loot-kind tick-armory tick-shooting]))
 
 ;; ---------------------------------------------------------------------
 ;; closest-attacker: selection rule.
@@ -409,6 +409,38 @@
   ;; Acceptance criterion from issue #57: melee damage AT LEAST
   ;; doubles. Pin the constant so a future buff/nerf is intentional.
   (is (php/>= berserk-damage-mul 2)))
+
+;; ---------------------------------------------------------------------
+;; #127: berserk is melee-biased (the DOOM 'go punch everything' pack)
+;; plus a full heal on pickup, not a flat all-weapon multiplier.
+;; ---------------------------------------------------------------------
+
+(deftest test-berserk-mul-melee-beats-ranged
+  ;; Melee gets a much bigger boost than ranged - the identity shift.
+  (is (php/> (berserk-mul-for :melee) (berserk-mul-for :ballistic))
+      "melee berserk boost exceeds ranged")
+  (is (= berserk-melee-mul (berserk-mul-for :melee)))
+  (is (= berserk-damage-mul (berserk-mul-for :ballistic)))
+  (is (= berserk-damage-mul (berserk-mul-for :plasma))
+      "non-melee types all use the ranged multiplier"))
+
+(deftest test-berserk-melee-mul-is-a-real-surge
+  ;; Chainsaw (damage 1) under berserk should hit for the big melee
+  ;; multiplier, turning it into a tank shredder.
+  (is (php/>= berserk-melee-mul 4) "melee surge is substantial")
+  (is (php/> berserk-melee-mul berserk-damage-mul)))
+
+(deftest test-arm-berserk-full-heals-to-max
+  ;; Pickup restores health to the cap (#127).
+  (let [w (arm-berserk {:lives 2})]
+    (is (= max-lives (:lives w)) "berserk pickup full-heals to max-lives")
+    (is (= berserk-seconds (:berserk-secs w)) "and arms the rage window")))
+
+(deftest test-arm-berserk-never-lowers-overcap-lives
+  ;; A soulsphere can push lives over the cap; the berserk heal must not
+  ;; claw that back.
+  (let [w (arm-berserk {:lives (php/+ max-lives 3)})]
+    (is (= (php/+ max-lives 3) (:lives w)))))
 
 ;; ---------------------------------------------------------------------
 ;; Chainsaw (issue #59): no-ammo, melee range, slow movement while firing.

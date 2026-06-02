@@ -19,6 +19,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Changed
 
+- Berserk is now melee-biased with a full heal (#127), matching DOOM. Pickup restores health to full, and the rage window boosts melee (the chainsaw) far more than guns (`x6` vs `x2`) instead of a flat all-weapon multiplier - the classic "go punch everything" identity.
 - Shotgun is now a multi-target graze (#125): the nearest enemy in a cone takes the full damage and up to two others in the cone are grazed for reduced damage, turning the slow-cadence shotgun into a crowd weapon instead of a single big hit.
 - Pistol identity vs chaingun (#124): the pistol round now **pierces**, hitting every enemy in the line instead of stopping at the nearest. That is its edge over the strictly-higher-DPS chaingun (lined-up enemies take one hit each). Overheat was dropped from the pistol - jamming the forced fallback weapon is anti-fun; the generic `:overheats?` mechanic stays dormant for future weapons.
 - `press R to RELOAD` reminder is now weapon-aware (#128): it arms on the remaining-mag fraction instead of an absolute count, and is suppressed for single-round mags (the BFG no longer nags on its 1/1 magazine).

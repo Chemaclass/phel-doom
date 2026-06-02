@@ -172,16 +172,36 @@
   20.0)
 
 (def berserk-damage-mul
-  "Damage multiplier applied to every shot while berserk-secs > 0."
+  "Berserk damage multiplier for RANGED weapons (the default). Berserk is
+   melee-biased (#127): ranged guns get this modest boost, melee gets the
+   much larger `berserk-melee-mul`."
   2)
 
+(def berserk-melee-mul
+  "Berserk damage multiplier for `:melee` weapons (the chainsaw). Far
+   bigger than the ranged boost so berserk's identity is the DOOM 'go
+   punch everything' melee surge, not a flat all-weapon buff (#127). At
+   chainsaw damage 1 this is 6 per hit on a 0.10s cadence = a tank
+   shredder for the rage window."
+  6)
+
+(defn berserk-mul-for
+  "Berserk damage multiplier for `damage-type`: the big melee boost for
+   `:melee`, the modest ranged boost otherwise (#127)."
+  [damage-type]
+  (if (= damage-type :melee) berserk-melee-mul berserk-damage-mul))
+
 (defn arm-berserk
-  "Pure helper: stamp the full `berserk-seconds` rage window on the
-   world, replacing the current timer (a refresh, not a stack). Used
-   by `pickup-berserks` after the pickup is consumed; isolated here so
-   the timer logic can be unit-tested without the IO sfx call."
+  "Pure helper: stamp the full `berserk-seconds` rage window on the world
+   (a refresh, not a stack) AND full-heal the player to `max-lives` - the
+   DOOM berserk pack restores health on pickup (#127). Never lowers an
+   over-cap life count (e.g. from a soulsphere). Used by `pickup-berserks`
+   after the pickup is consumed; isolated here so the timer + heal logic
+   can be unit-tested without the IO sfx call."
   [world]
-  (assoc world :berserk-secs berserk-seconds))
+  (assoc world
+         :berserk-secs berserk-seconds
+         :lives (php/max (or (:lives world) 0) max-lives)))
 
 (defn berserk?
   "True while the player's berserk timer is still ticking down."
@@ -454,8 +474,8 @@
   (let [p         (:player world)
         spec      (w-spec world)
         base-dmg  (or (:damage spec) 1)
-        dmg       (if (berserk? world) (php/* base-dmg berserk-damage-mul) base-dmg)
         dmg-type  (:damage-type spec)
+        dmg       (if (berserk? world) (php/* base-dmg (berserk-mul-for dmg-type)) base-dmg)
         max-range (or (:max-range spec) shot-max-range)]
     (shoot (:enemies world) (:x p) (:y p) (:angle p)
            (cast-wall-distance world)
@@ -720,8 +740,8 @@
         spec         (w-spec world)
         radius       (:splash-radius spec)
         base         (or (:splash-damage spec) 1)
-        dmg          (if (berserk? world) (php/* base berserk-damage-mul) base)
         dtype        (:damage-type spec)
+        dmg          (if (berserk? world) (php/* base (berserk-mul-for dtype)) base)
         max-r        (or (:max-range spec) shot-max-range)
         wall-d       (cast-wall-distance world)
         [ix iy]      (beam-impact (:enemies world) (:x p) (:y p) (:angle p)
@@ -803,8 +823,8 @@
   (let [p                          (:player world)
         spec                       (w-spec world)
         base                       (or (:damage spec) 1)
-        dmg                        (if (berserk? world) (php/* base berserk-damage-mul) base)
         dtype                      (:damage-type spec)
+        dmg                        (if (berserk? world) (php/* base (berserk-mul-for dtype)) base)
         max-r                      (or (:max-range spec) shot-max-range)
         wall-d                     (cast-wall-distance world)
         [es' killed hit-pos tough] (pierce (:enemies world) (:x p) (:y p) (:angle p)
@@ -820,12 +840,13 @@
   (let [p                          (:player world)
         spec                       (w-spec world)
         base                       (or (:damage spec) 1)
-        prim                       (if (berserk? world) (php/* base berserk-damage-mul) base)
+        dtype                      (:damage-type spec)
+        mul                        (if (berserk? world) (berserk-mul-for dtype) 1)
+        prim                       (php/* base mul)
         graze-base                 (or (:graze-damage spec) 1)
-        graze                      (if (berserk? world) (php/* graze-base berserk-damage-mul) graze-base)
+        graze                      (php/* graze-base mul)
         targets                    (or (:spread-targets spec) 3)
         half                       (or (:spread-half-angle spec) shotgun-spread-half-angle)
-        dtype                      (:damage-type spec)
         max-r                      (or (:max-range spec) shot-max-range)
         wall-d                     (cast-wall-distance world)
         [es' killed hit-pos tough] (spread-shoot (:enemies world) (:x p) (:y p) (:angle p)

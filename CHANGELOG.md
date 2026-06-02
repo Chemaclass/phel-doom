@@ -19,6 +19,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Changed
 
+- Each weapon now has its own gun-sprite silhouette, not just a recolour: the chainsaw shows a toothed blade over an engine (no barrel), the BFG a bulky cannon with a glowing aperture, the incinerator a thin nozzle over a fat fuel tank, the rocket a straight round tube, and the super shotgun a stubby twin-bore. Previously every weapon past the chaingun reused the pistol shape.
 - Berserk is melee-biased with a full heal (#127): pickup restores full health, and the rage window boosts melee (chainsaw `x6`) far more than guns (`x2`) - the DOOM "go punch everything" identity, not a flat all-weapon multiplier.
 - Shotgun fires a cone graze (#125): the nearest enemy takes full damage and up to two others in the cone are grazed - a crowd weapon, not one big hit.
 - Pistol pierces (#124): its round hits every enemy in the line, its edge over the higher-DPS chaingun. Overheat dropped (jamming the forced fallback weapon is anti-fun).

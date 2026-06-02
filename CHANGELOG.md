@@ -9,6 +9,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-02
+
 ### Added
 
 - Super shotgun (#126). Slot 8, found L8: a high-burst tank-killer, `:damage 5` over a wide but very short cone with a 2-shell barrel and slow reload. Beats the shotgun's TTK on 4-5HP tanks with no BFG ammo cost; appended so keys 1-7 keep their meaning.
@@ -233,7 +235,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `cast + render` under 5 ms per frame at 120×30.
 - Flat PHP arrays on hot paths; `:tag` types for OPcache JIT tracing.
 
-[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/Chemaclass/phel-doom/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Chemaclass/phel-doom/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Chemaclass/phel-doom/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Chemaclass/phel-doom/compare/v0.4.1...v0.5.0

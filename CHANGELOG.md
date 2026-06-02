@@ -11,6 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+- Super shotgun (#126). Slot 8 (key `8`), found on L8: a high-burst tank-killer with `:damage 5` over a wide but very short-range cone, a 2-shell double barrel, and a slow reload. Beats the basic shotgun's TTK against 4-5HP tanks without spending scarce BFG ammo. Appended at slot 8 so the existing 1-7 weapon keys keep their meaning.
 - Run times render as a clock (`M:SS`, or `H:MM:SS` past an hour) instead of raw seconds (#131). Applies to the victory and death screens, the persisted best time, and the info-menu RUN time, via a unit-tested `format-duration` helper.
 - The H info menu now lists `F5` / `F9` quick save / load, so the save feature is discoverable in-game instead of only via the post-press HUD flash.
 - Rocket launcher (#123). Slot 7, found on L5: a single-action mid-tier AoE (splash radius 2.0, splash damage 3) that fills the gap between the chaingun and the rare BFG nuke. Reuses the splash combat path; cheaper and more available than the BFG. Switch keys now span 1-7.

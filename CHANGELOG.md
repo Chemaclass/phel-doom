@@ -18,6 +18,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Start-menu settings (`s`) now apply and persist; music/sfx/minimap/difficulty edits were silently dropped.
 - Chainsaw (slot 4) is now obtainable: it drops on L4 and `--armory` includes it (was unreachable dead content).
 - Powerup spawn odds and map placement margins now match their documented values (`rng/int!` was off-by-one inclusive).
+- Settings cursor no longer jumps two rows per arrow tap. On kitty-protocol terminals a tap sends a press and a release event; both were counted as navigation. Release events are now ignored (held-key ramp still works via repeat events).
 
 ## [0.7.0] - 2026-06-01
 

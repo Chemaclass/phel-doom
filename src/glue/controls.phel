@@ -353,15 +353,21 @@
         (= 1 (php/preg_match kitty-re keys)))))
 
 (defn- arrow-count
-  "How many times an arrow with final byte `letter` (A=up B=down C=right
-   D=left) appears in `keys`. Matches every encoding a terminal may
-   send: CSI (`\\e[A`), modified / kitty-enhanced CSI (`\\e[1;2A`,
-   `\\e[1;m:eD`), AND the SS3 application-cursor form (`\\eOA`) that many
-   terminals + tmux emit in the alternate screen. Counting (not a bool)
-   lets a held key's OS-repeat burst ramp a slider."
+  "How many PRESS / REPEAT arrows with final byte `letter` (A=up B=down
+   C=right D=left) appear in `keys`. Matches every encoding a terminal
+   may send: CSI (`\\e[A`), modified / kitty-enhanced CSI (`\\e[1;2A`,
+   `\\e[1;1:2A`), AND the SS3 application-cursor form (`\\eOA`) that many
+   terminals + tmux emit in the alternate screen.
+
+   Excludes kitty RELEASE events (`:3`). With report-event-types on
+   (`\\e[>3u` in init-input!) a single tap sends a press AND a release;
+   counting both moved the settings cursor twice per keypress. The
+   optional `(?::[12])?` accepts press (`:1` / none) and repeat (`:2`,
+   so a held key still ramps) but not release. Counting (not a bool)
+   lets a held key's repeat burst ramp a slider."
   [keys letter]
   (let [m (php/array)]
-    (php/preg_match_all (str "/\\x1b(?:\\[[\\d;:]*|O)" letter "/") keys m)))
+    (php/preg_match_all (str "/\\x1b(?:\\[[\\d;]*(?::[12])?|O)" letter "/") keys m)))
 
 (defn nav-deltas
   "Net menu-navigation intent in `keys` for the settings page, as

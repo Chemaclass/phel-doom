@@ -325,6 +325,20 @@
   (is (= {:cursor -1 :value 0} (nav-deltas "\e[1;2A")) "shift+up")
   (is (= {:cursor -1 :value 0} (nav-deltas "\e[1;1:1A")) "kitty up press"))
 
+(deftest test-nav-deltas-excludes-kitty-release-events
+  ;; Regression (menu double-move): with report-event-types on
+  ;; (\e[>3u in init-input!), a single arrow tap sends a PRESS and a
+  ;; RELEASE (:3). Counting both moved the settings cursor twice per
+  ;; keypress. Release events must NOT count.
+  (is (= {:cursor 0 :value 0} (nav-deltas "\e[1;1:3B")) "release alone = no move")
+  (is (= {:cursor 1 :value 0} (nav-deltas "\e[B\e[1;1:3B")) "bare press + release = one move")
+  (is (= {:cursor 1 :value 0} (nav-deltas "\e[1;1:1B\e[1;1:3B")) "press + release = one move"))
+
+(deftest test-nav-deltas-counts-kitty-repeat-for-ramp
+  ;; A held arrow on kitty sends press then repeat (:2) events; both
+  ;; count so the slider still ramps. Only release (:3) is dropped.
+  (is (= {:cursor 3 :value 0} (nav-deltas "\e[1;1:1B\e[1;1:2B\e[1;1:2B"))))
+
 (deftest test-nav-deltas-wasd-fallback
   ;; WASD navigates too, so the page works even when arrows aren't
   ;; recognised by the terminal.

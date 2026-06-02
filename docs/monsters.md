@@ -50,7 +50,7 @@ Reading it:
 - **Casters** (`:caco`, `:baron`, `:archvile`) are the types that fire projectiles (`caster-spec`). They move slower than the melee rushers to stay fair: keep distance and strafe the bolts, or close in and trade the dodge window for melee range. Bolt speed is world-units/sec (deliberately low so a fireball is dodge-able, not near-hitscan). The archvile is the escalated caster: fastest bolt (3.4) and tightest range, but its windup matches the caco (0.6s) so the telegraph stays reactable on a laggy terminal.
 - `:cyber` is the heaviest: top HP, slowest move (0.55x), long telegraph. The L10 boss spawns it with 50 HP.
 - `:pinky` is the glass rusher: low HP, full speed, shortest windup + cooldown.
-- **Resists** zeroes incoming damage of that type (`enemy/shoot` checks `enemies/resists?`). `:fire` resistance is why the BFG's `:plasma` shot matters against caco / baron / archvile / mancubus.
+- **Resists** zeroes incoming damage of that type (`enemy/shoot` checks `enemies/resists?`). `:fire` resistance means the incinerator (slot 6, the only `:fire` weapon, issue #122) does zero to caco / baron / archvile / mancubus. The BFG's `:plasma` is NOT resisted, so plasma is the answer against those four; the incinerator burns everything else.
 
 ### Depth-scaled aggression
 

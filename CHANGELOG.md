@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Added
+
+- Incinerator weapon (#122). Slot 6, found on L6: a fast short-range `:fire` flame stream. It is the first weapon to deal `:fire`, so it activates the previously-inert per-enemy resist system - caco / baron / archvile / mancubus shrug it off (zero damage), everything else burns. Switch keys now span 1-6.
+
 ### Changed
 
 - `press R to RELOAD` reminder is now weapon-aware (#128): it arms on the remaining-mag fraction instead of an absolute count, and is suppressed for single-round mags (the BFG no longer nags on its 1/1 magazine).

@@ -6,11 +6,11 @@ One-shot SFX via `src/io/sound.phel` (shell-out) + ambient drone via `src/io/amb
 
 ## Event tags
 
-Combat raises events by name: `:shoot`, `:shoot-shotgun`, `:shoot-chaingun`, `:shoot-chainsaw`, `:shoot-bfg`, `:hit`, `:kill`, `:reload`, `:click`, `:door`, `:heartbeat`, `:berserk`, `:wound`.
+Combat raises events by name: `:shoot`, `:shoot-shotgun`, `:shoot-chaingun`, `:shoot-chainsaw`, `:shoot-bfg`, `:shoot-incinerator`, `:hit`, `:kill`, `:reload`, `:click`, `:door`, `:heartbeat`, `:berserk`, `:wound`.
 
 `core/combat` is pure: it enqueues `{:name :vol}` events on the world's per-frame `:sfx` queue rather than calling `play-sfx!`. `commands/play` drains the queue after `tick-world` and emits each event, gated on `:sound-on`. Keeps the effect at the io boundary.
 
-macOS maps to `.aiff`: Pop (pistol/kill), Blow (shotgun), Morse (chaingun), Purr (chainsaw), Glass (BFG), Sosumi (player-hurt), Basso (dry-fire), Funk (reload), Tink (door/pickup), Submarine (wound), Bottle (heartbeat), Hero (berserk).
+macOS maps to `.aiff`: Pop (pistol/kill), Blow (shotgun), Morse (chaingun), Purr (chainsaw), Glass (BFG), Frog (incinerator), Sosumi (player-hurt), Basso (dry-fire), Funk (reload), Tink (door/pickup), Submarine (wound), Bottle (heartbeat), Hero (berserk).
 
 ## Per-weapon fire report
 

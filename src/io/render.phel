@@ -988,37 +988,51 @@
     (str text "\e[40;97m"
          (php/str_repeat " " (php/max 0 (php/- width visible-len))))))
 
+(def help-weapon-name-width
+  "Widest weapon `:name`, so the `dmg`/ammo columns line up in the
+   WEAPONS table regardless of how long a name is (e.g. the 15-char
+   `rocket launcher` or `incinerator`). Computed from the catalog so a
+   new weapon never silently collides the columns."
+  (reduce (fn [m kw]
+            (php/max m (php/strlen (or (:name (get weapons kw)) (php/strval kw)))))
+          0 weapon-order))
+
 (defn- help-weapon-row
   "Render one weapon entry as a full menu row including both `│`
    borders. Builds the visible string first (no SGR) so the trailing
    pad math is byte-accurate, then wraps the body in the per-weapon
    colour. Active weapon gets a yellow `>` marker; unowned weapons
    render dim with `--/--` ammo so the player sees the slot exists
-   but still has to find it on the map."
+   but still has to find it on the map. The name pads to
+   `help-weapon-name-width` and dmg pads to 2 cols so every column
+   aligns down the table."
   [kw spec active? owned? mag reserve cap row-w]
   (let [name     (or (:name spec) (php/strval kw))
         dmg      (or (:damage spec) 0)
         mag-sz   (or (:mag-size spec) 0)
         marker   (if active? "> " "  ")
-        name-pad (php/str_repeat " " (php/max 0 (php/- 10 (php/strlen name))))
+        name-pad (php/str_repeat " " (php/max 0 (php/- help-weapon-name-width (php/strlen name))))
+        dmg-str  (php/str_pad (php/strval dmg) 2 " ")
         ammo-txt (if owned?
                    (let [mag-frag (str mag "/" mag-sz)]
                      (str mag-frag
                           (php/str_repeat " " (php/max 0 (php/- 7 (php/strlen mag-frag))))
                           "[" reserve "/" cap "]"))
-                   "--/--   [--/--]")
-        body     (str " " marker name name-pad "dmg " dmg "  " ammo-txt)
+                   "--/--  [--/--]")
+        body     (str " " marker name name-pad " dmg " dmg-str "  " ammo-txt)
         body-pad (php/str_repeat " " (php/max 0 (php/- row-w (php/strlen body))))
         sgr      (cond active? "\e[1;93m" owned? "\e[97m" :else "\e[2;90m")]
     (str "│" sgr body "\e[40;97m" body-pad "│")))
 
-(defn- help-menu-string
-  "Build the H info overlay. Three sections — run state, player
-   status, weapons table — plus a short controls reminder. Pure:
-   caller pushes the resulting ANSI string into the parts array.
+(defn help-menu-rows
+  "Build the H info overlay as a vector of full-width bordered rows
+   (each `│...│`, or a `┌─┐`/`├─┤`/`└─┘` rule). Sections — run state,
+   player status, weapons table, compass hint, controls — are spliced
+   greedily to fit `vh`. Every interior row is padded to the same width
+   so the right border lines up; `help-menu-string` positions them.
 
-   Reads everything from `stats` so the overlay never reaches back
-   into `world` directly. `stats` carries the same keys frame-stats
+   Pure: reads everything from `stats` so the overlay never reaches
+   back into `world` directly. `stats` carries the same keys frame-stats
    stamps in commands/play.phel — see that fn for the full list."
   [vw vh stats]
   (let [;; Width-adaptive: clamp interior so the whole frame
@@ -1151,7 +1165,8 @@
                         (bord "  n             toggle sound")
                         (bord "  F3            debug overlay")
                         (bord "  p             pause + settings")
-                        (bord "  h / ESC      close this menu")
+                        (bord "  F5 / F9       quick save / load")
+                        (bord "  h / ESC       close this menu")
                         (bord "  q             quit")])
         closer-rows   (to-php-array [blnk (str "└" bar "┘")])
         ;; Greedy fit: always include core + closer, then add compass
@@ -1171,16 +1186,26 @@
                         (php/array_merge with-compass controls-rows)
                         with-compass)
         rows          (apply vector (php/array_merge with-ctrls closer-rows))]
-    (let [n    (count rows)
-          col0 (php/max 1 (php/- (php/+ (php/intdiv vw 2) 1)
-                                 (php/intdiv (php/+ w 2) 2)))
-          row0 (php/max 1 (php/intdiv (php/max 1 (php/- vh n)) 2))]
-      (loop [i 0 acc ""]
-        (if (php/>= i n)
-          acc
-          (recur (php/+ i 1)
-                 (str acc "\e[" (php/+ row0 i) ";" col0 "H\e[40;97m"
-                      (get rows i) "\e[0m")))))))
+    rows))
+
+(defn- help-menu-string
+  "Position the help/info menu rows (built by `help-menu-rows`) with
+   absolute cursor moves, centred in the `vw` x `vh` viewport. Pure:
+   caller pushes the resulting ANSI string into the parts array."
+  [vw vh stats]
+  (let [w    (php/max help-min-inner-width
+                      (php/min help-inner-width (php/- vw 2)))
+        rows (help-menu-rows vw vh stats)
+        n    (count rows)
+        col0 (php/max 1 (php/- (php/+ (php/intdiv vw 2) 1)
+                               (php/intdiv (php/+ w 2) 2)))
+        row0 (php/max 1 (php/intdiv (php/max 1 (php/- vh n)) 2))]
+    (loop [i 0 acc ""]
+      (if (php/>= i n)
+        acc
+        (recur (php/+ i 1)
+               (str acc "\e[" (php/+ row0 i) ";" col0 "H\e[40;97m"
+                    (get rows i) "\e[0m"))))))
 
 (def settings-inner-width
   "Interior character width of each settings-overlay row. Wide enough

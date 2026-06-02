@@ -1,6 +1,6 @@
 (ns phel-doom-tests.io.render-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.io.render :refer [direction-char project-enemy enemy-front-visible-at? reload-reminder-visible?]))
+  (:require phel-doom.io.render :refer [direction-char project-enemy enemy-front-visible-at? reload-reminder-visible? help-menu-rows]))
 
 ;; ---------------------------------------------------------------------
 ;; reload-reminder-visible? (#128): the periodic "press R to RELOAD" nag
@@ -133,3 +133,64 @@
         edists (php/array)]
     (is (= true (enemy-front-visible-at? 4.0 0 dists edists))
         "no nearer enemy -> shadow allowed")))
+
+;; ---------------------------------------------------------------------
+;; help-menu-rows borders: every interior row of the H info overlay is
+;; padded to the same width so the right `│` border lines up. A row built
+;; without help-pad (or a miscounted glyph) would render a ragged border.
+;; This guards every section: RUN, PLAYER, WEAPONS, COMPASS, CONTROLS
+;; (incl. the F5/F9 quick save/load line).
+;; ---------------------------------------------------------------------
+
+(defn- visible-width [s]
+  ;; Strip CSI SGR escapes, then count display columns (mb, not bytes):
+  ;; matches how render's help-pad measures interior width.
+  (php/mb_strlen (php/preg_replace "/\\x1b\\[[\\d;]*m/" "" s)))
+
+(defn- expected-frame-width [vw]
+  ;; Mirror help-menu-string: interior w clamped to [36, 44], plus the
+  ;; two side borders.
+  (php/+ 2 (php/max 36 (php/min 44 (php/- vw 2)))))
+
+(defn- all-rows-aligned? [vw vh stats]
+  (let [rows (help-menu-rows vw vh stats)
+        want (expected-frame-width vw)]
+    (every? (fn [r] (= want (visible-width r))) rows)))
+
+(deftest test-help-menu-borders-align-default-stats
+  ;; vh=60 is tall enough that the greedy fit keeps every section,
+  ;; including CONTROLS (the F5/F9 + h/ESC rows).
+  (is (all-rows-aligned? 80 60 {})
+      "all help-menu rows share one width with every section visible"))
+
+(deftest test-help-menu-borders-align-narrow
+  ;; vw=44 -> interior clamps to 42 (below the 44 default). The widest
+  ;; row (rocket launcher) still fits, so borders stay aligned. Terminals
+  ;; narrower than the weapon table are the documented clip zone.
+  (is (all-rows-aligned? 44 40 {})
+      "borders still align when the menu clamps below its default width"))
+
+(deftest test-help-menu-borders-align-with-buffs-and-keys
+  ;; Populate the coloured keys/buffs rows + an active non-pistol weapon
+  ;; so the SGR-stripping pad math is exercised on every dynamic row.
+  (is (all-rows-aligned? 80 40
+                         {:held-keys #{:blue :red}
+                          :berserk-secs 12.0
+                          :invuln-secs 4.0
+                          :backpack? true
+                          :owned-weapons #{:pistol :shotgun :chaingun}
+                          :weapon :shotgun})
+      "coloured keys/buffs + weapon rows stay border-aligned"))
+
+(deftest test-help-menu-borders-align-short-viewport
+  ;; Short vh drops CONTROLS then COMPASS; the surviving rows must still
+  ;; align (closer row is always appended).
+  (is (all-rows-aligned? 80 14 {})
+      "section-dropping on a short terminal keeps borders aligned"))
+
+(deftest test-help-menu-lists-save-load
+  ;; The save/load feature must be discoverable in the info menu, not
+  ;; only via the post-press HUD flash.
+  (let [rows (help-menu-rows 80 60 {})]
+    (is (some (fn [r] (php/!== false (php/strpos r "F5 / F9"))) rows)
+        "H info menu lists F5 / F9 quick save / load")))

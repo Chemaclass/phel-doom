@@ -11,6 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+- The H info menu now lists `F5` / `F9` quick save / load, so the save feature is discoverable in-game instead of only via the post-press HUD flash.
 - Rocket launcher (#123). Slot 7, found on L5: a single-action mid-tier AoE (splash radius 2.0, splash damage 3) that fills the gap between the chaingun and the rare BFG nuke. Reuses the splash combat path; cheaper and more available than the BFG. Switch keys now span 1-7.
 - Incinerator weapon (#122). Slot 6, found on L6: a fast short-range `:fire` flame stream. It is the first weapon to deal `:fire`, so it activates the previously-inert per-enemy resist system - caco / baron / archvile / mancubus shrug it off (zero damage), everything else burns. Switch keys now span 1-6.
 
@@ -21,6 +22,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Fixed
 
+- WEAPONS table in the H info menu: long weapon names (`rocket launcher`, `incinerator`) no longer collide with the `dmg` column, 2-digit damage (the BFG) no longer shifts the ammo column, and unowned `--/--` rows line up with owned rows. The name column now sizes to the longest weapon name.
 - Wall-top/ceiling seam no longer shows scattered dark dots. The half-block edge cell painted its sky/floor half with a flat shade code instead of the actual gradient shade at that row; it now samples the gradient so the seam blends cleanly.
 - Start-menu settings (`s`) now apply and persist; music/sfx/minimap/difficulty edits were silently dropped.
 - Chainsaw (slot 4) is now obtainable: it drops on L4 and `--armory` includes it (was unreachable dead content).

@@ -1077,11 +1077,15 @@
         (if esc-edge
           ;; Volumes were applied live on each adjust; close just saves.
           (save-settings! settings)
+          ;; Destructure into NON-loop names: binding the result back to
+          ;; locals called `settings` / `cursor` (the loop vars) makes the
+          ;; recur re-bind the loop's ORIGINAL values, silently dropping
+          ;; every edit. Use `nav` + accessors so the recur threads the
+          ;; navigated map forward.
           (let [{:cursor cursor-steps :value value-steps} (nav-deltas keys)
-                {:keys [cursor settings adjusted?]}
-                (navigate settings cursor cursor-steps value-steps)]
-            (when adjusted? (apply-audio-settings! settings))
-            (recur settings cursor now [rows cols])))))))
+                nav                                       (navigate settings cursor cursor-steps value-steps)]
+            (when (:adjusted? nav) (apply-audio-settings! (:settings nav)))
+            (recur (:settings nav) (:cursor nav) now [rows cols])))))))
 
 (defn- start-pressed?
   "True when `keys` carries an ENTER / Return (raw mode sends CR; some

@@ -2204,7 +2204,7 @@
    `haze-shift` int 0-23: how many shade-table steps to pull walls
                 toward black. Doors are kept bright as a nav cue."
   [vw vh haze-shift cast palette blood-cols]
-  (let [{:keys [dists hits sides hxs hys]}                             cast
+  (let [{:keys [dists hits sides]}                                     cast
         {:keys [stbl ctbl sky-c floor-c door-shade-now door-code-now
                 boss-door-shade-now boss-door-code-now]}               palette
         tops                                                           (buf-mk)
@@ -2244,34 +2244,20 @@
             :else
             (let [idx-raw (php/max 0
                                    (php/min 23
-                                            (php/+ (php/intval (php/* (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 23))
-                                                   (if (php/=== (buf-get sides col) 0) 2 0))))
+                                            (php/+ (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 0.6) 23))
+                                                   (if (php/=== (buf-get sides col) 0) 3 0))))
                   ;; Haze pulls every wall cell toward index 0 (black)
                   ;; by `haze-shift` steps. 0 = full visibility; values
                   ;; come from frame->string based on player lives.
                   idx     (php/max 0 (php/- idx-raw haze-shift))]
-              (let [wcode     (buf-get ctbl-l idx)
-                    plain     (buf-get stbl-l idx)
-                    hx        (buf-get hxs col)
-                    hy        (buf-get hys col)
-                    bhash     (mod (php/+ (php/* hx 73856093) (php/* hy 19349663)) 100)
+              (let [plain     (buf-get stbl-l idx)
                     shd-idx   (php/max 0 (php/- idx 3))
                     shd-bg    (buf-get stbl-l shd-idx)
                     edge-code (buf-get ctbl-l shd-idx)]
-                (buf-set normal col
-                         ;; Architectural brick texture: ~4% of wall
-                         ;; cells (was 14%; dropped the `·` dot variant
-                         ;; that read as bright noise rather than
-                         ;; mortar). Three glyphs left (▤▦▥) keep
-                         ;; mortar variety without speckling every
-                         ;; corridor.
-                         (if (php/< bhash 4)
-                           (let [dcode (buf-get ctbl-l (php/max 0 (php/- idx 5)))
-                                 glyph (cond (php/=== (mod bhash 3) 0) "▤"
-                                             (php/=== (mod bhash 3) 1) "▦"
-                                             :else                     "▥")]
-                             (str "\e[48;5;" wcode ";38;5;" dcode "m" glyph))
-                           plain))
+                ;; Flat plain wall cells: no per-cell brick speckle. Walls
+                ;; read as clean shaded stone; depth comes from the gamma
+                ;; distance falloff + stronger EW side-shading instead.
+                (buf-set normal col plain)
                 (buf-set top-edge   col (str "\e[48;5;" edge-code ";38;5;" sky-c-l "m▀"))
                 (buf-set bot-edge   col (str "\e[48;5;" floor-c-l ";38;5;" edge-code "m▀"))
                 (buf-set top-shadow col shd-bg)

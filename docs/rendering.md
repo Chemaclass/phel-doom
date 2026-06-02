@@ -45,12 +45,11 @@ overlays (cursor-positioned):
 
 ```
 shade-idx = clamp(0, 23,
-  distance-to-shade(dist)         ; base by distance
-  + (side == 0 ? 1 : 0)           ; vertical face darker
-  + cell-variation-hash(hx, hy))  ; ±1 mottling
+  gamma(distance-to-shade(dist))  ; base by distance, gamma 0.6 curve
+  + (side == 0 ? 3 : 0))          ; NS face brighter (directional light)
 ```
 
-Indexes `shade-table[0..23]`: pre-baked ANSI for 256-color grays (codes 232-255). One lookup per column.
+Walls are flat shaded stone (no per-cell mottling). The gamma 0.6 curve brightens mid-range so walls pop out of the dark; the `+3` NS-face bonus reads as directional lighting and sharpens corners. Indexes `shade-table[0..23]`: pre-baked ANSI for 256-color grays (codes 232-255). One lookup per column.
 
 Doors: `door-shade` (orange for unlocked, blue/red for keycards, bright red for boss-lock). Half-block edges mix door with sky/floor. Locked messages ("NEED BLUE KEY", "KILL THE BOSS") painted separately.
 

@@ -16,6 +16,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 ### Fixed
 
 - Start-menu settings page (`s`) now applies + persists every edit. The page loop destructured nav results into locals named `settings`/`cursor`, shadowing the loop bindings so `recur` re-bound the originals and silently dropped each change.
+- Chainsaw (slot 4) is now obtainable. It was fully implemented but never granted: no level dropped it and the `--armory` set omitted it, so pressing `4` was always a no-op. L4 now seeds a chainsaw pickup and `--armory` owns every weapon.
 
 ## [0.7.0] - 2026-06-01
 

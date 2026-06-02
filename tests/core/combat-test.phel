@@ -108,21 +108,19 @@
 ;; apply-heat: one shot's worth of state change.
 ;; ---------------------------------------------------------------------
 
-(deftest test-apply-heat-bumps-and-cools-cooldown
+(deftest test-apply-heat-arms-cooldown
+  ;; Default weapon is the pistol; each shot arms the fire-cooldown.
   (let [w (apply-heat {:heat 0.0 :jam-secs 0.0})]
-    ;; Some non-zero cooldown is armed.
-    (is (> (:fire-cooldown w) 0.0))
-    ;; Heat increased.
-    (is (> (:heat w) 0.0))
-    ;; Not yet jammed.
-    (is (= 0.0 (:jam-secs w)))))
+    (is (> (:fire-cooldown w) 0.0))))
 
-(deftest test-apply-heat-overheats-into-jam
-  ;; Push heat near 1.0 then fire once more; should trigger jam.
+(deftest test-pistol-no-longer-overheats
+  ;; #124 dropped overheat from the pistol: jamming the forced fallback
+  ;; weapon is anti-fun. Even fed near-max heat the pistol stays cool and
+  ;; never jams (it now behaves like the chaingun/shotgun). The generic
+  ;; :overheats? machinery stays for any future weapon that opts in.
   (let [w (apply-heat {:heat 0.99 :jam-secs 0.0})]
-    (is (> (:jam-secs w) 0.0))
-    ;; Heat resets to 0 so the player isn't punished twice.
-    (is (= 0.0 (:heat w)))))
+    (is (= 0.0 (:heat w)) "pistol never accumulates heat")
+    (is (= 0.0 (:jam-secs w)) "pistol never jams")))
 
 (deftest test-apply-heat-burns-one-round
   ;; Each fired shot drops the mag count by one (issue #5 phase 1).
@@ -149,13 +147,6 @@
     (is (= 0.0 (:heat w)))
     (is (= 0.0 (:jam-secs w)))
     (is (= 3   (:mag w)))))
-
-(deftest test-apply-heat-pistol-still-jams
-  ;; Pistol is the only weapon that overheats. Pushed to ~1.0 the
-  ;; jam timer arms and heat resets.
-  (let [w (apply-heat {:weapon :pistol :heat 0.99 :jam-secs 0.0 :mag 10})]
-    (is (php/> (:jam-secs w) 0.0))
-    (is (= 0.0 (:heat w)))))
 
 ;; ---------------------------------------------------------------------
 ;; reload: tops the mag back up, arms a brief cooldown.

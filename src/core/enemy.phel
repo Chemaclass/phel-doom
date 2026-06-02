@@ -258,6 +258,54 @@
                        (conj acc (assoc woke :hit-flash-secs hit-flash-seconds))
                        killed)))))))))
 
+(defn pierce
+  "Piercing hitscan: damage EVERY alive enemy along the ray, not just the
+   nearest like `shoot`. An enemy is struck when it is in front of the
+   player (`proj > 0`), nearer than both the wall and `max-range`, and
+   within `hit-radius` of the ray line. Returns
+   `[new-enemies killed-count hit-pos kill-toughness]`, where `hit-pos`
+   is the nearest struck enemy (for blood + sfx) or nil on a clean miss,
+   and `kill-toughness` is the largest `:max-lives` among enemies killed
+   this shot (0 if none) so the caller can size hit-stop per the meatiest
+   kill. Survivors wake (`:aware`) + take a hit-flash; no pain roll
+   (mirrors `splash`). Pure."
+  [enemies ^float px ^float py ^float angle ^float wall-dist ^float hit-radius ^float max-range ^int damage damage-type]
+  (let [cos-a (php/cos angle)
+        sin-a (php/sin angle)
+        cap   (php/min wall-dist max-range)
+        hr2   (php/* hit-radius hit-radius)]
+    (loop [i 0 acc [] killed 0 best-d cap hit-pos nil tough 0]
+      (if (php/>= i (count enemies))
+        [acc killed hit-pos tough]
+        (let [e     (get enemies i)
+              dx    (php/- (:x e) px)
+              dy    (php/- (:y e) py)
+              proj  (php/+ (php/* dx cos-a) (php/* dy sin-a))
+              perpx (php/- dx (php/* proj cos-a))
+              perpy (php/- dy (php/* proj sin-a))
+              in?   (and (:alive e)
+                         (php/> proj 0.0)
+                         (php/< proj cap)
+                         (php/<= (php/+ (php/* perpx perpx) (php/* perpy perpy)) hr2))]
+          (if (not in?)
+            (recur (php/+ i 1) (conj acc e) killed best-d hit-pos tough)
+            (let [eff     (if (resists? (:type e) damage-type) 0 damage)
+                  lives   (php/max 0 (php/- (or (:lives e) 1) eff))
+                  woke    (assoc e :state :aware :lives lives)
+                  closer? (php/< proj best-d)
+                  hp'     (if closer? {:x (:x e) :y (:y e)} hit-pos)
+                  bd'     (if closer? proj best-d)]
+              (if (php/<= lives 0)
+                (recur (php/+ i 1)
+                       (conj acc (assoc woke
+                                        :alive false
+                                        :respawn-after (respawn-delay-for e)))
+                       (php/+ killed 1) bd' hp'
+                       (php/max tough (or (:max-lives e) 1)))
+                (recur (php/+ i 1)
+                       (conj acc (assoc woke :hit-flash-secs hit-flash-seconds))
+                       killed bd' hp' tough)))))))))
+
 (defn push-back-enemy
   "Shove the enemy at `idx` along `(cos-a, sin-a)` by `dist` world
    units; on wall collision try a half then a quarter step before

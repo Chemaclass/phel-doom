@@ -1,7 +1,7 @@
 (ns phel-doom.core.combat
   (:require phel-doom.core.rng :as rng)
   (:require phel-doom.core.engine   :refer [cast-ray])
-  (:require phel-doom.core.enemy    :refer [push-back-enemy shoot beam-impact splash])
+  (:require phel-doom.core.enemy    :refer [push-back-enemy shoot beam-impact splash pierce])
   (:require phel-doom.core.enemy-ai :refer [attacks? noise-wake])
   (:require phel-doom.core.physics  :refer [try-move])
   (:require phel-doom.core.state    :refer [max-lives])
@@ -748,17 +748,66 @@
      (apply-heat (push-blood-fx (assoc juiced :fire-anim fire-anim-seconds) hit-pos))
      world killed? hit-pos)))
 
+(defn- pierce-fire
+  "Resolve a piercing shot (weapons flagged `:pierce?`, the pistol). The
+   round damages every enemy in the line instead of stopping at the
+   nearest, so a row of lined-up enemies takes one hit each — the
+   pistol's niche over the higher-DPS chaingun. Aggregates kills/streak
+   like `bfg-fire`; blood + sfx land on the nearest target. No per-enemy
+   loot (mirrors the splash path)."
+  [world]
+  (let [p                          (:player world)
+        spec                       (w-spec world)
+        base                       (or (:damage spec) 1)
+        dmg                        (if (berserk? world) (php/* base berserk-damage-mul) base)
+        dtype                      (:damage-type spec)
+        max-r                      (or (:max-range spec) shot-max-range)
+        wall-d                     (cast-wall-distance world)
+        [es' killed hit-pos tough] (pierce (:enemies world) (:x p) (:y p) (:angle p)
+                                           wall-d shot-hit-radius max-r dmg dtype)
+        woken                      (noise-wake es' (:grid world) (:x p) (:y p))
+        hit?                       (not (nil? hit-pos))
+        killed?                    (php/> killed 0)
+        chain?                     (pos? (or (:streak-secs world) 0.0))
+        boss-killed?               (and (= (:door-lock world) :boss)
+                                        (some (fn [e] (and (= (:type e) :cyber)
+                                                           (false? (:alive e))))
+                                              woken))
+        scored                     (assoc world
+                                          :enemies     woken
+                                          :kills       (php/+ (or (:kills world) 0) killed)
+                                          :streak      (if killed?
+                                                         (php/+ (if chain? (or (:streak world) 0) 0) killed)
+                                                         (or (:streak world) 0))
+                                          :streak-secs (if killed? streak-window-seconds
+                                                           (or (:streak-secs world) 0.0)))
+        unlocked                   (if boss-killed?
+                                     (assoc scored :held-keys (conj (or (:held-keys scored) #{}) :boss))
+                                     scored)
+        juiced                     (if killed?
+                                     (let [hs (hit-stop-for tough)]
+                                       (if (php/> hs 0.0)
+                                         (assoc unlocked :hit-stop-secs hs)
+                                         unlocked))
+                                     unlocked)
+        based                      (assoc juiced :fire-anim fire-anim-seconds)]
+    (enqueue-shot-sfx
+     (apply-heat (if hit? (push-blood-fx based hit-pos) based))
+     world killed? (or hit-pos {:x (:x p) :y (:y p)}))))
+
 (defn fire-shot
   "Resolve one trigger pull end-to-end. Weapons with `:splash-radius`
-   (BFG, rocket) route to `bfg-fire`; everything else is a single-target
-   hitscan. After the
-   shot, run a flood-fill sound-wake from the player's cell so dormant
-   enemies in the same room hear it and switch to :aware. Doors block
-   the BFS so the wake stays local — same per-sector noise rule DOOM
-   uses."
+   (BFG, rocket) route to `bfg-fire`; `:pierce?` weapons (pistol) route
+   to `pierce-fire`; everything else is a single-target hitscan. After
+   the shot, run a flood-fill sound-wake from the player's cell so
+   dormant enemies in the same room hear it and switch to :aware. Doors
+   block the BFS so the wake stays local — same per-sector noise rule
+   DOOM uses."
   [world]
-  (if (:splash-radius (w-spec world))
-    (bfg-fire world)
+  (cond
+    (:splash-radius (w-spec world)) (bfg-fire world)
+    (:pierce? (w-spec world))       (pierce-fire world)
+    :else
     (let [[enemies' hit? hit-pos idx] (resolve-shot world)
           p                           (:player world)
           woken                       (noise-wake enemies' (:grid world) (:x p) (:y p))

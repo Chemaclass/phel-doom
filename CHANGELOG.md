@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Fixed
+
+- Start-menu settings page (`s`) now applies + persists every edit. The page loop destructured nav results into locals named `settings`/`cursor`, shadowing the loop bindings so `recur` re-bound the originals and silently dropped each change.
+
 ## [0.7.0] - 2026-06-01
 
 ### Added

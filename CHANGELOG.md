@@ -11,28 +11,28 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Super shotgun (#126). Slot 8 (key `8`), found on L8: a high-burst tank-killer with `:damage 5` over a wide but very short-range cone, a 2-shell double barrel, and a slow reload. Beats the basic shotgun's TTK against 4-5HP tanks without spending scarce BFG ammo. Appended at slot 8 so the existing 1-7 weapon keys keep their meaning.
-- Run times render as a clock (`M:SS`, or `H:MM:SS` past an hour) instead of raw seconds (#131). Applies to the victory and death screens, the persisted best time, and the info-menu RUN time, via a unit-tested `format-duration` helper.
-- The H info menu now lists `F5` / `F9` quick save / load, so the save feature is discoverable in-game instead of only via the post-press HUD flash.
-- Rocket launcher (#123). Slot 7, found on L5: a single-action mid-tier AoE (splash radius 2.0, splash damage 3) that fills the gap between the chaingun and the rare BFG nuke. Reuses the splash combat path; cheaper and more available than the BFG. Switch keys now span 1-7.
-- Incinerator weapon (#122). Slot 6, found on L6: a fast short-range `:fire` flame stream. It is the first weapon to deal `:fire`, so it activates the previously-inert per-enemy resist system - caco / baron / archvile / mancubus shrug it off (zero damage), everything else burns. Switch keys now span 1-6.
+- Super shotgun (#126). Slot 8, found L8: a high-burst tank-killer, `:damage 5` over a wide but very short cone with a 2-shell barrel and slow reload. Beats the shotgun's TTK on 4-5HP tanks with no BFG ammo cost; appended so keys 1-7 keep their meaning.
+- Rocket launcher (#123). Slot 7, found L5: single-action mid-tier AoE (splash r2.0 / 3) between the chaingun and the BFG. Reuses the splash path; cheaper and more available than the BFG.
+- Incinerator (#122). Slot 6, found L6: a fast short-range `:fire` stream, the first weapon to deal `:fire` - activating the per-enemy resist system (caco / baron / archvile / mancubus shrug it off).
+- Run times show as a clock (`M:SS`, or `H:MM:SS` past an hour) on the victory/death screens, the best time, and the info-menu RUN line (#131).
+- Info menu lists `F5` / `F9` quick save / load, so the feature is discoverable in-game.
 
 ### Changed
 
-- Berserk is now melee-biased with a full heal (#127), matching DOOM. Pickup restores health to full, and the rage window boosts melee (the chainsaw) far more than guns (`x6` vs `x2`) instead of a flat all-weapon multiplier - the classic "go punch everything" identity.
-- Shotgun is now a multi-target graze (#125): the nearest enemy in a cone takes the full damage and up to two others in the cone are grazed for reduced damage, turning the slow-cadence shotgun into a crowd weapon instead of a single big hit.
-- Pistol identity vs chaingun (#124): the pistol round now **pierces**, hitting every enemy in the line instead of stopping at the nearest. That is its edge over the strictly-higher-DPS chaingun (lined-up enemies take one hit each). Overheat was dropped from the pistol - jamming the forced fallback weapon is anti-fun; the generic `:overheats?` mechanic stays dormant for future weapons.
-- `press R to RELOAD` reminder is now weapon-aware (#128): it arms on the remaining-mag fraction instead of an absolute count, and is suppressed for single-round mags (the BFG no longer nags on its 1/1 magazine).
-- Plainer, deeper wall shading: flat shaded stone (no brick speckle), gamma distance falloff for brighter mids, stronger corner contrast.
+- Berserk is melee-biased with a full heal (#127): pickup restores full health, and the rage window boosts melee (chainsaw `x6`) far more than guns (`x2`) - the DOOM "go punch everything" identity, not a flat all-weapon multiplier.
+- Shotgun fires a cone graze (#125): the nearest enemy takes full damage and up to two others in the cone are grazed - a crowd weapon, not one big hit.
+- Pistol pierces (#124): its round hits every enemy in the line, its edge over the higher-DPS chaingun. Overheat dropped (jamming the forced fallback weapon is anti-fun).
+- `press R to RELOAD` reminder is weapon-aware (#128): arms on the remaining-mag fraction, suppressed for single-round mags (the BFG).
+- Deeper wall shading: flat stone (no speckle), gamma distance falloff, stronger corner contrast.
 
 ### Fixed
 
-- WEAPONS table in the H info menu: long weapon names (`rocket launcher`, `incinerator`) no longer collide with the `dmg` column, 2-digit damage (the BFG) no longer shifts the ammo column, and unowned `--/--` rows line up with owned rows. The name column now sizes to the longest weapon name.
-- Wall-top/ceiling seam no longer shows scattered dark dots. The half-block edge cell painted its sky/floor half with a flat shade code instead of the actual gradient shade at that row; it now samples the gradient so the seam blends cleanly.
-- Start-menu settings (`s`) now apply and persist; music/sfx/minimap/difficulty edits were silently dropped.
-- Chainsaw (slot 4) is now obtainable: it drops on L4 and `--armory` includes it (was unreachable dead content).
-- Powerup spawn odds and map placement margins now match their documented values (`rng/int!` was off-by-one inclusive).
-- Settings cursor no longer jumps two rows per arrow tap. On kitty-protocol terminals a tap sends a press and a release event; both were counted as navigation. Release events are now ignored (held-key ramp still works via repeat events).
+- Info-menu WEAPONS table columns align: long names no longer collide with `dmg`, 2-digit damage no longer shifts the ammo column, and unowned `--/--` rows line up.
+- Wall-top/ceiling seam no longer shows scattered dark dots (the edge cell now samples the gradient instead of a flat shade).
+- Start-menu settings (`s`) apply and persist (music/sfx/minimap/difficulty edits were silently dropped).
+- Chainsaw (slot 4) is obtainable: drops on L4 and included in `--armory` (was unreachable).
+- Powerup spawn odds and placement margins match their documented values (`rng/int!` off-by-one).
+- Settings cursor moves once per arrow tap (kitty release events no longer double-count as navigation).
 
 ## [0.7.0] - 2026-06-01
 

@@ -30,6 +30,26 @@ composer doctor       # env diagnostics
 
 CI runs `composer ci` on PHP 8.5. PHP 8.4 works locally but isn't CI-tested.
 
+## AI agent config (generated, not committed)
+
+The per-tool agent config is generated, not tracked. Only the specs are.
+
+- `.claude/` and root `AGENTS.md` come from [agnostic-ai](https://github.com/Chemaclass/agnostic-ai). Source of truth lives in `.agnostic-ai/`. Hook scripts live in `.agnostic-ai/scripts/`.
+- `.agents/` comes from `vendor/bin/phel agent-install`, run automatically by `composer install`.
+
+If you use an AI agent (Claude Code, Codex) and want its config locally, install the tool and sync:
+
+```bash
+brew install Chemaclass/tap/agnostic-ai   # one-time, needs >= 0.30.0
+agnostic-ai sync                          # rebuild .claude/ + AGENTS.md from .agnostic-ai/
+```
+
+Use agnostic-ai 0.30.0 or newer: earlier versions leak `.claude/README.md` as untracked, can delete other targets' files on a scoped `sync --only`, and list the gitignore block file-by-file instead of `/.claude/`.
+
+This is a contributor convenience only. It is not needed to run, build, or play the game.
+
+To change agent behavior, edit specs under `.agnostic-ai/` (never the generated files) and re-run `agnostic-ai sync`. CI gate: `agnostic-ai sync --check`.
+
 ## Test conventions
 
 - **Assert behavior, not implementation.** Test WHAT a fn returns, not how it walks data or which shape it uses.

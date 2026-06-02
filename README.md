@@ -75,7 +75,7 @@ Weapons (DPS-balanced, found on map):
 | 6 | incinerator | 1 | 0.06s | 40 | 16 | fire, swarm-clearer (caco/baron/archvile/mancubus resist it) |
 | 7 | rocket launcher | 3 splash (r2.0) | 0.9s | 1 | - | ballistic, mid-tier AoE (cheaper than BFG) |
 
-Hold space to spray (pistol / chaingun / chainsaw / incinerator). Shotgun and BFG: one pull per shot.
+Hold space to spray (pistol / chaingun / chainsaw / incinerator). Shotgun, BFG, and rocket launcher: one pull per shot.
 
 CLI flags:
 

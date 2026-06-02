@@ -306,6 +306,76 @@
                        (conj acc (assoc woke :hit-flash-secs hit-flash-seconds))
                        killed bd' hp' tough)))))))))
 
+(defn- in-cone?
+  "True when the enemy offset `(dx, dy)` lies in front of the player
+   within `half-angle` of facing `(cos-a, sin-a)` and nearer than `cap`.
+   Uses the projection / distance ratio as cos(angle-to-target)."
+  [^float dx ^float dy ^float cos-a ^float sin-a ^float cos-half ^float cap]
+  (let [proj (php/+ (php/* dx cos-a) (php/* dy sin-a))
+        dist (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
+    (and (php/> proj 0.0)
+         (php/< proj cap)
+         (php/> dist 0.0)
+         (php/>= (php// proj dist) cos-half))))
+
+(defn spread-shoot
+  "Shotgun cone (#125): a multi-target graze. The PRIMARY (nearest alive
+   enemy inside the `half-angle` cone in front of the player) takes the
+   full `primary-dmg`; up to `max-targets - 1` other enemies in the cone
+   are grazed for the smaller `graze-dmg`. Distinct from the single big
+   hit of `shoot` - the shotgun becomes a crowd weapon. Returns
+   `[new-enemies killed-count hit-pos kill-toughness]` like `pierce`,
+   where `hit-pos` is the primary target (blood + sfx)."
+  [enemies ^float px ^float py ^float angle ^float wall-dist ^float half-angle ^float max-range ^int primary-dmg ^int graze-dmg ^int max-targets damage-type]
+  (let [cos-a    (php/cos angle)
+        sin-a    (php/sin angle)
+        cos-half (php/cos half-angle)
+        cap      (php/min wall-dist max-range)
+        primary  (loop [i 0 best -1 best-d cap]
+                   (if (php/>= i (count enemies))
+                     best
+                     (let [e (get enemies i)]
+                       (if (not (:alive e))
+                         (recur (php/+ i 1) best best-d)
+                         (let [dx   (php/- (:x e) px)
+                               dy   (php/- (:y e) py)
+                               proj (php/+ (php/* dx cos-a) (php/* dy sin-a))]
+                           (if (and (php/< proj best-d)
+                                    (in-cone? dx dy cos-a sin-a cos-half cap))
+                             (recur (php/+ i 1) i proj)
+                             (recur (php/+ i 1) best best-d)))))))]
+    (if (php/< primary 0)
+      [enemies 0 nil 0]
+      (loop [i 0 acc [] killed 0 tough 0 grazed 0 hit-pos nil]
+        (if (php/>= i (count enemies))
+          [acc killed hit-pos tough]
+          (let [e (get enemies i)]
+            (if (not (:alive e))
+              (recur (php/+ i 1) (conj acc e) killed tough grazed hit-pos)
+              (let [dx       (php/- (:x e) px)
+                    dy       (php/- (:y e) py)
+                    primary? (php/=== i primary)
+                    graze?   (and (not primary?)
+                                  (php/< grazed (php/- max-targets 1))
+                                  (in-cone? dx dy cos-a sin-a cos-half cap))
+                    dmg      (cond primary? primary-dmg graze? graze-dmg :else 0)]
+                (if (php/<= dmg 0)
+                  (recur (php/+ i 1) (conj acc e) killed tough grazed hit-pos)
+                  (let [eff     (if (resists? (:type e) damage-type) 0 dmg)
+                        lives   (php/max 0 (php/- (or (:lives e) 1) eff))
+                        woke    (assoc e :state :aware :lives lives)
+                        hp'     (if primary? {:x (:x e) :y (:y e)} hit-pos)
+                        grazed' (if graze? (php/+ grazed 1) grazed)]
+                    (if (php/<= lives 0)
+                      (recur (php/+ i 1)
+                             (conj acc (assoc woke
+                                              :alive false
+                                              :respawn-after (respawn-delay-for e)))
+                             (php/+ killed 1) (php/max tough (or (:max-lives e) 1)) grazed' hp')
+                      (recur (php/+ i 1)
+                             (conj acc (assoc woke :hit-flash-secs hit-flash-seconds))
+                             killed tough grazed' hp'))))))))))))
+
 (defn push-back-enemy
   "Shove the enemy at `idx` along `(cos-a, sin-a)` by `dist` world
    units; on wall collision try a half then a quarter step before

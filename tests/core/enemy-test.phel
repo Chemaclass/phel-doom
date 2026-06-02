@@ -1,6 +1,6 @@
 (ns phel-doom-tests.core.enemy-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.enemy :refer [default-wander-fraction new-enemy promote-wanderers push-back-enemy spawn-enemies spawn-enemies-mixed shoot pierce splash beam-impact advance tick-scare rear-attacker? type-speed-mul]))
+  (:require phel-doom.core.enemy :refer [default-wander-fraction new-enemy promote-wanderers push-back-enemy spawn-enemies spawn-enemies-mixed shoot pierce spread-shoot splash beam-impact advance tick-scare rear-attacker? type-speed-mul]))
 
 (def open-grid
   "Bordered 10x10 open arena, no interior walls."
@@ -711,3 +711,47 @@
         (pierce [(new-enemy 3.5 5.5)] 1.5 1.5 0.0 12.0 0.5 12.0 1 :ballistic)]
     (is (= 0 killed))
     (is (= nil hit-pos))))
+
+;; ---------------------------------------------------------------------
+;; spread-shoot (#125): shotgun cone. Nearest enemy in the cone takes the
+;; full primary damage; up to (max-targets - 1) others graze for less.
+;; Player at (1.5,1.5) facing +x; half-angle 0.30 rad (~17deg).
+;; ---------------------------------------------------------------------
+
+(deftest test-spread-primary-full-graze-reduced
+  ;; idx0 dead ahead (primary, full 3 -> kills 3HP); idx1 slightly off but
+  ;; in-cone (graze 1 -> 3HP drops to 2); idx2 far off-cone (untouched).
+  (let [[es' killed hit-pos _]
+        (spread-shoot [(new-enemy 4.5 1.5 3) (new-enemy 4.5 2.2 3) (new-enemy 4.5 4.0 3)]
+                      1.5 1.5 0.0 12.0 0.30 12.0 3 1 3 :ballistic)]
+    (is (= 1 killed) "only the primary dies; grazes just chip")
+    (is (= false (:alive (get es' 0))) "primary killed by full damage")
+    (is (= 2 (:lives (get es' 1))) "in-cone neighbour grazed for 1")
+    (is (= 3 (:lives (get es' 2))) "off-cone enemy untouched")
+    (is (= 4.5 (:x hit-pos)))
+    (is (= 1.5 (:y hit-pos)) "blood/sfx land on the primary")))
+
+(deftest test-spread-caps-at-max-targets
+  ;; Four enemies in the cone, max-targets 3 -> primary + 2 grazes; the
+  ;; 4th in-cone enemy takes nothing.
+  (let [[es' killed _ _]
+        (spread-shoot [(new-enemy 4.5 1.5 3) (new-enemy 4.5 1.9 3)
+                       (new-enemy 4.5 1.2 3) (new-enemy 4.5 1.7 3)]
+                      1.5 1.5 0.0 12.0 0.30 12.0 3 1 3 :ballistic)]
+    (is (= 1 killed))
+    ;; Exactly two of the three neighbours were grazed (lives 2); one was
+    ;; left at full (lives 3) because the target cap was reached.
+    (let [neighbours [(get es' 1) (get es' 2) (get es' 3)]
+          grazed     (count (filter (fn [e] (= 2 (:lives e))) neighbours))
+          untouched  (count (filter (fn [e] (= 3 (:lives e))) neighbours))]
+      (is (= 2 grazed) "max-targets-1 = 2 grazes applied")
+      (is (= 1 untouched) "the extra in-cone enemy is spared by the cap"))))
+
+(deftest test-spread-clean-miss-returns-nil
+  ;; Only an off-cone enemy present -> no primary, nothing hit.
+  (let [[es' killed hit-pos _]
+        (spread-shoot [(new-enemy 4.5 4.0 3)]
+                      1.5 1.5 0.0 12.0 0.30 12.0 3 1 3 :ballistic)]
+    (is (= 0 killed))
+    (is (= nil hit-pos))
+    (is (= 3 (:lives (get es' 0))) "off-cone enemy untouched")))

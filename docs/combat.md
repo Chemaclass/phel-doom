@@ -63,7 +63,7 @@ On miss: weapon report only.
 
 Killed enemy stays in vector with `:respawn-after` timer. See [monsters.md](monsters.md).
 
-Weapons flagged `:pierce?` (the pistol) take a different path: `pierce` (in `enemy.phel`) damages **every** enemy in the line instead of only the nearest, and `pierce-fire` aggregates the kills like the BFG splash path (blood + sfx on the nearest target, hit-stop sized by the meatiest kill, no per-enemy loot).
+Weapons flagged `:pierce?` (the pistol) or `:spread?` (the shotgun) take a different path: `pierce` (in `enemy.phel`) damages **every** enemy in the line, while `spread-shoot` damages a primary plus grazed neighbours in a cone. Both aggregate kills through the shared `finish-multikill` tail (blood + sfx on the nearest target, hit-stop sized by the meatiest kill, no per-enemy loot).
 
 ### Blood splatter
 
@@ -103,6 +103,10 @@ While `:hit-stop-secs > 0`, `play/tick-world` skips entire gameplay step (physic
 The pistol's identity (issue #124) is the `:pierce?` flag: its round passes through and damages every enemy along the ray, not just the nearest. That is its edge over the strictly-higher-DPS chaingun (20 vs 8 DPS) - a row of lined-up enemies in a corridor takes one hit each, where the chaingun would have to chew through them one at a time. The chaingun keeps the single-target sustained-spray niche; neither dominates.
 
 **Overheat dropped.** The pistol used to be the only `:overheats?` weapon (jam at heat 1.0). Jamming the weapon the player is *forced* onto when out of ammo is anti-fun, so overheat was removed from the pistol. The chaingun's mag burn and the shotgun's slow cadence are brake enough for those, so no weapon overheats now. The generic `:overheats?` / heat / jam machinery stays in place (data-driven, dormant) for any future weapon that opts in; `heat-per-shot` and `jam-seconds` are unused until then.
+
+### Shotgun (spread, slot 2)
+
+The shotgun's `:spread?` flag makes it a multi-target graze (issue #125). Instead of one big single-target hit, the nearest enemy inside a cone (`:spread-half-angle`, default `shotgun-spread-half-angle` ~17 degrees) takes the full `:damage` (3); up to `:spread-targets - 1` other enemies in the cone are grazed for the smaller `:graze-damage` (1). `spread-shoot` (in `enemy.phel`) finds the primary, then grazes others in index order up to the cap; `spread-fire` routes the result through the shared `finish-multikill` tail (blood + sfx on the primary, hit-stop sized by the meatiest kill, no per-enemy loot). This turns the slow-cadence shotgun into a crowd weapon distinct from the chaingun's single-target spray.
 
 ### Chainsaw (melee, slot 4)
 

@@ -1,7 +1,7 @@
 (ns phel-doom.core.combat
   (:require phel-doom.core.rng :as rng)
   (:require phel-doom.core.engine   :refer [cast-ray])
-  (:require phel-doom.core.enemy    :refer [push-back-enemy shoot beam-impact splash pierce])
+  (:require phel-doom.core.enemy    :refer [push-back-enemy shoot beam-impact splash pierce spread-shoot])
   (:require phel-doom.core.enemy-ai :refer [attacks? noise-wake])
   (:require phel-doom.core.physics  :refer [try-move])
   (:require phel-doom.core.state    :refer [max-lives])
@@ -49,6 +49,12 @@
 (def shot-max-range
   "Maximum hitscan range in world units."
   12.0)
+
+(def shotgun-spread-half-angle
+  "Default half-angle (radians, ~17°) of the shotgun cone when a weapon
+   spec omits `:spread-half-angle`. Enemies within this angle of facing
+   can be grazed by a spread shot (#125)."
+  0.30)
 
 (def touch-damage-dist
   "If an alive enemy is closer than this in world units, the player
@@ -748,13 +754,51 @@
      (apply-heat (push-blood-fx (assoc juiced :fire-anim fire-anim-seconds) hit-pos))
      world killed? hit-pos)))
 
+(defn- finish-multikill
+  "Shared tail for the multi-target hitscans (`pierce-fire`,
+   `spread-fire`): given the enemies after damage was applied, the kill
+   count, the nearest hit-pos (or nil), and the toughest kill's HP,
+   aggregate kills + streak like `bfg-fire`, unlock the boss door if a
+   cyber died, size hit-stop per the meatiest kill, splat blood on the
+   primary, drain the mag, and queue sfx. No per-enemy loot (mirrors the
+   splash path)."
+  [world enemies-after killed hit-pos tough]
+  (let [p            (:player world)
+        woken        (noise-wake enemies-after (:grid world) (:x p) (:y p))
+        hit?         (not (nil? hit-pos))
+        killed?      (php/> killed 0)
+        chain?       (pos? (or (:streak-secs world) 0.0))
+        boss-killed? (and (= (:door-lock world) :boss)
+                          (some (fn [e] (and (= (:type e) :cyber)
+                                             (false? (:alive e))))
+                                woken))
+        scored       (assoc world
+                            :enemies     woken
+                            :kills       (php/+ (or (:kills world) 0) killed)
+                            :streak      (if killed?
+                                           (php/+ (if chain? (or (:streak world) 0) 0) killed)
+                                           (or (:streak world) 0))
+                            :streak-secs (if killed? streak-window-seconds
+                                             (or (:streak-secs world) 0.0)))
+        unlocked     (if boss-killed?
+                       (assoc scored :held-keys (conj (or (:held-keys scored) #{}) :boss))
+                       scored)
+        juiced       (if killed?
+                       (let [hs (hit-stop-for tough)]
+                         (if (php/> hs 0.0)
+                           (assoc unlocked :hit-stop-secs hs)
+                           unlocked))
+                       unlocked)
+        based        (assoc juiced :fire-anim fire-anim-seconds)]
+    (enqueue-shot-sfx
+     (apply-heat (if hit? (push-blood-fx based hit-pos) based))
+     world killed? (or hit-pos {:x (:x p) :y (:y p)}))))
+
 (defn- pierce-fire
   "Resolve a piercing shot (weapons flagged `:pierce?`, the pistol). The
    round damages every enemy in the line instead of stopping at the
    nearest, so a row of lined-up enemies takes one hit each — the
-   pistol's niche over the higher-DPS chaingun. Aggregates kills/streak
-   like `bfg-fire`; blood + sfx land on the nearest target. No per-enemy
-   loot (mirrors the splash path)."
+   pistol's niche over the higher-DPS chaingun."
   [world]
   (let [p                          (:player world)
         spec                       (w-spec world)
@@ -764,49 +808,43 @@
         max-r                      (or (:max-range spec) shot-max-range)
         wall-d                     (cast-wall-distance world)
         [es' killed hit-pos tough] (pierce (:enemies world) (:x p) (:y p) (:angle p)
-                                           wall-d shot-hit-radius max-r dmg dtype)
-        woken                      (noise-wake es' (:grid world) (:x p) (:y p))
-        hit?                       (not (nil? hit-pos))
-        killed?                    (php/> killed 0)
-        chain?                     (pos? (or (:streak-secs world) 0.0))
-        boss-killed?               (and (= (:door-lock world) :boss)
-                                        (some (fn [e] (and (= (:type e) :cyber)
-                                                           (false? (:alive e))))
-                                              woken))
-        scored                     (assoc world
-                                          :enemies     woken
-                                          :kills       (php/+ (or (:kills world) 0) killed)
-                                          :streak      (if killed?
-                                                         (php/+ (if chain? (or (:streak world) 0) 0) killed)
-                                                         (or (:streak world) 0))
-                                          :streak-secs (if killed? streak-window-seconds
-                                                           (or (:streak-secs world) 0.0)))
-        unlocked                   (if boss-killed?
-                                     (assoc scored :held-keys (conj (or (:held-keys scored) #{}) :boss))
-                                     scored)
-        juiced                     (if killed?
-                                     (let [hs (hit-stop-for tough)]
-                                       (if (php/> hs 0.0)
-                                         (assoc unlocked :hit-stop-secs hs)
-                                         unlocked))
-                                     unlocked)
-        based                      (assoc juiced :fire-anim fire-anim-seconds)]
-    (enqueue-shot-sfx
-     (apply-heat (if hit? (push-blood-fx based hit-pos) based))
-     world killed? (or hit-pos {:x (:x p) :y (:y p)}))))
+                                           wall-d shot-hit-radius max-r dmg dtype)]
+    (finish-multikill world es' killed hit-pos tough)))
+
+(defn- spread-fire
+  "Resolve a spread shot (weapons flagged `:spread?`, the shotgun). The
+   nearest enemy in the cone takes full damage; up to `:spread-targets`-1
+   others in the cone are grazed for the smaller `:graze-damage` — a
+   multi-target crowd hit that justifies the slow cadence (#125)."
+  [world]
+  (let [p                          (:player world)
+        spec                       (w-spec world)
+        base                       (or (:damage spec) 1)
+        prim                       (if (berserk? world) (php/* base berserk-damage-mul) base)
+        graze-base                 (or (:graze-damage spec) 1)
+        graze                      (if (berserk? world) (php/* graze-base berserk-damage-mul) graze-base)
+        targets                    (or (:spread-targets spec) 3)
+        half                       (or (:spread-half-angle spec) shotgun-spread-half-angle)
+        dtype                      (:damage-type spec)
+        max-r                      (or (:max-range spec) shot-max-range)
+        wall-d                     (cast-wall-distance world)
+        [es' killed hit-pos tough] (spread-shoot (:enemies world) (:x p) (:y p) (:angle p)
+                                                 wall-d half max-r prim graze targets dtype)]
+    (finish-multikill world es' killed hit-pos tough)))
 
 (defn fire-shot
   "Resolve one trigger pull end-to-end. Weapons with `:splash-radius`
-   (BFG, rocket) route to `bfg-fire`; `:pierce?` weapons (pistol) route
-   to `pierce-fire`; everything else is a single-target hitscan. After
-   the shot, run a flood-fill sound-wake from the player's cell so
-   dormant enemies in the same room hear it and switch to :aware. Doors
-   block the BFS so the wake stays local — same per-sector noise rule
-   DOOM uses."
+   (BFG, rocket) route to `bfg-fire`; `:pierce?` weapons (pistol) to
+   `pierce-fire`; `:spread?` weapons (shotgun) to `spread-fire`;
+   everything else is a single-target hitscan. After the shot, run a
+   flood-fill sound-wake from the player's cell so dormant enemies in the
+   same room hear it and switch to :aware. Doors block the BFS so the
+   wake stays local — same per-sector noise rule DOOM uses."
   [world]
   (cond
     (:splash-radius (w-spec world)) (bfg-fire world)
     (:pierce? (w-spec world))       (pierce-fire world)
+    (:spread? (w-spec world))       (spread-fire world)
     :else
     (let [[enemies' hit? hit-pos idx] (resolve-shot world)
           p                           (:player world)

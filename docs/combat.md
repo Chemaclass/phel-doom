@@ -33,6 +33,8 @@ Per-weapon overrides in `weapons.phel`: mag-size, fire-cooldown, reload-duration
 
 Empty trigger pulls → `empty-trigger-pull`: arm `:empty-click-secs` (0.8s), play `:click` sfx. Render paints `CLICK · press R to reload` or `OUT OF AMMO`.
 
+The periodic `press R to RELOAD` nag is gated by the pure `reload-reminder-visible?` (`io/render.phel`). It arms on the remaining-mag **fraction** (`<= reload-reminder-frac`, 0.3) rather than an absolute count, so a 10-round pistol and a 4-round shotgun both nag at "nearly empty". Single-round mags (BFG, chainsaw: `mag-size <= 1`) reload every shot by design, so the nag is suppressed entirely. It is also suppressed while reloading, when the reserve is dry, during the dry-fire CLICK, and on viewports under 9 rows.
+
 Fresh run starts with 30 reserve (3 mags); cap 50. Pickups refill (see [`level-system.md`](level-system.md)).
 
 ## Kill loot

@@ -1,6 +1,51 @@
 (ns phel-doom-tests.io.render-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.io.render :refer [direction-char project-enemy enemy-front-visible-at?]))
+  (:require phel-doom.io.render :refer [direction-char project-enemy enemy-front-visible-at? reload-reminder-visible?]))
+
+;; ---------------------------------------------------------------------
+;; reload-reminder-visible? (#128): the periodic "press R to RELOAD" nag
+;; must scale to the active weapon's mag-size instead of an absolute
+;; mag<=2 threshold. Single-round mags (BFG mag-size 1) reload every
+;; shot by design, so the nag is pure noise and must be suppressed.
+;; ---------------------------------------------------------------------
+
+(deftest test-reload-reminder-suppressed-for-single-round-mag
+  ;; BFG: mag-size 1. Empty mag, reserve to spare, clock on a visible
+  ;; phase -- still must not nag.
+  (is (= false (reload-reminder-visible? 0 1 5 0.0 0.0 0.0 30))
+      "single-round mag (BFG) never shows the periodic reminder"))
+
+(deftest test-reload-reminder-shows-on-low-mag-fraction
+  ;; Pistol mag-size 10, 2 rounds left (20% <= 30% threshold), reserve
+  ;; spare, not reloading, clock inside the 0.5s visible window.
+  (is (= true (reload-reminder-visible? 2 10 30 0.0 0.0 0.0 30))
+      "pistol at low mag fraction shows the reminder"))
+
+(deftest test-reload-reminder-hidden-on-full-mag
+  (is (= false (reload-reminder-visible? 9 10 30 0.0 0.0 0.0 30))
+      "near-full mag (90%) does not nag"))
+
+(deftest test-reload-reminder-suppressed-while-reloading
+  (is (= false (reload-reminder-visible? 0 10 30 1.0 0.0 0.0 30))
+      "active reload cooldown suppresses the nag"))
+
+(deftest test-reload-reminder-suppressed-when-reserve-dry
+  (is (= false (reload-reminder-visible? 1 10 0 0.0 0.0 0.0 30))
+      "no reserve -> a reload would no-op -> no nag"))
+
+(deftest test-reload-reminder-suppressed-during-empty-click
+  (is (= false (reload-reminder-visible? 0 10 30 0.0 0.5 0.0 30))
+      "dry-fire CLICK on screen suppresses the nag so prompts don't stack"))
+
+(deftest test-reload-reminder-blinks-off-outside-visible-window
+  ;; Empty pistol -> 1s interval. At game-time 0.6 the phase is past the
+  ;; 0.5s on-window, so the nag blinks off.
+  (is (= false (reload-reminder-visible? 0 10 30 0.0 0.0 0.6 30))
+      "reminder blinks off in the second half of its cadence interval"))
+
+(deftest test-reload-reminder-needs-min-viewport-height
+  (is (= false (reload-reminder-visible? 0 10 30 0.0 0.0 0.0 8))
+      "tiny viewport (<9 rows) suppresses the reminder"))
 
 (deftest test-direction-char-cardinal
   (is (= "→" (direction-char 0.0)))

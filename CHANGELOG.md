@@ -11,13 +11,13 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Changed
 
-- Plainer, deeper wall shading. Dropped the per-cell brick speckle for flat shaded stone, swapped the linear distance falloff for a gamma curve (brighter mids), and widened the EW/NS side-shading gap for sharper corners.
+- Plainer, deeper wall shading: flat shaded stone (no brick speckle), gamma distance falloff for brighter mids, stronger corner contrast.
 
 ### Fixed
 
-- Start-menu settings page (`s`) now applies + persists every edit. The page loop destructured nav results into locals named `settings`/`cursor`, shadowing the loop bindings so `recur` re-bound the originals and silently dropped each change.
-- Chainsaw (slot 4) is now obtainable. It was fully implemented but never granted: no level dropped it and the `--armory` set omitted it, so pressing `4` was always a no-op. L4 now seeds a chainsaw pickup and `--armory` owns every weapon.
-- `rng/int!` is now exclusive (`0..n-1`, like `rand-int`) instead of off-by-one inclusive. Powerup spawn odds were skewed toward spawning (armor 2/3 not 1/2, berserk 2/9 not 1/8, etc.) and map placements could land one cell closer to the edge than intended. Both now match their documented values.
+- Start-menu settings (`s`) now apply and persist; music/sfx/minimap/difficulty edits were silently dropped.
+- Chainsaw (slot 4) is now obtainable: it drops on L4 and `--armory` includes it (was unreachable dead content).
+- Powerup spawn odds and map placement margins now match their documented values (`rng/int!` was off-by-one inclusive).
 
 ## [0.7.0] - 2026-06-01
 

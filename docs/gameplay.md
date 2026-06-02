@@ -15,7 +15,7 @@ version; this page is the complete reference.
 | `space`        | Fire (hold to spray auto-fire weapons)  |
 | `r`            | Reload                                   |
 | `f`            | Use: reveal secret / toggle switch      |
-| `1`...`7`      | Switch weapon                           |
+| `1`...`8`      | Switch weapon                           |
 | `m`            | Minimap toggle                          |
 | `n`            | Sound toggle                            |
 | `p`            | Pause + settings                        |
@@ -46,20 +46,22 @@ Terminal quirks (kitty, tmux): [input.md](input.md).
 ## Weapons
 
 DPS-balanced niches rather than monotonic upgrades; weapons are found on
-the map and selected with keys `1`...`7`.
+the map and selected with keys `1`...`8`.
 
 | Key | Weapon | Dmg | CD | Mag | DPS | Type / niche |
 |---|---|---|---|---|---|---|
-| 1 | pistol | 1 | 0.12s | 10 | 8 | ballistic, fallback (overheats if held) |
-| 2 | shotgun | 3 | 0.6s | 4 | 5 | ballistic, burst |
-| 3 | chaingun | 1 | 0.05s | 30 | 20 | ballistic, sustained |
+| 1 | pistol | 1 | 0.12s | 10 | 8 | ballistic, fallback; pierces the whole line |
+| 2 | shotgun | 3 | 0.6s | 4 | 5 | ballistic; cone graze (primary + 2 neighbours) |
+| 3 | chaingun | 1 | 0.05s | 30 | 20 | ballistic, sustained single-target |
 | 4 | chainsaw | 1 | 0.10s | inf | 10 | melee, no ammo |
 | 5 | BFG | 10 + 6 splash (r3.0) | 1.2s | 1 | - | plasma, AoE (ignores fire-resist) |
 | 6 | incinerator | 1 | 0.06s | 40 | 16 | fire, swarm-clearer (caco/baron/archvile/mancubus resist) |
 | 7 | rocket launcher | 4 + 3 splash (r2.0) | 0.9s | 1 | - | ballistic, mid-tier AoE (cheaper than BFG) |
+| 8 | super shotgun | 5 + 2 graze | 0.9s | 2 | - | ballistic, short-range tank-killer (wide cone) |
 
 Hold `space` to spray auto-fire weapons (pistol / chaingun / chainsaw /
-incinerator). Shotgun, BFG, and rocket launcher fire one shot per pull.
+incinerator). Shotgun, super shotgun, BFG, and rocket launcher fire one
+shot per pull.
 
 ## CLI flags
 

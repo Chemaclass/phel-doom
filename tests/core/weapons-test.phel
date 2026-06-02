@@ -201,14 +201,16 @@
     (is (= 1 (:damage s)))))
 
 (deftest test-weapon-order-slots
-  ;; Player presses 1-6 to swap weapons. Slot ordering must stay stable
+  ;; Player presses 1-8 to swap weapons. Slot ordering must stay stable
   ;; so muscle memory survives. BFG is slot 5 (issue #58); incinerator
-  ;; is slot 6 (issue #122).
-  (is (= [:pistol :shotgun :chaingun :chainsaw :bfg :incinerator :rocket] weapon-order))
-  (is (= :chainsaw    (get weapon-order 3)))
-  (is (= :bfg         (get weapon-order 4)))
-  (is (= :incinerator (get weapon-order 5)))
-  (is (= :rocket      (get weapon-order 6))))
+  ;; is slot 6 (issue #122). Super shotgun is appended at slot 8 (issue
+  ;; #126) rather than inserted, so 1-7 keep their meaning.
+  (is (= [:pistol :shotgun :chaingun :chainsaw :bfg :incinerator :rocket :super-shotgun] weapon-order))
+  (is (= :chainsaw      (get weapon-order 3)))
+  (is (= :bfg           (get weapon-order 4)))
+  (is (= :incinerator   (get weapon-order 5)))
+  (is (= :rocket        (get weapon-order 6)))
+  (is (= :super-shotgun (get weapon-order 7))))
 
 (deftest test-effective-reserve-cap-scales-with-backpack-level
   ;; Pistol's reserve-cap is 50 from the catalog. Backpack stack scales
@@ -281,3 +283,15 @@
     (is (= 1 (:graze-damage sg)) "grazes for reduced damage")
     (is (php/>= (:spread-targets sg) 2) "hits 2+ targets")
     (is (php/< (:graze-damage sg) (:damage sg)) "graze < primary damage")))
+
+(deftest test-super-shotgun-tank-killer-profile
+  ;; #126: high burst, very short range, slow reload, wide spread cone.
+  (let [ssg (get weapons :super-shotgun)]
+    (is (php/>= (:damage ssg) 5) "high per-shot damage (tank-killer)")
+    (is (php/> (:damage ssg) (:damage (get weapons :shotgun)))
+        "hits harder than the basic shotgun")
+    (is (php/<= (:max-range ssg) 4.0) "very short effective range")
+    (is (php/>= (:reload-duration ssg) 2.0) "slow reload is the cost")
+    (is (= true (:spread? ssg)) "wide spread cone")
+    (is (= false (:auto-fire? ssg)) "single-action")
+    (is (= :super-shotgun (get weapon-order 7)) "appended at slot 8")))

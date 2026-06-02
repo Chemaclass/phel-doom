@@ -100,6 +100,23 @@ A `let` inside a `loop` that destructures into a local sharing a loop-binding na
 
 Bit the start-menu options page (`settings-screen!`): every change applied live then reverted on the next frame.
 
+### `def-` takes no docstring slot
+
+`def` accepts `(def name "doc" value)`, but the private `def-` is `(def- name value)` only. Pass a docstring and it silently becomes the VALUE; the real value is dropped. Lint stays quiet, so it surfaces as a runtime type error far from the def.
+
+```phel
+;; BROKEN - bfs-steps is now the STRING, not the vector
+(def- bfs-steps
+  "4-connected BFS offsets."
+  [[1 0] [-1 0] [0 1] [0 -1]])   ; dropped -> later (+ int bfs-steps) blows up
+
+;; FIX - move the note to a line comment
+;; 4-connected BFS offsets.
+(def- bfs-steps [[1 0] [-1 0] [0 1] [0 -1]])
+```
+
+`defn-` DOES take a docstring; only `def-` is the odd one out.
+
 ### Lint warnings are often false positives
 
 `vendor/bin/phel lint` warns on:

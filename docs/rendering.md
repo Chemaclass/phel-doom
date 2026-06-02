@@ -58,11 +58,19 @@ Doors: `door-shade` (orange for unlocked, blue/red for keycards, bright red for 
 Wall top/bottom: `▀` (upper half block) with BG for one zone, FG for the other:
 
 ```
-Top:    \e[48;5;<wall>;38;5;<sky>m▀      (wall BG, sky FG)
-Bottom: \e[48;5;<floor>;38;5;<wall>m▀    (floor BG, wall FG)
+Top:    \e[48;5;<wall>;38;5;<sky-at-row>m▀      (wall BG, sky FG sampled at that row)
+Bottom: \e[48;5;<floor-at-row>;38;5;<wall>m▀    (floor BG sampled at that row, wall FG)
 ```
 
 Sub-cell boundary, halves vertical aliasing.
+
+The sky FG code and floor BG code are sampled from the gradient at the seam row
+(`sky-code-gradient[top]` and `floor-code-gradient[bots-1]`) rather than a flat
+constant. Using a flat dark code (236) produced scattered dark dots wherever the
+gradient is brighter than that constant. `build-horizon-gradient-codes` and
+`build-themed-gradient-codes` are code-only twins of the string gradient builders,
+pre-baked once per frame alongside the paint-string versions. One extra `buf-get`
+per column in `compute-wall-shades`; no per-row cost added.
 
 ## Distance-shaded sky and floor
 

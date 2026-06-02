@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Changed
+
+- Plainer, deeper wall shading. Dropped the per-cell brick speckle for flat shaded stone, swapped the linear distance falloff for a gamma curve (brighter mids), and widened the EW/NS side-shading gap for sharper corners.
+
 ### Fixed
 
 - Start-menu settings page (`s`) now applies + persists every edit. The page loop destructured nav results into locals named `settings`/`cursor`, shadowing the loop bindings so `recur` re-bound the originals and silently dropped each change.

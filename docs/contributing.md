@@ -40,11 +40,11 @@ The per-tool agent config is generated, not tracked. Only the specs are.
 If you use an AI agent (Claude Code, Codex) and want its config locally, install the tool and sync:
 
 ```bash
-brew install Chemaclass/tap/agnostic-ai   # one-time, needs >= 0.29.0
+brew install Chemaclass/tap/agnostic-ai   # one-time, needs >= 0.30.0
 agnostic-ai sync                          # rebuild .claude/ + AGENTS.md from .agnostic-ai/
 ```
 
-Use agnostic-ai 0.29.0 or newer: earlier versions leak `.claude/README.md` as untracked and can delete other targets' files on a scoped `sync --only`.
+Use agnostic-ai 0.30.0 or newer: earlier versions leak `.claude/README.md` as untracked, can delete other targets' files on a scoped `sync --only`, and list the gitignore block file-by-file instead of `/.claude/`.
 
 This is a contributor convenience only. It is not needed to run, build, or play the game.
 

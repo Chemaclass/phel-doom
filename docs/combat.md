@@ -14,8 +14,8 @@ Hitscan + damage timing + i-frames. `src/core/combat.phel`. Pure: no side effect
 | `fire-anim-seconds` | 0.09 | Muzzle flash visibility |
 | `fx-ttl-seconds` | 0.7 | Blood splatter lifetime |
 | `flash-seconds` | 0.05 | White impact jolt |
-| `heat-per-shot` | 0.30 | Pistol overheat per shot (jam at 1.0) |
-| `jam-seconds` | 0.7 | Pistol jam lockout duration |
+| `heat-per-shot` | 0.30 | Overheat per shot (jam at 1.0); dormant - no weapon overheats |
+| `jam-seconds` | 0.7 | Jam lockout duration; dormant (see Pistol below) |
 | `mag-size` | 10 | Pistol default magazine capacity |
 | `max-reserve` | 50 | Pistol default reserve cap |
 | `reload-cooldown-seconds` | 1.2 | Pistol reload duration |
@@ -63,6 +63,8 @@ On miss: weapon report only.
 
 Killed enemy stays in vector with `:respawn-after` timer. See [monsters.md](monsters.md).
 
+Weapons flagged `:pierce?` (the pistol) take a different path: `pierce` (in `enemy.phel`) damages **every** enemy in the line instead of only the nearest, and `pierce-fire` aggregates the kills like the BFG splash path (blood + sfx on the nearest target, hit-stop sized by the meatiest kill, no per-enemy loot).
+
 ### Blood splatter
 
 `{:x :y :ttl fx-ttl-seconds}` pushed into `:fx`. Render paints RGB gradient (bright-pink → mid-red → dim-red).
@@ -95,6 +97,12 @@ On kill, stamp `:hit-stop-secs` based on enemy HP via `hit-stop-for`:
 While `:hit-stop-secs > 0`, `play/tick-world` skips entire gameplay step (physics / AI / projectiles / shooting / damage); render holds frozen frame. Only tough kills freeze, so rapid-fire stays fluid.
 
 ## Weapon specializations
+
+### Pistol (pierce, slot 1)
+
+The pistol's identity (issue #124) is the `:pierce?` flag: its round passes through and damages every enemy along the ray, not just the nearest. That is its edge over the strictly-higher-DPS chaingun (20 vs 8 DPS) - a row of lined-up enemies in a corridor takes one hit each, where the chaingun would have to chew through them one at a time. The chaingun keeps the single-target sustained-spray niche; neither dominates.
+
+**Overheat dropped.** The pistol used to be the only `:overheats?` weapon (jam at heat 1.0). Jamming the weapon the player is *forced* onto when out of ammo is anti-fun, so overheat was removed from the pistol. The chaingun's mag burn and the shotgun's slow cadence are brake enough for those, so no weapon overheats now. The generic `:overheats?` / heat / jam machinery stays in place (data-driven, dormant) for any future weapon that opts in; `heat-per-shot` and `jam-seconds` are unused until then.
 
 ### Chainsaw (melee, slot 4)
 

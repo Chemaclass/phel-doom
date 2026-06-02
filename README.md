@@ -4,9 +4,9 @@
 
 DOOM-lite raycaster in your terminal. Pure [Phel](https://phel-lang.org/) (Lisp on PHP). 256-color ANSI, 10 procgen levels, FPS combat, ~5ms frame. Full feature list: [docs/features.md](docs/features.md).
 
-## Quick start
+## Play
 
-Needs PHP >= 8.4, Composer, 256-color terminal.
+Needs PHP >= 8.4, Composer, and a 256-color terminal.
 
 ```bash
 git clone git@github.com:Chemaclass/phel-doom.git
@@ -17,9 +17,10 @@ make play
 
 Or `composer install && composer play`.
 
-### Docker
+<details>
+<summary>No local PHP? Run in Docker</summary>
 
-No PHP? Run in Docker: PHP 8.5 CLI + Composer + deps in an image. `docker` is the only prerequisite.
+PHP 8.5 CLI + Composer + deps in an image; `docker` is the only prerequisite.
 
 ```bash
 make docker-build      # build image
@@ -31,59 +32,21 @@ make docker-clean      # remove image
 
 Override tag: `DOCKER_IMG=mytag make docker-build`. Host PHP is the inner loop; Docker adds ~1s startup.
 
+</details>
+
 ## Controls
 
-| Key            | Action                       |
+| Key            | Action                  |
 |---|---|
-| `w` / `s` / ↑↓ | Forward / back               |
-| `a` / `d`      | Strafe left / right          |
-| `←` / `→`      | Turn left / right            |
-| `SHIFT` / `x`  | Sprint (1.6× speed)          |
-| `e`            | About-face (180°)            |
-| `space`        | Fire                         |
-| `r`            | Reload                       |
-| `1` / `2` / `3` | Switch weapon                |
-| `m` / `n`      | Minimap / sound toggle       |
-| `p`            | Pause + settings             |
-| `h` / `ESC`    | Info menu + pause            |
-| `F3`           | Debug overlay                |
-| `q`            | Quit                         |
+| `w` `a` `s` `d` / arrows | Move / turn    |
+| `SHIFT`        | Sprint                  |
+| `space` / `r`  | Fire / reload           |
+| `1`...`7`      | Switch weapon           |
+| `p` / `q`      | Pause / quit            |
 
-Walk into doors to advance. Pickups:
+Walk into doors to advance. Find weapons and pickups on the map.
 
-- **♥ heart**: `+1` life
-- **◆ armor**: absorbs one hit (cap 5)
-- **armor shard**: `+1` armor over 5, up to 10
-- **soulsphere**: `+1` life over cap, decays back
-- **ammo box**: `+N` to weapon reserve
-- **berserk**: 20s of `×2` damage
-- **invuln**: 10s immunity
-- **backpack**: increases reserve cap
-- **⚿ keycard**: unlocks L4 (blue) / L5 (red) exits; L10 boss-locked
-
-Compass at top-centre: tints the cardinal letter (E/S/W/N) toward your target. Orange = exit, blue/red = keycard needed.
-
-Weapons (DPS-balanced, found on map):
-
-| Slot | Weapon | Dmg | CD | Mag | DPS | Type / niche |
-|---|---|---|---|---|---|---|
-| 1 | pistol | 1 | 0.12s | 10 | 8 | ballistic, fallback |
-| 2 | shotgun | 3 | 0.6s | 4 | 5 | ballistic, burst |
-| 3 | chaingun | 1 | 0.05s | 30 | 20 | ballistic, sustained |
-| 4 | chainsaw | 1 | 0.10s | ∞ | 10 | melee, no ammo |
-| 5 | BFG | 10 +6 splash | 1.2s | 1 | - | plasma, AoE (ignores fire-resist) |
-| 6 | incinerator | 1 | 0.06s | 40 | 16 | fire, swarm-clearer (caco/baron/archvile/mancubus resist it) |
-| 7 | rocket launcher | 3 splash (r2.0) | 0.9s | 1 | - | ballistic, mid-tier AoE (cheaper than BFG) |
-
-Hold space to spray (pistol / chaingun / chainsaw / incinerator). Shotgun, BFG, and rocket launcher: one pull per shot.
-
-CLI flags:
-
-- `--difficulty=easy|normal|hard|nightmare` (`-d`) - scales enemy speed, HP, count
-- `--level=N` (`-l`) - start at level N
-- `--god` (`-g`), `--armory` (`-a`), `--full-map` (`-f`) - dev flags
-
-Terminal quirks (kitty, tmux): [docs/input.md](docs/input.md).
+Full controls, pickups, and weapons: [docs/gameplay.md](docs/gameplay.md).
 
 ## Internals
 

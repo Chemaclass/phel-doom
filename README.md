@@ -84,7 +84,8 @@ Terminal quirks (kitty, tmux): [docs/input.md](docs/input.md).
 
 ## Internals
 
-[docs/README.md](docs/README.md) - per-subsystem guide.
+- [docs/README.md](docs/README.md) - per-subsystem guide.
+- [docs/contributing.md](docs/contributing.md) - dev setup, test conventions, Phel gotchas.
 
 ## License
 

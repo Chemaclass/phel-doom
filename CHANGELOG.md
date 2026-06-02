@@ -15,6 +15,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Fixed
 
+- Wall-top/ceiling seam no longer shows scattered dark dots. The half-block edge cell painted its sky/floor half with a flat shade code instead of the actual gradient shade at that row; it now samples the gradient so the seam blends cleanly.
 - Start-menu settings (`s`) now apply and persist; music/sfx/minimap/difficulty edits were silently dropped.
 - Chainsaw (slot 4) is now obtainable: it drops on L4 and `--armory` includes it (was unreachable dead content).
 - Powerup spawn odds and map placement margins now match their documented values (`rng/int!` was off-by-one inclusive).

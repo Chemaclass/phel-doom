@@ -532,6 +532,50 @@
         (recur (php/+ r 1))))
     arr))
 
+(defn- build-horizon-gradient-codes
+  "Code-only twin of build-horizon-gradient. Stores bare 256-color
+   code strings (e.g. \"240\") instead of full SGR paint cells.
+   Used to sample the sky gradient code at a specific row so the ▀
+   half-block edge cell can blend the exact sky shade of that row
+   into the top-half FG, eliminating the flat-236 seam artifact."
+  [^int vh ctbl]
+  (let [arr     (buf-mk)
+        horizon (php/intdiv vh 2)
+        max-d   (php/max 1 horizon)]
+    (loop [r 0]
+      (when (php/< r vh)
+        (let [idx (php/max 0
+                           (php/min 23
+                                    (php/intval (php/* (php/- 1.0
+                                                              (php// (php/abs (php/- r horizon))
+                                                                     max-d))
+                                                       23))))]
+          (buf-set arr r (buf-get ctbl idx)))
+        (recur (php/+ r 1))))
+    arr))
+
+(defn- build-themed-gradient-codes
+  "Code-only twin of build-themed-gradient. Stores bare 256-color
+   code strings (e.g. \"237\") instead of full SGR paint cells.
+   Used to sample the floor gradient code at a specific row so the ▀
+   half-block edge cell can blend the exact floor shade of that row
+   into the bottom-half BG, eliminating the flat floor-code seam."
+  [^int vh ^int base-code stripe?]
+  (let [arr     (buf-mk)
+        horizon (php/intdiv vh 2)
+        max-d   (php/max 1 horizon)]
+    (loop [r 0]
+      (when (php/< r vh)
+        (let [t     (php// (php/abs (php/- r horizon)) max-d)
+              fade  (php/- 1.0 t)
+              fade' (if (and stripe? (php/=== (mod r 2) 1))
+                      (php/max 0.0 (php/- fade 0.12))
+                      fade)
+              code  (fade-256 base-code fade')]
+          (buf-set arr r (php/strval code)))
+        (recur (php/+ r 1))))
+    arr))
+
 ;; Per-column shading lives inline in frame->string's hot loop:
 ;; base distance index, +1 for vertical wall faces (side-shading),
 ;; ±1 per-cell hash, then resolve TWO shade strings per column
@@ -2199,14 +2243,18 @@
    keep the same names it used previously.
 
    `cast`       ray-cast outputs {:dists :hits :sides}
-   `palette`    {:stbl :ctbl :sky-c :floor-c :door-shade-now :door-code-now}
+   `palette`    {:stbl :ctbl :sky-c :floor-c :door-shade-now :door-code-now
+                 :sky-code-grad :floor-code-grad :blood-sky-code-grad
+                 :blood-floor-code-grad}
    `blood-cols` per-col directional blood mask (from build-blood-cols)
    `haze-shift` int 0-23: how many shade-table steps to pull walls
                 toward black. Doors are kept bright as a nav cue."
   [vw vh haze-shift cast palette blood-cols]
   (let [{:keys [dists hits sides]}                                     cast
         {:keys [stbl ctbl sky-c floor-c door-shade-now door-code-now
-                boss-door-shade-now boss-door-code-now]}               palette
+                boss-door-shade-now boss-door-code-now
+                sky-code-grad floor-code-grad
+                blood-sky-code-grad blood-floor-code-grad]}            palette
         tops                                                           (buf-mk)
         bots                                                           (buf-mk)
         normal                                                         (buf-mk)
@@ -2216,29 +2264,43 @@
         bot-shadow                                                     (buf-mk)]
     (loop [col 0]
       (when (php/< col vw)
-        (let [dist      (buf-get dists col)
-              wall-h    (php/min vh (php/intval
-                                     (php// proj-dist (php/* (php/max 0.3 dist) char-aspect))))
-              top       (php/intdiv (php/- vh wall-h) 2)
-              blood?    (php/> (buf-get blood-cols col) 0.4)
-              stbl-l    (if blood? shade-table-blood stbl)
-              ctbl-l    (if blood? shade-code-table-blood ctbl)
-              sky-c-l   (if blood? sky-blood-code sky-c)
-              floor-c-l (if blood? floor-blood-code floor-c)
-              h         (buf-get hits col)]
+        (let [dist         (buf-get dists col)
+              wall-h       (php/min vh (php/intval
+                                        (php// proj-dist (php/* (php/max 0.3 dist) char-aspect))))
+              top          (php/intdiv (php/- vh wall-h) 2)
+              blood?       (php/> (buf-get blood-cols col) 0.4)
+              stbl-l       (if blood? shade-table-blood stbl)
+              ctbl-l       (if blood? shade-code-table-blood ctbl)
+              sky-c-l      (if blood? sky-blood-code sky-c)
+              floor-c-l    (if blood? floor-blood-code floor-c)
+              ;; Sample the gradient code at the exact row of each seam
+              ;; cell so the ▀ top-half blends the true sky shade at that
+              ;; row (not a flat dark-236), eliminating the dark-dot
+              ;; artifact where bright gradient meets flat edge code.
+              sky-edge-row (php/max 0 (php/min (php/- vh 1) top))
+              flr-edge-row (php/max 0 (php/min (php/- vh 1) (php/- (php/+ top wall-h) 1)))
+              sky-edge-c   (buf-get (if (and blood? blood-sky-code-grad)
+                                      blood-sky-code-grad
+                                      sky-code-grad)
+                                    sky-edge-row)
+              flr-edge-c   (buf-get (if (and blood? blood-floor-code-grad)
+                                      blood-floor-code-grad
+                                      floor-code-grad)
+                                    flr-edge-row)
+              h            (buf-get hits col)]
           (buf-set tops col top)
           (buf-set bots col (php/+ top wall-h))
           (cond
             (php/=== 5 h)
             (do (buf-set normal      col boss-door-shade-now)
-                (buf-set top-edge    col (str "\e[48;5;" boss-door-code-now ";38;5;" sky-c-l "m▀"))
-                (buf-set bot-edge    col (str "\e[48;5;" floor-c-l ";38;5;" boss-door-code-now "m▀"))
+                (buf-set top-edge    col (str "\e[48;5;" boss-door-code-now ";38;5;" sky-edge-c "m▀"))
+                (buf-set bot-edge    col (str "\e[48;5;" flr-edge-c ";38;5;" boss-door-code-now "m▀"))
                 (buf-set top-shadow  col boss-door-shade-now)
                 (buf-set bot-shadow  col boss-door-shade-now))
             (or (php/=== 2 h) (php/=== 3 h) (php/=== 4 h))
             (do (buf-set normal      col door-shade-now)
-                (buf-set top-edge    col (str "\e[48;5;" door-code-now ";38;5;" sky-c-l "m▀"))
-                (buf-set bot-edge    col (str "\e[48;5;" floor-c-l ";38;5;" door-code-now "m▀"))
+                (buf-set top-edge    col (str "\e[48;5;" door-code-now ";38;5;" sky-edge-c "m▀"))
+                (buf-set bot-edge    col (str "\e[48;5;" flr-edge-c ";38;5;" door-code-now "m▀"))
                 (buf-set top-shadow  col door-shade-now)
                 (buf-set bot-shadow  col door-shade-now))
             :else
@@ -2258,8 +2320,8 @@
                 ;; read as clean shaded stone; depth comes from the gamma
                 ;; distance falloff + stronger EW side-shading instead.
                 (buf-set normal col plain)
-                (buf-set top-edge   col (str "\e[48;5;" edge-code ";38;5;" sky-c-l "m▀"))
-                (buf-set bot-edge   col (str "\e[48;5;" floor-c-l ";38;5;" edge-code "m▀"))
+                (buf-set top-edge   col (str "\e[48;5;" edge-code ";38;5;" sky-edge-c "m▀"))
+                (buf-set bot-edge   col (str "\e[48;5;" flr-edge-c ";38;5;" edge-code "m▀"))
                 (buf-set top-shadow col shd-bg)
                 (buf-set bot-shadow col shd-bg))))
           (recur (php/+ col 1)))))
@@ -2449,6 +2511,16 @@
         blood-sky-gradient                 (when bloody?
                                              (build-horizon-gradient vh shade-table-blood))
         blood-floor-gradient               blood-sky-gradient
+        ;; Code-only gradient twins for ▀ half-block edge composition.
+        ;; The top-edge cell blends wall BG with the sky shade AT THAT ROW
+        ;; in FG; using a flat sky-code produced a dark notch at the seam
+        ;; wherever the gradient is brighter than code 236. Similarly the
+        ;; bot-edge blends the floor shade at its row into the BG half.
+        sky-code-gradient                  (build-horizon-gradient-codes vh shade-code-table)
+        floor-code-gradient                (build-themed-gradient-codes vh 239 true)
+        blood-sky-code-gradient            (when bloody?
+                                             (build-horizon-gradient-codes vh shade-code-table-blood))
+        blood-floor-code-gradient          blood-sky-code-gradient
         ;; Directional blood mask: per-column intensity in [0, 1]. Only
         ;; non-zero during i-frames AND when :hurt-side is set. Fades
         ;; from 1.0 at the screen edge that took the hit toward 0 at
@@ -2596,7 +2668,11 @@
                               :door-shade-now door-shade-now
                               :door-code-now  door-code-now
                               :boss-door-shade-now boss-door-shade-now
-                              :boss-door-code-now  boss-door-code-now}
+                              :boss-door-code-now  boss-door-code-now
+                              :sky-code-grad         sky-code-gradient
+                              :floor-code-grad       floor-code-gradient
+                              :blood-sky-code-grad   blood-sky-code-gradient
+                              :blood-floor-code-grad blood-floor-code-gradient}
                              blood-cols)
         ;; Enemy sprite zone boundaries (head/body/legs). For each
         ;; column carrying an enemy:

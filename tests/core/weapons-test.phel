@@ -1,6 +1,7 @@
 (ns phel-doom-tests.core.weapons-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.state :refer [new-player new-world])
+  (:require phel-doom.core.enemies :refer [resists?])
   (:require phel-doom.core.weapons :refer [current-weapon effective-reserve-cap give-weapon initial-weapon-state owns? switch-weapon weapon-order weapon-spec weapons]))
 
 (def empty-grid [[1 1 1] [1 0 1] [1 1 1]])
@@ -27,6 +28,43 @@
   (is (= 1 (:damage (get weapons :pistol))))
   (is (= 3 (:damage (get weapons :shotgun))))
   (is (= 1 (:damage (get weapons :chaingun)))))
+
+;; ---------------------------------------------------------------------
+;; #122: the incinerator is the first weapon to emit :fire, so it is the
+;; weapon that makes the (already-working) per-enemy resist system bite.
+;; Fire-resist mobs (caco/baron/archvile/mancubus) shrug it off; everyone
+;; else burns. Without a fire weapon the whole :damage-type / :resists
+;; machinery was inert (no player weapon ever triggered a resist).
+;; ---------------------------------------------------------------------
+
+(deftest test-incinerator-is-a-fire-weapon
+  (let [inc (get weapons :incinerator)]
+    (is (some? inc) "incinerator exists in the catalogue")
+    (is (= :fire (:damage-type inc)) "incinerator deals :fire")))
+
+(deftest test-incinerator-fire-is-resisted-by-fire-mobs
+  ;; The proof that #122 is fixed: a real player weapon's damage-type now
+  ;; lands in the resist table.
+  (let [ftype (:damage-type (get weapons :incinerator))]
+    (is (= true  (resists? :caco ftype))    "cacodemon resists incinerator fire")
+    (is (= true  (resists? :baron ftype))   "baron resists incinerator fire")
+    (is (= true  (resists? :archvile ftype)) "archvile resists incinerator fire")
+    (is (= true  (resists? :mancubus ftype)) "mancubus resists incinerator fire")
+    (is (= false (resists? :imp ftype))     "imp does NOT resist fire (burns)")
+    (is (= false (resists? :demon ftype))   "demon does NOT resist fire (burns)")))
+
+(deftest test-incinerator-is-slot-6
+  (is (= :incinerator (get weapon-order 5))
+      "incinerator occupies slot 6 (weapon-order index 5)"))
+
+(deftest test-give-and-switch-incinerator
+  (let [w  (give-weapon (fresh-world) :incinerator)]
+    (is (= :incinerator (current-weapon w)) "give-weapon auto-switches to incinerator")
+    (is (= true (owns? w :incinerator)))
+    (let [back (switch-weapon w :pistol)]
+      (is (= :pistol (current-weapon back)))
+      (is (= :incinerator (current-weapon (switch-weapon back :incinerator)))
+          "can switch back to the owned incinerator"))))
 
 (deftest test-initial-weapon-state-has-every-weapon-at-spec-defaults
   (let [s (initial-weapon-state)]
@@ -130,11 +168,13 @@
     (is (= 1 (:damage s)))))
 
 (deftest test-weapon-order-slots
-  ;; Player presses 1-5 to swap weapons. Slot ordering must stay stable
-  ;; so muscle memory survives. BFG is slot 5 (issue #58).
-  (is (= [:pistol :shotgun :chaingun :chainsaw :bfg] weapon-order))
-  (is (= :chainsaw (get weapon-order 3)))
-  (is (= :bfg      (get weapon-order 4))))
+  ;; Player presses 1-6 to swap weapons. Slot ordering must stay stable
+  ;; so muscle memory survives. BFG is slot 5 (issue #58); incinerator
+  ;; is slot 6 (issue #122).
+  (is (= [:pistol :shotgun :chaingun :chainsaw :bfg :incinerator] weapon-order))
+  (is (= :chainsaw    (get weapon-order 3)))
+  (is (= :bfg         (get weapon-order 4)))
+  (is (= :incinerator (get weapon-order 5))))
 
 (deftest test-effective-reserve-cap-scales-with-backpack-level
   ;; Pistol's reserve-cap is 50 from the catalog. Backpack stack scales

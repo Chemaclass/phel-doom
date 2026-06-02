@@ -65,14 +65,16 @@ Compass at top-centre: tints the cardinal letter (E/S/W/N) toward your target. O
 
 Weapons (DPS-balanced, found on map):
 
-| Slot | Weapon | Dmg | CD | Mag | DPS |
-|---|---|---|---|---|---|
-| 1 | pistol | 1 | 0.12s | 10 | 8 |
-| 2 | shotgun | 3 | 0.6s | 4 | 5 |
-| 3 | chaingun | 1 | 0.05s | 30 | 20 |
-| 4 | chainsaw | 1 | 0.10s | ∞ | 10 |
+| Slot | Weapon | Dmg | CD | Mag | DPS | Type / niche |
+|---|---|---|---|---|---|---|
+| 1 | pistol | 1 | 0.12s | 10 | 8 | ballistic, fallback |
+| 2 | shotgun | 3 | 0.6s | 4 | 5 | ballistic, burst |
+| 3 | chaingun | 1 | 0.05s | 30 | 20 | ballistic, sustained |
+| 4 | chainsaw | 1 | 0.10s | ∞ | 10 | melee, no ammo |
+| 5 | BFG | 10 +6 splash | 1.2s | 1 | - | plasma, AoE (ignores fire-resist) |
+| 6 | incinerator | 1 | 0.06s | 40 | 16 | fire, swarm-clearer (caco/baron/archvile/mancubus resist it) |
 
-Hold space to spray (pistol / chaingun / chainsaw). Shotgun: one pull per shell.
+Hold space to spray (pistol / chaingun / chainsaw / incinerator). Shotgun and BFG: one pull per shot.
 
 CLI flags:
 

@@ -119,6 +119,12 @@ Flow:
 
 Damage type `:plasma` (bypasses fire-resist). Single-action, 1.2s cooldown, mag 1 / reserve 20.
 
+### Incinerator (fire, slot 6, found L6)
+
+The only `:fire` weapon (issue #122). Hitscan flame stream: `:damage 1`, fast `:fire-cooldown 0.06`, mag 40, reserve cap 120, short `:max-range 4.0`. Fast auto-fire makes it a swarm-clearer, but the short reach keeps it out of the chaingun's long-range niche.
+
+Its point is the damage type: caco / baron / archvile / mancubus carry `:resists #{:fire}`, so the flame does **zero** to them. The incinerator is the weapon that makes the resist system bite (before it, no player weapon ever emitted a resisted type). Switch off it for fire-resist heavies; use plasma (BFG), ballistic, or melee on those.
+
 ## Berserk pickup
 
 Berserk sphere (`Ω` glyph, 1-in-8 levels):
@@ -132,10 +138,10 @@ Berserk sphere (`Ω` glyph, 1-in-8 levels):
 
 `shoot` reads active weapon's `:damage-type` and passes to `enemy/shoot`. If target type has `:resists` set containing that type, damage is 0. Hit registration (splatter, flash, sfx, wake) still fires.
 
-Current resistances (dormant until BFG / plasma adds `:plasma` type):
+Current resistances:
 - caco, baron, archvile, mancubus: `:fire`
 
-All current weapons deal `:ballistic`.
+The incinerator (slot 6) deals `:fire`, so it is the weapon those four mobs resist (zero damage). The BFG deals `:plasma`, which is NOT in any resist set, so it bypasses the fire resist by design. Pistol / shotgun / chaingun deal `:ballistic` and the chainsaw deals `:melee`; none of those are resisted by any current enemy.
 
 ## Nightmare respawn
 

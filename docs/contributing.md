@@ -82,6 +82,24 @@ See `src/io/render.phel` for pattern 2 in the paint-overlay chain.
 
 Opposite of Clojure. `{:keys [foo bar]}` works when local name matches key. Clojure-style syntax throws `Cannot destructure Phel\Lang\Keyword`.
 
+### `recur` re-binds loop names, not let-shadows of them
+
+A `let` inside a `loop` that destructures into a local sharing a loop-binding name silently drops the value: at the `recur` site that name resolves to the loop's ORIGINAL binding, not the shadow.
+
+```phel
+;; BROKEN - recur sends the loop's old `settings`, not the navigated one
+(loop [settings s0 cursor 0]
+  (let [{:keys [cursor settings]} (navigate settings cursor steps)]
+    (recur settings cursor)))        ; every edit lost next iteration
+
+;; FIX - destructure into a non-loop name, read via accessors
+(loop [settings s0 cursor 0]
+  (let [nav (navigate settings cursor steps)]
+    (recur (:settings nav) (:cursor nav))))
+```
+
+Bit the start-menu options page (`settings-screen!`): every change applied live then reverted on the next frame.
+
 ### Lint warnings are often false positives
 
 `vendor/bin/phel lint` warns on:
@@ -89,10 +107,6 @@ Opposite of Clojure. `{:keys [foo bar]}` works when local name matches key. Cloj
 - **Threading macros.** `(-> w (foo arg) (bar))` looks like 1-arg calls; emits spurious arity errors.
 
 Errors fail CI; warnings don't. If you need threading, use sequential `let` instead to keep lint quiet.
-
-### Never use bare `vendor/bin/phel test`
-
-`composer test` sets `PHEL_DOOM_SILENT=1`; bare invocation does not. Always use composer scripts locally so tests match CI.
 
 ### Avoid Phel vectors in hot loops
 
@@ -118,7 +132,7 @@ Phel's `+`, `-`, `*`, `<`, `=`, ... wrap PHP operators with `NumericOperations` 
 
 ## Example: adding an overlay
 
-New kill-counter banner at top-right? 
+New kill-counter banner at top-right?
 
 1. Write `paint-kill-counter` in `src/io/render.phel`:
    ```phel

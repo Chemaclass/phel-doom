@@ -6,6 +6,7 @@ Per-subsystem docs, each linked to source files and key functions.
 
 | Topic | File |
 |---|---|
+| Player guide (controls, pickups, weapons) | [gameplay.md](gameplay.md) |
 | Feature catalogue | [features.md](features.md) |
 | Module layout + rules | [architecture.md](architecture.md) |
 | Per-frame transitions | [game-loop.md](game-loop.md) |

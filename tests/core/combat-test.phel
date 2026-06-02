@@ -237,6 +237,33 @@
                          false)]
     (is (= 0.0 (or (:empty-click-secs w) 0.0)))))
 
+;; ---------------------------------------------------------------------
+;; SFX events: combat is pure (no io require). Instead of playing sound,
+;; it enqueues {:name :vol} on the world's :sfx queue; io/play drains +
+;; emits. These pin that contract (io-boundary).
+;; ---------------------------------------------------------------------
+
+(defn- sfx-named [world name]
+  (filter (fn [e] (= name (:name e))) (:sfx world)))
+
+(deftest test-empty-trigger-enqueues-click-event
+  (let [w (tick-shooting {:mag 0 :fire-cooldown 0.0 :jam-secs 0.0
+                          :reload-cooldown 0.0 :ammo-reserve 20}
+                         true)]
+    (is (= 1 (count (sfx-named w :click))))))
+
+(deftest test-hit-player-enqueues-hit-event
+  (let [w  (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
+        w' (hit-player-at w 1.5 1.5 1)]
+    (is (= 1 (count (sfx-named w' :hit))))))
+
+(deftest test-fire-shot-enqueues-weapon-report
+  ;; A trigger pull that misses still queues the active weapon's report.
+  (let [w0 (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
+        w  (assoc w0 :mag 6 :weapon :pistol :fire-cooldown 0.0 :enemies [])
+        w' (tick-shooting w true)]
+    (is (pos? (count (:sfx w'))) "fire report queued")))
+
 (deftest test-tick-shooting-empty-mag-skip-when-jammed
   ;; Jam already has its own visual cue (paint-door-face / fire-anim).
   ;; Suppress the click so we don't double up.

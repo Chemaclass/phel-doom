@@ -1,6 +1,6 @@
 # Combat
 
-Hitscan + damage timing + i-frames. `src/core/combat.phel`. Only side effect: `play-sfx!`, gated by `(:sound-on world)`.
+Hitscan + damage timing + i-frames. `src/core/combat.phel`. Pure: no side effects. Sound cues (gun report, kill, pain, dry-fire click) are enqueued as `{:name :vol}` events on the world's per-frame `:sfx` queue; `commands/play` drains it after `tick-world` and emits via `play-sfx!`, gated by `(:sound-on world)`.
 
 ## Tunables
 

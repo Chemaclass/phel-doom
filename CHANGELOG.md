@@ -11,6 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Changed
 
+- `press R to RELOAD` reminder is now weapon-aware (#128): it arms on the remaining-mag fraction instead of an absolute count, and is suppressed for single-round mags (the BFG no longer nags on its 1/1 magazine).
 - Plainer, deeper wall shading: flat shaded stone (no brick speckle), gamma distance falloff for brighter mids, stronger corner contrast.
 
 ### Fixed

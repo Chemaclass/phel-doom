@@ -12,6 +12,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 ### Added
 
 - Start-menu welcome box and credits screen show the current version, sourced from a single `src/core/version.phel` constant that `tools/release.sh` bumps (also feeds `--version`), so a release updates it everywhere at once.
+- Each release publishes a SHA256 checksum of the PHAR: a `checksum` asset (verify with `shasum -a 256 -c checksum`) plus the hash in the release notes.
 
 ### Changed
 

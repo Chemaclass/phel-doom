@@ -6,9 +6,9 @@
 # Steps:
 #   1. Validate semver and preflight (clean tree, on main, gh CLI ready, tag free).
 #   2. Move CHANGELOG.md "## [Unreleased]" block into "## [X.Y.Z] - YYYY-MM-DD".
-#   3. Build a self-contained phel-doom.phar and smoke-test it.
+#   3. Build a self-contained phel-doom.phar, smoke-test it, write its SHA256.
 #   4. Commit, tag vX.Y.Z, push branch and tag.
-#   5. Create GitHub release using the extracted changelog as notes, attaching the PHAR.
+#   5. Create GitHub release (changelog as notes + SHA256), attaching the PHAR + checksum.
 
 set -euo pipefail
 
@@ -22,6 +22,7 @@ CHANGELOG_FILE="$REPO_ROOT/CHANGELOG.md"
 VERSION_FILE="$REPO_ROOT/src/core/version.phel"
 PHAR_SCRIPT="$REPO_ROOT/build/phar.sh"
 PHAR_OUTPUT="$REPO_ROOT/build/out/phel-doom.phar"
+CHECKSUM_OUTPUT="$REPO_ROOT/build/out/checksum"
 MAIN_BRANCH="main"
 REMOTE="origin"
 DEFAULT_REPO_SLUG="Chemaclass/phel-doom"
@@ -34,6 +35,7 @@ DRAFT=0
 SKIP_TESTS=0
 SKIP_PHAR=0
 REPO_SLUG=""
+PHAR_SHA256=""
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -408,6 +410,15 @@ build_phar() {
         || { log_err "PHAR build failed — run '$PHAR_SCRIPT' to see output"; return 1; }
     [[ -f "$PHAR_OUTPUT" ]] || { log_err "PHAR not found at $PHAR_OUTPUT after build"; return 1; }
     log_ok "Built $PHAR_OUTPUT"
+
+    # Publish a checksum so downloaders can verify integrity. `php hash_file`
+    # avoids shasum/sha256sum portability differences. The file mirrors the
+    # `<hash>  <name>` shasum format, so `shasum -a 256 -c checksum` works once
+    # both assets sit in the same directory.
+    PHAR_SHA256=$(php -r 'echo hash_file("sha256", $argv[1]);' "$PHAR_OUTPUT") \
+        || { log_err "Failed to compute PHAR checksum"; return 1; }
+    printf '%s  %s\n' "$PHAR_SHA256" "phel-doom.phar" >"$CHECKSUM_OUTPUT"
+    log_ok "SHA256: $PHAR_SHA256"
 }
 
 # Smoke-test the freshly built PHAR: it must report the released version and
@@ -439,6 +450,15 @@ create_github_release() {
     notes=$(extract_release_notes "$NEW_VERSION")
     [[ -z "$notes" ]] && notes="Release v$NEW_VERSION"
 
+    # Append the checksum so the hash is visible in the notes (and the file is
+    # attached below for `shasum -c`).
+    if [[ -n "$PHAR_SHA256" ]]; then
+        notes="$notes
+
+## Checksum
+SHA256: \`$PHAR_SHA256\`"
+    fi
+
     local title="v$NEW_VERSION"
     [[ -n "$RELEASE_NAME" ]] && title="v$NEW_VERSION - $RELEASE_NAME"
 
@@ -449,16 +469,22 @@ create_github_release() {
     local draft_flag=""
     [[ $DRAFT -eq 1 ]] && draft_flag="--draft"
 
-    # Attach the PHAR as a release asset when present (skipped via --skip-phar).
-    local asset=""
-    [[ $SKIP_PHAR -eq 0 && -f "$PHAR_OUTPUT" ]] && asset="$PHAR_OUTPUT"
+    # Attach the PHAR + its checksum as assets when present (skipped via
+    # --skip-phar). Scalars (not an array) so empty values vanish cleanly
+    # under `set -u` on bash 3.2.
+    local phar_asset="" sum_asset=""
+    if [[ $SKIP_PHAR -eq 0 && -f "$PHAR_OUTPUT" ]]; then
+        phar_asset="$PHAR_OUTPUT"
+        [[ -f "$CHECKSUM_OUTPUT" ]] && sum_asset="$CHECKSUM_OUTPUT"
+    fi
 
     gh release create "v$NEW_VERSION" \
         --repo "$REPO_SLUG" \
         --title "$title" \
         --notes-file "$notes_file" \
         $draft_flag \
-        ${asset:+"$asset"}
+        ${phar_asset:+"$phar_asset"} \
+        ${sum_asset:+"$sum_asset"}
 
     rm -f "$notes_file"
 }
@@ -502,8 +528,8 @@ main() {
         if [[ $SKIP_PHAR -eq 1 ]]; then
             log "\n[DRY-RUN] Would: git commit, tag v$NEW_VERSION, push, gh release create (no PHAR)"
         else
-            log "\n[DRY-RUN] Would: build phel-doom.phar (v$NEW_VERSION), smoke-test it,"
-            log "[DRY-RUN]       git commit, tag v$NEW_VERSION, push, gh release create + attach PHAR"
+            log "\n[DRY-RUN] Would: build phel-doom.phar (v$NEW_VERSION), smoke-test it, checksum it,"
+            log "[DRY-RUN]       git commit, tag v$NEW_VERSION, push, gh release create + attach PHAR + checksum"
         fi
         rollback
         log_ok "Dry-run complete - CHANGELOG.md + version.phel restored"

@@ -1,6 +1,21 @@
 # Rendering
 
-`src/io/render.phel`. Composes one ANSI string per frame, writes to stdout. Side-effecting IO layer.
+The render layer composes one ANSI string per frame and writes it to stdout. Side-effecting IO layer.
+
+`src/io/render.phel` is a thin public facade: it re-exports the stable surface (`render!`, `clear-screen`, `read-perf-snapshot`, the screen entry points, plus `direction-char` / `project-enemy` / `enemy-front-visible-at?` / `reload-reminder-visible?` / `build-blood-cols` / `help-menu-rows` for tests). Callers require `phel-doom.io.render` and never reach into the sub-namespaces directly.
+
+The implementation lives under `src/io/render/`:
+
+| Namespace | File | Responsibility |
+|-----------|------|----------------|
+| `...render.buffer` | `buffer.phel` | Hot-loop php-array macros (`buf-mk` / `buf-set` / `buf-get` / `buf-push`). |
+| `...render.palette` | `palette.phel` | ANSI colour/glyph string constants + shade lookup tables. Pure data. |
+| `...render.frame-math` | `frame_math.phel` | Gradients, sprite scaling, enemy projection, visibility tests. Pure helpers. |
+| `...render.hud` | `hud.phel` | Minimap, F3 debug line, help menu, settings panel. |
+| `...render.paint` | `paint.phel` | Transient overlay effects (face, crosshair, vignettes, badges, pistol HUD). |
+| `...render.main` | `main.phel` | The `frame->string` pipeline, `render!`, perf snapshot, end / menu screens. |
+
+Dependency direction is acyclic: `buffer -> palette -> frame-math -> {hud, paint} -> main -> facade`. The hot per-cell loop (`frame->string` + `compute-wall-shades`) stays co-located in `main`; cross-namespace calls compile to direct PHP static calls and the buffer macros inline, so the split adds no hot-path overhead.
 
 Entry point: `render! [world stats cols rows]` - cursor home, pick impact flash or normal frame, flush.
 

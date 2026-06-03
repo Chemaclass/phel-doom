@@ -1,0 +1,1080 @@
+;; Render entry points: the per-frame frame->string pipeline, render!,
+;; perf snapshot, and the end / menu screens.
+(ns phel-doom.io.render.main
+  (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
+  (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade sky-code floor-code door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright char-aspect shade-table shade-code-table shade-table-blood shade-code-table-blood])
+  (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
+  (:require phel-doom.io.render.hud :refer [minimap-door minimap-door-pulse minimap-rows hud-debug-line hud-line-str help-menu-string settings-menu-string])
+  (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-wall-lights paint-crosshair paint-intro-splash paint-locked-bump paint-door-face paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-flicker paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-blood-fx-into paint-pickups-into paint-projectiles-into build-blood-cols])
+  (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
+  (:require phel-doom.core.perf :refer [render-scale])
+  (:require phel-doom.core.format :refer [format-duration])
+  (:require phel-doom.core.version :refer [version]))
+
+(def perf-snapshot
+  "Side-channel for the F3 perf overlay. `render!` writes the latest
+   cast-ms / render-ms / bytes / avg-rle / PHP-mem snapshot into this
+   atom every frame the overlay is on; `frame-stats` reads it on the
+   following frame so the debug row paints last-frame numbers. nil
+   while the overlay is off — gates the paint-debug-row helper out."
+  (atom nil))
+
+(defn read-perf-snapshot
+  "Public accessor for the latest perf snapshot written by render!.
+   Called by play.frame-stats so the debug HUD has data to paint on
+   the next frame. Returns nil while the overlay has never been on."
+  []
+  @perf-snapshot)
+
+(defn- record-cast-ms!
+  "Helper used by `frame->string` when :debug? is on. Stashes the
+   measured cast-phase time so `render!` can subtract it from total
+   frame time to get the render-phase slice. Skips the swap when the
+   atom is unset so the off path stays branch-free."
+  [^float ms]
+  (swap! perf-snapshot
+         (fn [snap] (if (nil? snap) {:cast-ms ms} (assoc snap :cast-ms ms)))))
+
+(defn- compute-wall-shades
+  "Per-column wall shading. Builds and returns seven PHP-array buffers
+   filled with: wall top + bottom screen rows, plus precomputed cell
+   strings for the wall body, the top/bot half-block edges, and the
+   top/bot ambient-shadow band.
+
+   PHP arrays are pass-by-value in fn args, so the buffers are CREATED
+   inside this fn and returned in a map; the caller destructures to
+   keep the same names it used previously.
+
+   `cast`       ray-cast outputs {:dists :hits :sides}
+   `palette`    {:stbl :ctbl :sky-c :floor-c :door-shade-now :door-code-now
+                 :sky-code-grad :floor-code-grad :blood-sky-code-grad
+                 :blood-floor-code-grad}
+   `blood-cols` per-col directional blood mask (from build-blood-cols)
+   `haze-shift` int 0-23: how many shade-table steps to pull walls
+                toward black. Doors are kept bright as a nav cue."
+  [vw vh haze-shift cast palette blood-cols]
+  (let [{:keys [dists hits sides]}                                     cast
+        {:keys [stbl ctbl sky-c floor-c door-shade-now door-code-now
+                boss-door-shade-now boss-door-code-now
+                sky-code-grad floor-code-grad
+                blood-sky-code-grad blood-floor-code-grad]}            palette
+        tops                                                           (buf-mk)
+        bots                                                           (buf-mk)
+        normal                                                         (buf-mk)
+        top-edge                                                       (buf-mk)
+        bot-edge                                                       (buf-mk)
+        top-shadow                                                     (buf-mk)
+        bot-shadow                                                     (buf-mk)]
+    (loop [col 0]
+      (when (php/< col vw)
+        (let [dist         (buf-get dists col)
+              wall-h       (php/min vh (php/intval
+                                        (php// proj-dist (php/* (php/max 0.3 dist) char-aspect))))
+              top          (php/intdiv (php/- vh wall-h) 2)
+              blood?       (php/> (buf-get blood-cols col) 0.4)
+              stbl-l       (if blood? shade-table-blood stbl)
+              ctbl-l       (if blood? shade-code-table-blood ctbl)
+              ;; Sample the gradient code at the exact row of each seam
+              ;; cell so the ▀ top-half blends the true sky shade at that
+              ;; row (not a flat dark-236), eliminating the dark-dot
+              ;; artifact where bright gradient meets flat edge code.
+              sky-edge-row (php/max 0 (php/min (php/- vh 1) top))
+              flr-edge-row (php/max 0 (php/min (php/- vh 1) (php/- (php/+ top wall-h) 1)))
+              sky-edge-c   (buf-get (if (and blood? blood-sky-code-grad)
+                                      blood-sky-code-grad
+                                      sky-code-grad)
+                                    sky-edge-row)
+              flr-edge-c   (buf-get (if (and blood? blood-floor-code-grad)
+                                      blood-floor-code-grad
+                                      floor-code-grad)
+                                    flr-edge-row)
+              h            (buf-get hits col)]
+          (buf-set tops col top)
+          (buf-set bots col (php/+ top wall-h))
+          (cond
+            (php/=== 5 h)
+            (do (buf-set normal      col boss-door-shade-now)
+                (buf-set top-edge    col (str "\e[48;5;" boss-door-code-now ";38;5;" sky-edge-c "m▀"))
+                (buf-set bot-edge    col (str "\e[48;5;" flr-edge-c ";38;5;" boss-door-code-now "m▀"))
+                (buf-set top-shadow  col boss-door-shade-now)
+                (buf-set bot-shadow  col boss-door-shade-now))
+            (or (php/=== 2 h) (php/=== 3 h) (php/=== 4 h))
+            (do (buf-set normal      col door-shade-now)
+                (buf-set top-edge    col (str "\e[48;5;" door-code-now ";38;5;" sky-edge-c "m▀"))
+                (buf-set bot-edge    col (str "\e[48;5;" flr-edge-c ";38;5;" door-code-now "m▀"))
+                (buf-set top-shadow  col door-shade-now)
+                (buf-set bot-shadow  col door-shade-now))
+            :else
+            (let [idx-raw (php/max 0
+                                   (php/min 23
+                                            (php/+ (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 0.6) 23))
+                                                   (if (php/=== (buf-get sides col) 0) 3 0))))
+                  ;; Haze pulls every wall cell toward index 0 (black)
+                  ;; by `haze-shift` steps. 0 = full visibility; values
+                  ;; come from frame->string based on player lives.
+                  idx     (php/max 0 (php/- idx-raw haze-shift))]
+              (let [plain     (buf-get stbl-l idx)
+                    shd-idx   (php/max 0 (php/- idx 3))
+                    shd-bg    (buf-get stbl-l shd-idx)
+                    edge-code (buf-get ctbl-l shd-idx)]
+                ;; Flat plain wall cells: no per-cell brick speckle. Walls
+                ;; read as clean shaded stone; depth comes from the gamma
+                ;; distance falloff + stronger EW side-shading instead.
+                (buf-set normal col plain)
+                (buf-set top-edge   col (str "\e[48;5;" edge-code ";38;5;" sky-edge-c "m▀"))
+                (buf-set bot-edge   col (str "\e[48;5;" flr-edge-c ";38;5;" edge-code "m▀"))
+                (buf-set top-shadow col shd-bg)
+                (buf-set bot-shadow col shd-bg))))
+          (recur (php/+ col 1)))))
+    {:tops tops :bots bots :normal normal
+     :top-edge top-edge :bot-edge bot-edge
+     :top-shadow top-shadow :bot-shadow bot-shadow}))
+
+(defn frame->string
+  "Render the world sized to cols x rows. Walls project at a constant
+   scale (proj-dist from engine) with a 2:1 character-aspect correction,
+   so resizing the terminal widens the FOV instead of growing the walls.
+   Minimap is overlaid top-right when (:show-map world) is truthy."
+  [world stats cols rows]
+  (let [{:keys [vw vh map-col map-row map-step]}
+        (layout cols rows (count (first (:grid world))) stats)
+        bloody?                            (php/> (or (get stats :iframes) 0.0) 0.0)
+        ;; Walls + sky + floor are ALL pure grayscale: enemy colours
+        ;; pop against neutral stonework, and far walls fade toward
+        ;; near-black (shade-table[0] = code 232) like an unseen
+        ;; horizon. No per-level wall tinting; level distinction comes
+        ;; from enemy sprites + intro splash + audio.
+        stbl                               shade-table
+        sky-gradient                       (build-horizon-gradient vh shade-table)
+        ;; Floor: same grey gradient with subtle tile banding (odd
+        ;; rows one fade step darker).
+        floor-gradient                     (build-themed-gradient vh 239 true)
+        ;; Pre-baked red gradients used when a column sits inside the
+        ;; blood band: sky + floor go red for those cols so the band
+        ;; reads as a coherent red corner, not red walls floating in a
+        ;; grey ceiling. Built only when bloody?; otherwise nil and
+        ;; the inner row loop short-circuits the blood swap.
+        blood-sky-gradient                 (when bloody?
+                                             (build-horizon-gradient vh shade-table-blood))
+        blood-floor-gradient               blood-sky-gradient
+        ;; Code-only gradient twins for ▀ half-block edge composition.
+        ;; The top-edge cell blends wall BG with the sky shade AT THAT ROW
+        ;; in FG; using a flat sky-code produced a dark notch at the seam
+        ;; wherever the gradient is brighter than code 236. Similarly the
+        ;; bot-edge blends the floor shade at its row into the BG half.
+        sky-code-gradient                  (build-horizon-gradient-codes vh shade-code-table)
+        floor-code-gradient                (build-themed-gradient-codes vh 239 true)
+        blood-sky-code-gradient            (when bloody?
+                                             (build-horizon-gradient-codes vh shade-code-table-blood))
+        blood-floor-code-gradient          blood-sky-code-gradient
+        ;; Directional blood mask: per-column intensity in [0, 1]. Only
+        ;; non-zero during i-frames AND when :hurt-side is set. Fades
+        ;; from 1.0 at the screen edge that took the hit toward 0 at
+        ;; the centre. Drives the per-col red-shade swap inside the
+        ;; col-setup loop below. One vw-sized PHP array built per
+        ;; frame; lookup is O(1) inside the loop.
+        blood-cols                         (build-blood-cols vw bloody? (get stats :hurt-side))
+        ehead                              enemy-head
+        ebody                              enemy-body
+        elegs                              enemy-body ; intentional: default legs = body colour (no separate legs def)
+        ;; Pause-aware clock: render samples its blinks/pulses from
+        ;; this instead of wall time so every time-driven animation
+        ;; freezes the moment the game is paused (issue #7).
+        t                                  (or (get stats :game-time) 0.0)
+        ;; Walk-cycle body glyph: same sin-wave selector as the face,
+        ;; offset by π so the body glyph swaps on the OPPOSITE beat from
+        ;; the face. Eye blinks and scales/muscles shift on alternating
+        ;; beats so the monster looks animated without per-enemy state.
+        face-phase                         (php/sin (php/* t 3.0))
+        ;; Cast phase. When the F3 overlay is on, sample microtime
+        ;; around the call so render! can split cast-ms from total
+        ;; frame-ms. The branch is the only debug-gated cost in the
+        ;; off path — a single `(get stats :debug?)` check per frame.
+        debug?                             (get stats :debug?)
+        t-cast-start                       (if debug? (php/microtime true) 0.0)
+        ;; render-scale = 2 on perf-mode terminals: one ray per pair
+        ;; of output columns, each sample replicated across the pair.
+        ;; Halves cast + wall-shade work with a chunky-per-2-cols
+        ;; look. Standard sizes return 1 → identical to before.
+        scale                              (render-scale vw vh)
+        {:keys [dists hits sides hxs hys]}
+        (cast-frame world vw scale)
+        _                                  (when debug?
+                                             (record-cast-ms!
+                                              (php/* (php/- (php/microtime true) t-cast-start) 1000.0)))
+        ;; Half-block edge cells need the sky/floor colour CODE for
+        ;; the current palette so the composer can write
+        ;; "\e[48;5;WALL;38;5;SKYm▀" and let ▀'s upper half show sky.
+        sky-c                              sky-code
+        floor-c                            floor-code
+        ctbl                               shade-code-table
+        ;; Subtle pulse on interactive pickups so the eye picks them
+        ;; out of the wall colours: doors and hearts cycle between
+        ;; two shades on a sin wave. Wall clock so the rhythm stays
+        ;; the same regardless of fps. Frequencies differ (4 vs 6
+        ;; rad/s) so the two pulses don't lock together.
+        door-bright?                       (pulse t 4.0)
+        door-shade-now                     (if door-bright? "\e[48;5;130;38;5;226m▌" door-shade)
+        door-code-now                      (if door-bright? "130" door-code)
+        ;; Boss door pulses on a faster, alarm-ish beat (5 rad/s) so
+        ;; the L10 exit reads as 'kill the boss to open' even at the
+        ;; far end of the arena.
+        boss-door-bright?                  (pulse t 5.0)
+        boss-door-shade-now                (if boss-door-bright? "\e[48;5;124;38;5;226;1m▌" boss-door-shade)
+        boss-door-code-now                 (if boss-door-bright? "124" boss-door-code)
+        ;; Pickup pulse: systole/diastole BG + matching centre glyph
+        ;; both swap on the same beat so the icon throbs in tempo.
+        heart-bright?                      (pulse t 6.0)
+        heart-shade-now                    (if heart-bright? heart-shade-bright heart-shade)
+        heart-glyph-now                    (if heart-bright? heart-glyph-bright heart-glyph)
+        armor-bright?                      (pulse t 5.0)
+        ;; Aggro head pulse: same code-driven swap so a monster in
+        ;; striking range throbs without relying on terminal blink.
+        aggro-bright?                      (pulse t 5.0)
+        armor-shade-now                    (if armor-bright? armor-shade-bright armor-shade)
+        armor-glyph-now                    (if armor-bright? armor-glyph-bright armor-glyph)
+        ;; Ammo-box pulse: warm-brown crate to yellow flare at 7 rad/s
+        ;; — slower than hearts so the two pickup types read distinct
+        ;; even when both are in frame.
+        ammo-bright?                       (pulse t 7.0)
+        ammo-shade-now                     (if ammo-bright? ammo-shade-bright ammo-shade)
+        ammo-glyph-now                     (if ammo-bright? ammo-glyph-bright ammo-glyph)
+        ;; Berserk pulse — faster than ammo so a rage sphere flashes
+        ;; the most aggressively of any pickup, telegraphing the buff.
+        berserk-bright?                    (pulse t 9.0)
+        berserk-shade-now                  (if berserk-bright? berserk-shade-bright berserk-shade)
+        berserk-glyph-now                  (if berserk-bright? berserk-glyph-bright berserk-glyph)
+        ;; Invuln pulse — different cadence (8 rad/s) so a sphere on
+        ;; the same screen as a berserk doesn't sync up into one beat.
+        invuln-bright?                     (pulse t 8.0)
+        invuln-shade-now                   (if invuln-bright? invuln-shade-bright invuln-shade)
+        invuln-glyph-now                   (if invuln-bright? invuln-glyph-bright invuln-glyph)
+        ;; Soulsphere pulse — slower than invuln so a co-spawn reads
+        ;; with two distinct cadences instead of synced flashes.
+        soulsphere-bright?                 (pulse t 6.0)
+        soulsphere-shade-now               (if soulsphere-bright? soulsphere-shade-bright soulsphere-shade)
+        soulsphere-glyph-now               (if soulsphere-bright? soulsphere-glyph-bright soulsphere-glyph)
+        ;; Armor-shard pulse: faster than the full armor pickup
+        ;; (5 rad/s) so a shard sitting next to an armor item reads
+        ;; with a quicker tempo - matches its 'common chip drop'
+        ;; feel vs the rarer fuller pickup.
+        armor-shard-bright?                (pulse t 5.5)
+        armor-shard-shade-now              (if armor-shard-bright? armor-shard-shade-bright armor-shard-shade)
+        armor-shard-glyph-now              (if armor-shard-bright? armor-shard-glyph-bright armor-shard-glyph)
+        ;; Backpack pulse — slowest of the powerup family so the
+        ;; one-shot pickup reads as 'permanent gear' rather than a
+        ;; ticking buff.
+        backpack-bright?                   (pulse t 4.0)
+        backpack-shade-now                 (if backpack-bright? backpack-shade-bright backpack-shade)
+        backpack-glyph-now                 (if backpack-bright? backpack-glyph-bright backpack-glyph)
+        ;; Keycards pulse at the same beat as pickups; colour is per-
+        ;; card so paint-keycards-into picks the right shade.
+        keycard-bright?                    (pulse t 5.5)
+        keycard-blue-shade-now             (if keycard-bright? keycard-blue-bright keycard-blue-shade)
+        keycard-blue-glyph-now             (if keycard-bright? keycard-blue-glyph-bright keycard-blue-glyph)
+        keycard-red-shade-now              (if keycard-bright? keycard-red-bright keycard-red-shade)
+        keycard-red-glyph-now              (if keycard-bright? keycard-red-glyph-bright keycard-red-glyph)
+        weapon-pickup-bright?              (pulse t 3.0)
+        shotgun-pickup-shade-now           (if weapon-pickup-bright? shotgun-pickup-bright shotgun-pickup-shade)
+        shotgun-pickup-glyph-now           (if weapon-pickup-bright? shotgun-pickup-glyph-bright shotgun-pickup-glyph)
+        chaingun-pickup-shade-now          (if weapon-pickup-bright? chaingun-pickup-bright chaingun-pickup-shade)
+        chaingun-pickup-glyph-now          (if weapon-pickup-bright? chaingun-pickup-glyph-bright chaingun-pickup-glyph)
+        bfg-pickup-shade-now               (if weapon-pickup-bright? bfg-pickup-bright bfg-pickup-shade)
+        bfg-pickup-glyph-now               (if weapon-pickup-bright? bfg-pickup-glyph-bright bfg-pickup-glyph)
+        incinerator-pickup-shade-now       (if weapon-pickup-bright? incinerator-pickup-bright incinerator-pickup-shade)
+        incinerator-pickup-glyph-now       (if weapon-pickup-bright? incinerator-pickup-glyph-bright incinerator-pickup-glyph)
+        rocket-pickup-shade-now            (if weapon-pickup-bright? rocket-pickup-bright rocket-pickup-shade)
+        rocket-pickup-glyph-now            (if weapon-pickup-bright? rocket-pickup-glyph-bright rocket-pickup-glyph)
+        ;; Atmospheric haze pulls walls toward black as lives drop, so
+        ;; the world reads as 'consumed by darkness' the closer the
+        ;; player is to dying. Sky / floor untouched; doors keep their
+        ;; full-brightness pulse so the exit stays findable.
+        ;; HP is a half-heart pool (10 = full): haze ramps over the last
+        ;; ~3 hearts, deepening toward the last half-heart.
+        haze-shift                         (let [l (or (get stats :lives) 0)]
+                                             (cond
+                                               (php/<= l 0) 0
+                                               (php/<= l 2) 6
+                                               (php/<= l 4) 3
+                                               (php/<= l 6) 1
+                                               :else        0))
+        ;; Per-column wall geometry + shade arrays. compute-wall-shades
+        ;; CREATES them fresh and returns them (PHP arrays are passed
+        ;; by value so a mutating helper can't mutate the caller's
+        ;; buffers — we let the helper own the allocation + return).
+        ;; Phel destructure reads `:keyword local-name`, so the order
+        ;; is opposite to Clojure's `{local :keyword}`.
+        {:tops              tops
+         :bots              bots
+         :normal            shades-normal
+         :top-edge          shades-top-edge
+         :bot-edge          shades-bot-edge
+         :top-shadow        shades-top-shadow
+         :bot-shadow        shades-bot-shadow}
+        (compute-wall-shades vw vh haze-shift
+                             {:dists dists :hits hits :sides sides}
+                             {:stbl stbl :ctbl ctbl
+                              :sky-c sky-c :floor-c floor-c
+                              :door-shade-now door-shade-now
+                              :door-code-now  door-code-now
+                              :boss-door-shade-now boss-door-shade-now
+                              :boss-door-code-now  boss-door-code-now
+                              :sky-code-grad         sky-code-gradient
+                              :floor-code-grad       floor-code-gradient
+                              :blood-sky-code-grad   blood-sky-code-gradient
+                              :blood-floor-code-grad blood-floor-code-gradient}
+                             blood-cols)
+        ;; Enemy sprite zone boundaries (head/body/legs). For each
+        ;; column carrying an enemy:
+        ;;   row in [tops, mids)   -> head
+        ;;   row in [mids, lowers) -> body
+        ;;   row in [lowers, bots) -> legs
+        mids                               (buf-mk)
+        lowers                             (buf-mk)
+        emask                              (buf-mk)
+        ;; Per-column enemy shade strings. Each enemy projection
+        ;; computes faded variants of head/body/legs based on its
+        ;; distance and writes them into these arrays for the
+        ;; columns it covers.
+        eheads                             (buf-mk)
+        ebodys                             (buf-mk)
+        elegss                             (buf-mk)
+        ;; Per-column nearest-enemy distance. Set when the enemy paints
+        ;; a column (only if the enemy is in front of the wall there).
+        ;; Pickups read it to occlude themselves behind enemies the same
+        ;; way `dists` occludes them behind walls.
+        edists                             (buf-mk)
+        blood-paint                        (buf-mk)
+        ;; Project + depth-sort enemies once: the zone pass paints them
+        ;; back-to-front, then a second pass grounds the shadows reading
+        ;; the completed `edists` (see below).
+        enemy-projs                        (collect-enemy-projs (:enemies world) (:player world) vw)
+        ;; Pulse the minimap door glyph on the same beat as the 3D
+        ;; door shade so the exit catches the eye both in first-person
+        ;; and on the overhead map.
+        mini-door                          (if door-bright? minimap-door-pulse minimap-door)
+        mrows                              (if (:show-map world)
+                                             (minimap-rows world mini-door map-step)
+                                             (buf-mk))
+        visible-mh                         (php/min (php/count mrows) vh)
+        ;; First 0-indexed column the minimap overdraws. When the
+        ;; minimap is on, the inner row loop emits sky' for those
+        ;; cells (rows < visible-mh) since the minimap blits over
+        ;; them via absolute cursor positioning anyway — saves a
+        ;; chain of aget + cond per cell in the overlay region.
+        mini-col0                          (if (php/> visible-mh 0)
+                                             (php/max 0 (php/- map-col 1))
+                                             vw)]
+    (doseq [proj enemy-projs]
+           (let [col (:col proj)
+                 hw  (:half-width proj)
+                 d   (:dist proj)
+                 dmg (or (:damage-ratio proj) 0.0)
+                 sc  (or (:scale proj) 1.0)]
+             (let [c-from    (php/max 0 (php/- col hw))
+                   c-to      (php/min (php/- vw 1) (php/+ col hw))
+                   ;; `sc` scales the sprite vertically in lockstep with
+                   ;; :half-width so bosses (cyber, sc=2.0) stay
+                   ;; proportional instead of stretching wide-but-flat.
+                   h         (php/min vh (php/intval (php/* sc
+                                                            (php// proj-dist
+                                                                   (php/* (php/max 0.5 d) char-aspect)))))
+                   ;; Distance-fade factor: 0 at the player's feet,
+                   ;; ~0.85 at max-depth. Squared so things stay
+                   ;; saturated up close and only really dim once
+                   ;; they're past mid-range.
+                   dist-fade (php/min 0.85
+                                      (php/* (php// d max-depth)
+                                             (php// d max-depth)))
+                   ;; Wound tint: combine distance fade with the per-
+                   ;; enemy damage ratio so wounded sprites read as
+                   ;; darker/dirtier even up close. Multiplier kept
+                   ;; modest (0.35) so a fully-wounded cyberdemon at
+                   ;; mid-range still reads distinct from a healthy
+                   ;; one far away. Capped at 0.85 so a near-dead
+                   ;; enemy never fades to invisible.
+                   body-fade (php/min 0.85 (php/+ dist-fade (php/* dmg 0.35)))]
+               (let [e-top (php/intdiv (php/- vh h) 2)]
+                 (let [e-bot         (php/+ e-top h)
+                       e-mid         (php/+ e-top (php/intdiv h 3))
+                       e-lower       (php/+ e-top (php/intdiv (php/* h 2) 3))
+                       ;; Per-enemy catalog lookup — mixed-monster rooms
+                       ;; (boss + minions) pick the right palette per
+                       ;; sprite, single-type rooms hit the same kw on
+                       ;; every iteration so the cost is one map get.
+                       visuals       (visuals-for-type (:type proj) stats)
+                       head-code     (get visuals :head-code)
+                       body-code     (get visuals :body-code)
+                       legs-code     (get visuals :legs-code)
+                       body-glyph-fg (get visuals :body-glyph-fg)
+                       body-glyph    (if (php/< face-phase 0.0)
+                                       (get visuals :body-glyph)
+                                       (or (get visuals :body-glyph-alt)
+                                           (get visuals :body-glyph)))
+                       ;; Faded shade strings for this enemy at its
+                       ;; current distance. Computed ONCE per enemy
+                       ;; and assigned to every column it covers.
+                       fhead         (cond
+                                       (and head-code (php/< d aggro-distance))
+                                       (enemy-aggro-head-string head-code aggro-bright?)
+                                       head-code
+                                       (enemy-shade-string head-code dist-fade)
+                                       :else
+                                       ehead)
+                       fbody         (cond
+                                       (and body-code body-glyph body-glyph-fg)
+                                       (enemy-textured-shade-string body-code body-fade body-glyph body-glyph-fg)
+                                       body-code
+                                       (enemy-shade-string body-code body-fade)
+                                       :else
+                                       ebody)
+                       flegs         (if legs-code (enemy-shade-string legs-code dist-fade) elegs)]
+                   (loop [c c-from]
+                     (when (php/<= c c-to)
+                       (when (php/< d (buf-get dists c))
+                         (buf-set tops c e-top)
+                         (buf-set bots c e-bot)
+                         (buf-set mids c e-mid)
+                         (buf-set lowers c e-lower)
+                         ;; Cyberdemon: carve a boss silhouette out of
+                         ;; the rectangle so the form reads as helmet +
+                         ;; arms + 2 legs instead of a giant imp brick.
+                         (let [[ph pb pl] (if (and (php/=== (:type proj) :cyber)
+                                                   body-code)
+                                            (boss-col-paint
+                                             (php// (php/abs (php/- c col))
+                                                    (php/max 1 hw))
+                                             fhead fbody flegs body-code body-fade
+                                             (buf-get shades-normal c))
+                                            [fhead fbody flegs])]
+                           (buf-set eheads c ph)
+                           (buf-set ebodys c pb)
+                           (buf-set elegss c pl))
+                         (buf-set emask c true)
+                         ;; Track nearest enemy distance for this col so
+                         ;; pickups behind it occlude properly. Multiple
+                         ;; enemies on the same col → keep the closest.
+                         ;; The shadow pass below also reads this to keep
+                         ;; only the front enemy's grounding shadow.
+                         (let [prev (buf-get edists c)]
+                           (when (or (php/=== prev nil) (php/< d prev))
+                             (buf-set edists c d))))
+                       (recur (php/+ c 1)))))))))
+    ;; Grounding shadows, second pass. The shadow goes into blood-paint
+    ;; (top-priority overlay), so it can't be painted inline during the
+    ;; back-to-front zone pass: a FAR enemy's shadow row would sit over a
+    ;; NEAR enemy's body (which lives in the lower-priority enemy-zone
+    ;; layer) and bleed through. Deferring until `edists` holds the
+    ;; nearest dist per column lets us drop a shadow cell only for the
+    ;; column's front-most enemy (d <= edists[c]); farther enemies skip
+    ;; it. Still wall-gated (d < dists[c]). (issue #86)
+    (doseq [proj enemy-projs]
+           (let [col    (:col proj)
+                 hw     (:half-width proj)
+                 d      (:dist proj)
+                 sc     (or (:scale proj) 1.0)
+                 h      (php/min vh (php/intval (php/* sc
+                                                       (php// proj-dist
+                                                              (php/* (php/max 0.5 d) char-aspect)))))
+                 e-bot  (php/+ (php/intdiv (php/- vh h) 2) h)
+                 c-from (php/max 0 (php/- col hw))
+                 c-to   (php/min (php/- vw 1) (php/+ col hw))]
+             (when (php/< e-bot vh)
+               (loop [c c-from]
+                 (when (php/<= c c-to)
+                   (when (enemy-front-visible-at? d c dists edists)
+                     (buf-set blood-paint
+                              (php/+ (php/* e-bot vw) c)
+                              sprite-shadow))
+                   (recur (php/+ c 1)))))))
+    ;; Chain the fx + pickup painters: each one takes the current
+    ;; blood-paint, returns a new buffer (PHP arrays pass by value, so
+    ;; the helper owns the allocation). Rename per step to keep phel
+    ;; lint happy about shadowed-binding without losing the chain.
+    ;; Threading (->) would be cleaner but trips arity-mismatch lint.
+    (let [bp-fx     (paint-blood-fx-into blood-paint stats world dists vw vh)
+          bp-hearts (paint-pickups-into  bp-fx (or (:hearts world) [])
+                                         (:player world) dists edists vw vh
+                                         heart-shade-now heart-glyph-now)
+          bp-armors (paint-pickups-into  bp-hearts (or (:armors world) [])
+                                         (:player world) dists edists vw vh
+                                         armor-shade-now armor-glyph-now)
+          bp-shards (paint-pickups-into  bp-armors (or (:armor-shards world) [])
+                                         (:player world) dists edists vw vh
+                                         armor-shard-shade-now armor-shard-glyph-now)
+          bp-ammos  (paint-pickups-into  bp-shards (or (:ammo-boxes world) [])
+                                         (:player world) dists edists vw vh
+                                         ammo-shade-now ammo-glyph-now)
+          bp-bers   (paint-pickups-into  bp-ammos (or (:berserks world) [])
+                                         (:player world) dists edists vw vh
+                                         berserk-shade-now berserk-glyph-now)
+          bp-inv    (paint-pickups-into  bp-bers (or (:invulns world) [])
+                                         (:player world) dists edists vw vh
+                                         invuln-shade-now invuln-glyph-now)
+          bp-soul   (paint-pickups-into  bp-inv (or (:soulspheres world) [])
+                                         (:player world) dists edists vw vh
+                                         soulsphere-shade-now soulsphere-glyph-now)
+          bp-pack   (paint-pickups-into  bp-soul (or (:backpacks world) [])
+                                         (:player world) dists edists vw vh
+                                         backpack-shade-now backpack-glyph-now)
+          bp-kb     (paint-pickups-into  bp-pack
+                                         (apply vector
+                                                (filter (fn [k] (php/=== (:colour k) :blue))
+                                                        (or (:keycards world) [])))
+                                         (:player world) dists edists vw vh
+                                         keycard-blue-shade-now keycard-blue-glyph-now)
+          bp-kr     (paint-pickups-into  bp-kb
+                                         (apply vector
+                                                (filter (fn [k] (php/=== (:colour k) :red))
+                                                        (or (:keycards world) [])))
+                                         (:player world) dists edists vw vh
+                                         keycard-red-shade-now keycard-red-glyph-now)
+          bp-ws     (paint-pickups-into  bp-kr
+                                         (apply vector
+                                                (filter (fn [w] (php/=== (:weapon w) :shotgun))
+                                                        (or (:weapon-pickups world) [])))
+                                         (:player world) dists edists vw vh
+                                         shotgun-pickup-shade-now shotgun-pickup-glyph-now)
+          bp-wc     (paint-pickups-into  bp-ws
+                                         (apply vector
+                                                (filter (fn [w] (php/=== (:weapon w) :chaingun))
+                                                        (or (:weapon-pickups world) [])))
+                                         (:player world) dists edists vw vh
+                                         chaingun-pickup-shade-now chaingun-pickup-glyph-now)
+          bp-wb     (paint-pickups-into  bp-wc
+                                         (apply vector
+                                                (filter (fn [w] (php/=== (:weapon w) :bfg))
+                                                        (or (:weapon-pickups world) [])))
+                                         (:player world) dists edists vw vh
+                                         bfg-pickup-shade-now bfg-pickup-glyph-now)
+          bp-wi     (paint-pickups-into  bp-wb
+                                         (apply vector
+                                                (filter (fn [w] (php/=== (:weapon w) :incinerator))
+                                                        (or (:weapon-pickups world) [])))
+                                         (:player world) dists edists vw vh
+                                         incinerator-pickup-shade-now incinerator-pickup-glyph-now)
+          bp-wr     (paint-pickups-into  bp-wi
+                                         (apply vector
+                                                (filter (fn [w] (php/=== (:weapon w) :rocket))
+                                                        (or (:weapon-pickups world) [])))
+                                         (:player world) dists edists vw vh
+                                         rocket-pickup-shade-now rocket-pickup-glyph-now)
+          ;; Fireballs paint last into the overlay so an incoming bolt
+          ;; sits on top of every pickup glow it crosses.
+          bp-proj   (paint-projectiles-into bp-wr (or (:projectiles world) [])
+                                            (:player world) dists edists vw vh)
+          parts     (buf-mk)]
+      (dotimes [row vh]
+               (loop [col 0 prev nil run 0]
+                 (if (php/>= col vw)
+                   (when (php/> run 0)
+                     (buf-push parts prev)
+                     (buf-push parts (php/str_repeat " " (php/- run 1))))
+                   (let [;; Blood-band sky/floor swap: cols in the
+                         ;; directional blood band use the pre-baked red
+                         ;; gradients so sky + floor + walls all flush
+                         ;; red on the affected side. Short-circuits to
+                         ;; the normal gradients when no blood is active.
+                         in-blood? (and blood-sky-gradient
+                                        (php/> (buf-get blood-cols col) 0.4))
+                         sky-row   (buf-get (if in-blood? blood-sky-gradient sky-gradient) row)
+                         flr-row   (buf-get (if in-blood? blood-floor-gradient floor-gradient) row)
+                         c         (if (and (php/< row visible-mh) (php/>= col mini-col0))
+                                     sky-row
+                                     (or (buf-get bp-proj (php/+ (php/* row vw) col))
+                                         (cond
+                                           (php/< row (buf-get tops col))             sky-row
+                                           (php/>= row (buf-get bots col))            flr-row
+                                           (buf-get emask col)
+                                           (cond
+                                             (php/< row (buf-get mids col))   (buf-get eheads col)
+                                             (php/< row (buf-get lowers col)) (buf-get ebodys col)
+                                             :else                            (buf-get elegss col))
+                                           (php/=== row (buf-get tops col))
+                                           (buf-get shades-top-edge col)
+                                           (php/=== row (php/+ (buf-get tops col) 1))
+                                           (buf-get shades-top-shadow col)
+                                           (php/=== row (php/- (buf-get bots col) 1))
+                                           (buf-get shades-bot-edge col)
+                                           (php/=== row (php/- (buf-get bots col) 2))
+                                           (buf-get shades-bot-shadow col)
+                                           :else
+                                           (buf-get shades-normal col))))]
+                     (cond
+                       (php/=== run 0)  (recur (php/+ col 1) c 1)
+                       (php/=== c prev) (recur (php/+ col 1) prev (php/+ run 1))
+                       :else            (do
+                                          (buf-push parts prev)
+                                          (buf-push parts (php/str_repeat " " (php/- run 1)))
+                                          (recur (php/+ col 1) c 1))))))
+               (buf-push parts "\e[0m\n"))
+      (when (get stats :debug?)
+        (buf-push parts (hud-debug-line world stats))
+        (buf-push parts "\n"))
+      (buf-push parts hud-line-str)
+      (dotimes [i visible-mh]
+               (buf-push parts (str "\e[" (php/+ map-row i) ";" map-col "H" (buf-get mrows i))))
+      ;; Overlay chain: each helper returns the parts buffer because
+      ;; PHP arrays pass by value across fn boundaries. Rebind every
+      ;; step so the pushed escapes actually accumulate.
+      ;;
+      ;; The crosshair needs the SGR-only prefix of whatever cell
+      ;; sits at the centre column so `+` paints on the real cell
+      ;; colour (wall, floor, sky, enemy, blood) instead of clobbering
+      ;; it with the terminal default. Replays the same priority chain
+      ;; the inner row loop uses (blood-paint > sky / floor > enemy
+      ;; zones > wall edges / shadows > wall body). Centre row tracks
+      ;; the firing kick so the resolved cell follows the crosshair.
+      (let [c-col       (php/intdiv vw 2)
+            firing?     (php/> (or (get stats :fire-anim) 0.0) 0.0)
+            c-row       (php/+ (php/intdiv vh 2) (if firing? -1 0))
+            top-col     (buf-get tops c-col)
+            bot-col     (buf-get bots c-col)
+            center-cell (or (buf-get bp-proj (php/+ (php/* c-row vw) c-col))
+                            (cond
+                              (php/< c-row top-col)             (buf-get sky-gradient c-row)
+                              (php/>= c-row bot-col)            (buf-get floor-gradient c-row)
+                              (buf-get emask c-col)
+                              (cond
+                                (php/< c-row (buf-get mids c-col))   (buf-get eheads c-col)
+                                (php/< c-row (buf-get lowers c-col)) (buf-get ebodys c-col)
+                                :else                                (buf-get elegss c-col))
+                              (php/=== c-row top-col)           (buf-get shades-top-edge c-col)
+                              (php/=== c-row (php/+ top-col 1)) (buf-get shades-top-shadow c-col)
+                              (php/=== c-row (php/- bot-col 1)) (buf-get shades-bot-edge c-col)
+                              (php/=== c-row (php/- bot-col 2)) (buf-get shades-bot-shadow c-col)
+                              :else                             (buf-get shades-normal c-col)))
+            center-bg   (php/mb_substr center-cell 0
+                                       (php/max 0 (php/- (php/mb_strlen center-cell) 1)))
+            ;; Overlay chain: each helper takes the parts buffer plus
+            ;; its own deps and returns the (possibly larger) buffer.
+            ;; Numbered rebinds so phel lint's shadowed-binding stays
+            ;; quiet without changing semantics. Threading (->) would
+            ;; be cleaner but trips arity-mismatch lint.
+            p1          (paint-face-overlay       parts world stats vw vh dists edists face-phase)
+            p2          (paint-wall-lights        p1 t vw vh hits hxs hys tops)
+            p3          (paint-door-face          p2 stats vw vh hits tops bots)
+            p4          (paint-crosshair          p3 stats vw vh center-bg)
+            p5          (paint-intro-splash       p4 stats vw vh)
+            p6          (paint-blood-drops        p5 stats vw vh)
+            p7          (paint-flicker            p6 stats vw vh)
+            p8          (paint-heartbeat-vignette p7 stats vw vh)
+            p9          (paint-hit-vignette       p8 stats bloody? vw vh)
+            p9b         (paint-berserk-tint       p9 t stats vw vh)
+            p10         (paint-heat-bar           p9b t stats vw vh)
+            p11         (paint-kill-streak        p10 stats map-col map-row visible-mh)
+            p12         (paint-compass            p11 world vw)
+            p13         (paint-rear-warning       p12 t stats vw)
+            p14         (paint-low-ammo           p13 t stats vw)
+            p15         (paint-game-info          p14 stats vw)
+            p15b        (paint-berserk-badge      p15 t stats vw)
+            p15c        (paint-invuln-badge       p15b t stats vw)
+            p16         (paint-hearts-hud         p15c t stats bloody?)
+            p17         (paint-pistol-hud         p16 stats vw vh floor-gradient)
+            p18         (paint-empty-click        p17 stats vw vh)
+            p19         (paint-reload-reminder    p18 stats vw vh)
+            p19b        (paint-locked-bump        p19 stats vw vh)
+            p19c        (paint-enemy-hp-flashes   p19b world vw vh)
+            p20         (paint-save-flash         p19c stats vw vh)]
+        ;; Pause (P) IS the settings page: freezing the game and the
+        ;; options live in one overlay so there's only one layer to
+        ;; learn. The H info panel can still sit on top of it (player
+        ;; paused, then pressed H); it paints last so it wins.
+        (when (and (get stats :paused) (not (get stats :help?)))
+          (buf-push p20 (settings-menu-string vw vh
+                                              (get stats :settings)
+                                              (get stats :settings-cursor)
+                                              "↑↓ws move  ←→ad change  p resume")))
+        (when (get stats :help?)
+          (buf-push p20 (help-menu-string vw vh stats)))
+        (php/implode "" p20)))))
+
+;; --- DO NOT swap `print` / `println` for `php/fwrite` in render! ---
+;; `php/fwrite($fh, $s)` returns the byte count actually written,
+;; which can be `< strlen($s)` on partial writes (kernel terminal
+;; buffer full, or EINTR from a signal under pcntl_async_signals).
+;; The renderer doesn't loop on partial writes; result is silently
+;; truncated frames (only the first slice paints). PHP's `print` /
+;; `echo` already loop internally via the output handler, so they're
+;; the safe primitive here. See PR #54 black-screen incident.
+
+(defn clear-screen
+  "ANSI clear + cursor home."
+  []
+  (print "\e[2J\e[H"))
+
+(defn- white-flash-frame
+  "Full-screen white wash, one frame. Painted on impact so the player
+   sees a brief jolt before the red i-frame palette swap kicks in."
+  [cols rows]
+  (let [parts (buf-mk)
+        line  (str "\e[107m" (php/str_repeat " " cols))]
+    (buf-push parts "\e[H")
+    (loop [r 1]
+      (when (php/<= r rows)
+        (buf-push parts (str "\e[" r ";1H" line))
+        (recur (php/+ r 1))))
+    (buf-push parts "\e[0m")
+    (php/implode "" parts)))
+
+(defn- update-perf-snapshot!
+  "Compute the perf snapshot from the just-emitted `frame-str` and the
+   `total-ms` it took, then merge it into `perf-snapshot` (cast-ms was
+   already stashed by frame->string). Render-ms is whatever's left
+   after subtracting cast — the same accounting the manual sanity
+   check in issue #9 uses (`cast + render ≈ frame`)."
+  [^string frame-str ^float total-ms]
+  (let [bytes     (php/strlen frame-str)
+        sgr-count (php/max 1 (php/substr_count frame-str "\e["))
+        avg-rle   (php// bytes sgr-count)
+        cast-ms   (or (get @perf-snapshot :cast-ms) 0.0)
+        render-ms (php/max 0.0 (php/- total-ms cast-ms))]
+    (swap! perf-snapshot
+           (fn [snap]
+             (assoc (or snap {})
+                    :cast-ms      cast-ms
+                    :render-ms    render-ms
+                    :bytes        bytes
+                    :avg-rle      avg-rle
+                    :php-mem      (php/memory_get_usage true)
+                    :php-mem-peak (php/memory_get_peak_usage true))))))
+
+(defn render!
+  "Move cursor home and overwrite the previous frame in place. Avoids
+   the full-screen clear that would otherwise flicker each frame.
+   While :flash-secs > 0 the whole viewport flashes white — a 1-frame
+   impact jolt that lands before the red i-frame wash. Screen-shake:
+   the first ~0.25s of the i-frame window offsets the cursor-home
+   anchor by ±1 col so the next frame paints one cell off, reading
+   as a snap-shake on damage. When :debug? is set, also samples
+   microtime around `frame->string` and updates `perf-snapshot` so the
+   next frame's HUD can paint the F3 overlay; the work is gated so
+   the off path pays nothing beyond a single key read."
+  [world stats cols rows]
+  (let [iframes (or (get stats :iframes) 0.0)
+        shake?  (php/> iframes 0.75)
+        t       (or (get stats :game-time) 0.0)
+        debug?  (get stats :debug?)
+        shake-x (if shake?
+                  (php/+ 1 (mod (php/intval (php/* t 50.0)) 3))
+                  1)]
+    (print (str "\e[1;" shake-x "H"))
+    (if (php/> (or (get stats :flash-secs) 0.0) 0.0)
+      (print (white-flash-frame cols rows))
+      (if debug?
+        (let [t-start  (php/microtime true)
+              frame    (frame->string world stats cols rows)
+              total-ms (php/* (php/- (php/microtime true) t-start) 1000.0)]
+          (print frame)
+          (update-perf-snapshot! frame total-ms))
+        (print (frame->string world stats cols rows)))))
+  (php/flush))
+
+;; ---------------------------------------------------------------------
+;; End-of-game screens (death / victory).
+;;
+;; Same box geometry as the settings page but full-screen washed in either
+;; dark red (death) or dark green (victory). Both screens share
+;; render-end-screen — the only thing each variant supplies is the
+;; wash colour and the 32-wide row strings.
+;; ---------------------------------------------------------------------
+
+(def end-box-width-cap   "Upper bound on the end-screen box width."   36)
+
+(def end-box-width-floor "Smallest readable box at very narrow vw."   22)
+
+(def end-compact-rows    "rows below this drop separators + best-row block." 20)
+
+(defn- end-pad
+  "Right-pad `text` with spaces up to `width` visible columns."
+  [text width]
+  (str text (php/str_repeat " " (php/max 0 (php/- width (php/strlen text))))))
+
+(defn- end-clip
+  "Truncate `text` to at most `width` chars so a long level-name on a
+   tiny terminal can't bleed past the right border."
+  [text width]
+  (let [n (php/strlen text)]
+    (if (php/<= n width) text (php/substr text 0 width))))
+
+(defn- end-row-text
+  "Build one interior text row sized to `width`: clip first, then
+   right-pad. Wrapping the SGR around it is the caller's job."
+  [text width]
+  (end-pad (end-clip text width) width))
+
+(defn- end-centre
+  "Centre a visible-text run inside `width` columns, wrapping the
+   supplied SGR around the whole padded string."
+  [text width sgr]
+  (let [t (end-clip text width)
+        n (php/strlen t)
+        L (php/max 0 (php/intdiv (php/- width n) 2))
+        R (php/max 0 (php/- width (php/+ n L)))]
+    (str sgr (php/str_repeat " " L) t (php/str_repeat " " R) "\e[0m")))
+
+(defn- end-box-width-for
+  "Pick a box width that fits a 4-col total margin while staying within
+   the readable floor / cap."
+  [cols]
+  (php/max end-box-width-floor
+           (php/min end-box-width-cap (php/- cols 4))))
+
+(defn- best-victory-cell [s]
+  (if (php/<= s 0) "--" (format-duration s)))
+
+(defn- best-rows
+  "Tiny 3-line block summarising the persisted best scores."
+  [scores width]
+  [(str "\e[2;93m" (end-row-text (str "   best kills:   " (:best-kills scores)) width) "\e[0m")
+   (str "\e[2;93m" (end-row-text (str "   best level:   " (:best-level scores)) width) "\e[0m")
+   (str "\e[2;93m" (end-row-text (str "   best time:    "
+                                      (best-victory-cell (:fastest-victory-s scores)))
+                                 width) "\e[0m")])
+
+(defn- end-rows
+  "Compose the interior row list for either variant. `title` is the
+   one-line centred banner SGR-painted by the caller; `did-what` is
+   the past-tense phrase under the run stats (`died on` / `cleared`).
+   Compact mode (when the terminal is too short) drops the leading
+   blank-line padding, the best-scores block, and most separators —
+   keeps the box tall enough to read even on a 12-row split."
+  [title-sgr title did-what kills survived-s level level-name scores rows width]
+  (let [bl      (end-row-text "" width)
+        compact (php/< rows end-compact-rows)]
+    (apply vector
+           (concat
+            (if compact []  [bl])
+            [(end-centre title width title-sgr)]
+            (if compact [:sep] [bl :sep bl])
+            [(str "\e[97m" (end-row-text (str "  " did-what " L" level " " level-name) width) "\e[0m")
+             (str "\e[97m" (end-row-text (str "  kills:   " kills)                width) "\e[0m")
+             (str "\e[97m" (end-row-text (str "  time:    " (format-duration survived-s)) width) "\e[0m")]
+            (if compact
+              [:sep]
+              (concat [bl :sep bl] (best-rows scores width) [bl :sep bl]))
+            [(end-centre "r new  R same  q quit" width "\e[97;1m")]
+            (if compact
+              []
+              [bl :sep bl
+               (str "\e[2;97m" (end-row-text "  phel-doom by Chemaclass" width) "\e[0m")
+               (str "\e[2;97m" (end-row-text "  written in Phel Lang"    width) "\e[0m")
+               bl])))))
+
+(defn- death-rows [kills survived-s level level-name scores rows width]
+  (end-rows "\e[91;1m" "YOU DIED" "died on"  kills survived-s level level-name scores rows width))
+
+(defn- victory-rows [kills survived-s level level-name scores rows width]
+  (end-rows "\e[92;1m" "VICTORY!" "cleared" kills survived-s level level-name scores rows width))
+
+(defn- render-end-screen
+  "Generic end-of-game overlay: full-screen wash in `wash-bg` plus a
+   centred ─┌┐│└┘ box whose contents are `items` (interior strings
+   interleaved with :sep markers). Item count is clamped to the
+   available rows so a tall box can't paint past the terminal bottom
+   on very short terminals."
+  [cols rows wash-bg items width]
+  (let [parts (buf-mk)
+        bar   (php/str_repeat "─" width)]
+    (buf-push parts "\e[H")
+    (loop [r 1]
+      (when (php/<= r rows)
+        (buf-push parts (str "\e[" r ";1H" wash-bg
+                             (php/str_repeat " " cols)))
+        (recur (php/+ r 1))))
+    (let [;; Reserve 2 rows for the top + bottom border.
+          max-n   (php/max 0 (php/- rows 2))
+          n       (php/min max-n (count items))
+          row-top (php/max 1 (php/- (php/intdiv rows 2) (php/intdiv n 2)))
+          col0    (php/max 1 (php/- (php/+ (php/intdiv cols 2) 1)
+                                    (php/intdiv (php/+ width 2) 2)))]
+      (buf-push parts (str "\e[" row-top ";" col0
+                           "H\e[40;97m┌" bar "┐\e[0m"))
+      (buf-push parts (str "\e[" (php/+ row-top n 1) ";" col0
+                           "H\e[40;97m└" bar "┘\e[0m"))
+      (loop [i 0]
+        (when (php/< i n)
+          (let [item (get items i)
+                row  (php/+ row-top 1 i)]
+            (if (= item :sep)
+              (buf-push parts (str "\e[" row ";" col0
+                                   "H\e[40;97m├" bar "┤\e[0m"))
+              (buf-push parts (str "\e[" row ";" col0
+                                   "H\e[40;97m│" item "\e[40;97m│\e[0m"))))
+          (recur (php/+ i 1)))))
+    (print (php/implode "" parts))
+    (php/flush)))
+
+;; ---------------------------------------------------------------------
+;; Start menu (shown once on game launch, before run-levels).
+;; Pixel-perfect: every interior row is normalised to a fixed visible
+;; width via end-pad (mb_strwidth on the raw text, ANSI escapes are
+;; zero-width). The arrow glyphs ←→↑↓ are mb_strwidth=1 so they pad
+;; correctly alongside ASCII; doubling fancy chars would skew the
+;; right border.
+;; ---------------------------------------------------------------------
+
+(def start-menu-width
+  "Visible character width of the menu's interior row (between the
+   left and right borders). Pad target for every line."
+  48)
+
+(defn- pad-visible
+  "Right-pad `text` with spaces so its visible width (ignoring ANSI
+   escapes, counting wide chars correctly) hits `width`.
+
+   Items typically end with an internal `\\e[40;97m` (or `\\e[0m`)
+   that resets BG + FG. The `22` in the trailing reset also clears
+   any sticky intensity attribute — `\\e[2;97m` (dim) sets bit `2`
+   which `\\e[40;97m` alone does NOT cancel, so without the `22` the
+   trailing pad spaces and the closing `│` border inherit the dim
+   wash and read as gray. Re-applies `\\e[40;97m` (with `22` for
+   intensity-normal) before the padding so trailing spaces stay on
+   the menu's dark BG at full brightness."
+  [text width]
+  (let [stripped (php/preg_replace "/\\x1b\\[[0-9;]*[a-zA-Z]/" "" text)
+        visible  (php/mb_strwidth stripped)
+        pad      (php/str_repeat " " (php/max 0 (php/- width visible)))]
+    (str text "\e[22;40;97m" pad)))
+
+(defn- start-menu-rows
+  "Interior strings for the start-menu box. `:sep` markers between
+   sections become `├─┤` divider rows in render-start-menu.
+
+   Controls are laid out in two columns to keep the box short.
+
+   Adaptive to terminal height (`rows`):
+     >= 28  full menu (title + controls + how-to-play + footer)
+     >= 22  drop the how-to-play section
+     < 22   ultra-compact (title + footer only, with a resize hint).
+
+   The total row count always fits inside `rows - 4` cells (box top
+   border + bottom border + one cushion above + one below)."
+  [rows]
+  (let [w        start-menu-width
+        half     (php/intdiv w 2)
+        blank    (pad-visible "" w)
+        ;; key+label cell: 2-space indent, yellow key in an 8-col field,
+        ;; then the label. ANSI is ignored by pad-visible's width count.
+        cell     (fn [key label]
+                   (str "  \e[93m" key "\e[40;97m"
+                        (php/str_repeat " " (php/max 1 (php/- 8 (php/mb_strwidth key))))
+                        label))
+        ;; one interior row holding two key/label cells side by side; each
+        ;; cell padded to half the interior so the columns line up.
+        row2     (fn [lkey llab rkey rlab]
+                   (str (pad-visible (cell lkey llab) half)
+                        (pad-visible (if (= rkey "") "" (cell rkey rlab)) half)))
+        title    [blank
+                  (pad-visible "      \e[1;93m✦  P H E L - D O O M  ✦\e[40;97m" w)
+                  blank
+                  (pad-visible (str "       \e[2;97m// crafted by \e[1;93mChemaclass\e[40;97m\e[2;97m  // v" version "\e[40;97m") w)
+                  blank]
+        controls [:sep blank
+                  (pad-visible "  \e[1mCONTROLS\e[40;97m" w)
+                  blank
+                  (row2 "w s ↑ ↓" "move"   "1 .. 8" "weapon slot")
+                  (row2 "a d"     "strafe" "h"      "info menu")
+                  (row2 "← →"     "turn"   "m n"    "map / sound")
+                  (row2 "e"       "180°"   "p"      "pause")
+                  (row2 "space"   "fire"   "F3 q"   "debug / quit")
+                  (row2 "r"       "reload" ""       "")
+                  blank]
+        howto    [:sep blank
+                  (pad-visible "  \e[1mHOW TO PLAY\e[40;97m" w)
+                  blank
+                  (pad-visible "  Shoot enemies. Walk into a door to advance." w)
+                  (pad-visible "  Heart refills a life. Armor soaks a hit." w)
+                  (pad-visible "  Survive 5 levels." w)
+                  blank]
+        footer   [:sep blank
+                  (pad-visible "    \e[93mENTER\e[40;97m start   \e[93ms\e[40;97m settings   \e[93mq\e[40;97m quit" w)
+                  blank]]
+    (apply vector
+           (cond
+             ;; Full menu: title + controls (2-col) + how-to-play + footer.
+             (php/>= rows 28) (concat title controls howto footer)
+             ;; Medium: drop the how-to-play section.
+             (php/>= rows 22) (concat title controls footer)
+             ;; Tight: title + footer only, with a hint that resizing
+             ;; reveals the full menu.
+             :else            (concat title
+                                      [:sep blank
+                                       (pad-visible "       \e[2;97mresize terminal for full menu\e[40;97m" w)
+                                       blank]
+                                      footer)))))
+
+(defn render-start-menu
+  "Full-screen wash + centred bordered box listing controls and a
+   how-to-play blurb. Same geometry helpers as render-end-screen so
+   borders align pixel-perfect with the rest of the UI."
+  [cols rows]
+  (let [items (start-menu-rows rows)
+        parts (buf-mk)
+        bar   (php/str_repeat "─" start-menu-width)
+        wash  "\e[48;5;233m"]
+    (buf-push parts "\e[H")
+    (loop [r 1]
+      (when (php/<= r rows)
+        (buf-push parts (str "\e[" r ";1H" wash
+                             (php/str_repeat " " cols)))
+        (recur (php/+ r 1))))
+    (let [n       (count items)
+          row-top (php/max 1 (php/- (php/intdiv rows 2) (php/intdiv n 2)))
+          col0    (php/max 1 (php/- (php/+ (php/intdiv cols 2) 1)
+                                    (php/intdiv (php/+ start-menu-width 2) 2)))]
+      (buf-push parts (str "\e[" row-top ";" col0
+                           "H\e[40;97m┌" bar "┐\e[0m"))
+      (buf-push parts (str "\e[" (php/+ row-top n 1) ";" col0
+                           "H\e[40;97m└" bar "┘\e[0m"))
+      (loop [i 0]
+        (when (php/< i n)
+          (let [item (get items i)
+                row  (php/+ row-top 1 i)]
+            (if (= item :sep)
+              (buf-push parts (str "\e[" row ";" col0
+                                   "H\e[40;97m├" bar "┤\e[0m"))
+              (buf-push parts (str "\e[" row ";" col0
+                                   "H\e[40;97m│" item "\e[40;97m│\e[0m"))))
+          (recur (php/+ i 1)))))
+    (print (php/implode "" parts))
+    (php/flush)))
+
+(defn render-settings!
+  "Full-screen wash + centred settings box, for the start-menu options
+   screen (no game frame behind it). `settings` is the live map and
+   `cursor` the selected field index. The in-game pause overlay reuses
+   the same box via render!'s :paused branch; this entry just adds the
+   background wash so it reads as a standalone screen."
+  [cols rows settings cursor]
+  (let [parts (buf-mk)
+        wash  "\e[48;5;233m"]
+    (buf-push parts "\e[H")
+    (loop [r 1]
+      (when (php/<= r rows)
+        (buf-push parts (str "\e[" r ";1H" wash (php/str_repeat " " cols)))
+        (recur (php/+ r 1))))
+    (buf-push parts (settings-menu-string cols rows settings cursor
+                                          "↑↓ws move  ←→ad change  esc back"))
+    (print (php/implode "" parts))
+    (php/flush)))
+
+(defn render-death-screen
+  "Centred YOU DIED box on a dark-red wash. Shows this run + the
+   persisted bests from the scores file. Box width adapts to `cols`
+   (capped 22..36) and switches to a compact layout when `rows`
+   drops below `end-compact-rows` so tiny terminals still fit."
+  [cols rows kills survived-s level level-name scores]
+  (let [w (end-box-width-for cols)]
+    (render-end-screen cols rows "\e[48;5;52m"
+                       (death-rows kills survived-s level level-name scores rows w)
+                       w)))
+
+(defn render-victory-screen
+  "Centred VICTORY box on a dark-green wash. Same responsive width +
+   compact-mode rules as render-death-screen."
+  [cols rows kills survived-s level level-name scores]
+  (let [w (end-box-width-for cols)]
+    (render-end-screen cols rows "\e[48;5;22m"
+                       (victory-rows kills survived-s level level-name scores rows w)
+                       w)))

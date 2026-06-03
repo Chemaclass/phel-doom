@@ -368,8 +368,10 @@ confirm_release() {
 # thus the PHAR), the start menu, and the credits all report the released
 # version. This is the single source of truth; the build does not stamp.
 bump_src_version() {
-    perl -0pi -e 's/(\(def version )"[^"]*"/${1}"'"$NEW_VERSION"'"/' "$VERSION_FILE"
-    grep -q "\"$NEW_VERSION\"" "$VERSION_FILE" \
+    # Line-anchored (^ + /m) so only the real `(def version ...)` form is
+    # rewritten, never a `(def version ...)` mention in a comment.
+    perl -0pi -e 's/^(\(def version )"[^"]*"/${1}"'"$NEW_VERSION"'"/m' "$VERSION_FILE"
+    grep -qE "^\(def version \"$NEW_VERSION\"\)" "$VERSION_FILE" \
         || { log_err "Failed to bump version in src/core/version.phel"; return 1; }
 }
 

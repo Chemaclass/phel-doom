@@ -2,15 +2,14 @@
 ;; the base frame (face, crosshair, vignettes, badges, pistol HUD).
 (ns phel-doom.io.render.paint
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
-  (:require phel-doom.io.render.palette :refer [floor kill-flash death-slump death-collapse blood-mid blood-dim fireball-shade fireball-glyph])
-  (:require phel-doom.io.render.frame-math :refer [sprite-h aggro-distance project-enemy collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
+  (:require phel-doom.io.render.palette :refer [kill-flash death-slump death-collapse blood-mid blood-dim fireball-shade fireball-glyph])
+  (:require phel-doom.io.render.frame-math :refer [sprite-h aggro-distance project-enemy collect-enemy-projs pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.core.map :refer [find-door-cell]))
 
-;;
-;; Each fn appends one logical UI overlay to the parts vector via
-;; absolute cursor positioning. Frame->string composes the base raycast
-;; frame then calls these in order. Keeping them as defn-s makes
-;; frame->string scannable + each overlay independently testable.
+;; Each fn appends one logical UI overlay to the `parts` PHP-array via
+;; absolute cursor positioning. `frame->string` (in render/main) composes
+;; the base raycast frame then calls these in order; keeping each overlay
+;; as its own public fn makes it independently testable.
 
 ;; All paint-* helpers below take a `parts` PHP-array, append their
 ;; absolute-positioned ANSI escapes via php/array_push, and RETURN
@@ -18,6 +17,10 @@
 ;; caller MUST rebind parts to the returned value; otherwise the
 ;; mutations stay local to the helper and the overlay never shows.
 ;; (Painfully learned: missing pistol, missing hearts HUD.)
+
+;; =====================================================================
+;; § Enemy overlays (face, lights)
+;; =====================================================================
 
 (def scare-face-glyph
   "Universal jump-scare face — bright magenta BG, blink white skull.
@@ -87,6 +90,9 @@
                                  tcol "✦\e[0m")))))))
         (recur (php/+ col 1)))))
   parts)
+;; =====================================================================
+;; § HUD cues (crosshair, prompts, doors, blood)
+;; =====================================================================
 
 (defn paint-crosshair
   "Centre `+` glyph. Jumps one row up + brightens while :fire-anim > 0
@@ -439,6 +445,9 @@
                       pack sta-chip keys-tag diff-tag "\e[0m")]
     (buf-push parts (str "\e[2;1H" styled)))
   parts)
+;; =====================================================================
+;; § Status badges + screen vignettes
+;; =====================================================================
 
 (defn- paint-timed-badge
   "Centred top-of-screen powerup banner while the `secs-key` timer is
@@ -596,6 +605,9 @@
             (buf-push parts (str "\e[" r ";" vw "H" edge))
             (recur (php/+ r 1)))))))
   parts)
+;; =====================================================================
+;; § Weapon HUD, compass, health
+;; =====================================================================
 
 (defn paint-heat-bar
   "10-cell heat bar under the pistol sprite. Replaced by blinking
@@ -1003,6 +1015,9 @@
                      "\e[" r-bot ";" cc "H" (row-bg (php/- vh 7)) "\e[1;93m *★* "
                      "\e[0m"))))))
   parts)
+;; =====================================================================
+;; § Buffer painters (blood, pickups, projectiles)
+;; =====================================================================
 
 (defn paint-blood-fx-into
   "Walk every blood fx in `stats`, project to screen, and write the

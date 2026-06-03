@@ -1,22 +1,27 @@
 #!/usr/bin/env bash
 # Release script for phel-doom.
 #
-# Usage: ./release.sh [version] [--dry-run] [--force] [--name "Release name"]
+# Usage: ./tools/release.sh [version] [--dry-run] [--force] [--name "Release name"]
 #
 # Steps:
 #   1. Validate semver and preflight (clean tree, on main, gh CLI ready, tag free).
 #   2. Move CHANGELOG.md "## [Unreleased]" block into "## [X.Y.Z] - YYYY-MM-DD".
-#   3. Commit, tag vX.Y.Z, push branch and tag.
-#   4. Create GitHub release using the extracted changelog section as notes.
+#   3. Build a self-contained phel-doom.phar and smoke-test it.
+#   4. Commit, tag vX.Y.Z, push branch and tag.
+#   5. Create GitHub release using the extracted changelog as notes, attaching the PHAR.
 
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
+# tools/ lives one level below the repo root.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$SCRIPT_DIR"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 CHANGELOG_FILE="$REPO_ROOT/CHANGELOG.md"
+VERSION_FILE="$REPO_ROOT/src/main.phel"
+PHAR_SCRIPT="$REPO_ROOT/build/phar.sh"
+PHAR_OUTPUT="$REPO_ROOT/build/out/phel-doom.phar"
 MAIN_BRANCH="main"
 REMOTE="origin"
 DEFAULT_REPO_SLUG="Chemaclass/phel-doom"
@@ -27,6 +32,7 @@ DRY_RUN=0
 FORCE=0
 DRAFT=0
 SKIP_TESTS=0
+SKIP_PHAR=0
 REPO_SLUG=""
 
 # ---------------------------------------------------------------------------
@@ -79,6 +85,10 @@ rollback() {
         cp "$BACKUP_DIR/CHANGELOG.md" "$CHANGELOG_FILE"
         log_ok "Restored CHANGELOG.md"
     fi
+    if [[ -n "$BACKUP_DIR" && -f "$BACKUP_DIR/main.phel" ]]; then
+        cp "$BACKUP_DIR/main.phel" "$VERSION_FILE"
+        log_ok "Restored src/main.phel"
+    fi
     cleanup_backup
 }
 
@@ -107,13 +117,14 @@ Options:
   --dry-run           Print actions without changing files or pushing
   --force             Skip confirmation prompt
   --skip-tests        Skip composer ci gate (NOT recommended)
+  --skip-phar         Skip building + attaching the phel-doom.phar
   --draft             Create the GitHub release as a draft
   -h, --help          Show this help
 
 Examples:
-  ./release.sh                  # auto-bump minor from latest tag
-  ./release.sh 0.1.0
-  ./release.sh 0.2.0 --name "DDA raycaster" --dry-run
+  ./tools/release.sh                  # auto-bump minor from latest tag
+  ./tools/release.sh 0.1.0
+  ./tools/release.sh 0.2.0 --name "DDA raycaster" --dry-run
 EOF
 }
 
@@ -140,6 +151,7 @@ parse_args() {
             --dry-run)    DRY_RUN=1; shift ;;
             --force)      FORCE=1; shift ;;
             --skip-tests) SKIP_TESTS=1; shift ;;
+            --skip-phar)  SKIP_PHAR=1; shift ;;
             --draft)      DRAFT=1; shift ;;
             --name)       RELEASE_NAME="${2:-}"; shift 2 ;;
             -h|--help)    show_help; exit 0 ;;
@@ -336,7 +348,11 @@ confirm_release() {
     echo ""
     log "${BOLD}Release v$NEW_VERSION${NC}"
     [[ -n "$RELEASE_NAME" ]] && log "Name: $RELEASE_NAME"
-    log "Actions: update CHANGELOG.md, commit, tag v$NEW_VERSION, push, create GitHub release"
+    if [[ $SKIP_PHAR -eq 1 ]]; then
+        log "Actions: update CHANGELOG.md, commit, tag v$NEW_VERSION, push, create GitHub release"
+    else
+        log "Actions: update CHANGELOG.md, build+smoke-test PHAR, commit, tag v$NEW_VERSION, push, create GitHub release (with PHAR asset)"
+    fi
     echo ""
     read -rp "Proceed? [y/N] " response
     case "$response" in
@@ -348,8 +364,17 @@ confirm_release() {
 # ---------------------------------------------------------------------------
 # Git + GitHub
 # ---------------------------------------------------------------------------
+# Bump the `:version` literal in src/main.phel so the compiled game (and thus
+# the PHAR) reports the released version. This is the single source of truth;
+# the build does not stamp anything.
+bump_src_version() {
+    perl -0pi -e 's/(:version\s+)"[^"]*"/${1}"'"$NEW_VERSION"'"/' "$VERSION_FILE"
+    grep -q "\"$NEW_VERSION\"" "$VERSION_FILE" \
+        || { log_err "Failed to bump :version in src/main.phel"; return 1; }
+}
+
 git_commit_release() {
-    git -C "$REPO_ROOT" add "$CHANGELOG_FILE"
+    git -C "$REPO_ROOT" add "$CHANGELOG_FILE" "$VERSION_FILE"
     git -C "$REPO_ROOT" commit -m "chore(release): v$NEW_VERSION"
     COMMITTED=1
 }
@@ -368,6 +393,45 @@ git_push() {
     PUSHED=1
 }
 
+# Build the distributable single-file PHAR. The version was already bumped into
+# src/main.phel, so phar.sh just compiles + packages.
+build_phar() {
+    if [[ $SKIP_PHAR -eq 1 ]]; then
+        log_warn "Skipping PHAR build (--skip-phar)"
+        return 0
+    fi
+    [[ -x "$PHAR_SCRIPT" ]] || { log_err "PHAR build script not found: $PHAR_SCRIPT"; return 1; }
+    log "Building phel-doom.phar..."
+    "$PHAR_SCRIPT" >/dev/null \
+        || { log_err "PHAR build failed — run '$PHAR_SCRIPT' to see output"; return 1; }
+    [[ -f "$PHAR_OUTPUT" ]] || { log_err "PHAR not found at $PHAR_OUTPUT after build"; return 1; }
+    log_ok "Built $PHAR_OUTPUT"
+}
+
+# Smoke-test the freshly built PHAR: it must report the released version and
+# emit no PHP diagnostics on stderr. The game itself needs a TTY, so we only
+# exercise the non-interactive --version path here.
+smoke_test_phar() {
+    [[ $SKIP_PHAR -eq 1 ]] && return 0
+    local out err rc
+    out=$(mktemp); err=$(mktemp)
+    php "$PHAR_OUTPUT" --version >"$out" 2>"$err"; rc=$?
+    if [[ $rc -ne 0 ]]; then
+        log_err "PHAR smoke test failed (exit $rc)"; sed -n '1,20p' "$err" >&2
+        rm -f "$out" "$err"; return 1
+    fi
+    if grep -qE 'PHP (Warning|Fatal|Parse|Deprecated) ' "$err"; then
+        log_err "PHAR smoke test emitted PHP diagnostics:"; grep -E 'PHP ' "$err" | head -3 >&2
+        rm -f "$out" "$err"; return 1
+    fi
+    if ! grep -qE "phel-doom $NEW_VERSION" "$out"; then
+        log_err "PHAR --version did not report $NEW_VERSION:"; sed -n '1,5p' "$out" >&2
+        rm -f "$out" "$err"; return 1
+    fi
+    rm -f "$out" "$err"
+    log_ok "PHAR smoke test passed (phel-doom $NEW_VERSION)"
+}
+
 create_github_release() {
     local notes
     notes=$(extract_release_notes "$NEW_VERSION")
@@ -383,11 +447,16 @@ create_github_release() {
     local draft_flag=""
     [[ $DRAFT -eq 1 ]] && draft_flag="--draft"
 
+    # Attach the PHAR as a release asset when present (skipped via --skip-phar).
+    local asset=""
+    [[ $SKIP_PHAR -eq 0 && -f "$PHAR_OUTPUT" ]] && asset="$PHAR_OUTPUT"
+
     gh release create "v$NEW_VERSION" \
         --repo "$REPO_SLUG" \
         --title "$title" \
         --notes-file "$notes_file" \
-        $draft_flag
+        $draft_flag \
+        ${asset:+"$asset"}
 
     rm -f "$notes_file"
 }
@@ -412,22 +481,36 @@ main() {
 
     confirm_release
 
-    # Backup CHANGELOG so failures can roll back
+    # Backup mutated files so failures can roll back
     BACKUP_DIR=$(mktemp -d)
     cp "$CHANGELOG_FILE" "$BACKUP_DIR/CHANGELOG.md"
+    cp "$VERSION_FILE" "$BACKUP_DIR/main.phel"
 
     log "\n${BOLD}Updating CHANGELOG.md${NC}"
     update_changelog "$NEW_VERSION"
     log_ok "Moved Unreleased → [$NEW_VERSION]"
 
+    log "\n${BOLD}Bumping version${NC}"
+    bump_src_version
+    log_ok "Set src/main.phel :version to $NEW_VERSION"
+
     if [[ $DRY_RUN -eq 1 ]]; then
         log "\n${BOLD}Release notes preview${NC}"
         extract_release_notes "$NEW_VERSION"
-        log "\n[DRY-RUN] Would: git commit, tag v$NEW_VERSION, push, gh release create"
+        if [[ $SKIP_PHAR -eq 1 ]]; then
+            log "\n[DRY-RUN] Would: git commit, tag v$NEW_VERSION, push, gh release create (no PHAR)"
+        else
+            log "\n[DRY-RUN] Would: build phel-doom.phar (v$NEW_VERSION), smoke-test it,"
+            log "[DRY-RUN]       git commit, tag v$NEW_VERSION, push, gh release create + attach PHAR"
+        fi
         rollback
-        log_ok "Dry-run complete - CHANGELOG.md restored"
+        log_ok "Dry-run complete - CHANGELOG.md + src/main.phel restored"
         exit 0
     fi
+
+    log "\n${BOLD}Building PHAR${NC}"
+    build_phar
+    smoke_test_phar
 
     log "\n${BOLD}Committing${NC}"
     git_commit_release

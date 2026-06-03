@@ -5,9 +5,13 @@ All notable changes to phel-doom.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` until release cut. Run `./release.sh X.Y.Z` to roll the section into a new version.
+User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` until release cut. Run `./tools/release.sh X.Y.Z` to roll the section into a new version.
 
 ## [Unreleased]
+
+### Added
+
+- Distributable single-file `phel-doom.phar` (~2 MB): bundles the game with the Phel runtime into one executable. `./tools/release.sh` builds, smoke-tests, and attaches it to each GitHub release. Run with `php phel-doom.phar`.
 
 ## [0.8.0] - 2026-06-02
 

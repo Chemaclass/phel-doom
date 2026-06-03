@@ -84,6 +84,15 @@ Edge rays travel further to reach the same wall plane than central rays. Multipl
 
 DDA averages ~5-8 cell crossings per ray instead of ~35 fixed steps. Cast phase: ~1.55 ms at 180 cols (24% faster than step-march). Hot loop uses direct PHP ops (`php/+`, `php/<`) and `:pgrid` (nested PHP array), not Phel vectors.
 
+## Caching (two memo atoms)
+
+The engine keeps two private atoms. Both memoize data that is fully determined by their inputs, so the casts stay referentially transparent despite the writes:
+
+- `offset-cache`: the per-column FOV offset table (`atan` + its `cos`) depends only on viewport width, never on game state. Built once per width and reused; same width always yields the same arrays, so it behaves like a lazy `def`.
+- `pause-cast-cache`: a single-slot copy of the last `cast-frame` result, consulted only while the world is paused. A paused world freezes player x / y / angle and the grid, so the next cast is provably identical to the last; the cache key is `[width scale x y angle]` (six `php/===` compares). Active (unpaused) frames never read or write it, so the hot path is untouched. This is what makes pause overlays and the help menu cost zero cast time per frame.
+
+Neither cache can change a result for given inputs; they only trade memory for recomputation.
+
 ## Why `core/`
 
-Pure deterministic logic: `(pgrid, x, y, angle) -> distance`. No state, IO, or time-dependence. Tests (`tests/core/engine-test.phel`) verify distance accuracy, side bits, hit-cell coords, and array lengths.
+Pure deterministic logic: `(pgrid, x, y, angle) -> distance`. No IO or time-dependence; the two memo caches above are the only mutable state and are input-determined (see Caching), so the casts remain pure to callers. Tests (`tests/core/engine-test.phel`) verify distance accuracy, side bits, hit-cell coords, and array lengths.

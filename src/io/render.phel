@@ -3425,64 +3425,65 @@
   "Interior strings for the start-menu box. `:sep` markers between
    sections become `├─┤` divider rows in render-start-menu.
 
+   Controls are laid out in two columns to keep the box short.
+
    Adaptive to terminal height (`rows`):
-     >= 32  full menu (title + credit + controls + how-to-play + footer)
-     >= 24  drop the how-to-play section
-     < 24   ultra-compact (title + footer only; controls listed
-             behind a 'press ? for help' hint elsewhere).
+     >= 28  full menu (title + controls + how-to-play + footer)
+     >= 22  drop the how-to-play section
+     < 22   ultra-compact (title + footer only, with a resize hint).
 
    The total row count always fits inside `rows - 4` cells (box top
    border + bottom border + one cushion above + one below)."
   [rows]
   (let [w        start-menu-width
+        half     (php/intdiv w 2)
         blank    (pad-visible "" w)
+        ;; key+label cell: 2-space indent, yellow key in an 8-col field,
+        ;; then the label. ANSI is ignored by pad-visible's width count.
+        cell     (fn [key label]
+                   (str "  \e[93m" key "\e[40;97m"
+                        (php/str_repeat " " (php/max 1 (php/- 8 (php/mb_strwidth key))))
+                        label))
+        ;; one interior row holding two key/label cells side by side; each
+        ;; cell padded to half the interior so the columns line up.
+        row2     (fn [lkey llab rkey rlab]
+                   (str (pad-visible (cell lkey llab) half)
+                        (pad-visible (if (= rkey "") "" (cell rkey rlab)) half)))
         title    [blank
                   (pad-visible "      \e[1;93m✦  P H E L - D O O M  ✦\e[40;97m" w)
                   blank
-                  (pad-visible "         a DOOM-lite raycaster" w)
-                  (pad-visible "            written in \e[1mPhel\e[40;97m" w)]
-        credit   [blank
-                  (pad-visible "          \e[2;97m// crafted by \e[1;93mChemaclass\e[40;97m" w)
-                  (pad-visible (str "          \e[2;97m// v" version "\e[40;97m") w)
+                  (pad-visible (str "       \e[2;97m// crafted by \e[1;93mChemaclass\e[40;97m\e[2;97m  // v" version "\e[40;97m") w)
                   blank]
         controls [:sep blank
                   (pad-visible "  \e[1mCONTROLS\e[40;97m" w)
                   blank
-                  (pad-visible "    \e[93mw s ↑ ↓\e[40;97m   move forward / back" w)
-                  (pad-visible "    \e[93ma d    \e[40;97m   strafe left / right" w)
-                  (pad-visible "    \e[93m← →    \e[40;97m   turn left / right" w)
-                  (pad-visible "    \e[93me      \e[40;97m   about-face (snap 180°)" w)
-                  (pad-visible "    \e[93mspace  \e[40;97m   fire" w)
-                  (pad-visible "    \e[93mr      \e[40;97m   reload" w)
-                  (pad-visible "    \e[93m1 .. 8 \e[40;97m   switch weapon slot" w)
-                  (pad-visible "    \e[93mh      \e[40;97m   info menu (stats + weapons)" w)
-                  (pad-visible "    \e[93mm  n   \e[40;97m   toggle minimap / sound" w)
-                  (pad-visible "    \e[93mp      \e[40;97m   pause + settings menu" w)
-                  (pad-visible "    \e[93mF3 q   \e[40;97m   debug / quit" w)
+                  (row2 "w s ↑ ↓" "move"   "1 .. 8" "weapon slot")
+                  (row2 "a d"     "strafe" "h"      "info menu")
+                  (row2 "← →"     "turn"   "m n"    "map / sound")
+                  (row2 "e"       "180°"   "p"      "pause")
+                  (row2 "space"   "fire"   "F3 q"   "debug / quit")
+                  (row2 "r"       "reload" ""       "")
                   blank]
         howto    [:sep blank
                   (pad-visible "  \e[1mHOW TO PLAY\e[40;97m" w)
                   blank
-                  (pad-visible "    Shoot enemies. Walk into a door to" w)
-                  (pad-visible "    advance. Walk over a heart to refill" w)
-                  (pad-visible "    a life. Pick up armor to absorb a hit." w)
-                  (pad-visible "    Survive 5 levels." w)
+                  (pad-visible "  Shoot enemies. Walk into a door to advance." w)
+                  (pad-visible "  Heart refills a life. Armor soaks a hit." w)
+                  (pad-visible "  Survive 5 levels." w)
                   blank]
         footer   [:sep blank
-                  (pad-visible "      \e[93mENTER\e[40;97m  start game" w)
-                  (pad-visible "      \e[93ms\e[40;97m      settings" w)
-                  (pad-visible "      \e[93mq\e[40;97m      quit" w)
+                  (pad-visible "    \e[93mENTER\e[40;97m start   \e[93ms\e[40;97m settings   \e[93mq\e[40;97m quit" w)
                   blank]]
     (apply vector
            (cond
-             ;; Full menu: title + credit + controls + how-to-play + footer.
-             (php/>= rows 32) (concat title credit controls howto footer)
+             ;; Full menu: title + controls (2-col) + how-to-play + footer.
+             (php/>= rows 28) (concat title controls howto footer)
              ;; Medium: drop the how-to-play section.
-             (php/>= rows 24) (concat title credit controls footer)
+             (php/>= rows 22) (concat title controls footer)
              ;; Tight: title + footer only, with a hint that resizing
              ;; reveals the full menu.
              :else            (concat title
-                                      [blank
+                                      [:sep blank
                                        (pad-visible "       \e[2;97mresize terminal for full menu\e[40;97m" w)
                                        blank]
                                       footer)))))

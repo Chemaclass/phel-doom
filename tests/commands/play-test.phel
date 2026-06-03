@@ -113,6 +113,28 @@
     ;; reward sits at the revealed cell centre (2.5, 1.5).
     (is (= 2.5 (:x (first (:soulspheres w')))))))
 
+(deftest test-tick-world-pickup-enqueues-sfx-not-played-inline
+  ;; Purity invariant: a pickup must NOT emit sound inline. It enqueues
+  ;; a {:name :vol} event on the world's :sfx queue, which the game loop
+  ;; drains after the tick. Player stands on a heart at cell (5,5); the
+  ;; tick consumes it and the queue carries a :door cue.
+  (let [w0 (assoc (new-world open-grid (new-player 5.0 5.0 0.0))
+                  :hearts [{:x 5.0 :y 5.0}])
+        w' (tick-world w0 "" 0.016 no-edges)]
+    (is (= 0 (count (:hearts w'))) "heart consumed")
+    (is (some? (some (fn [ev] (= :door (:name ev))) (:sfx w')))
+        "pickup queued a :door sfx event instead of playing it inline")))
+
+(deftest test-tick-world-clears-sfx-queue-each-frame
+  ;; The queue is reset at the top of every tick so stale events from a
+  ;; prior frame never replay. A world entering the tick with a leftover
+  ;; event and nothing to trigger this frame ends with an empty queue.
+  (let [w0 (assoc (new-world open-grid (new-player 5.0 5.0 0.0))
+                  :sfx [{:name :stale :vol 1.0}])
+        w' (tick-world w0 "" 0.016 no-edges)]
+    (is (= false (some? (some (fn [ev] (= :stale (:name ev))) (:sfx w'))))
+        "stale sfx from a prior frame is cleared, not replayed")))
+
 (deftest test-tick-world-select-weapon5-switches-to-bfg
   ;; Player owns the BFG and presses 5 -> active weapon becomes :bfg.
   (let [w0 (assoc (new-world open-grid (new-player 5.0 5.0 0.0))

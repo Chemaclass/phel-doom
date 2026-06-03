@@ -4,6 +4,22 @@
   (:require phel-doom.core.enemies  :refer [resists? default-lives-for])
   (:require phel-doom.core.enemy-ai :refer [apply-pain maybe-start-attack moves? observe start-wander target-pos tick-attack tick-pain tick-wander]))
 
+;; ---------------------------------------------------------------------
+;; Enemy BODY: state, lifecycle, and physics. This module owns spawning
+;; (`spawn-enemies`, `new-enemy`), per-frame movement (`advance` ->
+;; `tick-one`), the hitscan a monster fires at the player (`shoot`),
+;; knockback, and pain/scare timers. It is the "what the body does".
+;;
+;; The "brain" - when to chase, search, attack, or wake - lives in
+;; `enemy-ai` (the FSM, LOS, attack windows). `advance` drives a frame by
+;; calling into enemy-ai (`observe`, `tick-attack`, `apply-pain`, ...) and
+;; then applying the resulting movement here. So:
+;;   - a new AI STATE or transition       -> edit enemy-ai (state-spec)
+;;   - new movement / spawn / hitscan rule -> edit here
+;; The catalog of enemy TYPES + their stats (resist tables, default HP)
+;; lives in `enemies`. Keep this split when adding behaviour.
+;; ---------------------------------------------------------------------
+
 (def default-chase-speed
   "Fallback chase speed (units/sec) used by the single-arity advance
    call so existing tests / callers that don't pass a per-level speed

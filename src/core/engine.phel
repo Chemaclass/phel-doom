@@ -1,5 +1,22 @@
 (ns phel-doom.core.engine)
 
+;; ---------------------------------------------------------------------
+;; Raycasting engine: DDA wall casting (`cast-ray` / `cast-frame`),
+;; line-of-sight (`los-clear?`), and visited-cell marking
+;; (`mark-visible-cells`).
+;;
+;; Two private atoms memoize pure, input-determined data, so the public
+;; fns read as pure despite the cache writes:
+;;   - `offset-cache`     per-width FOV offset tables. Same width always
+;;                        builds the same arrays (an idempotent lazy def).
+;;   - `pause-cast-cache` single-slot copy of the last cast, consulted
+;;                        only while paused (player + grid frozen, so the
+;;                        cast is provably identical). Active frames never
+;;                        touch it.
+;; Neither cache changes a result for given inputs; they only trade memory
+;; for not recomputing. Treat the casts as referentially transparent.
+;; ---------------------------------------------------------------------
+
 (def max-depth 12.0)
 
 (def proj-dist
@@ -298,22 +315,24 @@
     (and (some? visited) (php/=== 1 (php/aget visited idx)))))
 
 (defn cast-frame
-  "Cast `width / scale` rays across the visible FOV and return a map
-   of parallel PHP arrays, one entry per OUTPUT screen column:
-     :dists  fish-eye corrected wall distance
-     :hits   cell value at the hit
-     :sides  0 = vertical face, 1 = horizontal face (side-shading)
-     :hxs    integer x coord of the hit cell (brick-texture hash)
-     :hys    integer y coord of the hit cell
+  {:doc "Cast `width / scale` rays across the visible FOV and return a map
+         of parallel PHP arrays, one entry per OUTPUT screen column:
+           :dists  fish-eye corrected wall distance
+           :hits   cell value at the hit
+           :sides  0 = vertical face, 1 = horizontal face (side-shading)
+           :hxs    integer x coord of the hit cell (brick-texture hash)
+           :hys    integer y coord of the hit cell
 
-   `scale` controls the ray-replication factor (see `do-cast`).
+         `scale` controls the ray-replication factor (see `do-cast`).
 
-   While `(:paused world)` is truthy, the most recent cast is cached in
-   a private single-slot atom and reused as long as `width` / `scale` /
-   player x / y / angle match. Pause overlays + help-menu screens then
-   pay zero cast cost per frame. Active (unpaused) frames pass through
-   to `do-cast` and never touch the cache, so the fast path is
-   unchanged."
+         While `(:paused world)` is truthy, the most recent cast is cached in
+         a private single-slot atom and reused as long as `width` / `scale` /
+         player x / y / angle match. Pause overlays + help-menu screens then
+         pay zero cast cost per frame. Active (unpaused) frames pass through
+         to `do-cast` and never touch the cache, so the fast path is
+         unchanged."
+   :see-also ["cast-ray" "mark-visible-cells" "max-depth" "proj-dist"]
+   :example "(:dists (cast-frame world 120 1)) ; => php-array of wall depths"}
   [world ^int width ^int scale]
   (let [paused?             (:paused world)
         cached              (when paused? @pause-cast-cache)

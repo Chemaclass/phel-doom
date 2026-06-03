@@ -118,7 +118,7 @@ Four lifecycle layers:
 | `decay-soul-overcap` | Drop one life per 5s while `:lives > max-lives` (soulsphere) | `core/state` |
 | `advance-game-time` | Add `dt` to pause-aware `:game-time` (drives render pulses) | `core/state` |
 
-`tick-world` calls no IO. Data in, data out. Tests drive entire frame sequences without touching the terminal.
+`tick-world` calls no IO. Data in, data out. Sound is the one effect that looks tempting to fire inline (a pickup "should" beep): instead every cue (combat, pickups, secret reveal, switch toggle) enqueues a `{:name :vol}` event on the world's `:sfx` queue via `combat/push-sfx`. The queue is reset at the top of the tick and drained by the game loop afterwards, emitted via `io/sound` and gated on `:sound-on`. That keeps the whole transform pure, so tests drive entire frame sequences without touching the terminal. See [audio.md](audio.md).
 
 ## Frame timing + adaptive FPS
 

@@ -1,0 +1,43 @@
+(ns phel-doom.io.render.buffer)
+
+;; =====================================================================
+;; Hot-loop buffer macros
+;;
+;; The inner row + col loops read/write ~7200 cells per frame at 180x40.
+;; Bench (docs/contributing.md -> Phel gotchas) puts Phel persistent
+;; vectors at ~680x slower than php-array on a per-cell read; the row
+;; loop would drop from ~60fps to <2fps if we used (get v i) here.
+;;
+;; To avoid leaking php/* call shapes across the module we wrap the
+;; raw php interop in zero-cost macros. Reader stays at the Phel
+;; level (`(buf-mk)`, `(buf-set b i v)`, `(buf-get b i)`); the macro
+;; expands at compile time to the underlying php/array op.
+;;
+;; CAVEAT: these are macros, not fns. They compile inline. Trying to
+;; pass `buf-set` as a value (e.g. to `map`) won't work. Use them
+;; only at direct call sites in hot loops.
+;;
+;; PHP arrays still pass by value across fn boundaries. Helpers that
+;; build a buffer must RETURN it; callers rebind via let. See
+;; compute-wall-shades / paint-* helpers for the pattern.
+;; =====================================================================
+
+(defmacro buf-mk
+  "Create an empty buffer (php-array)."
+  []
+  `(php/array))
+
+(defmacro buf-set
+  "Write `v` at `i` in buffer `b`. Inlines to php/aset."
+  [b i v]
+  `(php/aset ~b ~i ~v))
+
+(defmacro buf-get
+  "Read `b[i]`. Inlines to php/aget."
+  [b i]
+  `(php/aget ~b ~i))
+
+(defmacro buf-push
+  "Append `v` to the end of buffer `b`. Inlines to php/array_push."
+  [b v]
+  `(php/array_push ~b ~v))

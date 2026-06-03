@@ -1,0 +1,334 @@
+;; Render palette: ANSI colour/glyph string constants and shade
+;; lookup tables. Pure data, no logic.
+(ns phel-doom.io.render.palette
+  (:require phel-doom.io.render.buffer :refer [buf-mk buf-set]))
+
+(def sky        "\e[48;5;236m ")
+(def floor      "\e[48;5;239m ")
+(def sky-blood  "\e[48;5;52m ")
+(def floor-blood "\e[48;5;88m ")
+(def enemy-head "\e[48;5;196m ")
+(def enemy-body "\e[48;5;52m ")
+
+;; All minimap + HUD cells carry an explicit dark BG (`\e[40m`). Without
+;; it, the underlying terminal default BG (which can be light/transparent
+;; on some iTerm2 themes) shows through and washes the overlay out.
+(def enemy-marker "\e[40;91;1mE\e[0m")
+(def heart-marker "\e[40;91;1m♥\e[0m")
+(def ammo-marker     "\e[40;93;1mA\e[0m")
+(def berserk-marker  "\e[40;91;1mB\e[0m")
+(def invuln-marker   "\e[40;96;1mI\e[0m")
+
+(def soulsphere-marker
+  "Soulsphere minimap glyph (issue #68): bright cyan circle on
+   black. Distinct from `I` (invuln) and `B` (berserk) on the same
+   palette family so the player can tell which powerup is which at
+   a glance."
+  "\e[40;96;1m●\e[0m")
+
+(def armor-shard-marker
+  "Armor-shard minimap glyph (issue #68): green caret. Shape +
+   colour both distinct from the heart `♥` and ammo `A` so the
+   common shard pickup reads as its own kind on a busy minimap."
+  "\e[40;92;1m▲\e[0m")
+
+(def backpack-marker "\e[40;33;1mP\e[0m")
+(def keycard-blue-marker "\e[40;94;1mk\e[0m")
+(def keycard-red-marker  "\e[40;91;1mk\e[0m")
+(def door-blue-marker    "\e[40;94;1m▌\e[0m")
+(def door-red-marker     "\e[40;91;1m▌\e[0m")
+(def shotgun-pickup-marker  "\e[40;33;1mS\e[0m")
+(def chaingun-pickup-marker "\e[40;32;1mC\e[0m")
+
+(def door-shade
+  "Door body cell drawn when a ray hit a door. Frame glyph `▌` (left
+   half block) on a dark steel BG with bright orange FG, so a column
+   of door cells reads as a vertical metal frame rather than a flat
+   orange band. Cheap: still one paint cell per column."
+  "\e[48;5;94;38;5;214m▌")
+
+(def boss-door-shade
+  "Boss-locked door body cell. Same frame glyph as the standard
+   door but on a blood-red BG with bright yellow FG so the L10
+   exit reads at a glance as 'kill the boss to open this'."
+  "\e[48;5;88;38;5;226m▌")
+
+(def boss-door-marker
+  "Minimap glyph for the L10 boss-locked door — vivid red so the
+   exit reads as 'danger / locked' against the dim minimap floor."
+  "\e[40;91;1m▌\e[0m")
+
+;; Color CODES used for half-block edge anti-aliasing. The outer
+;; column loop composes 'top edge' and 'bottom edge' cells by
+;; combining a wall code with the sky / floor code into a single
+;; ▀ glyph (upper-half block — FG paints top half, BG paints
+;; bottom half). The eye reads it as a sub-cell wall boundary
+;; instead of a staircase.
+(def sky-code         "236")
+(def floor-code       "239")
+(def sky-blood-code   "52")
+(def floor-blood-code "88")
+(def door-code        "172")
+(def boss-door-code   "196")
+(def kill-flash    "\e[48;5;231;38;5;226;1m✦")
+(def death-slump   "\e[48;5;124;38;5;232;1m▼")
+(def death-collapse "\e[48;5;88;38;5;52m▒")
+(def blood-bright  "\e[48;5;160m ")
+(def blood-mid     "\e[48;5;88m ")
+(def blood-dim     "\e[48;5;52m ")
+
+(def sprite-shadow
+  "Darkest-grey BG painted into the row immediately under an enemy's
+   feet so the sprite reads as grounded instead of floating in mid-air."
+  "\e[48;5;232m ")
+
+;; Pickup sprites paint a coloured BG rectangle over the projected
+;; column range, then overlay a single ICON glyph at the centre cell
+;; so the pickup reads as a proper symbol up close and a coloured
+;; glow from across the room. BG + glyph cycle on a sin wave.
+
+(def heart-shade
+  "Heartbeat 'systole' frame: dim dark-red BG."
+  "\e[48;5;52m ")
+
+(def heart-shade-bright
+  "Heartbeat 'diastole' frame: brighter pink-red BG that throbs in
+   tempo with the heart-glyph swap below."
+  "\e[48;5;205m ")
+
+(def heart-glyph
+  "Filled ♥ in bright white on the dim red BG. Single centre cell."
+  "\e[48;5;52;38;5;231;1m♥")
+
+(def heart-glyph-bright
+  "Pulse frame: ♥ in saturated red on the bright pink BG so glyph +
+   BG throb together."
+  "\e[48;5;205;38;5;196;1m♥")
+
+(def armor-shade
+  "Armor 'idle' BG: deep steel blue."
+  "\e[48;5;17m ")
+
+(def armor-shade-bright
+  "Armor 'pulse' BG: brighter electric blue."
+  "\e[48;5;33m ")
+
+(def armor-glyph
+  "White ◆ on the deep-blue BG. Reads as a shield boss."
+  "\e[48;5;17;38;5;231;1m◆")
+
+(def armor-glyph-bright
+  "Yellow ◆ on the bright-blue BG for the pulse frame."
+  "\e[48;5;33;38;5;226;1m◆")
+
+(def armor-shard-shade
+  "Armor-shard idle BG: dim slate-blue. Lower contrast than the
+   full armor pickup so a player can read shard vs armor at a
+   glance: shards are the common, less-impactful drop."
+  "\e[48;5;60m ")
+
+(def armor-shard-shade-bright
+  "Armor-shard pulse BG: lighter slate flare."
+  "\e[48;5;67m ")
+
+(def armor-shard-glyph
+  "Small green triangle (▲) on slate - distinct from the full
+   armor's white diamond. Shape-not-colour rule: shards vs armor
+   stay readable even on the same monitor."
+  "\e[48;5;60;38;5;46;1m▲")
+
+(def armor-shard-glyph-bright
+  "Yellow triangle on the slate pulse."
+  "\e[48;5;67;38;5;226;1m▲")
+
+(def ammo-shade
+  "Ammo-box idle BG: warm brown so it reads as a wooden crate from a
+   distance, distinct from the cooler armor blue and warmer heart red."
+  "\e[48;5;94m ")
+
+(def ammo-shade-bright
+  "Ammo-box pulse BG: saturated yellow so it grabs the eye when the
+   player is low on rounds."
+  "\e[48;5;220m ")
+
+(def ammo-glyph
+  "White ◉ on the brown BG — round / bullet read at a glance, no
+   longer confusable with the squared shotgun / chaingun pickups."
+  "\e[48;5;94;38;5;231;1m◉")
+
+(def ammo-glyph-bright
+  "Black ◉ on the yellow pulse BG so the icon flips contrast in tempo
+   with the shade swap."
+  "\e[48;5;220;38;5;52;1m◉")
+
+(def fireball-shade
+  "Enemy fireball glow BG: saturated orange so an incoming bolt reads
+   as a hot threat against any wall / floor palette."
+  "\e[48;5;208m ")
+
+(def fireball-glyph
+  "Bright white-hot core ● on the orange glow — a small dense dot the
+   eye tracks as it crosses the viewport, distinct from the round ammo
+   pickup (which sits still on a brown crate BG)."
+  "\e[48;5;208;38;5;231;1m●")
+
+(def berserk-shade
+  "Berserk sphere idle BG: dark blood-red so it reads as 'rage' from
+   across the room, distinct from the dim heart red (52)."
+  "\e[48;5;88m ")
+
+(def berserk-shade-bright
+  "Berserk sphere pulse BG: saturated bright red flare."
+  "\e[48;5;196m ")
+
+(def berserk-glyph
+  "Yellow Ω on the dark-red BG — Greek omega reads as a 'fury sigil'."
+  "\e[48;5;88;38;5;226;1mΩ")
+
+(def berserk-glyph-bright
+  "White Ω on the bright pulse BG."
+  "\e[48;5;196;38;5;231;1mΩ")
+
+(def invuln-shade
+  "Invulnerability sphere idle BG: deep electric blue."
+  "\e[48;5;19m ")
+
+(def invuln-shade-bright
+  "Invulnerability sphere pulse BG: bright cyan flare."
+  "\e[48;5;51m ")
+
+(def invuln-glyph
+  "White star on dark blue."
+  "\e[48;5;19;38;5;231;1m★")
+
+(def invuln-glyph-bright
+  "Yellow star on cyan pulse."
+  "\e[48;5;51;38;5;226;1m★")
+
+(def soulsphere-shade
+  "Soulsphere idle BG: deep sea blue so it sits visually between
+   invuln (bright cyan flare) and the wall greys."
+  "\e[48;5;25m ")
+
+(def soulsphere-shade-bright
+  "Soulsphere pulse BG: lighter sky-cyan flare."
+  "\e[48;5;39m ")
+
+(def soulsphere-glyph
+  "Cyan circle on deep blue: round shape distinguishes it from
+   invuln's star + berserk's omega so the shape-not-colour rule
+   from CHANGELOG 0.3.0 holds."
+  "\e[48;5;25;38;5;87;1m●")
+
+(def soulsphere-glyph-bright
+  "Bright white circle on sky-cyan pulse."
+  "\e[48;5;39;38;5;231;1m●")
+
+(def backpack-shade
+  "Backpack idle BG: dim olive-tan crate so it reads as field gear."
+  "\e[48;5;58m ")
+
+(def backpack-shade-bright
+  "Backpack pulse BG: brighter tan flare."
+  "\e[48;5;142m ")
+
+(def backpack-glyph
+  "White ⊞ on the tan BG: stylised pack."
+  "\e[48;5;58;38;5;231;1m⊞")
+
+(def backpack-glyph-bright
+  "Black ⊞ on the bright pulse BG."
+  "\e[48;5;142;38;5;232;1m⊞")
+
+;; Weapon-pickup glyphs use distinct shapes (not just colour) so the
+;; player can tell the loot apart at a glance from across the room:
+;;   shotgun  → ╪   (cross-barred = pump action, double-barrel feel)
+;;   chaingun → ≣   (triple horizontal = rapid-fire multi-barrel)
+;; Both still carry warm-wood / steel-cool BGs so the team identity
+;; matches the in-hand sprite's palette.
+(def shotgun-pickup-shade  "\e[48;5;94m ")
+(def shotgun-pickup-bright "\e[48;5;130m ")
+(def shotgun-pickup-glyph  "\e[48;5;94;38;5;253;1m╪")
+(def shotgun-pickup-glyph-bright "\e[48;5;130;38;5;253;1m╪")
+(def chaingun-pickup-shade  "\e[48;5;238m ")
+(def chaingun-pickup-bright "\e[48;5;244m ")
+(def chaingun-pickup-glyph  "\e[48;5;238;38;5;46;1m≣")
+(def chaingun-pickup-glyph-bright "\e[48;5;244;38;5;46;1m≣")
+
+;; BFG pickup: emerald plasma core on a dark-green crate so it reads as
+;; a rare power weapon from across the room (issue #58).
+(def bfg-pickup-shade  "\e[48;5;22m ")
+(def bfg-pickup-bright "\e[48;5;28m ")
+(def bfg-pickup-glyph  "\e[48;5;22;38;5;46;1m✸")
+(def bfg-pickup-glyph-bright "\e[48;5;28;38;5;82;1m✸")
+
+;; Incinerator pickup (#122): a bright flame glyph on an ember-red crate
+;; so the only :fire weapon reads as "heat" from across the room.
+(def incinerator-pickup-shade  "\e[48;5;88m ")
+(def incinerator-pickup-bright "\e[48;5;124m ")
+(def incinerator-pickup-glyph  "\e[48;5;88;38;5;214;1m♨")
+(def incinerator-pickup-glyph-bright "\e[48;5;124;38;5;226;1m♨")
+
+;; Rocket launcher pickup (#123): a red-tipped warhead on an olive crate
+;; so the AoE weapon reads as ordnance, distinct from the BFG plasma and
+;; the incinerator flame.
+(def rocket-pickup-shade  "\e[48;5;58m ")
+(def rocket-pickup-bright "\e[48;5;100m ")
+(def rocket-pickup-glyph  "\e[48;5;58;38;5;196;1m➤")
+(def rocket-pickup-glyph-bright "\e[48;5;100;38;5;202;1m➤")
+(def keycard-blue-shade  "\e[48;5;21m ")
+(def keycard-blue-bright "\e[48;5;33m ")
+(def keycard-blue-glyph  "\e[48;5;21;38;5;231;1m⚿")
+(def keycard-blue-glyph-bright "\e[48;5;33;38;5;231;1m⚿")
+(def keycard-red-shade   "\e[48;5;52m ")
+(def keycard-red-bright  "\e[48;5;124m ")
+(def keycard-red-glyph   "\e[48;5;52;38;5;231;1m⚿")
+(def keycard-red-glyph-bright "\e[48;5;124;38;5;231;1m⚿")
+(def char-aspect 2.0)
+(def base-hud-rows 1)
+
+(def shade-table
+  "Pre-baked ANSI strings for the 24 grayscale palette entries (codes
+   232-255). Indexed by an integer shade level 0-23, so the per-cell
+   shade lookup is just one PHP array fetch — no memoize, no string
+   alloc, no Phel runtime dispatch."
+  (let [t (buf-mk)]
+    (loop [i 0]
+      (when (php/< i 24)
+        (buf-set t i (str "\e[48;5;" (php/+ 232 i) "m "))
+        (recur (php/+ i 1))))
+    t))
+
+(def shade-code-table
+  "Parallel palette to shade-table holding ONLY the 256-color code as
+   a string (e.g. \"240\"). Used to compose ▀ half-block edge cells
+   that mix a wall colour with sky / floor for sub-pixel-looking wall
+   tops and bottoms."
+  (let [t (buf-mk)]
+    (loop [i 0]
+      (when (php/< i 24)
+        (buf-set t i (php/strval (php/+ 232 i)))
+        (recur (php/+ i 1))))
+    t))
+
+(def shade-table-blood
+  "Red gradient palette swapped in for the duration of the player's
+   post-hit i-frames so the whole viewport flushes red — instant 'you
+   just got hit' feedback without rendering a separate overlay."
+  (let [t (buf-mk)]
+    (loop [i 0]
+      (when (php/< i 24)
+        ;; bright red (close) -> dark red (far) along the 256-color
+        ;; reds: 196 -> 58, every shade step ~6 indices.
+        (buf-set t i (str "\e[48;5;" (php/- 196 (php/intval (php/* i 6))) "m "))
+        (recur (php/+ i 1))))
+    t))
+
+(def shade-code-table-blood
+  "Code-only twin of shade-table-blood for edge-cell composition."
+  (let [t (buf-mk)]
+    (loop [i 0]
+      (when (php/< i 24)
+        (buf-set t i (php/strval (php/- 196 (php/intval (php/* i 6)))))
+        (recur (php/+ i 1))))
+    t))

@@ -7,7 +7,7 @@
   (:require phel-doom.core.state    :refer [max-lives])
   (:require phel-doom.core.weapons  :refer [weapon-order weapon-spec weapons]))
 
-(def shot-knockback-distance
+(def shot-knockback-dist
   "World units an enemy is shoved AWAY from the player on every shot
    that connects. ~1 cell. Wall-clamped (falls back to 0.5 / 0.25 if
    the full distance lands in geometry) so the push never punts an
@@ -30,11 +30,12 @@
 ;; drains it after tick-world and emits them, gated on (:sound-on world).
 ;; ---------------------------------------------------------------------
 
-(defn- push-sfx
+(defn push-sfx
   "Append a sound event to the world's per-frame `:sfx` queue. Keeps
-   core/combat effect-free: the io layer drains `:sfx` after the tick
+   the pure tick effect-free: the io layer drains `:sfx` after the tick
    and plays each event (gated on :sound-on). `tick-world` clears the
-   queue at the start of every frame, so events never replay."
+   queue at the start of every frame, so events never replay. Used by
+   core/combat and by the pickup / interaction steps in commands/play."
   [world name ^float vol]
   (update world :sfx (fn [s] (conj (or s []) {:name name :vol vol}))))
 
@@ -233,7 +234,7 @@
    after overheat."
   0.7)
 
-(def knockback-distance
+(def knockback-dist
   "World units the player gets shoved AWAY from the attacker on each
    hit. ~1 cell; try-move clamps against walls so the player can't be
    pushed through geometry."
@@ -358,7 +359,7 @@
         :else            :left))))
 
 (defn knockback
-  "Shove the player one knockback-distance step AWAY from `att`.
+  "Shove the player one knockback-dist step AWAY from `att`.
    Uses try-move so walls clamp the displacement. Returns the world
    unchanged if att is nil or the player and attacker share a cell.
    Exported so the shove-away rule can be unit tested."
@@ -372,8 +373,8 @@
       (if (php/<= len 0.0001)
         world
         (try-move world
-                  (php/* (php// dx len) knockback-distance)
-                  (php/* (php// dy len) knockback-distance))))))
+                  (php/* (php// dx len) knockback-dist)
+                  (php/* (php// dy len) knockback-dist))))))
 
 (def flash-seconds
   "How long the all-white impact flash holds before the red i-frame
@@ -466,7 +467,7 @@
 ;; § Shooting (one trigger pull → world update)
 ;; =====================================================================
 
-(defn- cast-wall-distance [world]
+(defn- cast-wall-dist [world]
   (let [p (:player world)]
     (cast-ray (:pgrid world) (:x p) (:y p) (:angle p))))
 
@@ -478,7 +479,7 @@
         dmg       (if (berserk? world) (php/* base-dmg (berserk-mul-for dmg-type)) base-dmg)
         max-range (or (:max-range spec) shot-max-range)]
     (shoot (:enemies world) (:x p) (:y p) (:angle p)
-           (cast-wall-distance world)
+           (cast-wall-dist world)
            shot-hit-radius max-range dmg dmg-type)))
 
 (defn- push-blood-fx [world hit-pos]
@@ -599,7 +600,7 @@
                           sin-a (php/sin a)]
                       (push-back-enemy enemies-after (:grid world)
                                        idx cos-a sin-a
-                                       shot-knockback-distance)))
+                                       shot-knockback-dist)))
         scored    (if killed?
                     (assoc (update (assoc world :enemies pushed-es)
                                    :kills (fn [k] (php/+ k 1)))
@@ -743,7 +744,7 @@
         dtype        (:damage-type spec)
         dmg          (if (berserk? world) (php/* base (berserk-mul-for dtype)) base)
         max-r        (or (:max-range spec) shot-max-range)
-        wall-d       (cast-wall-distance world)
+        wall-d       (cast-wall-dist world)
         [ix iy]      (beam-impact (:enemies world) (:x p) (:y p) (:angle p)
                                   wall-d shot-hit-radius max-r)
         [es' killed] (splash (:enemies world) ix iy radius dmg dtype)
@@ -826,7 +827,7 @@
         dtype                      (:damage-type spec)
         dmg                        (if (berserk? world) (php/* base (berserk-mul-for dtype)) base)
         max-r                      (or (:max-range spec) shot-max-range)
-        wall-d                     (cast-wall-distance world)
+        wall-d                     (cast-wall-dist world)
         [es' killed hit-pos tough] (pierce (:enemies world) (:x p) (:y p) (:angle p)
                                            wall-d shot-hit-radius max-r dmg dtype)]
     (finish-multikill world es' killed hit-pos tough)))
@@ -848,7 +849,7 @@
         targets                    (or (:spread-targets spec) 3)
         half                       (or (:spread-half-angle spec) shotgun-spread-half-angle)
         max-r                      (or (:max-range spec) shot-max-range)
-        wall-d                     (cast-wall-distance world)
+        wall-d                     (cast-wall-dist world)
         [es' killed hit-pos tough] (spread-shoot (:enemies world) (:x p) (:y p) (:angle p)
                                                  wall-d half max-r prim graze targets dtype)]
     (finish-multikill world es' killed hit-pos tough)))
@@ -889,19 +890,21 @@
   (push-sfx (assoc world :empty-click-secs empty-click-seconds) :click 0.6))
 
 (defn tick-shooting
-  "Resolve a shot when the trigger is active this frame AND the
-   active weapon is ready (not on cooldown, not jammed).
+  {:doc "Resolve a shot when the trigger is active this frame AND the
+         active weapon is ready (not on cooldown, not jammed).
 
-   Trigger semantics depend on the weapon's `:auto-fire?` flag:
-     - auto-fire (pistol, chaingun): fires every frame the trigger
-       is held once `:fire-cooldown` elapses. Holding space sprays.
-     - single-action (shotgun): each shell requires a fresh rising
-       edge — holding space does not re-fire after the first shot.
+         Trigger semantics depend on the weapon's `:auto-fire?` flag:
+           - auto-fire (pistol, chaingun): fires every frame the trigger
+             is held once `:fire-cooldown` elapses. Holding space sprays.
+           - single-action (shotgun): each shell requires a fresh rising
+             edge - holding space does not re-fire after the first shot.
 
-   Trigger pulls during a jam / fire-cooldown / mid-reload are
-   dropped silently. Pulls on an empty mag arm a dry-fire click +
-   'R to reload' prompt instead. Two-arity kept for legacy callers
-   (e.g. tests) that pre-date :fire-held."
+         Trigger pulls during a jam / fire-cooldown / mid-reload are
+         dropped silently. Pulls on an empty mag arm a dry-fire click +
+         'R to reload' prompt instead. Two-arity kept for legacy callers
+         (e.g. tests) that pre-date :fire-held."
+   :see-also ["fire-shot" "reload" "push-sfx" "damage-step"]
+   :example "(tick-shooting world true false) ; trigger rising-edge this frame"}
   ([world fire?] (tick-shooting world fire? false))
   ([w fire-edge? fire-held?]
    (let [auto?        (boolean (:auto-fire? (weapon-spec w)))

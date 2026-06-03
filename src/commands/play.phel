@@ -11,7 +11,7 @@
                                             initial-key-snapshot nav-deltas])
   (:require phel-doom.core.physics  :refer [apply-physics tick-heartbeat tick-flicker tick-blood-drops tick-door-face tick-stamina])
   (:require phel-doom.core.engine   :refer [mark-visible-cells])
-  (:require phel-doom.core.combat   :refer [ammo-per-box arm-berserk berserk-seconds damage-step fire-anim-seconds invuln-seconds max-reserve reload reloading? reload-cooldown-seconds tick-armory tick-shooting])
+  (:require phel-doom.core.combat   :refer [ammo-per-box arm-berserk berserk-seconds damage-step fire-anim-seconds invuln-seconds max-reserve push-sfx reload reloading? reload-cooldown-seconds tick-armory tick-shooting])
   (:require phel-doom.core.enemy    :refer [advance tick-scare rear-attacker?])
   (:require phel-doom.core.projectile :refer [tick-projectiles])
   (:require phel-doom.core.weapons  :refer [effective-reserve-cap give-weapon switch-weapon weapon-spec weapon-order weapons])
@@ -196,9 +196,7 @@
                             (php/intval (:y (:player world))))]
     (if (= (count kept) (count (:hearts world)))
       world
-      (let [healed (assoc world :hearts kept)]
-        (when (:sound-on world) (play-sfx! :door))
-        (gain-life healed)))))
+      (push-sfx (gain-life (assoc world :hearts kept)) :door 1.0))))
 
 (defn- armors-not-at [armors px py]
   (apply vector
@@ -220,8 +218,9 @@
     (if (= (count kept) (count (or (:armors world) [])))
       world
       (let [shielded (assoc world :armors kept)]
-        (when (:sound-on world) (play-sfx! :door))
-        (update shielded :armor (fn [a] (php/min max-armor (php/+ (or a 0) 1))))))))
+        (push-sfx
+         (update shielded :armor (fn [a] (php/min max-armor (php/+ (or a 0) 1))))
+         :door 1.0)))))
 
 (defn- ammo-boxes-not-at [boxes px py]
   (apply vector
@@ -276,10 +275,11 @@
             cur'      (php/min cap (php/+ cur per-box))
             stash'    (assoc-in stash [target :reserve] cur')
             refilled  (assoc world :ammo-boxes kept :weapon-state stash')]
-        (when (:sound-on world) (play-sfx! :door))
-        (if (= target (or (:weapon world) :pistol))
-          (assoc refilled :ammo-reserve cur')
-          refilled)))))
+        (push-sfx
+         (if (= target (or (:weapon world) :pistol))
+           (assoc refilled :ammo-reserve cur')
+           refilled)
+         :door 1.0)))))
 
 (defn- berserks-not-at [bs px py]
   (apply vector
@@ -300,8 +300,7 @@
                               (php/intval (:y (:player world))))]
     (if (= (count kept) (count (or (:berserks world) [])))
       world
-      (do (when (:sound-on world) (play-sfx! :berserk))
-          (arm-berserk (assoc world :berserks kept))))))
+      (push-sfx (arm-berserk (assoc world :berserks kept)) :berserk 1.0))))
 
 (defn- invulns-not-at [is px py]
   (apply vector
@@ -319,10 +318,10 @@
                              (php/intval (:y (:player world))))]
     (if (= (count kept) (count (or (:invulns world) [])))
       world
-      (do (when (:sound-on world) (play-sfx! :door))
-          (assoc world
-                 :invulns     kept
-                 :invuln-secs invuln-seconds)))))
+      (push-sfx (assoc world
+                       :invulns     kept
+                       :invuln-secs invuln-seconds)
+                :door 1.0))))
 
 (defn- soulspheres-not-at [ss px py]
   (apply vector
@@ -341,8 +340,7 @@
                                  (php/intval (:y (:player world))))]
     (if (= (count kept) (count (or (:soulspheres world) [])))
       world
-      (do (when (:sound-on world) (play-sfx! :berserk))
-          (gain-soulsphere (assoc world :soulspheres kept))))))
+      (push-sfx (gain-soulsphere (assoc world :soulspheres kept)) :berserk 1.0))))
 
 (defn- armor-shards-not-at [shards px py]
   (apply vector
@@ -363,8 +361,7 @@
                                   (php/intval (:y (:player world))))]
     (if (= (count kept) (count (or (:armor-shards world) [])))
       world
-      (do (when (:sound-on world) (play-sfx! :door))
-          (gain-armor-shard (assoc world :armor-shards kept))))))
+      (push-sfx (gain-armor-shard (assoc world :armor-shards kept)) :door 1.0))))
 
 (defn- backpacks-not-at [bs px py]
   (apply vector
@@ -388,10 +385,11 @@
     (if (= (count kept) (count (or (:backpacks world) [])))
       world
       (let [picked (assoc world :backpacks kept)]
-        (when (:sound-on world) (play-sfx! :door))
-        (if (at-backpack-cap? picked)
-          picked
-          (gain-backpack picked))))))
+        (push-sfx
+         (if (at-backpack-cap? picked)
+           picked
+           (gain-backpack picked))
+         :door 1.0)))))
 
 (defn- keycards-not-at [ks px py]
   (apply vector
@@ -426,8 +424,9 @@
     (if (nil? on-pick)
       world
       (let [kept (weapon-pickups-not-at (:weapon-pickups world) px py)]
-        (when (:sound-on world) (play-sfx! :door))
-        (give-weapon (assoc world :weapon-pickups kept) (:weapon on-pick))))))
+        (push-sfx
+         (give-weapon (assoc world :weapon-pickups kept) (:weapon on-pick))
+         :door 1.0)))))
 
 (defn- pickup-keycards
   "Step-on consumes the keycard + adds its colour to `:held-keys`.
@@ -447,10 +446,11 @@
     (if (nil? on-card)
       world
       (let [kept (keycards-not-at (:keycards world) px py)]
-        (when (:sound-on world) (play-sfx! :door))
-        (assoc world
-               :keycards  kept
-               :held-keys (conj (or (:held-keys world) #{}) (:colour on-card)))))))
+        (push-sfx
+         (assoc world
+                :keycards  kept
+                :held-keys (conj (or (:held-keys world) #{}) (:colour on-card)))
+         :door 1.0)))))
 
 (defn- on-door?
   "True when the player's current cell is a door (auto-advances level)."
@@ -482,12 +482,13 @@
     (let [[cx cy] (cell-ahead world)]
       (if (secret? (:grid world) cx cy)
         (let [idx (or (:secrets-found world) 0)]
-          (when (:sound-on world) (play-sfx! :door))
-          (-> world
-              (assoc :grid (reveal-secret (:grid world) cx cy))
-              (rebuild-pgrid)
-              (place-secret-reward cx cy idx)
-              (update :secrets-found (fn [n] (php/+ (or n 0) 1)))))
+          (push-sfx
+           (-> world
+               (assoc :grid (reveal-secret (:grid world) cx cy))
+               (rebuild-pgrid)
+               (place-secret-reward cx cy idx)
+               (update :secrets-found (fn [n] (php/+ (or n 0) 1))))
+           :door 1.0))
         world))))
 
 (defn- try-toggle-switch
@@ -502,12 +503,13 @@
     world
     (let [[cx cy] (cell-ahead world)]
       (if (switch? (:grid world) cx cy)
-        (do (when (:sound-on world) (play-sfx! :door))
-            (-> world
-                (assoc :grid (toggle-switch (:grid world)
-                                            (or (:switches world) [])
-                                            cx cy))
-                (rebuild-pgrid)))
+        (push-sfx
+         (-> world
+             (assoc :grid (toggle-switch (:grid world)
+                                         (or (:switches world) [])
+                                         cx cy))
+             (rebuild-pgrid))
+         :door 1.0)
         world))))
 
 (defn tick-world
@@ -519,9 +521,11 @@
    physics, collect pickups, advance enemies, resolve a shot, decay
    timers + apply contact damage."
   [world keys ^float dt edges]
-  ;; Reset the per-frame combat sfx queue up front so events from
-  ;; core/combat accumulate fresh each tick; the game loop drains
-  ;; `:sfx` after this returns and emits them via io/sound.
+  ;; Reset the per-frame sfx queue up front so events accumulate fresh
+  ;; each tick. Every cue (pickups, interactions, combat) enqueues via
+  ;; combat/push-sfx instead of emitting inline, keeping this transform
+  ;; pure; the game loop drains `:sfx` after this returns and plays them
+  ;; via io/sound, gated on :sound-on.
   (let [w0 (assoc (handle-toggles world edges) :sfx [])]
     (cond
       (:paused w0)                             w0
@@ -587,9 +591,13 @@
             ;; both land in one frame (the bolt's i-frames gate the
             ;; touch test).
             wp   (tick-projectiles w5 dt)
+            ;; Queue the reload sfx only when a reload actually starts
+            ;; (reloading? holds on the pre-reload world), routed through
+            ;; the :sfx queue so this stays a pure transform like every
+            ;; other tick step. The game loop drains + gates on :sound-on.
             w5b  (if (:reload edges)
-                   (do
-                     (when (and (:sound-on wp) (reloading? wp)) (play-sfx! :reload 0.3))
+                   (if (reloading? wp)
+                     (push-sfx (reload wp) :reload 0.3)
                      (reload wp))
                    wp)
             w5c  (tick-armory w5b)

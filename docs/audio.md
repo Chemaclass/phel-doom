@@ -8,7 +8,7 @@ One-shot SFX via `src/io/sound.phel` (shell-out) + ambient drone via `src/io/amb
 
 Combat raises events by name: `:shoot`, `:shoot-shotgun`, `:shoot-chaingun`, `:shoot-chainsaw`, `:shoot-bfg`, `:shoot-incinerator`, `:shoot-rocket`, `:hit`, `:kill`, `:reload`, `:click`, `:door`, `:heartbeat`, `:berserk`, `:wound`.
 
-`core/combat` is pure: it enqueues `{:name :vol}` events on the world's per-frame `:sfx` queue rather than calling `play-sfx!`. `commands/play` drains the queue after `tick-world` and emits each event, gated on `:sound-on`. Keeps the effect at the io boundary.
+Every in-tick cue is pure: instead of calling `play-sfx!` inline, it enqueues a `{:name :vol}` event on the world's per-frame `:sfx` queue via `combat/push-sfx`. This holds for combat (shots, kills, pain), pickups (hearts, armor, ammo, berserk, ...), and interactions (secret reveal, switch toggle). `commands/play` drains the queue after `tick-world` and emits each event, gated on `:sound-on`. Keeping every sfx on one queue is what lets `tick-world` stay a pure transform. `tick-world` clears the queue at the top of each frame so events never replay. (Level-transition cues like the door advance are played directly in the outer loop, outside the pure tick.)
 
 macOS maps to `.aiff`: Pop (pistol/kill), Blow (shotgun), Morse (chaingun), Purr (chainsaw), Glass (BFG), Frog (incinerator), Ping (rocket), Sosumi (player-hurt), Basso (dry-fire), Funk (reload), Tink (door/pickup), Submarine (wound), Bottle (heartbeat), Hero (berserk).
 

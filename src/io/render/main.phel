@@ -130,6 +130,39 @@
      :top-edge top-edge :bot-edge bot-edge
      :top-shadow top-shadow :bot-shadow bot-shadow}))
 
+;; Pickup pulse cadences (rad/s). Each interactive pickup throbs on a
+;; distinct frequency so co-spawned items read as separate beats instead
+;; of syncing into one flash. Tuned by feel; frame->string's pulse
+;; bindings below pair each cadence with the glyph it drives.
+(def pulse-freq-door          4.0)
+(def pulse-freq-boss-door     5.0)
+(def pulse-freq-heart         6.0)
+(def pulse-freq-armor         5.0)
+(def pulse-freq-aggro         5.0)
+(def pulse-freq-ammo          7.0)
+(def pulse-freq-berserk       9.0)
+(def pulse-freq-invuln        8.0)
+(def pulse-freq-soulsphere    6.0)
+(def pulse-freq-armor-shard   5.5)
+(def pulse-freq-backpack      4.0)
+(def pulse-freq-keycard       5.5)
+(def pulse-freq-weapon-pickup 3.0)
+
+(defn- haze-shift-for-lives
+  "Shade-table steps to pull walls toward black as the life pool drains,
+   so the world reads as 'consumed by darkness' near death. `lives` is a
+   half-heart pool (10 = full); the haze ramps over the last ~3 hearts.
+   0 = full visibility; higher = darker (clamped into the shade table by
+   compute-wall-shades). Sky / floor / doors are left untouched."
+  [lives]
+  (let [l (or lives 0)]
+    (cond
+      (php/<= l 0) 0
+      (php/<= l 2) 6
+      (php/<= l 4) 3
+      (php/<= l 6) 1
+      :else        0)))
+
 (defn frame->string
   "Render the world sized to cols x rows. Walls project at a constant
    scale (proj-dist from engine) with a 2:1 character-aspect correction,
@@ -156,6 +189,9 @@
         ;; the inner row loop short-circuits the blood swap.
         blood-sky-gradient                 (when bloody?
                                              (build-horizon-gradient vh shade-table-blood))
+        ;; Intentional alias: floor reuses the sky red gradient so the
+        ;; blood band is one uniform red wash top-to-bottom (not a copy
+        ;; -paste slip). A separate floor curve would split the corner.
         blood-floor-gradient               blood-sky-gradient
         ;; Code-only gradient twins for ▀ half-block edge composition.
         ;; The top-edge cell blends wall BG with the sky shade AT THAT ROW
@@ -213,68 +249,68 @@
         ;; two shades on a sin wave. Wall clock so the rhythm stays
         ;; the same regardless of fps. Frequencies differ (4 vs 6
         ;; rad/s) so the two pulses don't lock together.
-        door-bright?                       (pulse t 4.0)
+        door-bright?                       (pulse t pulse-freq-door)
         door-shade-now                     (if door-bright? "\e[48;5;130;38;5;226m▌" door-shade)
         door-code-now                      (if door-bright? "130" door-code)
         ;; Boss door pulses on a faster, alarm-ish beat (5 rad/s) so
         ;; the L10 exit reads as 'kill the boss to open' even at the
         ;; far end of the arena.
-        boss-door-bright?                  (pulse t 5.0)
+        boss-door-bright?                  (pulse t pulse-freq-boss-door)
         boss-door-shade-now                (if boss-door-bright? "\e[48;5;124;38;5;226;1m▌" boss-door-shade)
         boss-door-code-now                 (if boss-door-bright? "124" boss-door-code)
         ;; Pickup pulse: systole/diastole BG + matching centre glyph
         ;; both swap on the same beat so the icon throbs in tempo.
-        heart-bright?                      (pulse t 6.0)
+        heart-bright?                      (pulse t pulse-freq-heart)
         heart-shade-now                    (if heart-bright? heart-shade-bright heart-shade)
         heart-glyph-now                    (if heart-bright? heart-glyph-bright heart-glyph)
-        armor-bright?                      (pulse t 5.0)
+        armor-bright?                      (pulse t pulse-freq-armor)
         ;; Aggro head pulse: same code-driven swap so a monster in
         ;; striking range throbs without relying on terminal blink.
-        aggro-bright?                      (pulse t 5.0)
+        aggro-bright?                      (pulse t pulse-freq-aggro)
         armor-shade-now                    (if armor-bright? armor-shade-bright armor-shade)
         armor-glyph-now                    (if armor-bright? armor-glyph-bright armor-glyph)
         ;; Ammo-box pulse: warm-brown crate to yellow flare at 7 rad/s
         ;; — slower than hearts so the two pickup types read distinct
         ;; even when both are in frame.
-        ammo-bright?                       (pulse t 7.0)
+        ammo-bright?                       (pulse t pulse-freq-ammo)
         ammo-shade-now                     (if ammo-bright? ammo-shade-bright ammo-shade)
         ammo-glyph-now                     (if ammo-bright? ammo-glyph-bright ammo-glyph)
         ;; Berserk pulse — faster than ammo so a rage sphere flashes
         ;; the most aggressively of any pickup, telegraphing the buff.
-        berserk-bright?                    (pulse t 9.0)
+        berserk-bright?                    (pulse t pulse-freq-berserk)
         berserk-shade-now                  (if berserk-bright? berserk-shade-bright berserk-shade)
         berserk-glyph-now                  (if berserk-bright? berserk-glyph-bright berserk-glyph)
         ;; Invuln pulse — different cadence (8 rad/s) so a sphere on
         ;; the same screen as a berserk doesn't sync up into one beat.
-        invuln-bright?                     (pulse t 8.0)
+        invuln-bright?                     (pulse t pulse-freq-invuln)
         invuln-shade-now                   (if invuln-bright? invuln-shade-bright invuln-shade)
         invuln-glyph-now                   (if invuln-bright? invuln-glyph-bright invuln-glyph)
         ;; Soulsphere pulse — slower than invuln so a co-spawn reads
         ;; with two distinct cadences instead of synced flashes.
-        soulsphere-bright?                 (pulse t 6.0)
+        soulsphere-bright?                 (pulse t pulse-freq-soulsphere)
         soulsphere-shade-now               (if soulsphere-bright? soulsphere-shade-bright soulsphere-shade)
         soulsphere-glyph-now               (if soulsphere-bright? soulsphere-glyph-bright soulsphere-glyph)
         ;; Armor-shard pulse: faster than the full armor pickup
         ;; (5 rad/s) so a shard sitting next to an armor item reads
         ;; with a quicker tempo - matches its 'common chip drop'
         ;; feel vs the rarer fuller pickup.
-        armor-shard-bright?                (pulse t 5.5)
+        armor-shard-bright?                (pulse t pulse-freq-armor-shard)
         armor-shard-shade-now              (if armor-shard-bright? armor-shard-shade-bright armor-shard-shade)
         armor-shard-glyph-now              (if armor-shard-bright? armor-shard-glyph-bright armor-shard-glyph)
         ;; Backpack pulse — slowest of the powerup family so the
         ;; one-shot pickup reads as 'permanent gear' rather than a
         ;; ticking buff.
-        backpack-bright?                   (pulse t 4.0)
+        backpack-bright?                   (pulse t pulse-freq-backpack)
         backpack-shade-now                 (if backpack-bright? backpack-shade-bright backpack-shade)
         backpack-glyph-now                 (if backpack-bright? backpack-glyph-bright backpack-glyph)
         ;; Keycards pulse at the same beat as pickups; colour is per-
         ;; card so paint-keycards-into picks the right shade.
-        keycard-bright?                    (pulse t 5.5)
+        keycard-bright?                    (pulse t pulse-freq-keycard)
         keycard-blue-shade-now             (if keycard-bright? keycard-blue-bright keycard-blue-shade)
         keycard-blue-glyph-now             (if keycard-bright? keycard-blue-glyph-bright keycard-blue-glyph)
         keycard-red-shade-now              (if keycard-bright? keycard-red-bright keycard-red-shade)
         keycard-red-glyph-now              (if keycard-bright? keycard-red-glyph-bright keycard-red-glyph)
-        weapon-pickup-bright?              (pulse t 3.0)
+        weapon-pickup-bright?              (pulse t pulse-freq-weapon-pickup)
         shotgun-pickup-shade-now           (if weapon-pickup-bright? shotgun-pickup-bright shotgun-pickup-shade)
         shotgun-pickup-glyph-now           (if weapon-pickup-bright? shotgun-pickup-glyph-bright shotgun-pickup-glyph)
         chaingun-pickup-shade-now          (if weapon-pickup-bright? chaingun-pickup-bright chaingun-pickup-shade)
@@ -291,13 +327,7 @@
         ;; full-brightness pulse so the exit stays findable.
         ;; HP is a half-heart pool (10 = full): haze ramps over the last
         ;; ~3 hearts, deepening toward the last half-heart.
-        haze-shift                         (let [l (or (get stats :lives) 0)]
-                                             (cond
-                                               (php/<= l 0) 0
-                                               (php/<= l 2) 6
-                                               (php/<= l 4) 3
-                                               (php/<= l 6) 1
-                                               :else        0))
+        haze-shift                         (haze-shift-for-lives (get stats :lives))
         ;; Per-column wall geometry + shade arrays. compute-wall-shades
         ;; CREATES them fresh and returns them (PHP arrays are passed
         ;; by value so a mutating helper can't mutate the caller's

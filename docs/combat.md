@@ -8,7 +8,7 @@ Hitscan + damage timing + i-frames. `src/core/combat.phel`. Pure: no side effect
 |----------|-------|-------|
 | `shot-hit-radius` | 0.5 | Off-axis hitscan tolerance (half-cell) |
 | `shot-max-range` | 12.0 | Max hitscan distance (world units) |
-| `shot-knockback-distance` | 1.0 | Push distance per wounding hit |
+| `shot-knockback-dist` | 1.0 | Push distance per wounding hit |
 | `touch-damage-dist` | 0.7 | Contact damage range |
 | `iframe-seconds` | 1.0 | Post-hit invulnerability window |
 | `fire-anim-seconds` | 0.09 | Muzzle flash visibility |

@@ -9,6 +9,14 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Added
+
+- Start-menu welcome box and credits screen show the current version, sourced from a single `src/core/version.phel` constant that `tools/release.sh` bumps (also feeds `--version`), so a release updates it everywhere at once.
+
+### Changed
+
+- Start-menu welcome box restructured: controls now in two columns, with how-to-play kept below and the compass-hint section dropped, so the box is shorter and fits more terminals.
+
 ## [0.9.0] - 2026-06-03
 
 ### Added

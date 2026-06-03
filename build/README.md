@@ -32,9 +32,9 @@ mutating `vendor/`). The stub's `out/main.php` does its own
 `require "../vendor/autoload.php"`, which resolves inside the PHAR. Levels are
 generated procedurally, so there are no external assets to bundle.
 
-The reported version comes from `:version` in `src/main.phel`, which
-`tools/release.sh` bumps as part of the release commit - the build stamps
-nothing.
+The reported version comes from `src/core/version.phel` (the single source of
+truth, also shown in the start menu + credits), which `tools/release.sh` bumps
+as part of the release commit - the build stamps nothing.
 
 ## Build
 

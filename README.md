@@ -15,7 +15,8 @@ curl -fsSL -o phel-doom.phar https://github.com/Chemaclass/phel-doom/releases/la
 php phel-doom.phar
 ```
 
-Or build from source (also needs Composer):
+<details>
+<summary>Build from source (needs Composer, or Docker)</summary>
 
 ```bash
 git clone git@github.com:Chemaclass/phel-doom.git
@@ -26,8 +27,7 @@ make play
 
 Or `composer install && composer play`.
 
-<details>
-<summary>No local PHP? Run in Docker</summary>
+### No local PHP? Run in Docker
 
 PHP 8.5 CLI + Composer + deps in an image; `docker` is the only prerequisite.
 

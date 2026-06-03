@@ -19,7 +19,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 CHANGELOG_FILE="$REPO_ROOT/CHANGELOG.md"
-VERSION_FILE="$REPO_ROOT/src/main.phel"
+VERSION_FILE="$REPO_ROOT/src/core/version.phel"
 PHAR_SCRIPT="$REPO_ROOT/build/phar.sh"
 PHAR_OUTPUT="$REPO_ROOT/build/out/phel-doom.phar"
 MAIN_BRANCH="main"
@@ -85,9 +85,9 @@ rollback() {
         cp "$BACKUP_DIR/CHANGELOG.md" "$CHANGELOG_FILE"
         log_ok "Restored CHANGELOG.md"
     fi
-    if [[ -n "$BACKUP_DIR" && -f "$BACKUP_DIR/main.phel" ]]; then
-        cp "$BACKUP_DIR/main.phel" "$VERSION_FILE"
-        log_ok "Restored src/main.phel"
+    if [[ -n "$BACKUP_DIR" && -f "$BACKUP_DIR/version.phel" ]]; then
+        cp "$BACKUP_DIR/version.phel" "$VERSION_FILE"
+        log_ok "Restored src/core/version.phel"
     fi
     cleanup_backup
 }
@@ -364,13 +364,13 @@ confirm_release() {
 # ---------------------------------------------------------------------------
 # Git + GitHub
 # ---------------------------------------------------------------------------
-# Bump the `:version` literal in src/main.phel so the compiled game (and thus
-# the PHAR) reports the released version. This is the single source of truth;
-# the build does not stamp anything.
+# Bump the version literal in src/core/version.phel so the compiled game (and
+# thus the PHAR), the start menu, and the credits all report the released
+# version. This is the single source of truth; the build does not stamp.
 bump_src_version() {
-    perl -0pi -e 's/(:version\s+)"[^"]*"/${1}"'"$NEW_VERSION"'"/' "$VERSION_FILE"
+    perl -0pi -e 's/(\(def version )"[^"]*"/${1}"'"$NEW_VERSION"'"/' "$VERSION_FILE"
     grep -q "\"$NEW_VERSION\"" "$VERSION_FILE" \
-        || { log_err "Failed to bump :version in src/main.phel"; return 1; }
+        || { log_err "Failed to bump version in src/core/version.phel"; return 1; }
 }
 
 git_commit_release() {
@@ -484,7 +484,7 @@ main() {
     # Backup mutated files so failures can roll back
     BACKUP_DIR=$(mktemp -d)
     cp "$CHANGELOG_FILE" "$BACKUP_DIR/CHANGELOG.md"
-    cp "$VERSION_FILE" "$BACKUP_DIR/main.phel"
+    cp "$VERSION_FILE" "$BACKUP_DIR/version.phel"
 
     log "\n${BOLD}Updating CHANGELOG.md${NC}"
     update_changelog "$NEW_VERSION"
@@ -492,7 +492,7 @@ main() {
 
     log "\n${BOLD}Bumping version${NC}"
     bump_src_version
-    log_ok "Set src/main.phel :version to $NEW_VERSION"
+    log_ok "Set version to $NEW_VERSION"
 
     if [[ $DRY_RUN -eq 1 ]]; then
         log "\n${BOLD}Release notes preview${NC}"
@@ -504,7 +504,7 @@ main() {
             log "[DRY-RUN]       git commit, tag v$NEW_VERSION, push, gh release create + attach PHAR"
         fi
         rollback
-        log_ok "Dry-run complete - CHANGELOG.md + src/main.phel restored"
+        log_ok "Dry-run complete - CHANGELOG.md + version.phel restored"
         exit 0
     fi
 

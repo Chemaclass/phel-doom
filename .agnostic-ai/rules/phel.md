@@ -16,12 +16,33 @@ globs: src/**,tests/**,*.phel
 
 ## Docstrings
 
-Public `defn` should carry metadata:
-- `:doc` — what the function does
-- `:see-also` — related fns (vector of strings)
-- `:example` — inline usage
+Every public `defn` MUST be documented. Two equivalent forms, pick by need:
 
-Skip metadata on private `defn-` unless behavior is subtle.
+1. **String docstring** (default) — a plain string after the fn name. This is
+   the house style for the vast majority of public fns. Phel stores it as the
+   fn's `:doc` meta, so it is REPL/`phel doc` queryable just like the map form.
+   ```phel
+   (defn gain-life "Bump :lives by one, capped at the soulsphere cap." [world] ...)
+   ```
+2. **Metadata map** — `{:doc "..." :see-also [...] :example "..."}` after the fn
+   name. Use this when a fn is a subsystem entry point and benefits from
+   cross-links (`:see-also`) or a worked usage (`:example`). `format.phel` and
+   the central APIs (e.g. `build-world`, `cast-frame`, `tick-shooting`) use it.
+   ```phel
+   (defn format-duration
+     {:doc "Format a second count as a clock string..."
+      :see-also ["end-rows"]
+      :example "(format-duration 3725) ; => \"1:02:05\""}
+     [secs] ...)
+   ```
+
+Rules: `:doc` text must match current behaviour; `:see-also` only names fns that
+exist and genuinely relate; `:example` must be correct (omit it rather than
+guess). Do NOT churn a clear string docstring into the map form just for
+uniformity - only upgrade when you are actually adding `:see-also`/`:example`.
+
+Skip docstrings on private `defn-` unless behaviour is subtle (a short `;;`
+comment is fine there).
 
 ## Comments
 

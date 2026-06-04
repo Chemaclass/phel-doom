@@ -1,7 +1,7 @@
 ---
 description: Tighten and de-duplicate the CHANGELOG.md `## [Unreleased]` notes, then commit + push
 argument-hint: ""
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools: "Read, Edit, Bash(git *)"
 target: claude
 ---

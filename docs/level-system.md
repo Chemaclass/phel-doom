@@ -12,7 +12,7 @@
 | 4 | barons | random + blue lock | 5 barons |
 | 5 | cyberdemons | random + red lock | 7 cyberdemons |
 | 6 | spectres | random mix | 4 spectres + 2 imps |
-| 7 | revenants | random mix | 4 revenants + 2 demons |
+| 7 | revenants | random mix + yellow lock | 4 revenants + 2 demons |
 | 8 | archvile court | random mix | 2 archviles + 3 cacos + 2 mancubi |
 | 9 | the brood | random mix | 3 pinkies + 3 barons + 2 mancubi |
 | 10 | the final | hand-authored boss arena | 1 cyberdemon boss (50 HP) + 2 imps (max 1 alive) |
@@ -21,7 +21,7 @@
 
 L1-L5: single-type procgen. L6-L9: mixed-monster procgen. L10: hand-authored arena with secrets + switches.
 
-Non-locked procgen levels seed up to 2 secret passages (seen in [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4/L5) skip seeding to prevent bypassing the keycard door.
+Non-locked procgen levels seed up to 2 secret passages (seen in [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4/L5/L7) skip seeding to prevent bypassing the keycard door.
 
 ```phel
 (def levels
@@ -54,7 +54,7 @@ Optional:
 | Field | Meaning |
 |---|---|
 | `:enemy-lives` | Override the catalog's `:default-lives` (single-type entries only) |
-| `:door-lock`   | `:blue` / `:red` - adds a matching keycard pickup and locks the exit |
+| `:door-lock`   | `:blue` / `:red` / `:yellow` - adds a matching keycard pickup and locks the exit |
 | `:layout`      | Hand-authored ASCII grid (vector of strings) - bypasses `random-grid` |
 
 ### Mixed-monster rooms
@@ -76,7 +76,7 @@ When `:enemies` is a vector, each spec spawns its own count + HP and the enemy c
 |---|---|
 | `#` / `.` | wall / floor |
 | `@` | player spawn |
-| `D` / `B` / `R` / `X` | unlocked / blue / red / boss-locked door |
+| `D` / `B` / `R` / `Y` / `X` | unlocked / blue / red / yellow / boss-locked door |
 | `S` | secret wall (press F to reveal) |
 | `T` | switch (toggles target cells via `:switches` config) |
 

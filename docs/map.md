@@ -14,13 +14,14 @@
 (def cell-secret    6)  ; hidden passage: looks + blocks like a wall until the player reveals it with F
 (def cell-switch-off 7) ; inactive switch: blocks like a wall, F-press flips to cell-switch-on + mutates target cells
 (def cell-switch-on  8) ; activated switch: same blocking + a second F-press reverts to cell-switch-off + targets
+(def cell-door-yellow 9) ; yellow-keyed door: blocks until player holds :yellow keycard
 ```
 
-Every cell is one of these ints. Constants exported so no module uses raw `0/1/2/3/4/5` literals. `(= cell-door (cell g x y))` reads as purpose.
+Every cell is one of these ints. Constants exported so no module uses raw `0/1/2/3/4/5/9` literals. `(= cell-door (cell g x y))` reads as purpose.
 
 `lock-colours` maps locked-door cell values to keycard keywords:
 ```phel
-{3 :blue   4 :red   5 :boss}
+{3 :blue   4 :red   5 :boss   9 :yellow}
 ```
 
 `:boss` is a synthetic "colour" - no physical keycard item ever spawns for it; the kw is granted automatically by `combat/maybe-unlock-boss-door` when the boss is killed on a `:door-lock :boss` level.

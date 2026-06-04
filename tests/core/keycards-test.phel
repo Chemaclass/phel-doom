@@ -1,6 +1,6 @@
 (ns phel-doom-tests.core.keycards-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.map :refer [cell-door-boss door-lock door? find-door-cell missing-key-for parse-layout passable? wall?]))
+  (:require phel-doom.core.map :refer [cell-door-boss cell-door-yellow door-lock door? find-door-cell missing-key-for parse-layout passable? wall?]))
 
 (def grid-with-doors
   ;; Row 1: wall, cell-door, cell-door-blue, cell-door-red, wall.
@@ -109,3 +109,40 @@
                            "#####"])
         g   (:grid out)]
     (is (= cell-door-boss (get-in g [1 4])))))
+
+;; ---------------------------------------------------------------------
+;; Yellow-locked door (cell-door-yellow = 9). The third physical
+;; keycard colour: a yellow keycard spawns on its level, and picking it
+;; up conj's `:yellow` into :held-keys. The standard passable? /
+;; missing-key-for / door? machinery then unlocks it via the same flow
+;; as :blue / :red. Gates the Level 7 exit.
+;; ---------------------------------------------------------------------
+
+(def grid-with-yellow-door
+  [[1 1 1 1 1]
+   [1 0 0 0 9]   ; cell-door-yellow at (4, 1)
+   [1 1 1 1 1]])
+
+(deftest test-yellow-door-is-a-door
+  (is (= true (door? grid-with-yellow-door 4 1))))
+
+(deftest test-yellow-door-lock-returns-yellow-kw
+  (is (= :yellow (door-lock grid-with-yellow-door 4 1))))
+
+(deftest test-yellow-door-blocks-without-key
+  (is (= false (passable? grid-with-yellow-door #{} 4 1)))
+  (is (= false (passable? grid-with-yellow-door #{:blue :red} 4 1))))
+
+(deftest test-yellow-door-opens-with-yellow-key
+  (is (= true (passable? grid-with-yellow-door #{:yellow} 4 1))))
+
+(deftest test-missing-key-for-yellow-door
+  (is (= :yellow (missing-key-for grid-with-yellow-door #{} 4 1)))
+  (is (= nil     (missing-key-for grid-with-yellow-door #{:yellow} 4 1))))
+
+(deftest test-parse-layout-y-char-produces-yellow-door
+  (let [out (parse-layout ["#####"
+                           "#.@.Y"
+                           "#####"])
+        g   (:grid out)]
+    (is (= cell-door-yellow (get-in g [1 4])))))

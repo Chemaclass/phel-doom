@@ -4,7 +4,7 @@
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
   (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade sky-code floor-code door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright char-aspect shade-table shade-code-table shade-table-blood shade-code-table-blood])
   (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
-  (:require phel-doom.io.render.hud :refer [minimap-door minimap-door-pulse minimap-rows hud-debug-line hud-line-str help-menu-string settings-menu-string])
+  (:require phel-doom.io.render.hud :refer [minimap-door minimap-door-pulse minimap-rows split-map-rows hud-debug-line hud-line-str help-menu-string settings-menu-string])
   (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-wall-lights paint-crosshair paint-intro-splash paint-locked-bump paint-door-face paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-flicker paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-blood-fx-into paint-pickups-into paint-projectiles-into build-blood-cols])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
   (:require phel-doom.core.perf :refer [render-scale])
@@ -721,7 +721,11 @@
             p15b        (paint-berserk-badge      p15 t stats vw)
             p15c        (paint-invuln-badge       p15b t stats vw)
             p16         (paint-hearts-hud         p15c t stats bloody?)
-            p17         (paint-pistol-hud         p16 stats vw vh floor-gradient)
+            ;; Demo phase 1 hides the weapon: skip the gun sprite so the
+            ;; reveal is a pure raycaster with nothing in hand.
+            p17         (if (:demo-hide-weapon? world)
+                          p16
+                          (paint-pistol-hud p16 stats vw vh floor-gradient))
             p18         (paint-empty-click        p17 stats vw vh)
             p19         (paint-reload-reminder    p18 stats vw vh)
             p19b        (paint-locked-bump        p19 stats vw vh)
@@ -793,6 +797,55 @@
                     :php-mem      (php/memory_get_usage true)
                     :php-mem-peak (php/memory_get_peak_usage true))))))
 
+(defn- split-frame->string
+  "Build the full ANSI string for one split-layout frame.
+
+   Layout: left half = full 3D raycast at half the terminal width;
+   right half = 2D top-down map panel that fills the viewport height.
+
+   Strategy: call `frame->string` with `half-cols` so the existing
+   pipeline casts fewer rays and renders the 3D view correctly into
+   a narrower viewport. Then overlay the right-hand map panel row by
+   row using absolute cursor positioning (`\\e[r;cH`), writing each
+   pre-built map row starting at column `half-cols + 2` (the `+2`
+   leaves a 1-cell separator column between the two panels for
+   visual clarity).
+
+   The map panel row count is clamped to `vh` (total rows minus HUD
+   footer). Each map row is exactly `panel-w` characters; surplus
+   terminal columns past `cols` are never touched."
+  [world stats cols rows]
+  (let [half-cols    (php/max 20 (php/intdiv cols 2))
+        panel-col    (php/+ half-cols 2)
+        panel-w      (php/max 10 (php/- cols panel-col))
+        ;; Re-use layout just for vh (hud-rows-for) with the FULL cols
+        ;; so the HUD footer line stays at the correct position.
+        {:keys [vh]} (layout cols rows
+                             (count (first (:grid world)))
+                             stats)
+        ;; Build the 3D left panel using the normal pipeline but at
+        ;; half the column count. frame->string casts half-cols rays,
+        ;; so the left panel is proportionally correct, not squashed.
+        left-str     (frame->string world stats half-cols rows)
+        ;; Build the 2D right panel rows. Uses the pulsing door glyph.
+        t            (or (get stats :game-time) 0.0)
+        door-bright? (pulse t pulse-freq-door)
+        mini-door    (if door-bright? minimap-door-pulse minimap-door)
+        map-rows     (split-map-rows world mini-door panel-w vh)
+        ;; Compose: start with the full left-panel string (already
+        ;; positioned from cursor-home), then cursor-jump to each
+        ;; right-panel row and paint the map row.
+        parts        (buf-mk)]
+    (buf-push parts left-str)
+    ;; Paint the divider column and map rows using absolute positioning.
+    ;; Row numbers are 1-based in ANSI. The divider is a dim vertical
+    ;; bar at column `half-cols + 1`.
+    (dotimes [r vh]
+             (buf-push parts (str "\e[" (php/+ r 1) ";" (php/+ half-cols 1) "H\e[2m│\e[0m"))
+             (buf-push parts (str "\e[" (php/+ r 1) ";" panel-col "H"
+                                  (or (buf-get map-rows r) ""))))
+    (php/implode "" parts)))
+
 (defn render!
   "Move cursor home and overwrite the previous frame in place. Avoids
    the full-screen clear that would otherwise flicker each frame.
@@ -803,25 +856,30 @@
    as a snap-shake on damage. When :debug? is set, also samples
    microtime around `frame->string` and updates `perf-snapshot` so the
    next frame's HUD can paint the F3 overlay; the work is gated so
-   the off path pays nothing beyond a single key read."
+   the off path pays nothing beyond a single key read.
+   When `:split-map?` is set on `world`, renders the split-layout demo
+   mode: left half = 3D raycast, right half = 2D top-down map."
   [world stats cols rows]
-  (let [iframes (or (get stats :iframes) 0.0)
-        shake?  (php/> iframes 0.75)
-        t       (or (get stats :game-time) 0.0)
-        debug?  (get stats :debug?)
-        shake-x (if shake?
-                  (php/+ 1 (mod (php/intval (php/* t 50.0)) 3))
-                  1)]
+  (let [iframes    (or (get stats :iframes) 0.0)
+        shake?     (php/> iframes 0.75)
+        t          (or (get stats :game-time) 0.0)
+        debug?     (get stats :debug?)
+        split-map? (:split-map? world)
+        shake-x    (if shake?
+                     (php/+ 1 (mod (php/intval (php/* t 50.0)) 3))
+                     1)]
     (print (str "\e[1;" shake-x "H"))
     (if (php/> (or (get stats :flash-secs) 0.0) 0.0)
       (print (white-flash-frame cols rows))
-      (if debug?
-        (let [t-start  (php/microtime true)
-              frame    (frame->string world stats cols rows)
-              total-ms (php/* (php/- (php/microtime true) t-start) 1000.0)]
-          (print frame)
-          (update-perf-snapshot! frame total-ms))
-        (print (frame->string world stats cols rows)))))
+      (if split-map?
+        (print (split-frame->string world stats cols rows))
+        (if debug?
+          (let [t-start  (php/microtime true)
+                frame    (frame->string world stats cols rows)
+                total-ms (php/* (php/- (php/microtime true) t-start) 1000.0)]
+            (print frame)
+            (update-perf-snapshot! frame total-ms))
+          (print (frame->string world stats cols rows))))))
   (php/flush))
 ;; =====================================================================
 ;; § End screens (death / victory)

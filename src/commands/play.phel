@@ -21,6 +21,7 @@
   (:require phel-doom.io.settings :refer [load-settings save-settings!])
   (:require phel-doom.io.savegame :refer [save-game! load-game])
   (:require phel-doom.io.demo     :as demo)
+  (:require phel-doom.demo.phases :as showcase)
   (:require phel-doom.core.rng    :as rng)
   (:require phel-doom.core.level    :refer [build-world num-levels place-secret-reward])
   (:require phel-doom.core.perf     :refer [target-frame-us])
@@ -980,8 +981,12 @@
    weapon stays testable without grinding for boxes. `start-level`
    (from --level / -l) sets where the run begins — 1..num-levels,
    clamped. Death + retry reset to L1 (the start-level only seeds
-   the initial loop entry)."
-  [diff god? armory? full-map? start-level init-seed init-settings]
+   the initial loop entry). `split-map?` (from --split-map) enables
+   the split-layout demo mode: left half = 3D raycast, right half =
+   2D top-down map panel. `demo-phase` (nil for normal play, 1..4 for
+   the tech-talk showcase) applies a per-phase world transform after
+   build-world (see phel-doom.demo.phases/apply-phase)."
+  [diff god? armory? full-map? split-map? demo-phase start-level init-seed init-settings]
   (loop [level       (php/max 1 (php/min num-levels (or start-level 1)))
          lives       max-lives
          carry-kills 0
@@ -1014,7 +1019,8 @@
           w1     (if god? (assoc w0 :god? true) w0)
           w1a    (if armory? (assoc w1 :armory? true) w1)
           w1b    (if full-map? (assoc w1a :full-map? true) w1a)
-          w2     (assoc w1b :show-map show-map? :sound-on sound-on?
+          w1c    (if split-map? (assoc w1b :split-map? true) w1b)
+          w2     (assoc w1c :show-map show-map? :sound-on sound-on?
                         :settings settings :settings-cursor 0)
           w3     (if (nil? weapon)
                    w2
@@ -1028,7 +1034,10 @@
                             :weapon-state stash
                             :mag          (:mag loaded)
                             :ammo-reserve (:reserve loaded))))
-          result (game-loop w3)]
+          ;; Tech-talk showcase: strip subsystems this phase hasn't
+          ;; revealed yet. Pure world->world; no-op for normal play.
+          w3d    (if demo-phase (showcase/apply-phase demo-phase w3) w3)
+          result (game-loop w3d)]
       (cond
         (= result :quit)
         nil
@@ -1156,6 +1165,7 @@
         god?        (cli/opt ctx "god")
         armory?     (cli/opt ctx "armory")
         full-map?   (cli/opt ctx "full-map")
+        split-map?  (cli/opt ctx "split-map")
         lv-raw      (cli/opt ctx "level")
         ;; CLI gives strings; coerce to int. nil / empty → nil → L1.
         lv          (cond
@@ -1196,7 +1206,7 @@
           ;; levels + end screens). N-toggle starts/stops it mid-run;
           ;; teardown always stops it so no loop process is orphaned.
           (start-ambient!)
-          (run-levels diff god? armory? full-map? lv init-seed settings)
+          (run-levels diff god? armory? full-map? split-map? nil lv init-seed settings)
           (stop-ambient!)
           (when record? (demo/save-recording! record-path))
           (demo/reset-off!)
@@ -1205,6 +1215,28 @@
           (cli/success ctx "Thanks for playing.")
           (print-credits)
           0)))))
+
+(defn run-demo-session
+  "Menu-less tech-talk showcase run for `phase` (1..num-phases). Forces
+   god + split-map + full-map and threads the phase through run-levels,
+   which applies the per-phase world transform after build-world. Same
+   loop, teardown, and ambient lifecycle as a normal run - only the
+   start menu and record/replay are skipped. `ctx` drives the closing
+   success line. Returns the process exit code."
+  [ctx phase]
+  (init-input!)
+  (let [settings0 (load-settings)]
+    (apply-audio-settings! settings0)
+    (demo/reset-off!)
+    (clear-screen)
+    (start-ambient!)
+    (run-levels :normal true false true true phase 1 (rng/fresh-seed) settings0)
+    (stop-ambient!)
+    (demo/reset-off!)
+    (restore!)
+    (clear-screen)
+    (cli/success ctx (str "Demo phase " phase " - thanks for watching."))
+    0))
 
 (def play-command
   {:name "play"
@@ -1228,6 +1260,9 @@
            :short "f"
            :mode  :none
            :doc   "Reveal the whole minimap from the start (skip fog-of-war). Useful for level editors / debugging."}
+          {:name "split-map"
+           :mode  :none
+           :doc   "Split-layout demo mode: left half = 3D raycast, right half = full 2D top-down map. Pairs with --god --full-map for the tech-talk showcase."}
           {:name    "level"
            :short   "l"
            :mode    :optional

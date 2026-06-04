@@ -11,6 +11,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+- Tech-talk demo showcase: `phel run phel-doom.main demo --phase 1..4` runs a progressive reveal of the game (1 bare raycaster, 2 +pistol, 3 +enemies, 4 +interior cover walls) in a split-screen layout (left 3D view, right full 2D map). Reuses the real engine and play loop; the per-phase transform is a pure `world->world` step. See `docs/demo-showcase.md`.
+- Split-screen render mode (`--split-map` on `play`, always on in `demo`): left half 3D raycast, right half full-height 2D top-down map.
 - Level 7: a yellow-keyed locked exit and a yellow keycard pickup - the third keycard colour (classic DOOM blue/yellow/red).
 
 ### Changed

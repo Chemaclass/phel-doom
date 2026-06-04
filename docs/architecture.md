@@ -6,6 +6,9 @@ Pure `core/` (deterministic logic) → composition `glue/` (pure wiring) → eff
 src/
 ├── main.phel                        ; phel.cli wiring, CLI entrypoint
 ├── commands/play.phel               ; orchestration (game-loop, run-levels, tick-world)
+├── commands/demo.phel               ; tech-talk showcase command (progressive reveal)
+├── demo/                            ; pure tech-talk demo logic, isolated from the game
+│   └── phases.phel                  ; per-phase world->world transform (see docs/demo-showcase.md)
 ├── core/                            ; pure, deterministic, no IO
 │   ├── state.phel                   ; world + player maps, gain-life, max-lives
 │   ├── map.phel                     ; grid generators, cell constants, wall? / door?

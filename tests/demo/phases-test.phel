@@ -1,0 +1,87 @@
+(ns phel-doom-tests.demo.phases-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.state :refer [new-player new-world with-enemies])
+  (:require phel-doom.core.map :refer [cell cell-wall cell-floor])
+  (:require phel-doom.demo.phases :refer [num-phases valid-phase? clamp-phase apply-phase phase-opts]))
+
+;; 5x5 enclosed room with a single interior wall at (2,2). Anything
+;; build-world produces is a superset of this shape, so the small
+;; fixture exercises the same flatten / strip paths.
+(def W cell-wall)
+(def F cell-floor)
+
+(defn- fixture-world []
+  (let [grid [[W W W W W]
+              [W F F F W]
+              [W F W F W]
+              [W F F F W]
+              [W W W W W]]]
+    (-> (new-world grid (new-player 1.5 1.5 0.0))
+        (with-enemies [{:type :imp :x 2.5 :y 2.5}])
+        (assoc :hearts [{:x 1.5 :y 3.5}]
+               :weapon-pickups [{:weapon :shotgun :x 3.5 :y 1.5}]
+               :ammo-boxes [{:x 2.5 :y 1.5}]))))
+
+(deftest clamp-phase-coerces
+  (is (= 1 (clamp-phase nil))    "nil -> 1")
+  (is (= 1 (clamp-phase 0))      "below floor -> 1")
+  (is (= 1 (clamp-phase "junk")) "non-int -> 1")
+  (is (= num-phases (clamp-phase 99)) "above cap -> num-phases")
+  (is (= 3 (clamp-phase 3))      "in range passes through"))
+
+(deftest valid-phase-bounds
+  (is (valid-phase? 1)        "1 is valid")
+  (is (valid-phase? num-phases) "top is valid")
+  (is (not (valid-phase? 0))  "0 invalid")
+  (is (not (valid-phase? (php/+ num-phases 1))) "over cap invalid")
+  (is (not (valid-phase? "1")) "string invalid"))
+
+(deftest phase-opts-shape
+  (is (get-in phase-opts [1 :arena?])       "p1 is an arena")
+  (is (not (get-in phase-opts [1 :weapon?])) "p1 hides the weapon")
+  (is (not (get-in phase-opts [1 :enemies?])) "p1 has no enemies")
+  (is (get-in phase-opts [3 :enemies?])     "p3 brings enemies")
+  (is (not (get-in phase-opts [4 :arena?])) "p4 keeps real interior walls"))
+
+(deftest phase1-is-empty-arena
+  (let [w (apply-phase 1 (fixture-world))]
+    (is (= cell-floor (cell (:grid w) 2 2)) "interior wall flattened to floor")
+    (is (= cell-wall (cell (:grid w) 0 0))  "border stays wall")
+    (is (= cell-wall (cell (:grid w) 4 2))  "right border stays wall")
+    (is (empty? (:enemies w))               "no enemies in p1")
+    (is (empty? (:hearts w))                "pickups cleared")
+    (is (empty? (:weapon-pickups w))        "weapon pickups cleared")
+    (is (empty? (:ammo-boxes w))            "ammo cleared")
+    (is (:demo-hide-weapon? w)              "weapon hidden in p1")
+    (is (:split-map? w)                     "split map on")
+    (is (:full-map? w)                      "full map on")
+    (is (:god? w)                           "god on")
+    (is (= 1 (:demo-phase w))               "phase stamped")))
+
+(deftest phase1-rebuilds-pgrid
+  (let [w (apply-phase 1 (fixture-world))]
+    (is (= cell-floor (php/aget (php/aget (:pgrid w) 2) 2))
+        "pgrid synced to flattened grid (cell 2,2 now floor)")))
+
+(deftest phase2-adds-weapon-keeps-arena
+  (let [w (apply-phase 2 (fixture-world))]
+    (is (= cell-floor (cell (:grid w) 2 2)) "still an arena")
+    (is (empty? (:enemies w))               "still no enemies")
+    (is (not (:demo-hide-weapon? w))        "weapon now visible")))
+
+(deftest phase3-adds-enemies
+  (let [w (apply-phase 3 (fixture-world))]
+    (is (= cell-floor (cell (:grid w) 2 2)) "still an arena")
+    (is (not (empty? (:enemies w)))         "enemies preserved")
+    (is (not (:demo-hide-weapon? w))        "weapon visible")))
+
+(deftest phase4-keeps-interior-walls
+  (let [w (apply-phase 4 (fixture-world))]
+    (is (= cell-wall (cell (:grid w) 2 2)) "interior wall preserved")
+    (is (not (empty? (:enemies w)))        "enemies preserved")
+    (is (empty? (:hearts w))               "pickups still cleared")
+    (is (= 4 (:demo-phase w))              "phase stamped")))
+
+(deftest clamp-applies-to-out-of-range-phase
+  (let [w (apply-phase 99 (fixture-world))]
+    (is (= num-phases (:demo-phase w)) "out-of-range phase clamped before transform")))

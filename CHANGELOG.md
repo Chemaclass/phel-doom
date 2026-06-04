@@ -11,17 +11,16 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Tech-talk demo showcase: `phel run phel-doom.main demo --phase 1..4` runs a progressive reveal of the game (1 bare raycaster in an arena with a central pillar, 2 +pistol, 3 +enemies, 4 +interior cover walls), with the full minimap on so the 2D map rides alongside the 3D view. Reuses the real engine and play loop; the per-phase transform is a pure `world->world` step. See `docs/demo-showcase.md`.
-- Level 7: a yellow-keyed locked exit and a yellow keycard pickup - the third keycard colour (classic DOOM blue/yellow/red).
+- Tech-talk demo (`demo --phase 1..4`): a progressive reveal - 1 bare raycaster (arena + central pillar), 2 +pistol, 3 +enemies, 4 +interior cover walls - with the full minimap on. Reuses the real engine via a pure `world->world` per-phase transform. See `docs/demo-showcase.md`.
+- Level 7: a yellow-keyed locked exit + yellow keycard pickup - the third keycard colour (blue/yellow/red).
 
 ### Changed
 
-- Weapon fire report is distance-attenuated by the enemy hit: full volume point-blank, down to a ~0.1 floor when far, full on a clean miss. Scaled by your SFX setting.
-- Maintainability pass (no gameplay change): `render.phel` split into a facade plus `render/{buffer,palette,frame-math,hud,paint,main}`; all in-tick sfx flow through the pure `:sfx` queue so `tick-world` is effect-free; pulse cadences and the near-death haze ramp are named constants; docstring, engine-cache, and `enemy` / `enemy-ai` split conventions documented.
+- Weapon fire report is distance-attenuated: full volume point-blank, down to a ~0.1 floor when far, full on a clean miss. Scaled by your SFX setting.
 
 ### Fixed
 
-- SFX volume setting is respected: the audio probe no longer resets the SFX scalar to full on the first sound, so shots stayed loud at low SFX %. Now scaled correctly against the music bed.
+- SFX volume setting is now respected: the audio probe no longer resets the SFX scalar to full on the first sound, so shots no longer stay loud at low SFX %.
 
 ## [0.10.0] - 2026-06-03
 

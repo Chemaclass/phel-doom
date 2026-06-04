@@ -1,7 +1,7 @@
 ---
 description: Launch the game to manually verify a change. Required smoke test for io/ work.
 argument-hint: "[check-list]"
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools: "Bash(composer play:*), Bash(make play:*)"
 target: claude
 ---

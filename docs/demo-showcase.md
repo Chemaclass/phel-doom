@@ -34,13 +34,13 @@ honours.
 
 | Phase | Arena? | Enemies | Weapon | Reveals |
 |-------|--------|---------|--------|---------|
-| 1 | empty room (outer walls only) | no | hidden | the pure raycaster |
-| 2 | empty room | no | pistol | firing + weapon HUD |
-| 3 | empty room | yes | pistol | spawn + AI |
+| 1 | open room + central pillar | no | hidden | the pure raycaster |
+| 2 | open room + central pillar | no | pistol | firing + weapon HUD |
+| 3 | open room + central pillar | yes | pistol | spawn + AI |
 | 4 | real generated geometry | yes | pistol | interior cover walls |
 
 The interior cover walls ("brinks") are deliberately the LAST reveal, so
-phases 1-3 flatten the level to an empty arena and only phase 4 keeps the
+phases 1-3 flatten the level to an open arena and only phase 4 keeps the
 real generated maze.
 
 ## How a phase is applied
@@ -48,8 +48,11 @@ real generated maze.
 `phel-doom.demo.phases/apply-phase` (`src/demo/phases.phel`) is a pure
 `world -> world` transform:
 
-- **arena** (phases 1-3): `flatten-interior` rewrites the grid so only the
-  outer border stays wall, everything inside becomes floor, then rebuilds
+- **arena** (phases 1-3): `flatten-interior` rewrites the grid so the outer
+  border stays wall, everything inside becomes floor, and a small 3x3 pillar
+  is stamped in the centre (`pillar-half`) so the bare raycaster has a wall to
+  render. The pillar is carved around the player and any enemy so a fresh-seed
+  spawn is never trapped, and is skipped on grids under 8 a side. Rebuilds
   `:pgrid` so the raycaster's hot-path view stays in sync.
 - **enemies** (off until phase 3): `with-enemies world []`.
 - **weapon** (off in phase 1): sets the generic `:hide-weapon?` flag, which

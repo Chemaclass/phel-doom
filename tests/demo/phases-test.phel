@@ -22,6 +22,17 @@
                :weapon-pickups [{:weapon :shotgun :x 3.5 :y 1.5}]
                :ammo-boxes [{:x 2.5 :y 1.5}]))))
 
+;; 9x9 empty enclosed room (no interior walls), player tucked in a
+;; corner - big enough (>= 8 a side) that the central pillar fires and
+;; lands clear of the spawn. Centre cell is (4,4); the 3x3 pillar spans
+;; (3..5, 3..5).
+(defn- big-fixture-world []
+  (let [wall-row [W W W W W W W W W]
+        open-row [W F F F F F F F W]
+        grid     [wall-row open-row open-row open-row open-row
+                  open-row open-row open-row wall-row]]
+    (new-world grid (new-player 1.5 1.5 0.0))))
+
 (deftest clamp-phase-coerces
   (is (= 1 (clamp-phase nil))    "nil -> 1")
   (is (= 1 (clamp-phase 0))      "below floor -> 1")
@@ -82,6 +93,27 @@
   (let [w (apply-phase 1 (fixture-world))]
     (is (= cell-floor (php/aget (php/aget (:pgrid w) 2) 2))
         "pgrid synced to flattened grid (cell 2,2 now floor)")))
+
+(deftest phase1-stamps-central-pillar
+  (let [w (apply-phase 1 (big-fixture-world))]
+    (is (= cell-wall (cell (:grid w) 4 4))  "pillar centre is wall")
+    (is (= cell-wall (cell (:grid w) 3 3))  "pillar corner is wall")
+    (is (= cell-wall (cell (:grid w) 5 5))  "pillar corner is wall")
+    (is (= cell-floor (cell (:grid w) 2 2)) "floor remains just outside the pillar")
+    (is (= cell-floor (cell (:grid w) 1 1)) "player corner stays floor")))
+
+(deftest pillar-carved-around-occupants
+  ;; A fresh seed can spawn the player or an enemy on the centre cell; the
+  ;; pillar must be carved around them so nothing is walled in.
+  (let [base (with-enemies (big-fixture-world) [{:type :imp :x 4.5 :y 4.5 :alive true}])
+        w    (apply-phase 3 base)]
+    (is (= cell-floor (cell (:grid w) 4 4)) "enemy cell carved out of the pillar")
+    (is (= cell-wall (cell (:grid w) 3 4))  "rest of the pillar stays solid")))
+
+(deftest small-grid-skips-pillar
+  ;; The 5x5 fixture is below the 8-a-side floor, so no pillar swallows it.
+  (let [w (apply-phase 1 (fixture-world))]
+    (is (= cell-floor (cell (:grid w) 2 2)) "centre stays floor on a tiny arena")))
 
 (deftest phase2-adds-weapon-keeps-arena
   (let [w (apply-phase 2 (fixture-world))]

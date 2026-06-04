@@ -11,7 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Tech-talk demo showcase: `phel run phel-doom.main demo --phase 1..4` runs a progressive reveal of the game (1 bare raycaster, 2 +pistol, 3 +enemies, 4 +interior cover walls), with the full minimap on so the 2D map rides alongside the 3D view. Reuses the real engine and play loop; the per-phase transform is a pure `world->world` step. See `docs/demo-showcase.md`.
+- Tech-talk demo showcase: `phel run phel-doom.main demo --phase 1..4` runs a progressive reveal of the game (1 bare raycaster in an arena with a central pillar, 2 +pistol, 3 +enemies, 4 +interior cover walls), with the full minimap on so the 2D map rides alongside the 3D view. Reuses the real engine and play loop; the per-phase transform is a pure `world->world` step. See `docs/demo-showcase.md`.
 - Level 7: a yellow-keyed locked exit and a yellow keycard pickup - the third keycard colour (classic DOOM blue/yellow/red).
 
 ### Changed

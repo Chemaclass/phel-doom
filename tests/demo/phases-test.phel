@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.state :refer [new-player new-world with-enemies])
   (:require phel-doom.core.map :refer [cell cell-wall cell-floor])
-  (:require phel-doom.demo.phases :refer [num-phases valid-phase? clamp-phase apply-phase phase-opts]))
+  (:require phel-doom.demo.phases :refer [num-phases valid-phase? clamp-phase enemies-in-phase? apply-phase phase-opts]))
 
 ;; 5x5 enclosed room with a single interior wall at (2,2). Anything
 ;; build-world produces is a superset of this shape, so the small
@@ -42,6 +42,20 @@
   (is (not (get-in phase-opts [1 :enemies?])) "p1 has no enemies")
   (is (get-in phase-opts [3 :enemies?])     "p3 brings enemies")
   (is (not (get-in phase-opts [4 :arena?])) "p4 keeps real interior walls"))
+
+(deftest enemies-in-phase-gates-audio
+  (is (not (enemies-in-phase? 1)) "p1 silent")
+  (is (not (enemies-in-phase? 2)) "p2 silent")
+  (is (enemies-in-phase? 3)       "p3 has audio")
+  (is (enemies-in-phase? 4)       "p4 has audio")
+  (is (not (enemies-in-phase? 0)) "low junk clamps to p1 (silent)")
+  (is (enemies-in-phase? 99)      "high clamps to p4 (audio)"))
+
+(deftest sound-follows-enemies
+  (is (not (:sound-on (apply-phase 1 (fixture-world)))) "p1 sound off")
+  (is (not (:sound-on (apply-phase 2 (fixture-world)))) "p2 sound off")
+  (is (:sound-on (apply-phase 3 (fixture-world)))       "p3 sound on")
+  (is (:sound-on (apply-phase 4 (fixture-world)))       "p4 sound on"))
 
 (deftest phase1-is-empty-arena
   (let [w (apply-phase 1 (fixture-world))]

@@ -59,8 +59,9 @@ real generated maze.
 - **pickups** (off in every phase): all pickup-spawn vectors cleared so the
   arena stays clean.
 
-The transform stamps `:show-map`, `:full-map?`, `:god?`, and `:demo-phase` -
-all existing game flags except `:demo-phase`.
+The transform sets only generic flags the game already honours - `:show-map` +
+`:full-map?` (the minimap, full), `:god?`, `:hide-weapon?`, `:hide-level-name?` -
+plus `:demo-phase`, a diagnostic marker nothing branches on.
 
 ## Wiring
 

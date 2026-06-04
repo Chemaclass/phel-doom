@@ -1,0 +1,142 @@
+(ns phel-doom-tests.demo.phases-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.state :refer [new-player new-world with-enemies])
+  (:require phel-doom.core.map :refer [cell cell-wall cell-floor])
+  (:require phel-doom.demo.phases :refer [num-phases valid-phase? clamp-phase enemies-in-phase? apply-phase phase-opts]))
+
+;; 5x5 enclosed room with a single interior wall at (2,2). Anything
+;; build-world produces is a superset of this shape, so the small
+;; fixture exercises the same flatten / strip paths.
+(def W cell-wall)
+(def F cell-floor)
+
+(defn- fixture-world []
+  (let [grid [[W W W W W]
+              [W F F F W]
+              [W F W F W]
+              [W F F F W]
+              [W W W W W]]]
+    (-> (new-world grid (new-player 1.5 1.5 0.0))
+        (with-enemies [{:type :imp :x 2.5 :y 2.5}])
+        (assoc :hearts [{:x 1.5 :y 3.5}]
+               :weapon-pickups [{:weapon :shotgun :x 3.5 :y 1.5}]
+               :ammo-boxes [{:x 2.5 :y 1.5}]))))
+
+;; 9x9 empty enclosed room (no interior walls), player tucked in a
+;; corner - big enough (>= 8 a side) that the central pillar fires and
+;; lands clear of the spawn. Centre cell is (4,4); the 3x3 pillar spans
+;; (3..5, 3..5).
+(defn- big-fixture-world []
+  (let [wall-row [W W W W W W W W W]
+        open-row [W F F F F F F F W]
+        grid     [wall-row open-row open-row open-row open-row
+                  open-row open-row open-row wall-row]]
+    (new-world grid (new-player 1.5 1.5 0.0))))
+
+(deftest clamp-phase-coerces
+  (is (= 1 (clamp-phase nil))    "nil -> 1")
+  (is (= 1 (clamp-phase 0))      "below floor -> 1")
+  (is (= 1 (clamp-phase "junk")) "non-int -> 1")
+  (is (= num-phases (clamp-phase 99)) "above cap -> num-phases")
+  (is (= 3 (clamp-phase 3))      "in range passes through"))
+
+(deftest valid-phase-bounds
+  (is (valid-phase? 1)        "1 is valid")
+  (is (valid-phase? num-phases) "top is valid")
+  (is (not (valid-phase? 0))  "0 invalid")
+  (is (not (valid-phase? (php/+ num-phases 1))) "over cap invalid")
+  (is (not (valid-phase? "1")) "string invalid"))
+
+(deftest phase-opts-shape
+  (is (get-in phase-opts [1 :arena?])       "p1 is an arena")
+  (is (not (get-in phase-opts [1 :weapon?])) "p1 hides the weapon")
+  (is (not (get-in phase-opts [1 :enemies?])) "p1 has no enemies")
+  (is (get-in phase-opts [3 :enemies?])     "p3 brings enemies")
+  (is (not (get-in phase-opts [4 :arena?])) "p4 keeps real interior walls"))
+
+(deftest enemies-in-phase-gates-audio
+  (is (not (enemies-in-phase? 1)) "p1 silent")
+  (is (not (enemies-in-phase? 2)) "p2 silent")
+  (is (enemies-in-phase? 3)       "p3 has audio")
+  (is (enemies-in-phase? 4)       "p4 has audio")
+  (is (not (enemies-in-phase? 0)) "low junk clamps to p1 (silent)")
+  (is (enemies-in-phase? 99)      "high clamps to p4 (audio)"))
+
+(deftest sound-follows-enemies
+  (is (not (:sound-on (apply-phase 1 (fixture-world)))) "p1 sound off")
+  (is (not (:sound-on (apply-phase 2 (fixture-world)))) "p2 sound off")
+  (is (:sound-on (apply-phase 3 (fixture-world)))       "p3 sound on")
+  (is (:sound-on (apply-phase 4 (fixture-world)))       "p4 sound on"))
+
+(deftest armory-reserve-pinned-to-99
+  (is (= 99 (:armory-reserve (apply-phase 1 (fixture-world)))) "p1 pins reserve 99")
+  (is (= 99 (:armory-reserve (apply-phase 3 (fixture-world)))) "p3 pins reserve 99"))
+
+(deftest phase1-is-empty-arena
+  (let [w (apply-phase 1 (fixture-world))]
+    (is (= cell-floor (cell (:grid w) 2 2)) "interior wall flattened to floor")
+    (is (= cell-wall (cell (:grid w) 0 0))  "border stays wall")
+    (is (= cell-wall (cell (:grid w) 4 2))  "right border stays wall")
+    (is (empty? (:enemies w))               "no enemies in p1")
+    (is (empty? (:hearts w))                "pickups cleared")
+    (is (empty? (:weapon-pickups w))        "weapon pickups cleared")
+    (is (empty? (:ammo-boxes w))            "ammo cleared")
+    (is (:hide-weapon? w)                   "weapon hidden in p1")
+    (is (:hide-level-name? w)               "enemy-themed level label hidden in p1")
+    (is (:show-map w)                       "minimap shown")
+    (is (:full-map? w)                      "full map on")
+    (is (:god? w)                           "god on")
+    (is (= 0.0 (:intro-secs w))             "intro splash cleared")
+    (is (= 1 (:demo-phase w))               "phase stamped")))
+
+(deftest phase1-rebuilds-pgrid
+  (let [w (apply-phase 1 (fixture-world))]
+    (is (= cell-floor (php/aget (php/aget (:pgrid w) 2) 2))
+        "pgrid synced to flattened grid (cell 2,2 now floor)")))
+
+(deftest phase1-stamps-central-pillar
+  (let [w (apply-phase 1 (big-fixture-world))]
+    (is (= cell-wall (cell (:grid w) 4 4))  "pillar centre is wall")
+    (is (= cell-wall (cell (:grid w) 3 3))  "pillar corner is wall")
+    (is (= cell-wall (cell (:grid w) 5 5))  "pillar corner is wall")
+    (is (= cell-floor (cell (:grid w) 2 2)) "floor remains just outside the pillar")
+    (is (= cell-floor (cell (:grid w) 1 1)) "player corner stays floor")))
+
+(deftest pillar-carved-around-occupants
+  ;; A fresh seed can spawn the player or an enemy on the centre cell; the
+  ;; pillar must be carved around them so nothing is walled in.
+  (let [base (with-enemies (big-fixture-world) [{:type :imp :x 4.5 :y 4.5 :alive true}])
+        w    (apply-phase 3 base)]
+    (is (= cell-floor (cell (:grid w) 4 4)) "enemy cell carved out of the pillar")
+    (is (= cell-wall (cell (:grid w) 3 4))  "rest of the pillar stays solid")))
+
+(deftest small-grid-skips-pillar
+  ;; The 5x5 fixture is below the 8-a-side floor, so no pillar swallows it.
+  (let [w (apply-phase 1 (fixture-world))]
+    (is (= cell-floor (cell (:grid w) 2 2)) "centre stays floor on a tiny arena")))
+
+(deftest phase2-adds-weapon-keeps-arena
+  (let [w (apply-phase 2 (fixture-world))]
+    (is (= cell-floor (cell (:grid w) 2 2)) "still an arena")
+    (is (empty? (:enemies w))               "still no enemies")
+    (is (not (:hide-weapon? w))             "weapon now visible")
+    (is (:hide-level-name? w)               "no enemies yet, level label still hidden")))
+
+(deftest phase3-adds-enemies
+  (let [w (apply-phase 3 (fixture-world))]
+    (is (= cell-floor (cell (:grid w) 2 2)) "still an arena")
+    (is (not (empty? (:enemies w)))         "enemies preserved")
+    (is (not (:hide-weapon? w))             "weapon visible")
+    (is (not (:hide-level-name? w))         "enemies present, level label visible")))
+
+(deftest phase4-keeps-interior-walls
+  (let [w (apply-phase 4 (fixture-world))]
+    (is (= cell-wall (cell (:grid w) 2 2)) "interior wall preserved")
+    (is (not (empty? (:enemies w)))        "enemies preserved")
+    (is (empty? (:hearts w))               "pickups still cleared")
+    (is (not (:hide-level-name? w))        "enemies present, level label visible")
+    (is (= 4 (:demo-phase w))              "phase stamped")))
+
+(deftest clamp-applies-to-out-of-range-phase
+  (let [w (apply-phase 99 (fixture-world))]
+    (is (= num-phases (:demo-phase w)) "out-of-range phase clamped before transform")))

@@ -1,0 +1,40 @@
+(ns phel-doom.commands.demo
+  (:require phel.cli :as cli)
+  (:require phel-doom.commands.play :refer [run-demo-session])
+  (:require phel-doom.demo.phases :as showcase))
+
+;; ---------------------------------------------------------------------
+;; The `demo` subcommand: a progressive-reveal showcase for the tech
+;; talk. It reuses the real play loop end to end - the only thing it
+;; adds is a per-phase world transform (phel-doom.demo.phases) applied
+;; after build-world. See docs/demo-showcase.md.
+;; ---------------------------------------------------------------------
+
+(defn- run-demo [ctx]
+  (let [raw (cli/opt ctx "phase")
+        n   (php/intval raw)]
+    (if (showcase/valid-phase? n)
+      (run-demo-session ctx n)
+      ;; Unknown phase: report it and stop with a non-zero exit instead
+      ;; of silently clamping into a neighbouring phase.
+      (do
+        (cli/error ctx (str "Unknown demo phase \"" raw "\" - valid phases are 1.."
+                            showcase/num-phases "."))
+        1))))
+
+(def demo-command
+  {:name "demo"
+   :doc  "Tech-talk showcase: a progressive raycaster reveal in the
+          full-screen 3D view, with the corner minimap on (full, no fog)
+          and god mode always on. Pick the reveal with --phase / -p:
+            1  bare raycaster (empty arena, no gun/enemies)
+            2  + the pistol
+            3  + enemies
+            4  + interior cover walls (the real geometry)
+          Move WASD / arrows, space fires (phase 2+), Q quits."
+   :opts [{:name    "phase"
+           :short   "p"
+           :mode    :optional
+           :doc     "Showcase phase 1..4 (default 1)."
+           :default "1"}]
+   :run  run-demo})

@@ -1,0 +1,157 @@
+(ns phel-doom.demo.phases
+  (:require phel-doom.core.state :refer [with-enemies rebuild-pgrid])
+  (:require phel-doom.core.map :refer [cell-floor cell-wall]))
+
+;; ---------------------------------------------------------------------
+;; Tech-talk showcase phases. Each phase is a progressive reveal of one
+;; subsystem, layered on top of the real game so the demo IS the game
+;; (same engine, same loop) - never a fork. A phase is expressed as a
+;; pure world->world transform applied AFTER build-world: it strips the
+;; subsystems that phase hasn't introduced yet.
+;;
+;;   P1  bare raycaster - open arena (outer walls + one central pillar),
+;;       no gun, no enemies, no interior cover, no pickups. "Carmack's
+;;       trick, live."
+;;   P2  + the pistol (fire + HUD).
+;;   P3  + enemies (spawn + AI).
+;;   P4  + interior cover walls ("brinks") - the real generated geometry.
+;;
+;; Pickups stay off in every phase: the demo spotlights one mechanic at
+;; a time, and stray hearts/ammo would distract from the reveal.
+;; ---------------------------------------------------------------------
+
+(def num-phases 4)
+
+(def armory-reserve
+  "Reserve ammo pinned on every weapon in the showcase (run with the
+   dev armory on). 99 reads as a clean two-digit 'plenty' in the HUD."
+  99)
+
+(def phase-opts
+  "Per-phase subsystem switches. `:arena?` flattens the level to an
+   open room (outer walls + one central pillar) so the real interior
+   cover is the LAST thing revealed; `:enemies?` keeps the spawned
+   monsters; `:weapon?` keeps the pistol live. `:label` is the caption."
+  {1 {:arena? true  :enemies? false :weapon? false :label "bare raycaster"}
+   2 {:arena? true  :enemies? false :weapon? true  :label "+ pistol"}
+   3 {:arena? true  :enemies? true  :weapon? true  :label "+ enemies"}
+   4 {:arena? false :enemies? true  :weapon? true  :label "+ cover walls"}})
+
+(defn valid-phase?
+  "True when `n` names a real showcase phase (1..num-phases)."
+  [n]
+  (and (php/is_int n) (php/>= n 1) (php/<= n num-phases)))
+
+(defn clamp-phase
+  "Coerce `n` into 1..num-phases, defaulting to 1 for nil / junk."
+  [n]
+  (cond
+    (not (php/is_int n)) 1
+    (php/< n 1)          1
+    (php/> n num-phases) num-phases
+    :else                n))
+
+(defn enemies-in-phase?
+  "True when showcase `phase` keeps the spawned enemies (phase 3+).
+   Drives demo audio: sound (sfx + ambient drone) is on only while
+   there's something to fight."
+  [phase]
+  (boolean (:enemies? (get phase-opts (clamp-phase phase)))))
+
+(def pillar-half
+  "Half-size of the central pillar stamped into the bare arena: 1 -> a
+   3x3 block. Gives the otherwise-empty raycaster room a wall to render."
+  1)
+
+(defn- in-pillar?
+  "True when (x, y) lands in the centred pillar of a `w` x `h` grid.
+   Skipped on grids smaller than 8 a side so the pillar never swallows a
+   tiny arena (keeps the test fixtures and any minimal level open)."
+  [^int x ^int y ^int w ^int h]
+  (and (php/>= w 8) (php/>= h 8)
+       (php/<= (php/abs (php/- x (php/intdiv w 2))) pillar-half)
+       (php/<= (php/abs (php/- y (php/intdiv h 2))) pillar-half)))
+
+(defn- occupied-keys
+  "Set of \"x,y\" cell keys holding the player or any enemy, so the
+   pillar can be carved around them - nothing ever ends up inside a wall
+   even when a fresh seed spawns an occupant near the centre."
+  [world]
+  (let [k   (fn [x y] (str (php/intval x) "," (php/intval y)))
+        p   (:player world)
+        ecs (map (fn [e] (k (:x e) (:y e))) (:enemies world))]
+    (set (cons (k (:x p) (:y p)) ecs))))
+
+(defn- flatten-interior
+  "Replace every interior cell with floor, keeping the outer border as
+   wall, then stamp a small central pillar (`pillar-half`) so the bare
+   arena phases (1-3) have a wall to render. The pillar is carved around
+   the player and any enemy (`occupied-keys`) so a fresh-seed spawn is
+   never trapped in it. Rebuilds :pgrid so the raycaster's hot-path view
+   stays in sync with the persistent grid."
+  [world]
+  (let [grid     (:grid world)
+        h        (count grid)
+        w        (count (first grid))
+        occupied (occupied-keys world)
+        edge?    (fn [x y]
+                   (or (php/=== x 0) (php/=== y 0)
+                       (php/=== x (php/- w 1)) (php/=== y (php/- h 1))))
+        wall?    (fn [x y]
+                   (or (edge? x y)
+                       (and (in-pillar? x y w h)
+                            (not (contains? occupied (str x "," y))))))
+        flat     (apply vector
+                        (map (fn [y]
+                               (apply vector
+                                      (map (fn [x] (if (wall? x y) cell-wall cell-floor))
+                                           (range w))))
+                             (range h)))]
+    (rebuild-pgrid (assoc world :grid flat))))
+
+(def ^:private pickup-keys
+  "Every world key that holds a pickup-spawn vector. Cleared as a group
+   so a new pickup type can't silently leak into a demo phase."
+  [:hearts :armors :ammo-boxes :berserks :invulns :soulspheres
+   :armor-shards :backpacks :keycards :weapon-pickups])
+
+(defn- clear-pickups
+  "Empty every pickup-spawn vector so the demo arena stays clean."
+  [world]
+  (reduce (fn [w k] (assoc w k [])) world pickup-keys))
+
+(defn apply-phase
+  "Pure world->world transform turning a freshly-built world into the
+   showcase world for `phase` (1..num-phases). Flattens to an arena
+   for early phases, drops enemies until phase 3, hides the weapon in
+   phase 1, and clears pickups throughout. Clears the level-intro
+   splash so the reveal starts clean. Sets only generic game/render
+   flags the core already honours - `:show-map` + `:full-map?` (the 2D
+   minimap, full), `:god?`, `:hide-weapon?` (phase 1), `:hide-level-name?`
+   (enemy-less phases) - plus `:demo-phase` (a diagnostic marker for
+   introspection / tests; no code branches on it). The core stays
+   demo-agnostic: combat and render never check for the demo, only for
+   these capability flags."
+  [phase world]
+  (let [p                                                    (clamp-phase phase)
+        {:arena? arena? :enemies? enemies? :weapon? weapon?} (get phase-opts p)
+        w1                                                   (if arena? (flatten-interior world) world)
+        w2                                                   (if enemies? w1 (with-enemies w1 []))
+        w3                                                   (clear-pickups w2)
+        w4                                                   (if weapon? w3 (assoc w3 :hide-weapon? true))]
+    (assoc w4
+           :show-map        true
+           :full-map?       true
+           :god?            true
+           ;; Blank the enemy-themed level name while a phase has no
+           ;; foes, so an early reveal reads as a pure raycaster.
+           :hide-level-name? (not enemies?)
+           :intro-secs      0.0
+           ;; Every weapon owned with a flat 99 reserve (run-demo-session
+           ;; turns the armory on); pins the per-tick refill to 99 so the
+           ;; HUD reads cleanly instead of the dev 9999.
+           :armory-reserve  armory-reserve
+           ;; Audio only once there are enemies: phases 1-2 stay silent
+           ;; so the raycaster + weapon reveals land without a drone.
+           :sound-on        (boolean enemies?)
+           :demo-phase      p)))

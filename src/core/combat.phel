@@ -919,7 +919,10 @@
   ([world fire?] (tick-shooting world fire? false))
   ([w fire-edge? fire-held?]
    (let [auto?        (boolean (:auto-fire? (weapon-spec w)))
-         should-fire? (or fire-edge? (and auto? fire-held?))]
+         ;; No weapon in hand (`:hide-weapon?`): swallow the trigger so
+         ;; there's no shot, no dry-fire click, no muzzle flash.
+         should-fire? (and (not (:hide-weapon? w))
+                           (or fire-edge? (and auto? fire-held?)))]
      (cond
        (not should-fire?) w
        (can-fire? w)      (fire-shot w)
@@ -934,19 +937,24 @@
    capacity and reserve to `armory-reserve` each tick + clear the
    reload cooldown. Net effect is effectively-infinite ammo with no
    reload pauses, so the player can test every weapon's hit feel
-   without grinding for boxes. No-op when `:armory?` is falsy."
+   without grinding for boxes. No-op when `:armory?` is falsy.
+
+   A world may override the reserve count via `:armory-reserve` (e.g.
+   pinned to 99 so the HUD reads a clean two digits instead of the dev
+   default)."
   [world]
   (if (not (:armory? world))
     world
-    (let [active  (or (:weapon world) :pistol)
+    (let [res     (or (:armory-reserve world) armory-reserve)
+          active  (or (:weapon world) :pistol)
           stash   (reduce (fn [acc kw]
                             (let [s (get weapons kw)]
                               (assoc acc kw {:mag     (:mag-size s)
-                                             :reserve armory-reserve})))
+                                             :reserve res})))
                           {} weapon-order)
           mag-cap (:mag-size (get weapons active))]
       (assoc world
              :weapon-state    stash
              :mag             mag-cap
-             :ammo-reserve    armory-reserve
+             :ammo-reserve    res
              :reload-cooldown 0.0))))

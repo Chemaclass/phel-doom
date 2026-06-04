@@ -93,20 +93,26 @@
    showcase world for `phase` (1..num-phases). Flattens to an arena
    for early phases, drops enemies until phase 3, hides the weapon in
    phase 1, and clears pickups throughout. Clears the level-intro
-   splash so the reveal starts clean. Stamps the demo flags
-   (`:split-map?`, `:full-map?`, `:god?`, `:demo-phase`) the renderer
-   and loop read."
+   splash so the reveal starts clean. Sets only generic game/render
+   flags the core already honours - `:show-map` + `:full-map?` (the 2D
+   minimap, full), `:god?`, `:hide-weapon?` (phase 1), `:hide-level-name?`
+   (enemy-less phases) - plus `:demo-phase` (the one demo-only marker,
+   read solely by the play loop). The core stays demo-agnostic: combat
+   and render never check for the demo, only for these capability flags."
   [phase world]
   (let [p                                                    (clamp-phase phase)
         {:arena? arena? :enemies? enemies? :weapon? weapon?} (get phase-opts p)
         w1                                                   (if arena? (flatten-interior world) world)
         w2                                                   (if enemies? w1 (with-enemies w1 []))
         w3                                                   (clear-pickups w2)
-        w4                                                   (if weapon? w3 (assoc w3 :demo-hide-weapon? true))]
+        w4                                                   (if weapon? w3 (assoc w3 :hide-weapon? true))]
     (assoc w4
-           :split-map?      true
+           :show-map        true
            :full-map?       true
            :god?            true
+           ;; Blank the enemy-themed level name while a phase has no
+           ;; foes, so an early reveal reads as a pure raycaster.
+           :hide-level-name? (not enemies?)
            :intro-secs      0.0
            ;; Every weapon owned with a flat 99 reserve (run-demo-session
            ;; turns the armory on); pins the per-tick refill to 99 so the

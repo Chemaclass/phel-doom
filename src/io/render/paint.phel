@@ -397,25 +397,25 @@
    other paint-* helpers; the strip is left-anchored so vw doesn't
    feed the col math."
   [parts stats _vw]
-  (let [hide-wpn? (get stats :demo-hide-weapon?)
-        hide-foe? (get stats :demo-hide-foes?)
-        lvl       (or (get stats :level) 1)
-        ;; Demo: the level label is enemy-themed ("imps"); drop it while
-        ;; the phase has no enemies so a bare-raycaster reveal stays clean.
-        name'     (if hide-foe? "" (or (get stats :level-name) ""))
-        kills     (or (get stats :kills) 0)
-        wname     (or (get stats :weapon-name) "pistol")
-        mag       (or (get stats :mag) 0)
-        cap       (or (get stats :mag-size) 10)
-        reserve   (or (get stats :ammo-reserve) 0)
-        mag-low   (php/max 1 (php/intdiv cap 3))
-        res-low   cap
-        mag-col   (cond (php/<= mag 0)       "\e[1;91m"
-                        (php/<= mag mag-low) "\e[1;93m"
-                        :else                "\e[1m")
-        res-col   (cond (php/<= reserve 0)       "\e[1;91m"
-                        (php/<= reserve res-low) "\e[1;93m"
-                        :else                    "\e[2m")
+  (let [hide-wpn?  (get stats :hide-weapon?)
+        hide-name? (get stats :hide-level-name?)
+        lvl        (or (get stats :level) 1)
+        ;; The level label is enemy-themed ("imps"); `:hide-level-name?`
+        ;; blanks it (used when a level has no foes to name).
+        name'      (if hide-name? "" (or (get stats :level-name) ""))
+        kills      (or (get stats :kills) 0)
+        wname      (or (get stats :weapon-name) "pistol")
+        mag        (or (get stats :mag) 0)
+        cap        (or (get stats :mag-size) 10)
+        reserve    (or (get stats :ammo-reserve) 0)
+        mag-low    (php/max 1 (php/intdiv cap 3))
+        res-low    cap
+        mag-col    (cond (php/<= mag 0)       "\e[1;91m"
+                         (php/<= mag mag-low) "\e[1;93m"
+                         :else                "\e[1m")
+        res-col    (cond (php/<= reserve 0)       "\e[1;91m"
+                         (php/<= reserve res-low) "\e[1;93m"
+                         :else                    "\e[2m")
         ;; Each trailing chunk starts with an explicit `\e[40m` so
         ;; the leading-space byte renders on the dark HUD wash
         ;; instead of inheriting the terminal-default BG that a
@@ -426,37 +426,37 @@
         ;; player with 2 backpacks reads `+pack x2`. Issue #68 part 3
         ;; switched the boolean to a stacking int; the label keeps
         ;; backward-compatible appearance for the single-pack case.
-        bp-lvl    (or (get stats :backpack-level)
-                      (if (get stats :backpack?) 1 0))
-        pack      (cond
-                    (php/<= bp-lvl 0)  ""
-                    (php/=== bp-lvl 1) "\e[40m \e[40;33;1m+pack\e[40;97m"
-                    :else              (str "\e[40m \e[40;33;1m+pack x" bp-lvl "\e[40;97m"))
-        diff      (or (get stats :difficulty) :normal)
-        diff-tag  (cond
-                    (php/=== diff :easy)      "\e[40m \e[40;32;1m[easy]\e[40;97m"
-                    (php/=== diff :hard)      "\e[40m \e[40;33;1m[hard]\e[40;97m"
-                    (php/=== diff :nightmare) "\e[40m \e[40;31;1m[nightmare]\e[40;97m"
-                    :else                     "")
-        keys'     (or (get stats :held-keys) #{})
-        keys-tag  (str (if (contains? keys' :blue)   "\e[40m \e[40;94;1m⚿\e[40;97m" "")
-                       (if (contains? keys' :red)    "\e[40m \e[40;91;1m⚿\e[40;97m" "")
-                       (if (contains? keys' :yellow) "\e[40m \e[40;93;1m⚿\e[40;97m" ""))
-        sta-chip  (stamina-chip stats)
+        bp-lvl     (or (get stats :backpack-level)
+                       (if (get stats :backpack?) 1 0))
+        pack       (cond
+                     (php/<= bp-lvl 0)  ""
+                     (php/=== bp-lvl 1) "\e[40m \e[40;33;1m+pack\e[40;97m"
+                     :else              (str "\e[40m \e[40;33;1m+pack x" bp-lvl "\e[40;97m"))
+        diff       (or (get stats :difficulty) :normal)
+        diff-tag   (cond
+                     (php/=== diff :easy)      "\e[40m \e[40;32;1m[easy]\e[40;97m"
+                     (php/=== diff :hard)      "\e[40m \e[40;33;1m[hard]\e[40;97m"
+                     (php/=== diff :nightmare) "\e[40m \e[40;31;1m[nightmare]\e[40;97m"
+                     :else                     "")
+        keys'      (or (get stats :held-keys) #{})
+        keys-tag   (str (if (contains? keys' :blue)   "\e[40m \e[40;94;1m⚿\e[40;97m" "")
+                        (if (contains? keys' :red)    "\e[40m \e[40;91;1m⚿\e[40;97m" "")
+                        (if (contains? keys' :yellow) "\e[40m \e[40;93;1m⚿\e[40;97m" ""))
+        sta-chip   (stamina-chip stats)
         ;; Demo phase 1 hides the weapon entirely; drop the name + ammo
         ;; chunk so the info line never advertises a gun that isn't drawn.
-        wpn-chunk (if hide-wpn?
-                    ""
-                    (str "  \e[1m" wname "\e[22m "
-                         mag-col mag "\e[22;97m/" cap " "
-                         res-col "[" reserve "]\e[22;97m"))
+        wpn-chunk  (if hide-wpn?
+                     ""
+                     (str "  \e[1m" wname "\e[22m "
+                          mag-col mag "\e[22;97m/" cap " "
+                          res-col "[" reserve "]\e[22;97m"))
         ;; Same wash-preserving pattern for the inline mag / reserve
         ;; recolours: replace bare \e[0m resets with \e[40;97m so
         ;; the row never falls off the dark BG mid-string.
-        styled    (str "\e[40;97m\e[1mL" lvl "\e[22m " name'
-                       "  \e[1mkills\e[22m " kills
-                       wpn-chunk
-                       pack sta-chip keys-tag diff-tag "\e[0m")]
+        styled     (str "\e[40;97m\e[1mL" lvl "\e[22m " name'
+                        "  \e[1mkills\e[22m " kills
+                        wpn-chunk
+                        pack sta-chip keys-tag diff-tag "\e[0m")]
     (buf-push parts (str "\e[2;1H" styled)))
   parts)
 ;; =====================================================================

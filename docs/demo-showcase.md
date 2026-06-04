@@ -18,20 +18,17 @@ phel run phel-doom.main demo --phase 3   # + enemies
 phel run phel-doom.main demo --phase 4   # + interior cover walls
 ```
 
-`--phase` / `-p` defaults to 1 and is clamped to 1..4. God mode, the
-split-screen layout, and the full (no fog) map are always on. `Q` quits.
+`--phase` / `-p` defaults to 1 and is clamped to 1..4. God mode and the
+corner minimap (shown, full / no fog) are always on. `Q` quits.
 
-## The split layout
+## The 2D map
 
-Every phase renders in a side-by-side layout: the left half is the normal 3D
-raycast view (cast at half the column count), the right half is a full-height
-2D top-down map of the level. It is driven by the `:split-map?` world flag,
-which `render!` honours by dispatching to `split-frame->string`
-(`src/io/render/main.phel`). The map panel itself is `split-map-rows`
-(`src/io/render/hud.phel`), a full-height variant of the corner minimap.
-
-This is distinct from the M-key corner minimap (`:show-map`), which is
-unchanged.
+Every phase renders as a normal full-screen 3D raycast with the corner
+minimap turned on, so the 2D top-down view sits alongside the 3D one. This
+reuses the existing game features only: `:show-map` (the M-key minimap, see
+`state/toggle-map`) plus `:full-map?` (the `--full-map` no-fog reveal). The
+demo adds no render path of its own - it just flips flags the game already
+honours.
 
 ## The phases
 
@@ -55,13 +52,15 @@ real generated maze.
   outer border stays wall, everything inside becomes floor, then rebuilds
   `:pgrid` so the raycaster's hot-path view stays in sync.
 - **enemies** (off until phase 3): `with-enemies world []`.
-- **weapon** (off in phase 1): stamps `:demo-hide-weapon?`, which makes
-  `combat/tick-shooting` swallow the trigger (no shot, no dry-fire click) and
-  `render!` skip the gun sprite (`paint-pistol-hud`).
+- **weapon** (off in phase 1): sets the generic `:hide-weapon?` flag, which
+  makes `combat/tick-shooting` swallow the trigger (no shot, no dry-fire click)
+  and `render!` skip the gun sprite (`paint-pistol-hud`). Core knows nothing of
+  the demo - it just honours "no weapon in hand".
 - **pickups** (off in every phase): all pickup-spawn vectors cleared so the
   arena stays clean.
 
-The transform stamps `:split-map?`, `:full-map?`, `:god?`, and `:demo-phase`.
+The transform stamps `:show-map`, `:full-map?`, `:god?`, and `:demo-phase` -
+all existing game flags except `:demo-phase`.
 
 ## Wiring
 
@@ -70,6 +69,6 @@ The transform stamps `:split-map?`, `:full-map?`, `:god?`, and `:demo-phase`.
   the showcase stays out of the game code.
 - `src/commands/demo.phel` - the thin CLI command; parses `--phase` and calls
   `run-demo-session`.
-- `src/commands/play.phel` - `run-demo-session` (menu-less god + split run) and
-  `run-levels`' `demo-phase` parameter, which applies the transform.
+- `src/commands/play.phel` - `run-demo-session` (menu-less god + full-map run)
+  and `run-levels`' `demo-phase` parameter, which applies the transform.
 - `src/main.phel` - registers `demo-command`.

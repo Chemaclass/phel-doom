@@ -695,13 +695,11 @@
    ;; :paused; the cursor + values ride along here.
    :settings             (:settings world)
    :settings-cursor      (or (:settings-cursor world) 0)
-   ;; Demo showcase (phel-doom.demo.phases): hide the weapon name/ammo
-   ;; chunk (phase 1) and the enemy-themed level label (phases with no
-   ;; enemies) from the top game-info line so an early reveal reads as a
-   ;; pure raycaster. No-ops for normal play (:demo-phase nil).
-   :demo-hide-weapon?    (boolean (:demo-hide-weapon? world))
-   :demo-hide-foes?      (boolean (and (:demo-phase world)
-                                       (empty? (:enemies world))))})
+   ;; Generic HUD-suppression flags (the demo showcase sets them; normal
+   ;; play leaves them nil): hide the weapon name/ammo chunk and the
+   ;; enemy-themed level label from the top game-info line.
+   :hide-weapon?         (boolean (:hide-weapon? world))
+   :hide-level-name?     (boolean (:hide-level-name? world))})
 
 (defn- ms-since
   "Whole-millisecond delta between two microtime samples. Args tagged
@@ -988,12 +986,10 @@
    weapon stays testable without grinding for boxes. `start-level`
    (from --level / -l) sets where the run begins — 1..num-levels,
    clamped. Death + retry reset to L1 (the start-level only seeds
-   the initial loop entry). `split-map?` (from --split-map) enables
-   the split-layout demo mode: left half = 3D raycast, right half =
-   2D top-down map panel. `demo-phase` (nil for normal play, 1..4 for
+   the initial loop entry). `demo-phase` (nil for normal play, 1..4 for
    the tech-talk showcase) applies a per-phase world transform after
    build-world (see phel-doom.demo.phases/apply-phase)."
-  [diff god? armory? full-map? split-map? demo-phase start-level init-seed init-settings]
+  [diff god? armory? full-map? demo-phase start-level init-seed init-settings]
   (loop [level       (php/max 1 (php/min num-levels (or start-level 1)))
          lives       max-lives
          carry-kills 0
@@ -1026,8 +1022,7 @@
           w1     (if god? (assoc w0 :god? true) w0)
           w1a    (if armory? (assoc w1 :armory? true) w1)
           w1b    (if full-map? (assoc w1a :full-map? true) w1a)
-          w1c    (if split-map? (assoc w1b :split-map? true) w1b)
-          w2     (assoc w1c :show-map show-map? :sound-on sound-on?
+          w2     (assoc w1b :show-map show-map? :sound-on sound-on?
                         :settings settings :settings-cursor 0)
           w3     (if (nil? weapon)
                    w2
@@ -1172,7 +1167,6 @@
         god?        (cli/opt ctx "god")
         armory?     (cli/opt ctx "armory")
         full-map?   (cli/opt ctx "full-map")
-        split-map?  (cli/opt ctx "split-map")
         lv-raw      (cli/opt ctx "level")
         ;; CLI gives strings; coerce to int. nil / empty → nil → L1.
         lv          (cond
@@ -1213,7 +1207,7 @@
           ;; levels + end screens). N-toggle starts/stops it mid-run;
           ;; teardown always stops it so no loop process is orphaned.
           (start-ambient!)
-          (run-levels diff god? armory? full-map? split-map? nil lv init-seed settings)
+          (run-levels diff god? armory? full-map? nil lv init-seed settings)
           (stop-ambient!)
           (when record? (demo/save-recording! record-path))
           (demo/reset-off!)
@@ -1225,7 +1219,7 @@
 
 (defn run-demo-session
   "Menu-less tech-talk showcase run for `phase` (1..num-phases). Forces
-   god + split-map + full-map and threads the phase through run-levels,
+   god + full-map (full minimap reveal) and threads the phase through run-levels,
    which applies the per-phase world transform after build-world. Same
    loop, teardown, and ambient lifecycle as a normal run - only the
    start menu and record/replay are skipped. `ctx` drives the closing
@@ -1242,8 +1236,9 @@
     (clear-screen)
     (when audio? (start-ambient!))
     ;; god + armory (own every weapon, ammo refilled to :armory-reserve
-    ;; = 99 each tick by combat/tick-armory) + split-map + full-map.
-    (run-levels :normal true true true true phase 1 (rng/fresh-seed) settings0)
+    ;; = 99 each tick by combat/tick-armory) + full-map. The phase stamps
+    ;; :show-map true so the corner minimap is visible by default.
+    (run-levels :normal true true true phase 1 (rng/fresh-seed) settings0)
     (stop-ambient!)
     (demo/reset-off!)
     (restore!)
@@ -1273,9 +1268,6 @@
            :short "f"
            :mode  :none
            :doc   "Reveal the whole minimap from the start (skip fog-of-war). Useful for level editors / debugging."}
-          {:name "split-map"
-           :mode  :none
-           :doc   "Split-layout demo mode: left half = 3D raycast, right half = full 2D top-down map. Pairs with --god --full-map for the tech-talk showcase."}
           {:name    "level"
            :short   "l"
            :mode    :optional

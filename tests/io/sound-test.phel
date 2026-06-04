@@ -1,6 +1,6 @@
 (ns phel-doom-tests.io.sound-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.io.sound :refer [play-sfx! set-sfx-scalar! state]))
+  (:require phel-doom.io.sound :refer [play-sfx! set-sfx-scalar! audio-player state]))
 
 ;; play-sfx! returns nil under PHEL_DOOM_SILENT=1 — that's the
 ;; contract `composer test` relies on so the test suite never shells
@@ -48,3 +48,14 @@
   ;; Restore the default so other tests / the live game are unaffected.
   (set-sfx-scalar! 1.0)
   (is (= 1.0 (:sfx-scalar @state))))
+
+(deftest test-probe-preserves-sfx-scalar
+  ;; Regression: the live boot order is set-sfx-scalar! (from the player's
+  ;; SFX setting) THEN the first probe (start-ambient! -> audio-player ->
+  ;; ensure-probed!). The probe must merge, not reset!, or it wipes the
+  ;; scalar back to 1.0 and every shot plays at full volume — exactly the
+  ;; "SFX louder than music despite 10% SFX" bug.
+  (set-sfx-scalar! 0.1)
+  (audio-player)                       ; forces ensure-probed!
+  (is (= 0.1 (:sfx-scalar @state)) "probe must not clobber the SFX scalar")
+  (set-sfx-scalar! 1.0))

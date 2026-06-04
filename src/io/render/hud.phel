@@ -280,10 +280,25 @@
         wcmap               (scaled-cells (:weapon-pickups world) step out-w
                                           (fn [w] (php/=== (:weapon w) :chaingun)))
         rows                (buf-mk)
-        ;; Padding to fill panel-w when out-w < panel-w
-        pad-right           (php/str_repeat "\e[40m \e[0m"
-                                            (php/max 0 (php/- panel-w out-w)))
-        ;; Blank row for rows beyond the map grid (out-h < vh)
+        ;; Upscale each grid cell into a cell-w x cell-h block so the map
+        ;; FILLS the panel instead of hugging a tiny corner. Terminal
+        ;; cells are ~2:1 (tall:wide), so a square map cell wants ~2 cols
+        ;; per row: cell-w targets 2x cell-h, capped to the panel width.
+        cell-h              (php/max 1 (php/intdiv vh out-h))
+        cell-w              (php/max 1 (php/min (php/intdiv panel-w out-w)
+                                                (php/* 2 cell-h)))
+        scaled-w            (php/* out-w cell-w)
+        scaled-h            (php/* out-h cell-h)
+        ;; Centre the scaled map inside the panel (left/right + top pad).
+        left-pad            (php/max 0 (php/intdiv (php/- panel-w scaled-w) 2))
+        right-pad           (php/max 0 (php/- panel-w (php/+ left-pad scaled-w)))
+        top-pad             (php/max 0 (php/intdiv (php/- vh scaled-h) 2))
+        black-pad           (fn [n] (if (php/<= n 0)
+                                      ""
+                                      (str "\e[40m" (php/str_repeat " " n) "\e[0m")))
+        left-str            (black-pad left-pad)
+        right-str           (black-pad right-pad)
+        ;; Blank row for the un-mapped panel margin.
         blank-row           (str "\e[40m" (php/str_repeat " " panel-w) "\e[0m")
         block-has-wall?     (fn [r0 c0]
                               (loop [dr 0]
@@ -325,11 +340,11 @@
                                           (php/=== v 8)
                                           (php/=== v 9)) (recur (php/+ dr 1) v)
                                       :else         (recur (php/+ dr 1) found))))))]
-    (loop [row 0]
-      (when (php/< row vh)
-        (if (php/>= row out-h)
-          (buf-set rows row blank-row)
-          (let [r0    (php/* row step)
+    ;; Pass 1: build the out-h base rows, one glyph per grid cell.
+    (let [base (buf-mk)]
+      (loop [brow 0]
+        (when (php/< brow out-h)
+          (let [r0    (php/* brow step)
                 parts (buf-mk)]
             (loop [col 0]
               (when (php/< col out-w)
@@ -337,34 +352,48 @@
                       cell (sample-cell r0 c0)]
                   (buf-push parts
                             (cond
-                              (and (php/=== row prow) (php/=== col pcol))   marker
-                              (not (block-visited? r0 c0))                  minimap-unseen
-                              (php/=== 1 cell)                              minimap-wall
-                              (block-has-wall? r0 c0)                       minimap-wall
-                              (php/=== 2 cell)                              door-glyph
-                              (php/=== 3 cell)                              door-blue-marker
-                              (php/=== 4 cell)                              door-red-marker
-                              (php/=== 9 cell)                              door-yellow-marker
-                              (php/=== 5 cell)                              boss-door-marker
-                              (php/=== 7 cell)                              minimap-switch-off
-                              (php/=== 8 cell)                              minimap-switch-on
-                              (buf-get emap (php/+ (php/* row out-w) col))  enemy-marker
-                              (buf-get hmap (php/+ (php/* row out-w) col))  heart-marker
-                              (buf-get amap (php/+ (php/* row out-w) col))  ammo-marker
-                              (buf-get bmap (php/+ (php/* row out-w) col))  berserk-marker
-                              (buf-get imap (php/+ (php/* row out-w) col))  invuln-marker
-                              (buf-get ssmap (php/+ (php/* row out-w) col)) soulsphere-marker
-                              (buf-get asmap (php/+ (php/* row out-w) col)) armor-shard-marker
-                              (buf-get pmap (php/+ (php/* row out-w) col))  backpack-marker
-                              (buf-get kbmap (php/+ (php/* row out-w) col)) keycard-blue-marker
-                              (buf-get krmap (php/+ (php/* row out-w) col)) keycard-red-marker
-                              (buf-get kymap (php/+ (php/* row out-w) col)) keycard-yellow-marker
-                              (buf-get wsmap (php/+ (php/* row out-w) col)) shotgun-pickup-marker
-                              (buf-get wcmap (php/+ (php/* row out-w) col)) chaingun-pickup-marker
-                              :else                                         minimap-floor)))
+                              (and (php/=== brow prow) (php/=== col pcol))   marker
+                              (not (block-visited? r0 c0))                   minimap-unseen
+                              (php/=== 1 cell)                               minimap-wall
+                              (block-has-wall? r0 c0)                        minimap-wall
+                              (php/=== 2 cell)                               door-glyph
+                              (php/=== 3 cell)                               door-blue-marker
+                              (php/=== 4 cell)                               door-red-marker
+                              (php/=== 9 cell)                               door-yellow-marker
+                              (php/=== 5 cell)                               boss-door-marker
+                              (php/=== 7 cell)                               minimap-switch-off
+                              (php/=== 8 cell)                               minimap-switch-on
+                              (buf-get emap (php/+ (php/* brow out-w) col))  enemy-marker
+                              (buf-get hmap (php/+ (php/* brow out-w) col))  heart-marker
+                              (buf-get amap (php/+ (php/* brow out-w) col))  ammo-marker
+                              (buf-get bmap (php/+ (php/* brow out-w) col))  berserk-marker
+                              (buf-get imap (php/+ (php/* brow out-w) col))  invuln-marker
+                              (buf-get ssmap (php/+ (php/* brow out-w) col)) soulsphere-marker
+                              (buf-get asmap (php/+ (php/* brow out-w) col)) armor-shard-marker
+                              (buf-get pmap (php/+ (php/* brow out-w) col))  backpack-marker
+                              (buf-get kbmap (php/+ (php/* brow out-w) col)) keycard-blue-marker
+                              (buf-get krmap (php/+ (php/* brow out-w) col)) keycard-red-marker
+                              (buf-get kymap (php/+ (php/* brow out-w) col)) keycard-yellow-marker
+                              (buf-get wsmap (php/+ (php/* brow out-w) col)) shotgun-pickup-marker
+                              (buf-get wcmap (php/+ (php/* brow out-w) col)) chaingun-pickup-marker
+                              :else                                          minimap-floor)))
                 (recur (php/+ col 1))))
-            (buf-set rows row (str (php/implode "" parts) pad-right))))
-        (recur (php/+ row 1))))
+            (buf-set base brow parts))
+          (recur (php/+ brow 1))))
+      ;; Pass 2: blit each base row upscaled (cell-w x cell-h) + centred.
+      (loop [row 0]
+        (when (php/< row vh)
+          (let [brow (php/intdiv (php/- row top-pad) cell-h)]
+            (if (and (php/>= row top-pad) (php/< brow out-h))
+              (let [glyphs (buf-get base brow)
+                    body   (loop [col 0 acc ""]
+                             (if (php/>= col out-w)
+                               acc
+                               (recur (php/+ col 1)
+                                      (str acc (php/str_repeat (buf-get glyphs col) cell-w)))))]
+                (buf-set rows row (str left-str body right-str)))
+              (buf-set rows row blank-row)))
+          (recur (php/+ row 1)))))
     rows))
 
 (defn- fmt-ms

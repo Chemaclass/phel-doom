@@ -102,9 +102,14 @@
 (defn- ensure-probed! []
   (let [s @state]
     (when (not (:probed s))
-      (reset! state {:player (resolve-player)
-                     :sounds (resolve-sounds)
-                     :probed true}))))
+      ;; merge, not reset!: the probe must NOT clobber :sfx-scalar /
+      ;; :mute-until. apply-audio-settings! runs set-sfx-scalar! BEFORE
+      ;; the first probe (start-ambient! -> audio-player -> here), so a
+      ;; reset! here would wipe the player's SFX volume back to 1.0 and
+      ;; every shot would play at full volume regardless of the setting.
+      (swap! state merge {:player (resolve-player)
+                          :sounds (resolve-sounds)
+                          :probed true}))))
 
 (defn- play-file-async!
   "Fire-and-forget shell-out to the resolved audio player. Optional

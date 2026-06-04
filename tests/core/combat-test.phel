@@ -1,6 +1,7 @@
 (ns phel-doom-tests.core.combat-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.state :refer [new-world new-player max-lives])
+  (:require phel-doom.core.enemy :refer [new-enemy])
   (:require phel-doom.core.combat
             :refer [arm-berserk armory-reserve closest-attacker attacker-side berserk? berserk-damage-mul berserk-melee-mul berserk-mul-for berserk-seconds can-fire? apply-heat damage-step empty-click-seconds enemy-hit-damage hit-damage-for hit-player-at hit-stop-for hit-stop-tough-seconds hit-stop-boss-seconds invuln? invuln-seconds knockback mag-size pick-loot-weapon reload reloading? roll-loot-kind tick-armory tick-shooting]))
 
@@ -254,6 +255,55 @@
         w  (assoc w0 :mag 6 :weapon :pistol :fire-cooldown 0.0 :enemies [])
         w' (tick-shooting w true)]
     (is (pos? (count (:sfx w'))) "fire report queued")))
+
+;; ---------------------------------------------------------------------
+;; Fire-report volume is distance-attenuated by the struck enemy:
+;; close hit -> near full, far hit -> quieter, miss -> full (gun in hand).
+;; The chaingun is single-target (no pierce/spread/splash) so it exercises
+;; the primary hitscan path. Player at (1.5,1.5) faces +x down a corridor.
+;; ---------------------------------------------------------------------
+
+(def corridor-grid
+  [[1 1 1 1 1 1 1 1 1 1 1 1]
+   [1 0 0 0 0 0 0 0 0 0 0 1]
+   [1 1 1 1 1 1 1 1 1 1 1 1]])
+
+(defn- shoot-at-enemy [enemy-x]
+  ;; Fire the chaingun once down the corridor at a single enemy placed
+  ;; on the player's facing axis; return the queued :shoot-chaingun vol.
+  (let [base (new-world corridor-grid (new-player 1.5 1.5 0.0))
+        w    (assoc base
+                    :weapon        :chaingun
+                    :owned-weapons #{:chaingun}
+                    :mag           30
+                    :ammo-reserve  10
+                    :fire-cooldown 0.0
+                    :reload-cooldown 0.0
+                    :jam-secs      0.0
+                    :iframes       0.0
+                    :enemies       [(new-enemy enemy-x 1.5 1)])
+        w'   (tick-shooting w true)]
+    (:vol (first (sfx-named w' :shoot-chaingun)))))
+
+(deftest test-fire-report-louder-for-close-enemy
+  (let [close (shoot-at-enemy 3.5)    ; d = 2.0
+        far   (shoot-at-enemy 9.5)]   ; d = 8.0
+    (is (php/> close far) "closer enemy => louder shot")
+    (is (php/<= close 1.0))
+    (is (php/> far 0.1) "still above the audible floor at range")))
+
+(deftest test-fire-report-full-volume-on-miss
+  ;; No enemy on the axis: the gun is in your hands, plays at full SFX
+  ;; volume (the global scalar is applied later in io/sound).
+  (let [base (new-world corridor-grid (new-player 1.5 1.5 0.0))
+        w    (assoc base
+                    :weapon        :chaingun
+                    :owned-weapons #{:chaingun}
+                    :mag           30 :ammo-reserve 10
+                    :fire-cooldown 0.0 :reload-cooldown 0.0
+                    :jam-secs 0.0 :iframes 0.0 :enemies [])
+        w'   (tick-shooting w true)]
+    (is (= 1.0 (:vol (first (sfx-named w' :shoot-chaingun)))))))
 
 (deftest test-tick-shooting-empty-mag-skip-when-jammed
   ;; Jam already has its own visual cue (paint-door-face / fire-anim).

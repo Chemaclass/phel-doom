@@ -626,25 +626,33 @@
   "Append the shot's sound events to `out`'s :sfx queue and return it.
    `src` is the pre-shot world (active weapon spec + player position).
 
-   Always queue the ACTIVE weapon's own report so every trigger pull
-   sounds like the gun going off — hit or miss. Earlier this only
-   played a gun sound on a MISS; a shot that connected swapped in the
-   enemy reaction, so the weapon (esp. the shotgun) felt silent when
-   you actually hit something. Per-weapon `:fire-sfx` (weapons spec)
-   gives each gun a distinct voice; falls back to :shoot.
+   The fire report is distance-attenuated by how far the struck enemy is
+   from the player (`distance-volume`): a point-blank hit plays at full
+   volume, a far hit drops toward the ~0.1 floor so a distant firefight
+   reads quieter than one in your face. A MISS (`hit?` false) has no
+   enemy to reference, so the gun plays at full volume — it is in your
+   hands. Every volume here is later multiplied by the player's global
+   SFX scalar in io/sound, so it stays relative to the SFX max set in
+   options.
 
-   On a kill, layer the kill cue ON TOP of the fire report so a kill
-   keeps its punch, distance-attenuated. Wounds ride on the fire sound
-   plus the floating HP digit + blood splatter — no separate thud."
-  [out src killed? hit-pos]
-  (let [fired (push-sfx out (or (:fire-sfx (w-spec src)) :shoot) 1.0)]
-    (if killed?
-      (let [p  (:player src)
-            dx (php/- (:x hit-pos) (:x p))
-            dy (php/- (:y hit-pos) (:y p))
-            d  (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
-        (push-sfx fired :kill (distance-volume d)))
-      fired)))
+   Always queue the ACTIVE weapon's own report so every trigger pull
+   sounds like the gun going off — hit or miss. Per-weapon `:fire-sfx`
+   (weapons spec) gives each gun a distinct voice; falls back to :shoot.
+
+   On a kill, layer the kill cue ON TOP of the fire report at the same
+   distance volume so a kill keeps its punch. Wounds ride on the fire
+   sound plus the floating HP digit + blood splatter — no separate thud."
+  [out src hit? killed? hit-pos]
+  (let [fire-sfx (or (:fire-sfx (w-spec src)) :shoot)]
+    (if hit?
+      (let [p     (:player src)
+            dx    (php/- (:x hit-pos) (:x p))
+            dy    (php/- (:y hit-pos) (:y p))
+            d     (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))
+            vol   (distance-volume d)
+            fired (push-sfx out fire-sfx vol)]
+        (if killed? (push-sfx fired :kill vol) fired))
+      (push-sfx out fire-sfx 1.0))))
 
 (defn can-fire?
   "True when the active weapon is ready: cooldown elapsed, not jammed,
@@ -771,9 +779,12 @@
                        (assoc unlocked :hit-stop-secs
                               (if boss-killed? hit-stop-boss-seconds hit-stop-tough-seconds))
                        unlocked)]
+    ;; bfg has no wound-only signal (splash returns just a kill count), so
+    ;; a kill is the hit proxy: a killing blast attenuates by the impact
+    ;; distance, a wall hit / whiff plays at full volume.
     (enqueue-shot-sfx
      (apply-heat (push-blood-fx (assoc juiced :fire-anim fire-anim-seconds) hit-pos))
-     world killed? hit-pos)))
+     world killed? killed? hit-pos)))
 
 (defn- finish-multikill
   "Shared tail for the multi-target hitscans (`pierce-fire`,
@@ -813,7 +824,7 @@
         based        (assoc juiced :fire-anim fire-anim-seconds)]
     (enqueue-shot-sfx
      (apply-heat (if hit? (push-blood-fx based hit-pos) based))
-     world killed? (or hit-pos {:x (:x p) :y (:y p)}))))
+     world hit? killed? (or hit-pos {:x (:x p) :y (:y p)}))))
 
 (defn- pierce-fire
   "Resolve a piercing shot (weapons flagged `:pierce?`, the pistol). The
@@ -877,7 +888,7 @@
        (apply-heat (if hit?
                      (on-shot-hit world woken hit-pos idx)
                      (on-shot-miss (assoc world :enemies woken))))
-       world killed? hit-pos))))
+       world hit? killed? hit-pos))))
 
 (defn- empty-trigger-pull
   "Trigger pulled while mag = 0 AND no cooldown / jam in the way. Arm

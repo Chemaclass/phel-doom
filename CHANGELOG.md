@@ -13,8 +13,13 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 - Level 7 now has a yellow-keyed locked exit and a yellow keycard pickup - the third keycard colour (classic DOOM blue/yellow/red).
 
+### Fixed
+
+- SFX volume setting is now respected: the audio probe no longer wiped the player's SFX scalar back to full volume on the first sound, so weapon fire stayed loud even at a low SFX percent. Shots now play at the configured level relative to the music bed.
+
 ### Changed
 
+- The weapon fire report is now distance-attenuated by the enemy you hit: a point-blank hit plays at full volume, a far hit is quieter (down to a ~0.1 audible floor), and a clean miss stays at full volume. All scaled by your SFX setting, so a distant firefight reads quieter than one in your face.
 - Internal maintainability pass (no gameplay change): the 3564-line `render.phel` is split into a thin public facade plus focused `render/{buffer,palette,frame-math,hud,paint,main}` namespaces; all in-tick sound effects (pickups, interactions, reload) now flow through the pure `:sfx` queue so `tick-world` is fully effect-free; render pulse cadences and the near-death haze ramp are named constants; and the docstring convention, engine cache rationale, and `enemy` / `enemy-ai` split are documented. Behaviour is identical.
 
 ## [0.10.0] - 2026-06-03

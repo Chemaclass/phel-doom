@@ -113,7 +113,7 @@
 
 (defn paint-intro-splash
   "Centred banner showing 'LEVEL N · NAME' while :intro-secs > 0.
-   On locked levels (L4 blue / L5 red) appends a 'FIND THE <COLOUR>
+   On locked levels (L4 blue / L5 red / L7 yellow) appends a 'FIND THE <COLOUR>
    KEY' subtitle so the player knows the door at the exit needs a
    keycard before they go hunting for it. Subtitle SGR matches the
    lock colour so the cue reads at a glance."
@@ -123,15 +123,17 @@
                         " · " (php/strtoupper (or (get stats :level-name) "")))
           lock     (get stats :door-lock)
           subtitle (cond
-                     (php/=== lock :blue) "FIND THE BLUE KEY"
-                     (php/=== lock :red)  "FIND THE RED KEY"
-                     (php/=== lock :boss) "KILL THE BOSS TO ESCAPE"
-                     :else                nil)
+                     (php/=== lock :blue)   "FIND THE BLUE KEY"
+                     (php/=== lock :red)    "FIND THE RED KEY"
+                     (php/=== lock :yellow) "FIND THE YELLOW KEY"
+                     (php/=== lock :boss)   "KILL THE BOSS TO ESCAPE"
+                     :else                  nil)
           sub-sgr  (cond
-                     (php/=== lock :blue) "\e[40;94;1m"
-                     (php/=== lock :red)  "\e[40;91;1m"
-                     (php/=== lock :boss) "\e[40;38;5;196;1m"
-                     :else                "\e[40;93;1m")
+                     (php/=== lock :blue)   "\e[40;94;1m"
+                     (php/=== lock :red)    "\e[40;91;1m"
+                     (php/=== lock :yellow) "\e[40;93;1m"
+                     (php/=== lock :boss)   "\e[40;38;5;196;1m"
+                     :else                  "\e[40;93;1m")
           ;; Box width sized to the longer of title / subtitle so
           ;; both lines fit symmetrically with the same 4-col pad.
           inner    (php/max (php/mb_strlen title)
@@ -171,15 +173,17 @@
     (when (php/> secs 0.0)
       (let [colour (get stats :locked-door-bump-colour)
             label  (cond
-                     (php/=== colour :blue) "  ⚿  NEED BLUE KEY  ⚿  "
-                     (php/=== colour :red)  "  ⚿  NEED RED KEY  ⚿   "
-                     (php/=== colour :boss) "  ☠  KILL THE BOSS  ☠  "
-                     :else                  "  ⚿  NEED KEY  ⚿  ")
+                     (php/=== colour :blue)   "  ⚿  NEED BLUE KEY  ⚿  "
+                     (php/=== colour :red)    "  ⚿  NEED RED KEY  ⚿   "
+                     (php/=== colour :yellow) "  ⚿  NEED YELLOW KEY  ⚿"
+                     (php/=== colour :boss)   "  ☠  KILL THE BOSS  ☠  "
+                     :else                    "  ⚿  NEED KEY  ⚿  ")
             sgr    (cond
-                     (php/=== colour :blue) "\e[40;94;1m"
-                     (php/=== colour :red)  "\e[40;91;1m"
-                     (php/=== colour :boss) "\e[40;38;5;196;1m"
-                     :else                  "\e[40;93;1m")
+                     (php/=== colour :blue)   "\e[40;94;1m"
+                     (php/=== colour :red)    "\e[40;91;1m"
+                     (php/=== colour :yellow) "\e[40;93;1m"
+                     (php/=== colour :boss)   "\e[40;38;5;196;1m"
+                     :else                    "\e[40;93;1m")
             row    (php/max 1 (php/intdiv vh 3))
             col0   (php/max 1 (php/- (php/+ (php/intdiv vw 2) 1)
                                      (php/intdiv (php/mb_strlen label) 2)))]
@@ -431,8 +435,9 @@
                    (php/=== diff :nightmare) "\e[40m \e[40;31;1m[nightmare]\e[40;97m"
                    :else                     "")
         keys'    (or (get stats :held-keys) #{})
-        keys-tag (str (if (contains? keys' :blue) "\e[40m \e[40;94;1m⚿\e[40;97m" "")
-                      (if (contains? keys' :red)  "\e[40m \e[40;91;1m⚿\e[40;97m" ""))
+        keys-tag (str (if (contains? keys' :blue)   "\e[40m \e[40;94;1m⚿\e[40;97m" "")
+                      (if (contains? keys' :red)    "\e[40m \e[40;91;1m⚿\e[40;97m" "")
+                      (if (contains? keys' :yellow) "\e[40m \e[40;93;1m⚿\e[40;97m" ""))
         sta-chip (stamina-chip stats)
         ;; Same wash-preserving pattern for the inline mag / reserve
         ;; recolours: replace bare \e[0m resets with \e[40;97m so
@@ -671,7 +676,8 @@
 (defn- quest-target-hint
   "Compass directional helper. Returns `{:sector 0..3 :tag kw}`
    where `:tag` is:
-     :blue / :red  — point at the matching un-picked keycard on a
+     :blue / :red / :yellow
+                   — point at the matching un-picked keycard on a
                      locked level (player still needs the key)
      :door         — point at the exit door (the key is already in
                      hand, or the level was never locked)
@@ -706,7 +712,7 @@
   "Top-centre 4-letter cardinal strip. Three highlights stack:
      - yellow bold = player's facing sector (always shown)
      - tinted bold = QUEST TARGET sector — points at the keycard
-       (blue / red, lock colour) on locked levels until the player
+       (blue / red / yellow, lock colour) on locked levels until the player
        grabs the card, then switches to the exit door (orange,
        SGR 214 to match the in-world door glyph).
    Quest tint wins over facing tint on the same letter so the cue
@@ -718,10 +724,11 @@
         quest  (quest-target-hint world)
         q-sec  (when quest (:sector quest))
         q-sgr  (cond
-                 (php/=== (and quest (:tag quest)) :blue) "\e[40;94;1m"
-                 (php/=== (and quest (:tag quest)) :red)  "\e[40;91;1m"
-                 (php/=== (and quest (:tag quest)) :door) "\e[40;38;5;214;1m"
-                 :else                                    nil)
+                 (php/=== (and quest (:tag quest)) :blue)   "\e[40;94;1m"
+                 (php/=== (and quest (:tag quest)) :red)    "\e[40;91;1m"
+                 (php/=== (and quest (:tag quest)) :yellow) "\e[40;93;1m"
+                 (php/=== (and quest (:tag quest)) :door)   "\e[40;38;5;214;1m"
+                 :else                                      nil)
         labels ["E" "S" "W" "N"]
         cells  (loop [i 0 acc ""]
                  (if (php/>= i 4)

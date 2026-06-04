@@ -1,7 +1,7 @@
 ;; HUD + menu text: minimap, debug line, help menu, settings panel.
 (ns phel-doom.io.render.hud
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
-  (:require phel-doom.io.render.palette :refer [enemy-marker heart-marker ammo-marker berserk-marker invuln-marker soulsphere-marker armor-shard-marker backpack-marker keycard-blue-marker keycard-red-marker door-blue-marker door-red-marker shotgun-pickup-marker chaingun-pickup-marker boss-door-marker])
+  (:require phel-doom.io.render.palette :refer [enemy-marker heart-marker ammo-marker berserk-marker invuln-marker soulsphere-marker armor-shard-marker backpack-marker keycard-blue-marker keycard-red-marker keycard-yellow-marker door-blue-marker door-red-marker door-yellow-marker shotgun-pickup-marker chaingun-pickup-marker boss-door-marker])
   (:require phel-doom.io.render.frame-math :refer [direction-char layout])
   (:require phel-doom.core.weapons :refer [weapon-order weapons])
   (:require phel-doom.core.settings :refer [page-fields])
@@ -120,6 +120,8 @@
                                           (fn [k] (php/=== (:colour k) :blue)))
         krmap               (scaled-cells (:keycards world) step out-w
                                           (fn [k] (php/=== (:colour k) :red)))
+        kymap               (scaled-cells (:keycards world) step out-w
+                                          (fn [k] (php/=== (:colour k) :yellow)))
         wsmap               (scaled-cells (:weapon-pickups world) step out-w
                                           (fn [w] (php/=== (:weapon w) :shotgun)))
         wcmap               (scaled-cells (:weapon-pickups world) step out-w
@@ -137,10 +139,10 @@
                                         :else                                    (recur (php/+ dc 1))))) true
                                   :else (recur (php/+ dr 1)))))
         sample-cell         (fn [r0 c0]
-                              ;; Priority: wall (1) > any door (2/3/4/5) >
+                              ;; Priority: wall (1) > any door (2/3/4/5/9) >
                               ;; switch (7 / 8) > floor (0). Door + switch
                               ;; variants flow through so minimap-rows can
-                              ;; paint blue/red/boss + switch-on/off
+                              ;; paint blue/red/yellow/boss + switch-on/off
                               ;; markers distinct from each other.
                               (loop [dr 0 found 0]
                                 (if (php/>= dr step)
@@ -157,7 +159,8 @@
                                                          (php/=== cell 4)
                                                          (php/=== cell 5)
                                                          (php/=== cell 7)
-                                                         (php/=== cell 8)) (recur (php/+ dc 1) cell)
+                                                         (php/=== cell 8)
+                                                         (php/=== cell 9)) (recur (php/+ dc 1) cell)
                                                      :else            (recur (php/+ dc 1) acc)))))]
                                     (cond
                                       (php/=== v 1) 1
@@ -166,7 +169,8 @@
                                           (php/=== v 4)
                                           (php/=== v 5)
                                           (php/=== v 7)
-                                          (php/=== v 8)) (recur (php/+ dr 1) v)
+                                          (php/=== v 8)
+                                          (php/=== v 9)) (recur (php/+ dr 1) v)
                                       :else         (recur (php/+ dr 1) found))))))]
     (loop [row 0]
       (when (php/< row out-h)
@@ -185,6 +189,7 @@
                             (php/=== 2 cell)                              door-glyph
                             (php/=== 3 cell)                              door-blue-marker
                             (php/=== 4 cell)                              door-red-marker
+                            (php/=== 9 cell)                              door-yellow-marker
                             (php/=== 5 cell)                              boss-door-marker
                             (php/=== 7 cell)                              minimap-switch-off
                             (php/=== 8 cell)                              minimap-switch-on
@@ -198,6 +203,7 @@
                             (buf-get pmap (php/+ (php/* row out-w) col))  backpack-marker
                             (buf-get kbmap (php/+ (php/* row out-w) col)) keycard-blue-marker
                             (buf-get krmap (php/+ (php/* row out-w) col)) keycard-red-marker
+                            (buf-get kymap (php/+ (php/* row out-w) col)) keycard-yellow-marker
                             (buf-get wsmap (php/+ (php/* row out-w) col)) shotgun-pickup-marker
                             (buf-get wcmap (php/+ (php/* row out-w) col)) chaingun-pickup-marker
                             :else                                         minimap-floor)))
@@ -434,12 +440,19 @@
         ;; or bold from `\e[1;…m` — stays sticky and the closing `│`
         ;; border on the keys/buffs rows renders gray instead of the
         ;; menu's bright white.
-        keys-str      (cond
-                        (and (contains? held :blue) (contains? held :red))
-                        "\e[94;1mblue\e[22;40;97m  \e[91;1mred\e[22;40;97m"
-                        (contains? held :blue)                             "\e[94;1mblue\e[22;40;97m"
-                        (contains? held :red)                              "\e[91;1mred\e[22;40;97m"
-                        :else                                              "\e[2;90m(none)\e[22;40;97m")
+        ;; Enumerate every held keycard colour in a fixed order, each
+        ;; tagged with its own SGR, joined by two spaces. Blue-only,
+        ;; red-only, and blue+red keep their exact prior byte output;
+        ;; yellow slots in last. Falls back to dim `(none)` when the
+        ;; player holds no keys.
+        held-key-tags (apply vector
+                             (filter (fn [s] (not (php/=== s nil)))
+                                     [(when (contains? held :blue) "\e[94;1mblue\e[22;40;97m")
+                                      (when (contains? held :red) "\e[91;1mred\e[22;40;97m")
+                                      (when (contains? held :yellow) "\e[93;1myellow\e[22;40;97m")]))
+        keys-str      (if (php/=== (count held-key-tags) 0)
+                        "\e[2;90m(none)\e[22;40;97m"
+                        (php/implode "  " (to-php-array held-key-tags)))
         buffs-str     (let [chunks (apply vector
                                           (filter (fn [s] (not (php/=== s nil)))
                                                   [(when (php/> bsec 0.0)
@@ -489,7 +502,7 @@
                         (bord "  Top E S W N strip tints the letter")
                         (bord "  pointing at your next quest target:")
                         (bord "    \e[38;5;214;1morange\e[40;97m = exit door")
-                        (bord "    \e[94;1mblue\e[40;97m / \e[91;1mred\e[40;97m = keycard (locked door)")
+                        (bord "    \e[94;1mblue\e[40;97m / \e[91;1mred\e[40;97m / \e[93;1myellow\e[40;97m = keycard")
                         (bord "  Use it to navigate without the 2D map.")])
         controls-rows (to-php-array
                        [blnk

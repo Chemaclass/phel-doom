@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Added
+
+- Level 7 now has a yellow-keyed locked exit and a yellow keycard pickup - the third keycard colour (classic DOOM blue/yellow/red).
+
 ### Changed
 
 - Internal maintainability pass (no gameplay change): the 3564-line `render.phel` is split into a thin public facade plus focused `render/{buffer,palette,frame-math,hud,paint,main}` namespaces; all in-tick sound effects (pickups, interactions, reload) now flow through the pure `:sfx` queue so `tick-world` is fully effect-free; render pulse cadences and the near-death haze ramp are named constants; and the docstring convention, engine cache rationale, and `enemy` / `enemy-ai` split are documented. Behaviour is identical.

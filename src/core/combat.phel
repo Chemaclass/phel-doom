@@ -494,6 +494,27 @@
                    (let [e {:x (:x hit-pos) :y (:y hit-pos) :ttl fx-ttl-seconds}]
                      (if type-kw (assoc e :type type-kw) e)))))))
 
+(defn- corpse-type-at
+  "Type of a just-killed enemy sitting at `hit-pos` (the corpse cell), or
+   nil. The multi-target shots (pistol pierce, shotgun spread, BFG) only
+   know a hit-pos + kill count, so this recovers the primary kill's type
+   from `enemies` (alive false within half a cell of hit-pos) to tag the
+   blood fx for the death-sprite renderer."
+  [enemies hit-pos]
+  (when hit-pos
+    (let [hx (:x hit-pos) hy (:y hit-pos) n (count enemies)]
+      ;; Nearest dead enemy within ~1.5 cells of the impact point.
+      (loop [i 0 best nil bestd 2.25]
+        (if (php/>= i n)
+          (when best (:type best))
+          (let [e  (get enemies i)
+                dx (php/- (:x e) hx)
+                dy (php/- (:y e) hy)
+                d2 (php/+ (php/* dx dx) (php/* dy dy))]
+            (if (and (false? (:alive e)) (php/< d2 bestd))
+              (recur (php/+ i 1) e d2)
+              (recur (php/+ i 1) best bestd))))))))
+
 (def loot-drop-chance
   "Probability cutoffs for a kill drop, layered on a single uniform roll
    in [0, 1). Tuned DOWN after the v0.3 playtesting reported too much
@@ -790,7 +811,8 @@
     ;; a kill is the hit proxy: a killing blast attenuates by the impact
     ;; distance, a wall hit / whiff plays at full volume.
     (enqueue-shot-sfx
-     (apply-heat (push-blood-fx (assoc juiced :fire-anim fire-anim-seconds) hit-pos))
+     (apply-heat (push-blood-fx (assoc juiced :fire-anim fire-anim-seconds) hit-pos
+                                (when killed? (corpse-type-at woken hit-pos))))
      world killed? killed? hit-pos)))
 
 (defn- finish-multikill
@@ -830,7 +852,10 @@
                        unlocked)
         based        (assoc juiced :fire-anim fire-anim-seconds)]
     (enqueue-shot-sfx
-     (apply-heat (if hit? (push-blood-fx based hit-pos) based))
+     (apply-heat (if hit?
+                   (push-blood-fx based hit-pos
+                                  (when killed? (corpse-type-at enemies-after hit-pos)))
+                   based))
      world hit? killed? (or hit-pos {:x (:x p) :y (:y p)}))))
 
 (defn- pierce-fire

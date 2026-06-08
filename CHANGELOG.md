@@ -9,6 +9,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-08
+
 ### Added
 
 - Freedoom weapon viewmodels: the first-person gun is now a real DOOM-style sprite (pistol, shotgun, chaingun, chainsaw, BFG, incinerator, rocket), baked from Freedoom (BSD) into a 256-colour grid and drawn as half-blocks. `PHEL_DOOM_NO_SPRITES=1` keeps the old ASCII guns. See `docs/rendering.md`.
@@ -273,7 +275,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `cast + render` under 5 ms per frame at 120×30.
 - Flat PHP arrays on hot paths; `:tag` types for OPcache JIT tracing.
 
-[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/Chemaclass/phel-doom/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Chemaclass/phel-doom/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/Chemaclass/phel-doom/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Chemaclass/phel-doom/compare/v0.7.0...v0.8.0

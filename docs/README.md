@@ -62,7 +62,7 @@ src/io/                      ; side effects
   scores.phel                JSON persistence
   settings.phel              options load/save (JSON)
   savegame.phel              game state save/load
-  ambient.phel               background loops
+  music.phel                 background OST loop
   demo.phel                  attract mode
   wad.phel                   WAD parser
 tests/                       ; unit tests (mirrors src/)

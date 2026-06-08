@@ -6,13 +6,13 @@ Player options: music volume, SFX volume, minimap default, difficulty default. P
 
 - `src/core/settings.phel` (pure): data model. Defaults, `coerce-settings` (clamp/validate), `move-cursor`, `adjust`, volume mappings (`music-volume`, `sfx-scalar`).
 - `src/io/settings.phel` (io): `load-settings` / `save-settings!`. Bad files never block startup (returns defaults). Difficulty is stored as string, keyword-ised on load.
-- `commands/play.phel`: wires page into start menu + in-game overlay, applies volumes to `io/sound` + `io/ambient`.
+- `commands/play.phel`: wires page into start menu + in-game overlay, applies volumes to `io/sound` + `io/music`.
 
 ## Fields
 
 | Field | Type | Range | Effect |
 |-------|------|-------|--------|
-| Music | pct | 0-100 (step 10) | Drone `-v` level. 0% stops bed. 60% = 0.30 (default). Capped at 0.5 so max volume never masks footsteps. |
+| Music | pct | 0-100 (step 10) | OST `-v` level. 0% stops the soundtrack. 60% = 0.30 (default). Capped at 0.5 so max volume never masks footsteps. |
 | SFX | pct | 0-100 (step 10) | Global multiplier on `play-sfx!` events. 0% mutes without affecting N toggle. |
 | Minimap | bool | on / off | Default `:show-map` state. Live edits apply immediately. |
 | Difficulty | enum | easy / normal / hard / nightmare | Default for next run. CLI `--difficulty` overrides. Baked at level build time. |

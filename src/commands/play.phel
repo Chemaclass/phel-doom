@@ -16,7 +16,6 @@
   (:require phel-doom.core.projectile :refer [tick-projectiles])
   (:require phel-doom.core.weapons  :refer [effective-reserve-cap give-weapon switch-weapon weapon-spec weapon-order weapons])
   (:require phel-doom.io.sound    :refer [play-sfx! mute-for! set-sfx-scalar!])
-  (:require phel-doom.io.ambient  :refer [start-ambient! stop-ambient! sync-ambient! set-music-volume!])
   (:require phel-doom.io.music    :as music)
   (:require phel-doom.core.settings :refer [navigate music-volume sfx-scalar valid-difficulty?])
   (:require phel-doom.io.settings :refer [load-settings save-settings!])
@@ -119,19 +118,16 @@
 ;; AND shows the adjustable options, so there is only one overlay layer
 ;; to learn (the H info panel stays a separate read-only reference).
 ;; While paused, the arrows move the cursor / change a value; volumes
-;; apply live through the io/sound + io/ambient atoms and the minimap
+;; apply live through the io/sound + io/music atoms and the minimap
 ;; field mirrors into :show-map. The settings ride on the world under
 ;; :settings / :settings-cursor so frame-stats can paint them and they
 ;; carry across level cuts; resuming (P) persists to disk.
 ;; =====================================================================
 
 (defn- apply-audio-settings!
-  "Push the current settings' volumes into the sfx + ambient layers."
+  "Push the current settings' volumes into the sfx + music layers."
   [settings]
   (set-sfx-scalar!   (sfx-scalar settings))
-  ;; The Music slider drives both layers: the ambient drone bed and the
-  ;; OST riff on top.
-  (set-music-volume!       (music-volume settings))
   (music/set-music-volume! (music-volume settings)))
 
 (defn- step-settings!
@@ -892,12 +888,11 @@
                 (play-sfx! :heartbeat 0.35))
               (when (and (:silence-tick? world') (:sound-on world'))
                 (mute-for! 0.4))
-              ;; N toggled sound this frame: start / stop the ambient
-              ;; drone to match. Comparing the flag (not the edge) also
+              ;; N toggled sound this frame: start / stop the OST loop
+              ;; to match. Comparing the flag (not the edge) also
               ;; catches any other path that flips :sound-on.
               (when (php/!== (:sound-on world) (:sound-on world'))
-                (sync-ambient!       (:sound-on world'))
-                (music/sync-music!   (:sound-on world')))
+                (music/sync-music! (:sound-on world')))
               (cond
                 (php/<= (:lives world') 0) (result-game-over world' t-start now)
                 (on-door? world')          (door-result      world' t-start now)
@@ -1190,7 +1185,7 @@
         ;; from a fresh seed (recorded so the run can be replayed).
         init-seed   (if replay (:seed replay) (rng/fresh-seed))
         ;; Persisted settings (volumes + minimap / difficulty defaults).
-        ;; Apply the volumes up front so the start menu + ambient drone
+        ;; Apply the volumes up front so the start menu + OST loop
         ;; honour them before the first frame.
         settings0   (load-settings)]
     (apply-audio-settings! settings0)
@@ -1208,13 +1203,11 @@
         (let [settings menu
               diff     (resolve-difficulty diff-raw settings)]
           (clear-screen)
-          ;; Ambient drone runs for the whole gameplay session (across
-          ;; levels + end screens). N-toggle starts/stops it mid-run;
-          ;; teardown always stops it so no loop process is orphaned.
-          (start-ambient!)
+          ;; OST loop runs for the whole gameplay session (across levels
+          ;; + end screens). N-toggle starts/stops it mid-run; teardown
+          ;; always stops it so no loop process is orphaned.
           (music/start-music!)
           (run-levels diff god? armory? full-map? nil lv init-seed settings)
-          (stop-ambient!)
           (music/stop-music!)
           (when record? (demo/save-recording! record-path))
           (demo/reset-off!)
@@ -1228,7 +1221,7 @@
   "Menu-less tech-talk showcase run for `phase` (1..num-phases). Forces
    god + full-map (full minimap reveal) and threads the phase through run-levels,
    which applies the per-phase world transform after build-world. Same
-   loop, teardown, and ambient lifecycle as a normal run - only the
+   loop, teardown, and music lifecycle as a normal run - only the
    start menu and record/replay are skipped. `ctx` drives the closing
    success line. Returns the process exit code."
   [ctx phase]
@@ -1241,12 +1234,11 @@
     (apply-audio-settings! settings0)
     (demo/reset-off!)
     (clear-screen)
-    (when audio? (start-ambient!) (music/start-music!))
+    (when audio? (music/start-music!))
     ;; god + armory (own every weapon, ammo refilled to :armory-reserve
     ;; = 99 each tick by combat/tick-armory) + full-map. The phase stamps
     ;; :show-map true so the corner minimap is visible by default.
     (run-levels :normal true true true phase 1 (rng/fresh-seed) settings0)
-    (stop-ambient!)
     (music/stop-music!)
     (demo/reset-off!)
     (restore!)

@@ -14,8 +14,8 @@ Hitscan + damage timing + i-frames. `src/core/combat.phel`. Pure: no side effect
 | `fire-anim-seconds` | 0.09 | Muzzle flash visibility |
 | `fx-ttl-seconds` | 0.7 | Blood splatter lifetime |
 | `flash-seconds` | 0.05 | White impact jolt |
-| `heat-per-shot` | 0.30 | Overheat per shot (jam at 1.0); dormant - no weapon overheats |
-| `jam-seconds` | 0.7 | Jam lockout duration; dormant (see Pistol below) |
+| `heat-per-shot` | 0.30 | Overheat per shot (dormant - no weapon overheats) |
+| `jam-seconds` | 0.7 | Jam lockout duration (dormant) |
 | `mag-size` | 10 | Pistol default magazine capacity |
 | `max-reserve` | 50 | Pistol default reserve cap |
 | `reload-cooldown-seconds` | 1.2 | Pistol reload duration |
@@ -100,9 +100,9 @@ While `:hit-stop-secs > 0`, `play/tick-world` skips entire gameplay step (physic
 
 ### Pistol (pierce, slot 1)
 
-The pistol's identity (issue #124) is the `:pierce?` flag: its round passes through and damages every enemy along the ray, not just the nearest. That is its edge over the strictly-higher-DPS chaingun (20 vs 8 DPS) - a row of lined-up enemies in a corridor takes one hit each, where the chaingun would have to chew through them one at a time. The chaingun keeps the single-target sustained-spray niche; neither dominates.
+The pistol's identity (issue #124) is the `:pierce?` flag: its round passes through and damages every enemy along the ray, not just the nearest. That is its edge over the strictly-higher-DPS chaingun (20 vs 8 DPS) - a row of lined-up enemies in a corridor takes one hit each, where the chaingun would chew through them one at a time. Neither dominates.
 
-**Overheat dropped.** The pistol used to be the only `:overheats?` weapon (jam at heat 1.0). Jamming the weapon the player is *forced* onto when out of ammo is anti-fun, so overheat was removed from the pistol. The chaingun's mag burn and the shotgun's slow cadence are brake enough for those, so no weapon overheats now. The generic `:overheats?` / heat / jam machinery stays in place (data-driven, dormant) for any future weapon that opts in; `heat-per-shot` and `jam-seconds` are unused until then.
+The pistol no longer overheats. Jamming the fallback weapon when the player runs out of ammo is anti-fun, so overheat was removed. The chaingun's mag burn and shotgun's slow cadence provide enough brake. The generic `:overheats?` / heat / jam machinery remains (data-driven, dormant) for any future weapon that opts in; `heat-per-shot` and `jam-seconds` are unused until then.
 
 ### Shotgun (spread, slot 2)
 
@@ -139,7 +139,7 @@ Its point is the damage type: caco / baron / archvile / mancubus carry `:resists
 
 ### Rocket launcher (splash, slot 7, found L5)
 
-Mid-tier AoE (issue #123): fills the gap between the chaingun (no splash) and the rare BFG nuke. Carries `:splash-radius 2.0` + `:splash-damage 3`, so it routes through the same `bfg-fire` path as the BFG, with smaller numbers (BFG is radius 3.0 / splash 6). Single-action, `:fire-cooldown 0.9`, mag 1 / reserve cap 30. Damage type `:ballistic` (an explosive shell), so no enemy resists it. The everyday crowd tool; the BFG stays the rare panic button.
+Mid-tier AoE (issue #123): fills the gap between the chaingun (no splash) and the rare BFG nuke. Carries `:splash-radius 2.0` + `:splash-damage 3`, with direct-hit damage 4 (so 4 + 3 splash total). Routes through the same `bfg-fire` path as the BFG with smaller numbers than BFG (radius 3.0 / splash 6). Single-action, `:fire-cooldown 0.9`, mag 1 / reserve cap 30. Damage type `:ballistic` (explosive shell), so no enemy resists it. The everyday crowd tool; the BFG stays the rare panic button.
 
 ### Super shotgun (spread, slot 8, found L8)
 

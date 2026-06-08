@@ -482,11 +482,17 @@
            (cast-wall-dist world)
            shot-hit-radius max-range dmg dmg-type)))
 
-(defn- push-blood-fx [world hit-pos]
-  (update world :fx
-          (fn [fx]
-            (conj (or fx [])
-                  {:x (:x hit-pos) :y (:y hit-pos) :ttl fx-ttl-seconds}))))
+(defn- push-blood-fx
+  "Append a blood/death fx at `hit-pos`. On a kill the caller passes the
+   dead enemy's `type-kw`, which the renderer uses to draw a collapsing
+   Freedoom corpse sprite; wounds (no type) stay a blood splatter."
+  ([w hp] (push-blood-fx w hp nil))
+  ([world hit-pos type-kw]
+   (update world :fx
+           (fn [fx]
+             (conj (or fx [])
+                   (let [e {:x (:x hit-pos) :y (:y hit-pos) :ttl fx-ttl-seconds}]
+                     (if type-kw (assoc e :type type-kw) e)))))))
 
 (def loot-drop-chance
   "Probability cutoffs for a kill drop, layered on a single uniform roll
@@ -617,7 +623,8 @@
                     (let [hs (hit-stop-for (or (:max-lives killed-e) 1))]
                       (if (php/> hs 0.0) (assoc with-loot :hit-stop-secs hs) with-loot))
                     with-loot)]
-    (push-blood-fx (assoc juiced :fire-anim fire-anim-seconds) hit-pos)))
+    (push-blood-fx (assoc juiced :fire-anim fire-anim-seconds) hit-pos
+                   (when killed? (:type killed-e)))))
 
 (defn- on-shot-miss [world]
   (assoc world :fire-anim fire-anim-seconds))

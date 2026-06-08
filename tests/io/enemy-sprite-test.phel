@@ -1,6 +1,7 @@
 (ns phel-doom-tests.io.enemy-sprite-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type sprite-col-x enemy-sprite-cell]))
+  (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type sprite-col-x enemy-sprite-cell])
+  (:require phel-doom.io.render.enemy-sprites-data :refer [projectile-sprites death-sprites]))
 
 ;; ---------------------------------------------------------------------
 ;; sprite-for-type: every game enemy type resolves to a baked sprite,
@@ -60,3 +61,24 @@
 (deftest test-sy-clamps-into-range
   ;; A row well past the box clamps to the last sub-rows (still in-range).
   (is (some? (enemy-sprite-cell grid 1 4 0 0 2 99))))
+
+;; ---------------------------------------------------------------------
+;; Projectile + death sprite data (baked from Freedoom).
+;; ---------------------------------------------------------------------
+
+(deftest test-fireball-projectile-baked
+  (let [f (get projectile-sprites :fireball)]
+    (is (not (nil? f)) "fireball sprite present")
+    (is (php/> (:w f) 0))
+    (is (php/> (count (:px f)) 0))))
+
+(deftest test-death-sequences-baked
+  ;; Each baked death seq is a non-empty vector of {:w :h :px} frames,
+  ;; collapse..corpse. (revenant frames are absent in Freedoom -> it
+  ;; gracefully falls back to the blood shade, so it is not required.)
+  (foreach [t [:imp :demon :caco :baron :cyber :mancubus :archvile]]
+    (let [seq (get death-sprites t)]
+      (is (not (nil? seq)) (str "death seq for " t))
+      (is (php/> (count seq) 0) (str (name t) " has frames"))
+      (let [corpse (php/aget seq (php/- (count seq) 1))]
+        (is (php/> (:w corpse) 0) (str (name t) " corpse has size"))))))

@@ -5,9 +5,9 @@
   (:require phel-doom.io.render.palette :refer [kill-flash death-slump death-collapse blood-mid blood-dim fireball-shade fireball-glyph])
   (:require phel-doom.io.render.frame-math :refer [sprite-h aggro-distance project-enemy collect-enemy-projs pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.weapon-sprites-data :refer [baked-weapons])
-  (:require phel-doom.io.render.enemy-sprites-data :refer [projectile-sprites death-sprites])
+  (:require phel-doom.io.render.enemy-sprites-data :refer [projectile-sprites death-sprites blood-sprites])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-col-x enemy-sprite-cell])
-  (:require phel-doom.core.combat :refer [corpse-ttl-seconds])
+  (:require phel-doom.core.combat :refer [fx-ttl-seconds corpse-ttl-seconds])
   (:require phel-doom.core.map :refer [find-door-cell]))
 
 ;; Each fn appends one logical UI overlay to the `parts` PHP-array via
@@ -1128,19 +1128,17 @@
          (or (php/=== ed nil) (php/< d ed)))))
 
 (defn- blit-sprite-into
-  "Billboard a baked sprite (`{:w :h :px}`) centred at column `col`,
-   depth `d`, into the `buf` overlay (top-priority cell strings). Reuses
-   the enemy half-block sampler + native-aspect width, and the
-   wall/enemy occlusion check so a fireball / corpse behind a closer
-   thing is hidden. Transparent pixels are not written (the base cell
-   shows). Returns the mutated buffer."
-  [buf sprite ^int col ^float d ^int vw ^int vh dists edists]
+  "Blit a baked sprite (`{:w :h :px}`) centred at column `col` into the
+   `buf` overlay (top-priority cell strings) over the vertical screen
+   span [`etop`, `etop`+`h`). Width follows the sprite's native aspect;
+   the wall/enemy occlusion check (depth `d`) hides a splat / corpse
+   behind a closer thing. Transparent pixels are not written (the base
+   cell shows). Returns the mutated buffer."
+  [buf sprite ^int col ^float d ^int etop ^int h ^int vw ^int vh dists edists]
   (let [sw     (:w sprite)
         sh     (:h sprite)
         px     (:px sprite)
-        h      (sprite-h vh d 1.0)
         ehw    (php/max 1 (php/intval (php/round (php// (php/* h sw) sh))))
-        etop   (php/intdiv (php/- vh h) 2)
         ebot   (php/+ etop h)
         r-lo   (php/max 0 etop)
         r-hi   (php/min vh ebot)
@@ -1157,6 +1155,13 @@
                 (recur (php/+ r 1))))))
         (recur (php/+ c 1))))
     buf))
+
+(defn- blit-billboard
+  "blit-sprite-into at full projected enemy height, centred vertically
+   (corpses, fireballs)."
+  [buf sprite ^int col ^float d ^int vw ^int vh dists edists]
+  (let [h (sprite-h vh d 1.0)]
+    (blit-sprite-into buf sprite col d (php/intdiv (php/- vh h) 2) h vw vh dists edists)))
 
 (defn- death-frame
   "Pick the death-animation frame for enemy `type-kw` at remaining
@@ -1175,6 +1180,16 @@
                          (php/intval (php/* (php/- 1.0 ttl-frac) (php/* n 2.5))))]
         (php/aget seq (php/max 0 idx))))))
 
+(defn- blood-frame
+  "Pick a Freedoom blood-spurt frame (big -> small) for a wound hit at
+   remaining life-fraction `ttl-frac` (1.0 fresh -> 0.0 gone)."
+  [^float ttl-frac]
+  (let [n (php/count blood-sprites)]
+    (when (php/> n 0)
+      (php/aget blood-sprites
+                (php/max 0 (php/min (php/- n 1)
+                                    (php/intval (php/* (php/- 1.0 ttl-frac) n))))))))
+
 (defn paint-blood-fx-into
   "Walk every blood/death fx in `stats`, project to screen, and draw it
    into `blood-paint`. A kill fx carries the dead enemy's `:type`, so in
@@ -1186,17 +1201,31 @@
    Returns the mutated buffer — PHP arrays pass by value, so the caller
    must rebind to see the writes."
   [blood-paint stats world dists vw vh]
-  (let [no-enemies (buf-mk)]            ; corpses occlude on walls only
+  (let [no-enemies (buf-mk)              ; sprites occlude on walls only
+        on?        (sprites-enabled?)]
     (doseq [fx (or (get stats :fx) [])]
            (let [proj (project-enemy fx (:player world) vw)]
              (when proj
-               (let [col   (:col proj)
-                     d     (:dist proj)
-                     frame (when (sprites-enabled?)
-                             (death-frame (:type fx)
-                                          (php// (or (:ttl fx) 0.0) corpse-ttl-seconds)))]
-                 (if frame
-                   (blit-sprite-into blood-paint frame col d vw vh dists no-enemies)
+               (let [col    (:col proj)
+                     d      (:dist proj)
+                     type-k (:type fx)
+                     corpse (when (and on? type-k)
+                              (death-frame type-k (php// (or (:ttl fx) 0.0) corpse-ttl-seconds)))
+                     splat  (when (and on? (not type-k))
+                              (blood-frame (php// (or (:ttl fx) 0.0) fx-ttl-seconds)))]
+                 (cond
+                   ;; Kill: full-height collapse -> corpse billboard.
+                   corpse
+                   (blit-billboard blood-paint corpse col d vw vh dists no-enemies)
+                   ;; Wound: a small Freedoom blood spurt at the hit torso.
+                   splat
+                   (let [eh   (sprite-h vh d 1.0)
+                         bh   (php/max 2 (php/intdiv eh 3))
+                         mid  (php/+ (php/intdiv (php/- vh eh) 2) (php/intdiv eh 3))
+                         etop (php/- mid (php/intdiv bh 2))]
+                     (blit-sprite-into blood-paint splat col d etop bh vw vh dists no-enemies))
+                   ;; NO_SPRITES fallback: ttl-tiered red shade block.
+                   :else
                    (let [hw     (:half-width proj)
                          bsh    (let [ttl (or (:ttl fx) 0.0)]
                                   (cond (php/> ttl 0.65) kill-flash
@@ -1285,7 +1314,7 @@
                      d   (:dist proj)]
                  (if fireball
                    ;; Freedoom fireball billboard.
-                   (blit-sprite-into blood-paint fireball col d vw vh dists edists)
+                   (blit-billboard blood-paint fireball col d vw vh dists edists)
                    ;; Legacy orange glow + white-hot core (NO_SPRITES).
                    (let [hw     (php/max 1 (php/intdiv (:half-width proj) 2))
                          c-from (php/max 0 (php/- col hw))

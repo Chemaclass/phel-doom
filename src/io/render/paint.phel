@@ -4,6 +4,7 @@
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
   (:require phel-doom.io.render.palette :refer [kill-flash death-slump death-collapse blood-mid blood-dim fireball-shade fireball-glyph])
   (:require phel-doom.io.render.frame-math :refer [sprite-h aggro-distance project-enemy collect-enemy-projs pulse visuals-for-type enemy-front-visible-at?])
+  (:require phel-doom.io.render.weapon-sprites-data :refer [baked-weapons])
   (:require phel-doom.core.map :refer [find-door-cell]))
 
 ;; Each fn appends one logical UI overlay to the `parts` PHP-array via
@@ -922,8 +923,8 @@
       ;; 1-based. Per-weapon SILHOUETTE dispatches on :weapon so each
       ;; weapon reads by SHAPE, not just colour: the pistol is a narrow
       ;; single barrel; the shotgun a wide double-barrel; the chaingun a
-      ;; spaced rotary cluster; the super shotgun a stubby twin-bore; the
-      ;; chainsaw a toothed blade over an engine (no barrel); the BFG a
+      ;; spaced rotary cluster; the chainsaw a toothed blade over an
+      ;; engine (no barrel); the BFG a
       ;; bulky cannon with a glowing aperture; the incinerator a thin
       ;; nozzle over a fat fuel tank; the rocket a straight round tube.
       (let [weapon (or (get stats :weapon) :pistol)
@@ -948,18 +949,6 @@
                (paint-row (php/- vh 1) (php/- cc 3) (php/- vh 2) frame
                           (str "▐█" grip-hi "▓▓▓▓▓▓▓▓" frame "█▌"))
                (paint-row vh           (php/- cc 2) (php/- vh 1) grip-lo "▐▓▓▓▓▓▓▓▓▌"))
-
-              ;; Super shotgun: stubby twin-bore. A gap in the muzzle +
-              ;; barrels reads as the sawn-off double barrel.
-              (php/=== weapon :super-shotgun)
-              (str
-               (paint-row (php/- vh 5) (php/- cc 2) (php/- vh 6) muzzle    "▄▄▄ ▄▄▄")
-               (paint-row (php/- vh 4) (php/- cc 2) (php/- vh 5) slide     "▐██ ██▌")
-               (paint-row (php/- vh 3) (php/- cc 3) (php/- vh 4) slide     "▐█████████▌")
-               (paint-row (php/- vh 2) (php/- cc 3) (php/- vh 3) slide-dim "▐█████████▌")
-               (paint-row (php/- vh 1) (php/- cc 3) (php/- vh 2) frame
-                          (str "▐█" grip-hi "▓▓▓▓▓▓▓" frame "█▌"))
-               (paint-row vh           (php/- cc 2) (php/- vh 1) grip-lo "▐▓▓▓▓▓▓▓▌"))
 
               ;; Chainsaw: no barrel. Toothed blade up top, light chain
               ;; bar, then the engine block + handle.
@@ -1031,6 +1020,96 @@
                      "\e[" r-bot ";" cc "H" (row-bg (php/- vh 7)) "\e[1;93m *★* "
                      "\e[0m"))))))
   parts)
+
+(def sprites-on?
+  "Memoised PHEL_DOOM_NO_SPRITES probe. The env can't change mid-run, so
+   resolve it once instead of calling getenv every frame. nil = not yet
+   probed."
+  (atom nil))
+
+(defn- sprites-enabled?
+  "Freedoom weapon sprites are on by default. PHEL_DOOM_NO_SPRITES=1
+   forces the hand-built ASCII silhouettes (A/B compare or fallback)."
+  []
+  (let [cached @sprites-on?]
+    (if (nil? cached)
+      (let [on (not (php/=== "1" (php/getenv "PHEL_DOOM_NO_SPRITES")))]
+        (reset! sprites-on? on)
+        on)
+      cached)))
+
+(defn- floor-row-bg
+  "The floor gradient's SGR-only prefix for screen row index `r` (the
+   cell minus its trailing glyph). Used as the backing colour for the
+   transparent half of a half-lit weapon cell so the gun has no halo."
+  [floor-gradient r]
+  (let [cell (or (buf-get floor-gradient r) "")]
+    (php/mb_substr cell 0 (php/max 0 (php/- (php/mb_strlen cell) 1)))))
+
+(defn- weapon-row-string
+  "Build one half-block sprite row (pixel rows `tb`..`tb+w` over
+   `bb`..`bb+w`) as a single string. Transparent runs collapse to one
+   cursor-forward; a colour SGR is emitted only when it changes from the
+   previous cell, so flat regions cost a handful of bytes. `bg` is the
+   floor prefix for the row (backs a half-lit cell's transparent half).
+   `pf` / `pb` track the fg / bg currently set on the terminal: -2 =
+   none yet, -1 = the floor bg, else an xterm-256 index."
+  [px tb bb w bg]
+  (loop [x 0 acc (php/array) skip 0 pf -2 pb -2]
+    (if (php/>= x w)
+      (php/implode "" acc)
+      (let [top (php/aget px (php/+ tb x))
+            bot (php/aget px (php/+ bb x))]
+        (if (and (php/=== top -1) (php/=== bot -1))
+          (recur (php/+ x 1) acc (php/+ skip 1) pf pb)
+          ;; At least one half is lit. fg = the lit half (top wins when
+          ;; both); bg = bot when both lit, else the floor (-1 sentinel).
+          (let [lead  (if (php/> skip 0) (str "\e[" skip "C") "")
+                half? (or (php/=== top -1) (php/=== bot -1))
+                nf    (if (php/=== top -1) bot top)
+                nb    (if half? -1 bot)
+                fg    (if (php/=== nf pf) "" (str "\e[38;5;" nf "m"))
+                bg'   (cond (php/=== nb pb) ""
+                            (php/=== nb -1) bg
+                            :else           (str "\e[48;5;" nb "m"))
+                glyph (if (php/=== top -1) "▄" "▀")]
+            (php/array_push acc (str lead bg' fg glyph))
+            (recur (php/+ x 1) acc 0 nf nb)))))))
+
+(defn paint-weapon-sprite
+  "Paint a baked Freedoom viewmodel (`spr` = {:w :h :px}, an xterm-256
+   pixel grid with -1 = transparent) centre-bottom, two pixel rows per
+   half-block cell, anchored at `vh`. Reuses the reload drop + recoil
+   kick so the gun animates on fire. See weapon-row-string for the
+   per-row byte-saving (cursor-skip + SGR dedup)."
+  [parts stats spr vw vh floor-gradient]
+  (let [w     (:w spr)
+        rows  (php/intdiv (:h spr) 2)
+        px    (:px spr)
+        shift (php/- (reload-offset stats) (recoil-offset stats))
+        c0    (php/max 1 (php/+ (php/intdiv (php/- vw w) 2) 1))
+        r0    (php/+ (php/- vh rows) 1)]
+    (dotimes [j rows]
+             (let [sr (php/+ r0 j shift)]
+               (when (and (php/<= sr vh) (php/>= sr 1))
+                 (let [tb   (php/* (php/* 2 j) w)
+                       bb   (php/+ tb w)
+                       bg   (floor-row-bg floor-gradient (php/- sr 1))
+                       line (weapon-row-string px tb bb w bg)]
+                   (buf-push parts (str "\e[" sr ";" c0 "H" line "\e[0m")))))))
+  parts)
+
+(defn paint-weapon-hud
+  "Bottom first-person weapon view. Paints a baked Freedoom sprite when
+   one exists for the active weapon and fits the viewport width; falls
+   back to the hand-built ASCII silhouette otherwise (or when
+   PHEL_DOOM_NO_SPRITES=1)."
+  [parts stats vw vh floor-gradient]
+  (let [spr (get baked-weapons (or (get stats :weapon) :pistol))]
+    (if (and spr (sprites-enabled?) (php/<= (:w spr) vw))
+      (paint-weapon-sprite parts stats spr vw vh floor-gradient)
+      (paint-pistol-hud parts stats vw vh floor-gradient))))
+
 ;; =====================================================================
 ;; § Buffer painters (blood, pickups, projectiles)
 ;; =====================================================================

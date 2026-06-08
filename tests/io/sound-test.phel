@@ -1,6 +1,7 @@
 (ns phel-doom-tests.io.sound-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.io.sound :refer [play-sfx! set-sfx-scalar! audio-player state]))
+  (:require phel-doom.io.sound :refer [play-sfx! set-sfx-scalar! audio-player state])
+  (:require phel-doom.io.sound-data :refer [freedoom-sfx]))
 
 ;; play-sfx! returns nil under PHEL_DOOM_SILENT=1 — that's the
 ;; contract `composer test` relies on so the test suite never shells
@@ -59,3 +60,23 @@
   (audio-player)                       ; forces ensure-probed!
   (is (= 0.1 (:sfx-scalar @state)) "probe must not clobber the SFX scalar")
   (set-sfx-scalar! 1.0))
+
+;; ---------------------------------------------------------------------
+;; Baked Freedoom weapon sounds: pure data assertions only (no audio).
+;; play-sfx! prefers these temp-WAV files per weapon-fire event; here we
+;; just pin that the baked map exists and every entry is a real WAV.
+;; ---------------------------------------------------------------------
+
+(deftest test-freedoom-sfx-covers-weapon-fire-events
+  (foreach [evt [:shoot :shoot-shotgun :shoot-chaingun :shoot-chainsaw
+                 :shoot-bfg :shoot-incinerator :shoot-rocket]]
+    (is (php/is_string (get freedoom-sfx evt))
+        (str "baked sound present for " evt))))
+
+(deftest test-freedoom-sfx-entries-decode-to-wav
+  ;; Each value is base64 of an 8-bit PCM WAV: RIFF....WAVE....data.
+  (foreach [evt (keys freedoom-sfx)]
+    (let [wav (php/base64_decode (get freedoom-sfx evt))]
+      (is (= "RIFF" (php/substr wav 0 4)) (str evt " starts with RIFF"))
+      (is (= "WAVE" (php/substr wav 8 4)) (str evt " has WAVE tag"))
+      (is (php/> (php/strlen wav) 44) (str evt " has PCM payload")))))

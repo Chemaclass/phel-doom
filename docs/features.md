@@ -42,8 +42,7 @@ See [level-system.md](level-system.md), [map.md](map.md).
   - 5: BFG (10 + 6 splash, 1.2s cd, mag 1, plasma AoE 3-cell, rare L7)
   - 6: incinerator (1 fire dmg, 0.06s cd, mag 40, auto-fire; fire-resist mobs take 0, L6)
   - 7: rocket launcher (4 + 3 splash r2.0, 0.9s cd, mag 1, single-action, ballistic AoE, L5)
-  - 8: super shotgun (5 dmg + 2 graze x3 cone, 0.9s cd, mag 2, short 4-cell reach, L8)
-- Pistol + chaingun + chainsaw auto-spray while held. Shotgun + BFG + rocket + super-shotgun single-action. The pistol round pierces every enemy in line. Mag/reserve persist across switches, auto-switch on first pickup.
+- Pistol + chaingun + chainsaw auto-spray while held. Shotgun + BFG + rocket single-action. The pistol round pierces every enemy in line. Mag/reserve persist across switches, auto-switch on first pickup.
 - Kill-loot skips pistol when other weapons owned, biases shotgun/chaingun. Level boxes refill active weapon.
 - Half-heart health: 10 HP drawn as 5 hearts (2 HP each), starting full. Hits cost by attacker type - 1 (half heart) for light melee, 2 (full heart) for heavy bruisers + casters, 3 for the cyberdemon boss. 1s i-frame, 4-way directional red hurt band, knockback on contact. Armor absorbs a whole hit.
 

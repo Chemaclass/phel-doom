@@ -52,9 +52,8 @@ DPS-balanced niches, not monotonic upgrades. Found on the map, selected with key
 | 5 | BFG | 10 + 6 splash (r3.0) | 1.2s | 1 | - | plasma AoE |
 | 6 | incinerator | 1 | 0.06s | 40 | 16 | fire swarm-clearer (fire-resist enemies) |
 | 7 | rocket | 4 + 3 splash (r2.0) | 0.9s | 1 | - | ballistic mid-tier AoE |
-| 8 | super shotgun | 5 + 2 graze | 0.9s | 2 | - | ballistic tank-killer (wide cone) |
 
-Hold `space` for auto-fire on pistol/chaingun/chainsaw/incinerator. Shotgun, super shotgun, BFG, rocket fire one shot per pull.
+Hold `space` for auto-fire on pistol/chaingun/chainsaw/incinerator. Shotgun, BFG, rocket fire one shot per pull.
 
 ## CLI flags
 

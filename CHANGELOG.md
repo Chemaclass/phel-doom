@@ -11,6 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+- Freedoom enemy sprites: monsters now render as real DOOM-style billboards (imp, demon/pinky/spectre, cacodemon, baron, cyberdemon, revenant, archvile, mancubus), baked from Freedoom (BSD) and sampled per cell with depth occlusion (transparent pixels show the wall behind, no halo). `PHEL_DOOM_NO_SPRITES=1` keeps the legacy glyph enemies. See `docs/rendering.md`.
 - Freedoom weapon viewmodels: the first-person gun is now a real DOOM-style sprite (pistol, shotgun, chaingun, chainsaw, BFG, incinerator, rocket), baked from Freedoom (BSD) into a 256-colour grid and drawn as half-blocks. `PHEL_DOOM_NO_SPRITES=1` keeps the old ASCII guns. See `docs/rendering.md`.
 - Freedoom weapon-fire sounds: each weapon plays its real DOOM-style report (baked Freedoom DMX, license-clean, no binary asset). See `docs/audio.md`.
 

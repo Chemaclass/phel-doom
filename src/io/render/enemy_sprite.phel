@@ -1,0 +1,84 @@
+;; Pure helpers for sampling baked Freedoom enemy sprite pixels.
+;; No side effects; used by main.phel's row loop.
+(ns phel-doom.io.render.enemy-sprite
+  (:require phel-doom.io.render.enemy-sprites-data :refer [enemy-sprites]))
+
+;; =====================================================================
+;; § Sprite-id resolution
+;; =====================================================================
+
+(def sprite-type-map
+  "Maps every in-game enemy `:type` keyword to the baked sprite-id.
+   `:pinky` and `:spectre` reuse the `:demon` sprite (same visual
+   appearance). Any type absent from this map has no baked sprite
+   and falls back to the glyph path."
+  {:imp      :imp
+   :demon    :demon
+   :pinky    :demon
+   :spectre  :demon
+   :caco     :caco
+   :baron    :baron
+   :cyber    :cyber
+   :revenant :revenant
+   :archvile :archvile
+   :mancubus :mancubus})
+
+(defn sprite-for-type
+  "Return the `{:w :h :px}` sprite map for enemy `:type` keyword
+   `type-kw`, or nil when the type has no baked sprite (unknown
+   type / no entry in `enemy-sprites`). Pure; no side effects."
+  [type-kw]
+  (let [sid (get sprite-type-map type-kw)]
+    (when sid
+      (get enemy-sprites sid))))
+
+;; =====================================================================
+;; § Per-cell sampling
+;; =====================================================================
+
+(def cell-cache
+  "Precomputed `\\e[38;5;<n>m█` cell string for every xterm-256 index
+   0..255. The sampler runs once per covered enemy cell every frame, so
+   building the string each call (str + intval) dominated the cost; a
+   flat lookup removes the per-cell allocation entirely."
+  (let [a (php/array)]
+    (dotimes [i 256] (php/aset a i (str "\e[38;5;" i "m█")))
+    a))
+
+(defn sprite-col-x
+  "Map screen column `col` to a sprite x for an enemy centred at `ecol`
+   with half-width `ehw` and native width `sw`. Depends only on the
+   column, so the zone pass computes it once per covered column instead
+   of once per cell. Clamped to [0, sw-1]."
+  [^int sw ^int ecol ^int ehw ^int col]
+  (let [span (php/max 1 (php/+ (php/* 2 ehw) 1))]
+    (php/max 0 (php/min (php/- sw 1)
+                        (php/intval (php// (php/* (php/- col (php/- ecol ehw)) sw)
+                                           span))))))
+
+(defn enemy-sprite-cell
+  "Sample one cell from a baked enemy sprite at screen `row`, given the
+   precomputed sprite column `sx` (see sprite-col-x) and the enemy's
+   vertical screen extent [`etop`, `ebot`).
+
+   Parameters:
+     px       - flat row-major xterm-256 php-array (-1 = transparent)
+     sw sh    - native sprite width / height in pixels
+     sx       - sprite x for this screen column (precomputed)
+     etop     - first screen row covered by the enemy billboard
+     ebot     - one past the last screen row (exclusive)
+     row      - screen row to sample
+
+   Returns: a cached `\\e[38;5;<n>m█` cell string when the pixel is
+   opaque, or nil when it is transparent (caller keeps its base
+   wall/sky/floor cell). The full-block `█` is fg-only so the terminal
+   BG already printed (wall/floor) shows through — no halo on any
+   background. `sy` is clamped to [0, sh-1]."
+  [px ^int sw ^int sh ^int sx ^int etop ^int ebot ^int row]
+  (let [height (php/max 1 (php/- ebot etop))
+        sy     (php/max 0 (php/min (php/- sh 1)
+                                   (php/intval (php// (php/* (php/- row etop) sh)
+                                                      height))))
+        p      (php/aget px (php/+ (php/* sy sw) sx))]
+    (when (php/!== p -1)
+      (php/aget cell-cache p))))

@@ -85,11 +85,15 @@ Per-row shade by distance from horizon (`vh/2`): rows near horizon darkest (atmo
 
 ## Enemy sprite paint
 
-Per enemy: fade `t = (dist/max-depth)²` capped at 0.85, then shade head/body/legs via `fade-256` on color codes. Body glyph (e.g. `▒`) varies per type. Writes to `eheads`, `ebodys`, `elegss` arrays per column.
+Two modes, chosen by `PHEL_DOOM_NO_SPRITES` (same flag as the weapon view; sprites on by default).
 
-`project-enemy` scale factor (1.0 default, 2.0 for `:cyber`): multiplies half-width and height proportionally. Centred vertically with feet at horizon. Stores `tops/bots/mids/lowers` for per-row zone selection.
+**Sprite mode (default):** enemies render as baked Freedoom (BSD) billboards. `enemy_sprites_data` holds a native-resolution xterm-256 grid per sprite-id (`{:w :h :px}`, -1 transparent); `enemy-sprite/sprite-for-type` maps each `:type` to one (pinky + spectre reuse `:demon`). The zone pass stashes per covered column (depth-gated `d < dists[c]`) the billboard box + sprite ref in `e-stop/e-sbot/e-sx/e-spx/e-sw/e-sh` WITHOUT clobbering the wall `tops/bots`, so transparent pixels show the real wall behind. The hot row loop computes the wall/sky/floor base cell, then overlays `enemy-sprite-cell` (a cached `\e[38;5;<n>m█` full-block, fg-only so the background shows through with no halo). `sprite-col-x` (column to sprite-x) is precomputed once per column in the zone pass; only `sy` is per-cell. The crosshair centre-cell resolver mirrors the same priority.
 
-Aggro blink at distance < 1.8 units.
+**Glyph mode (`PHEL_DOOM_NO_SPRITES=1`):** the legacy path. Per enemy: fade `t = (dist/max-depth)²` capped at 0.85, then shade head/body/legs via `fade-256` on color codes. Body glyph (e.g. `▒`) varies per type. Writes `eheads/ebodys/elegss` + overwrites `tops/bots/mids/lowers` for per-row zone selection. Cyberdemon uses `boss-col-paint` to carve a silhouette (sprite mode samples the real cyber sprite instead).
+
+`project-enemy` scale factor (1.0 default, 2.0 for `:cyber`): multiplies half-width and height proportionally. Centred vertically with feet at horizon.
+
+Aggro blink at distance < 1.8 units (glyph mode).
 
 ## Face overlay (post-pass)
 
@@ -135,4 +139,4 @@ The first-person gun (`paint-weapon-hud`) uses baked Freedoom (BSD) viewmodels. 
 
 ## Asset attribution
 
-Weapon sprites and weapon-fire sounds are derived from [Freedoom](https://freedoom.github.io/) (`freedoom1.wad`), distributed under the 3-clause BSD license. They are baked into `src/` data files by the scripts under `tools/`; re-bake from a Freedoom WAD rather than hand-editing.
+Weapon sprites, weapon-fire sounds, and enemy billboard sprites are derived from [Freedoom](https://freedoom.github.io/) (`freedoom1.wad` + `freedoom2.wad`), distributed under the 3-clause BSD license. They are baked into `src/` data files by the scripts under `tools/` (`bake-weapon-sprites`, `bake-weapon-sounds`, `bake-enemy-sprites`); re-bake from a Freedoom WAD rather than hand-editing.

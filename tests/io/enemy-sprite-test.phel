@@ -1,0 +1,60 @@
+(ns phel-doom-tests.io.enemy-sprite-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type sprite-col-x enemy-sprite-cell]))
+
+;; ---------------------------------------------------------------------
+;; sprite-for-type: every game enemy type resolves to a baked sprite,
+;; with pinky + spectre reusing the demon sprite. Unknown types fall
+;; back to nil (glyph path).
+;; ---------------------------------------------------------------------
+
+(deftest test-sprite-for-type-covers-every-enemy
+  (foreach [t [:imp :demon :pinky :spectre :caco :baron :cyber
+               :revenant :archvile :mancubus]]
+    (let [spr (sprite-for-type t)]
+      (is (not (nil? spr)) (str "baked sprite for " t))
+      (is (php/> (:w spr) 0) (str (name t) " has width"))
+      (is (php/> (:h spr) 0) (str (name t) " has height")))))
+
+(deftest test-pinky-and-spectre-reuse-demon
+  (is (= (sprite-for-type :demon) (sprite-for-type :pinky)) "pinky reuses demon")
+  (is (= (sprite-for-type :demon) (sprite-for-type :spectre)) "spectre reuses demon"))
+
+(deftest test-sprite-for-type-unknown-is-nil
+  (is (nil? (sprite-for-type :not-a-monster)))
+  (is (nil? (sprite-for-type nil))))
+
+;; ---------------------------------------------------------------------
+;; enemy-sprite-cell: pure per-cell sampler. Build a tiny 2x2 grid so
+;; pixel positions are exact. -1 = transparent.
+;;   px layout (row-major, w=2 h=2):
+;;     (0,0)=10  (1,0)=-1
+;;     (0,1)=-1  (1,1)=20
+;; Place it as a billboard centred at col 5, half-width 0 (1 col wide),
+;; rows [4,6). With span=1 every col maps to sx=0; height=2 maps row 4
+;; -> sy 0, row 5 -> sy 1.
+;; ---------------------------------------------------------------------
+
+(def grid (php/array 10 -1 -1 20))
+
+(deftest test-sprite-col-x-maps-and-clamps
+  ;; Enemy centred at col 5, half-width 2 (span 5), sprite width 2.
+  (is (= 0 (sprite-col-x 2 5 2 3)) "left edge -> sx 0")
+  (is (= 1 (sprite-col-x 2 5 2 7)) "right edge -> sx 1")
+  ;; A column past the billboard clamps into [0, sw-1].
+  (is (= 1 (sprite-col-x 2 5 2 99)) "far right clamps to sw-1"))
+
+(deftest test-opaque-pixel-returns-colour-cell
+  ;; sx 0, row 4 -> sy 0 -> px 10 -> colour cell.
+  (is (= "\e[38;5;10m█" (enemy-sprite-cell grid 2 2 0 4 6 4))))
+
+(deftest test-transparent-pixel-returns-nil
+  ;; sx 0, row 5 -> sy 1 -> px -1 -> nil (base cell shows through).
+  (is (nil? (enemy-sprite-cell grid 2 2 0 4 6 5))))
+
+(deftest test-sy-clamps-into-range
+  ;; sx 1, bottom row -> sy 1 -> px (1,1) = 20.
+  (is (= "\e[38;5;20m█" (enemy-sprite-cell grid 2 2 1 4 6 5)) "bottom row -> px 20")
+  ;; A row past the box clamps to sy = h-1 (still reads in-range; sx 1,
+  ;; clamped sy 1 -> px (1,1) = 20, opaque).
+  (is (= "\e[38;5;20m█" (enemy-sprite-cell grid 2 2 1 4 6 99))))

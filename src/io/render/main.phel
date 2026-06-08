@@ -582,25 +582,28 @@
     ;; nearest dist per column lets us drop a shadow cell only for the
     ;; column's front-most enemy (d <= edists[c]); farther enemies skip
     ;; it. Still wall-gated (d < dists[c]). (issue #86)
-    (doseq [proj enemy-projs]
-           (let [col    (:col proj)
-                 hw     (:half-width proj)
-                 d      (:dist proj)
-                 sc     (or (:scale proj) 1.0)
-                 h      (php/min vh (php/intval (php/* sc
-                                                       (php// proj-dist
-                                                              (php/* (php/max 0.5 d) char-aspect)))))
-                 e-bot  (php/+ (php/intdiv (php/- vh h) 2) h)
-                 c-from (php/max 0 (php/- col hw))
-                 c-to   (php/min (php/- vw 1) (php/+ col hw))]
-             (when (php/< e-bot vh)
-               (loop [c c-from]
-                 (when (php/<= c c-to)
-                   (when (enemy-front-visible-at? d c dists edists)
-                     (buf-set blood-paint
-                              (php/+ (php/* e-bot vw) c)
-                              sprite-shadow))
-                   (recur (php/+ c 1)))))))
+    ;; Glyph-mode only: the Freedoom billboards carry their own grounded
+    ;; silhouette, so a painted shadow under them just muddies the sprite.
+    (when (not sprites-on)
+      (doseq [proj enemy-projs]
+             (let [col    (:col proj)
+                   hw     (:half-width proj)
+                   d      (:dist proj)
+                   sc     (or (:scale proj) 1.0)
+                   h      (php/min vh (php/intval (php/* sc
+                                                         (php// proj-dist
+                                                                (php/* (php/max 0.5 d) char-aspect)))))
+                   e-bot  (php/+ (php/intdiv (php/- vh h) 2) h)
+                   c-from (php/max 0 (php/- col hw))
+                   c-to   (php/min (php/- vw 1) (php/+ col hw))]
+               (when (php/< e-bot vh)
+                 (loop [c c-from]
+                   (when (php/<= c c-to)
+                     (when (enemy-front-visible-at? d c dists edists)
+                       (buf-set blood-paint
+                                (php/+ (php/* e-bot vw) c)
+                                sprite-shadow))
+                     (recur (php/+ c 1))))))))
     ;; Chain the fx + pickup painters: each one takes the current
     ;; blood-paint, returns a new buffer (PHP arrays pass by value, so
     ;; the helper owns the allocation). Rename per step to keep phel
@@ -800,7 +803,10 @@
             ;; Numbered rebinds so phel lint's shadowed-binding stays
             ;; quiet without changing semantics. Threading (->) would
             ;; be cleaner but trips arity-mismatch lint.
-            p1          (paint-face-overlay       parts world stats vw vh dists edists face-phase)
+            ;; Face glyph (blinking eyes) is a glyph-era tell; the
+            ;; Freedoom sprites already show a face, so skip it in sprite mode.
+            p1          (if sprites-on parts
+                            (paint-face-overlay parts world stats vw vh dists edists face-phase))
             p2          (paint-wall-lights        p1 t vw vh hits hxs hys tops)
             p3          (paint-door-face          p2 stats vw vh hits tops bots)
             p4          (paint-crosshair          p3 stats vw vh center-bg)

@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>phel-doom &mdash; DOOM-lite raycaster in your terminal</title>
+<meta name="description" content="DOOM-lite raycaster that runs in your terminal. Pure Phel (Lisp on PHP). 256-color ANSI, 10 procgen levels, FPS combat, ~5ms frame.">
+<meta name="author" content="Chemaclass">
+
+<!-- Open Graph / social cards -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="phel-doom &mdash; DOOM-lite raycaster in your terminal">
+<meta property="og:description" content="Pure Phel (Lisp on PHP). 256-color ANSI raycaster, 10 procgen levels, FPS combat, ~5ms frame. Play it with one curl command.">
+<meta property="og:image" content="https://chemaclass.github.io/phel-doom/screenshot.png">
+<meta property="og:url" content="https://chemaclass.github.io/phel-doom/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="phel-doom &mdash; DOOM-lite raycaster in your terminal">
+<meta name="twitter:description" content="Pure Phel (Lisp on PHP). 256-color ANSI raycaster, 10 procgen levels, FPS combat, ~5ms frame.">
+<meta name="twitter:image" content="https://chemaclass.github.io/phel-doom/screenshot.png">
+
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230a0a0a'/><rect x='5' y='4' width='6' height='8' fill='%23ff2b2b'/></svg>">
+
+<style>
+:root{
+  --bg:#0a0a0a; --bg2:#111; --panel:#141414;
+  --fg:#d8d8d8; --dim:#888; --line:#262626;
+  --red:#ff2b2b; --red-deep:#7a0d0d; --amber:#ffb000;
+  --mono:'SFMono-Regular',ui-monospace,'JetBrains Mono','Cascadia Code',Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg); color:var(--fg); font-family:var(--mono);
+  line-height:1.6; overflow-x:hidden; position:relative;
+}
+/* CRT scanline + vignette overlay */
+body::before{
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:9999;
+  background:repeating-linear-gradient(0deg,rgba(0,0,0,.18) 0,rgba(0,0,0,.18) 1px,transparent 1px,transparent 3px);
+  mix-blend-mode:multiply;
+}
+body::after{
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:9998;
+  background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.55) 100%);
+}
+a{color:var(--red); text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:1040px; margin:0 auto; padding:0 20px}
+
+/* ---- top bar ---- */
+.topbar{
+  position:sticky; top:0; z-index:100; backdrop-filter:blur(6px);
+  background:rgba(10,10,10,.82); border-bottom:1px solid var(--line);
+}
+.topbar .wrap{display:flex; align-items:center; gap:16px; height:52px}
+.brand{font-weight:700; letter-spacing:.5px; color:#fff}
+.brand b{color:var(--red)}
+.topbar nav{margin-left:auto; display:flex; gap:18px; font-size:13px}
+.topbar nav a{color:var(--dim)}
+.topbar nav a:hover{color:var(--fg); text-decoration:none}
+
+/* ---- hero ---- */
+.hero{padding:72px 0 40px; text-align:center; position:relative}
+.kicker{color:var(--red); font-size:13px; letter-spacing:3px; text-transform:uppercase; margin-bottom:18px}
+.title{
+  font-size:clamp(48px,11vw,128px); font-weight:800; letter-spacing:2px; line-height:.95;
+  color:#fff; text-shadow:0 0 18px rgba(255,43,43,.45),4px 4px 0 var(--red-deep);
+  animation:flicker 5s infinite;
+}
+.title b{color:var(--red)}
+@keyframes flicker{
+  0%,19%,21%,23%,80%,100%{opacity:1}
+  20%,22%{opacity:.82} 81%{opacity:.92}
+}
+.subtitle{margin:22px auto 0; max-width:640px; color:var(--fg); font-size:clamp(15px,2.4vw,19px)}
+.subtitle .hl{color:var(--amber)}
+
+.badges{display:flex; gap:8px; justify-content:center; flex-wrap:wrap; margin-top:24px}
+.badge{
+  border:1px solid var(--line); border-radius:4px; padding:5px 11px; font-size:12px; color:var(--dim);
+  background:var(--bg2);
+}
+.badge b{color:var(--fg)}
+
+.cta{display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin-top:34px}
+.btn{
+  font-family:var(--mono); font-size:15px; font-weight:600; padding:13px 26px; border-radius:5px;
+  border:1px solid var(--red); cursor:pointer; transition:.15s;
+}
+.btn-primary{background:var(--red); color:#0a0a0a}
+.btn-primary:hover{background:#ff4d4d; text-decoration:none; box-shadow:0 0 22px rgba(255,43,43,.55)}
+.btn-ghost{background:transparent; color:var(--fg); border-color:var(--line)}
+.btn-ghost:hover{border-color:var(--fg); text-decoration:none}
+
+/* ---- terminal install block ---- */
+.term{
+  max-width:680px; margin:38px auto 0; text-align:left;
+  background:#0d0d0d; border:1px solid var(--line); border-radius:8px; overflow:hidden;
+  box-shadow:0 20px 50px rgba(0,0,0,.6);
+}
+.term-head{display:flex; align-items:center; gap:8px; padding:10px 14px; background:#161616; border-bottom:1px solid var(--line)}
+.dot{width:11px; height:11px; border-radius:50%}
+.dot.r{background:#ff5f56}.dot.y{background:#ffbd2e}.dot.g{background:#27c93f}
+.term-title{margin-left:8px; font-size:12px; color:var(--dim)}
+.term-body{padding:18px 16px; font-size:14px; line-height:1.9; white-space:pre-wrap; word-break:break-all}
+.term-body .pfx{color:var(--red); user-select:none}
+.term-body .cmd{color:#fff}
+.term-body .out{color:var(--dim)}
+.cursor{display:inline-block; width:9px; height:16px; background:var(--red); vertical-align:-2px; animation:blink 1s step-end infinite}
+@keyframes blink{50%{opacity:0}}
+.copy{margin-left:auto; font-size:11px; color:var(--dim); border:1px solid var(--line); background:#0d0d0d; padding:3px 9px; border-radius:4px; cursor:pointer; font-family:var(--mono)}
+.copy:hover{color:var(--fg); border-color:var(--fg)}
+
+/* ---- sections ---- */
+section{padding:64px 0; border-top:1px solid var(--line)}
+.sec-title{font-size:13px; letter-spacing:3px; text-transform:uppercase; color:var(--red); margin-bottom:8px}
+.sec-h{font-size:clamp(26px,5vw,40px); color:#fff; font-weight:800; margin-bottom:28px}
+
+.shot{border:1px solid var(--line); border-radius:8px; overflow:hidden; box-shadow:0 20px 50px rgba(0,0,0,.6); position:relative}
+.shot img{display:block; width:100%; image-rendering:pixelated}
+.shot-cap{padding:10px 14px; font-size:12px; color:var(--dim); background:#0d0d0d; border-top:1px solid var(--line)}
+
+/* ---- feature grid ---- */
+.grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:16px}
+.card{background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:22px; transition:.15s}
+.card:hover{border-color:var(--red-deep); transform:translateY(-2px)}
+.card h3{color:#fff; font-size:16px; margin-bottom:8px; display:flex; align-items:center; gap:9px}
+.card h3 .ic{color:var(--red); font-size:18px}
+.card p{color:var(--dim); font-size:13.5px}
+
+/* ---- controls table ---- */
+.controls{display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px}
+.kc{display:flex; align-items:center; gap:12px; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:12px 16px}
+.keys{display:flex; gap:5px; flex-wrap:wrap}
+kbd{
+  font-family:var(--mono); font-size:12px; background:#1d1d1d; border:1px solid #333; border-bottom-width:2px;
+  border-radius:4px; padding:3px 7px; color:#fff; min-width:24px; text-align:center
+}
+.kc span{color:var(--dim); font-size:13px}
+
+/* ---- video ---- */
+.video{position:relative; aspect-ratio:16/9; border:1px solid var(--line); border-radius:8px; overflow:hidden; box-shadow:0 20px 50px rgba(0,0,0,.6)}
+.video iframe{position:absolute; inset:0; width:100%; height:100%; border:0}
+
+/* ---- footer ---- */
+footer{border-top:1px solid var(--line); padding:40px 0; text-align:center; color:var(--dim); font-size:13px}
+footer a{color:var(--fg)}
+.foot-links{display:flex; gap:20px; justify-content:center; margin-bottom:14px; flex-wrap:wrap}
+.heart{color:var(--red)}
+
+@media(max-width:600px){
+  .topbar nav{display:none}
+  .hero{padding:48px 0 24px}
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap">
+    <span class="brand">phel<b>-</b>doom</span>
+    <nav>
+      <a href="#play">Play</a>
+      <a href="#features">Features</a>
+      <a href="#controls">Controls</a>
+      <a href="#video">Video</a>
+      <a href="https://github.com/Chemaclass/phel-doom">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero" style="border-top:none">
+  <div class="wrap">
+    <div class="kicker">256-color ANSI &middot; pure Phel &middot; ~5ms frame</div>
+    <h1 class="title">PHEL<b>-</b>DOOM</h1>
+    <p class="subtitle">
+      A <span class="hl">DOOM-lite raycaster</span> that runs entirely in your terminal.
+      Written in pure <a href="https://phel-lang.org/">Phel</a> &mdash; a Lisp that compiles to PHP.
+      No GPU. No engine. Just a tight pure-functional frame loop and a lot of escape codes.
+    </p>
+
+    <div class="badges">
+      <span class="badge"><b>10</b> procgen levels</span>
+      <span class="badge"><b>5</b> monster types</span>
+      <span class="badge"><b>7</b> weapons</span>
+      <span class="badge"><b>~5ms</b> frame @120&times;30</span>
+      <span class="badge">PHP <b>&ge;8.4</b></span>
+    </div>
+
+    <div class="cta">
+      <a class="btn btn-primary" href="#play">&#9655; Play in 2 commands</a>
+      <a class="btn btn-ghost" href="https://github.com/Chemaclass/phel-doom">View source &rarr;</a>
+    </div>
+
+    <!-- animated install terminal -->
+    <div class="term" id="play">
+      <div class="term-head">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span class="term-title">bash &mdash; no clone, no Composer</span>
+        <button class="copy" id="copyBtn">copy</button>
+      </div>
+      <div class="term-body" id="termBody"></div>
+    </div>
+  </div>
+</section>
+
+<section id="screenshot">
+  <div class="wrap">
+    <div class="sec-title">// the view</div>
+    <h2 class="sec-h">It actually renders, in cells.</h2>
+    <div class="shot">
+      <img src="screenshot.png" alt="phel-doom gameplay: grayscale corridor, red enemy block, heart HUD, minimap" loading="lazy">
+      <div class="shot-cap">Half-block sub-cell shading, distance-attenuated palette, live minimap &amp; heart HUD &mdash; all ANSI.</div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <div class="sec-title">// what's inside</div>
+    <h2 class="sec-h">More game than a terminal has any right to be.</h2>
+    <div class="grid">
+      <div class="card"><h3><span class="ic">&#9636;</span>Raycast engine</h3><p>256-color DDA raycaster, sub-5ms <code>frame&rarr;string</code> at 180&times;40. Resize widens FOV, not zoom. Perf mode auto-engages on huge terminals.</p></div>
+      <div class="card"><h3><span class="ic">&#9651;</span>Procgen levels</h3><p>10 levels: tutorial imps, 8 mixed procgen floors, a hand-authored cyberdemon boss arena. Keycards, locked doors, hidden secrets.</p></div>
+      <div class="card"><h3><span class="ic">&#9760;</span>Real AI</h3><p>Dormant &rarr; aware &rarr; hunting &rarr; attacking state machine. BFS noise-wake on every shot. Dodgeable telegraphed fireballs from casters.</p></div>
+      <div class="card"><h3><span class="ic">&#10037;</span>7-weapon loadout</h3><p>Pistol, shotgun, chaingun, chainsaw, BFG, incinerator, rocket launcher. DPS-balanced, mag/reserve persistence, auto-spray, overheat.</p></div>
+      <div class="card"><h3><span class="ic">&#9829;</span>Horror beats</h3><p>Heartbeat vignette on low HP, light flicker, jump-scares, sudden silence, blood drops, door-eye blinks. Tension, not just sprites.</p></div>
+      <div class="card"><h3><span class="ic">&#955;</span>Pure functional</h3><p>Immutable <code>world</code> map threaded through the loop. Side effects fenced into one IO layer. Seeded LCG &mdash; fully deterministic record/replay.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="controls">
+  <div class="wrap">
+    <div class="sec-title">// hands on</div>
+    <h2 class="sec-h">Controls</h2>
+    <div class="controls">
+      <div class="kc"><span class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><span>Move / turn</span></div>
+      <div class="kc"><span class="keys"><kbd>&#8679; Shift</kbd></span><span>Sprint</span></div>
+      <div class="kc"><span class="keys"><kbd>Space</kbd><kbd>R</kbd></span><span>Fire / reload</span></div>
+      <div class="kc"><span class="keys"><kbd>1</kbd>&hellip;<kbd>8</kbd></span><span>Switch weapon</span></div>
+      <div class="kc"><span class="keys"><kbd>M</kbd></span><span>Toggle minimap</span></div>
+      <div class="kc"><span class="keys"><kbd>E</kbd></span><span>About-face 180&deg;</span></div>
+      <div class="kc"><span class="keys"><kbd>P</kbd></span><span>Pause</span></div>
+      <div class="kc"><span class="keys"><kbd>Q</kbd></span><span>Quit</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="video">
+  <div class="wrap">
+    <div class="sec-title">// see it move</div>
+    <h2 class="sec-h">Gameplay</h2>
+    <div class="video">
+      <iframe src="https://www.youtube-nocookie.com/embed/0s-sXxpcoIA" title="phel-doom gameplay" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen loading="lazy"></iframe>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-links">
+      <a href="https://github.com/Chemaclass/phel-doom">GitHub</a>
+      <a href="https://github.com/Chemaclass/phel-doom/releases/latest">Releases</a>
+      <a href="https://github.com/Chemaclass/phel-doom/blob/main/docs/features.md">Full feature list</a>
+      <a href="https://phel-lang.org/">Phel</a>
+    </div>
+    <p>Built with <span class="heart">&#9829;</span> in pure Phel by <a href="https://github.com/Chemaclass">Chemaclass</a> &middot; MIT licensed</p>
+  </div>
+</footer>
+
+<script>
+// Type out the install commands, then leave a blinking cursor.
+const lines = [
+  {pfx:'$ ', cmd:'curl -fsSL -o phel-doom.phar \\\n    https://github.com/Chemaclass/phel-doom/releases/latest/download/phel-doom.phar', out:''},
+  {pfx:'$ ', cmd:'php phel-doom.phar', out:'\n  loading WAD... 10 levels  rip and tear.'}
+];
+const RAW = 'curl -fsSL -o phel-doom.phar https://github.com/Chemaclass/phel-doom/releases/latest/download/phel-doom.phar\nphp phel-doom.phar';
+const body = document.getElementById('termBody');
+let li = 0, ci = 0, cur = null;
+
+function frame(){
+  if(li >= lines.length){
+    if(cur) cur.remove();
+    body.insertAdjacentHTML('beforeend','<span class="cursor"></span>');
+    return;
+  }
+  const l = lines[li];
+  if(ci === 0){
+    body.insertAdjacentHTML('beforeend','<span class="pfx">'+l.pfx+'</span><span class="cmd" id="c'+li+'"></span>');
+  }
+  if(ci < l.cmd.length){
+    document.getElementById('c'+li).textContent += l.cmd[ci++];
+    setTimeout(frame, 14);
+  } else {
+    if(l.out){ body.insertAdjacentHTML('beforeend','<span class="out">'+l.out+'</span>'); }
+    body.insertAdjacentHTML('beforeend','\n');
+    li++; ci = 0;
+    setTimeout(frame, 380);
+  }
+}
+// kick off when the terminal scrolls into view (or immediately if already visible)
+const io = new IntersectionObserver((e,o)=>{ if(e[0].isIntersecting){ frame(); o.disconnect(); } });
+io.observe(body);
+
+document.getElementById('copyBtn').addEventListener('click', e=>{
+  navigator.clipboard.writeText(RAW).then(()=>{ e.target.textContent='copied!'; setTimeout(()=>e.target.textContent='copy',1500); });
+});
+</script>
+</body>
+</html>

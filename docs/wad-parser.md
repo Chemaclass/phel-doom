@@ -1,22 +1,22 @@
 # WAD parser
 
-`src/io/wad.phel`. Parses DOOM .wad binary format. Not wired into gameplay (renderer uses procedurally-generated grids). Available for future BSP-renderer work.
+`src/io/wad.phel`. Parses DOOM .wad binary format. Not integrated into gameplay (renderer uses procgen grids). Available for future BSP-renderer work.
 
 ## Format
 
-Binary archive of "lumps" (named chunks). Header (12 B): magic ("IWAD" or "PWAD") + lump count + directory offset (at EOF). Each lump is (offset, size, 8-byte name).
+Binary archive of "lumps" (named chunks). Header (12 B): magic ("IWAD"/"PWAD") + lump count + directory offset. Each lump entry is 16 B: offset (4 B) + size (4 B) + 8-byte name.
 
-Directory structure: header | lump payloads | lump directory.
+File layout: header | lump data | directory.
 
-Each level (E1M1, MAP01, etc.) is a named marker followed by geometry lumps: VERTEXES, LINEDEFS, SIDEDEFS, SECTORS, SEGS, SSECTORS, NODES, REJECT, BLOCKMAP.
+Each level (E1M1, MAP01, etc.) is a marker lump followed by geometry: VERTEXES, LINEDEFS, SIDEDEFS, SECTORS, SEGS, SSECTORS, NODES, REJECT, BLOCKMAP.
 
 ## Parser coverage
 
-Reads: header (magic/count/offset), directory (all lumps), VERTEXES (int16 x/y pairs), LINEDEFS (vertex pair indices).
+Reads header (magic/count/offset), directory (all lumps), VERTEXES (int16 x/y pairs), LINEDEFS (vertex pair indices).
 
-Skipped: SIDEDEFS/SECTORS (texture metadata), BSP tree (pre-built rendering nodes).
+Skips SIDEDEFS/SECTORS (texture metadata), BSP tree (rendering nodes).
 
-Scope: level geometry (vertices + connectivity) for inspection, debugging, BSP prototyping.
+Use case: level geometry inspection, debugging, BSP prototyping.
 
 ## API
 
@@ -37,8 +37,8 @@ Scope: level geometry (vertices + connectivity) for inspection, debugging, BSP p
 ;; → [PHP array of {:a :b}] (vertex indices, 14-byte records)
 ```
 
-Reads entire file into memory for random access. Typical WAD: few MB.
+Reads entire file into memory. Typical WAD: few MB.
 
 ## Tests
 
-`tests/io/wad-test.phel` covers header parse, directory, vertex/linedef decode. Fixture: hand-rolled minimal WAD inline (no shipped file dependency).
+`tests/io/wad-test.phel` covers header parse, directory, vertex/linedef decode. Fixture: minimal WAD built inline (no file dependency).

@@ -25,10 +25,9 @@ corner minimap (shown, full / no fog) are always on. `Q` quits.
 
 Every phase renders as a normal full-screen 3D raycast with the corner
 minimap turned on, so the 2D top-down view sits alongside the 3D one. This
-reuses the existing game features only: `:show-map` (the M-key minimap, see
-`state/toggle-map`) plus `:full-map?` (the `--full-map` no-fog reveal). The
-demo adds no render path of its own - it just flips flags the game already
-honours.
+reuses the existing game features only: `:show-map` (the M-key minimap toggle)
+plus `:full-map?` (the `--full-map` no-fog reveal). The demo adds no render
+path of its own - it just flips flags the game already honours.
 
 ## The phases
 
@@ -57,8 +56,8 @@ real generated maze.
 - **enemies** (off until phase 3): `with-enemies world []`.
 - **weapon** (off in phase 1): sets the generic `:hide-weapon?` flag, which
   makes `combat/tick-shooting` swallow the trigger (no shot, no dry-fire click)
-  and `render!` skip the gun sprite (`paint-pistol-hud`). Core knows nothing of
-  the demo - it just honours "no weapon in hand".
+  and the render layer skip the gun sprite. Core knows nothing of the demo - it
+  just honours "no weapon in hand".
 - **pickups** (off in every phase): all pickup-spawn vectors cleared so the
   arena stays clean.
 

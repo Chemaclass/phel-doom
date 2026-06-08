@@ -61,31 +61,23 @@ overlays (cursor-positioned):
 ```
 shade-idx = clamp(0, 23,
   gamma(distance-to-shade(dist))  ; base by distance, gamma 0.6 curve
-  + (side == 0 ? 3 : 0))          ; NS face brighter (directional light)
+  + (side == 0 ? 3 : 0))          ; vertical faces brighter
 ```
 
-Walls are flat shaded stone (no per-cell mottling). The gamma 0.6 curve brightens mid-range so walls pop out of the dark; the `+3` NS-face bonus reads as directional lighting and sharpens corners. Indexes `shade-table[0..23]`: pre-baked ANSI for 256-color grays (codes 232-255). One lookup per column.
+The gamma 0.6 curve brightens mid-range; the `+3` bonus for vertical faces reads as directional lighting. Indexes `shade-table[0..23]`: 24-step grayscale (ANSI codes 232-255). One lookup per column.
 
 Doors: `door-shade` (orange for unlocked, blue/red for keycards, bright red for boss-lock). Half-block edges mix door with sky/floor. Locked messages ("NEED BLUE KEY", "KILL THE BOSS") painted separately.
 
 ## Half-block edge anti-aliasing
 
-Wall top/bottom: `▀` (upper half block) with BG for one zone, FG for the other:
+Wall top/bottom: `▀` (upper half block) mixes wall BG with sky/floor FG:
 
 ```
-Top:    \e[48;5;<wall>;38;5;<sky-at-row>m▀      (wall BG, sky FG sampled at that row)
-Bottom: \e[48;5;<floor-at-row>;38;5;<wall>m▀    (floor BG sampled at that row, wall FG)
+Top:    \e[48;5;<wall>;38;5;<sky-at-row>m▀      (wall BG, sky FG)
+Bottom: \e[48;5;<floor-at-row>;38;5;<wall>m▀    (floor BG, wall FG)
 ```
 
-Sub-cell boundary, halves vertical aliasing.
-
-The sky FG code and floor BG code are sampled from the gradient at the seam row
-(`sky-code-gradient[top]` and `floor-code-gradient[bots-1]`) rather than a flat
-constant. Using a flat dark code (236) produced scattered dark dots wherever the
-gradient is brighter than that constant. `build-horizon-gradient-codes` and
-`build-themed-gradient-codes` are code-only twins of the string gradient builders,
-pre-baked once per frame alongside the paint-string versions. One extra `buf-get`
-per column in `compute-wall-shades`; no per-row cost added.
+Sky and floor codes are sampled from gradients at the seam row, not flat constants. Flat codes produced dark dots. `build-horizon-gradient-codes` and `build-themed-gradient-codes` pre-bake code-only twins of the string gradients per frame.
 
 ## Distance-shaded sky and floor
 
@@ -93,35 +85,21 @@ Per-row shade by distance from horizon (`vh/2`): rows near horizon darkest (atmo
 
 ## Enemy sprite paint
 
-Per enemy in `collect-enemy-projs`:
+Per enemy: fade `t = (dist/max-depth)²` capped at 0.85, then shade head/body/legs via `fade-256` on color codes. Body glyph (e.g. `▒`) varies per type. Writes to `eheads`, `ebodys`, `elegss` arrays per column.
 
-1. Fade `t = (dist/max-depth)²` capped at 0.85
-2. Three fade-shaded strings (head/body/legs) via `fade-256` on color codes
-3. Body glyph (e.g. `▒`) distinct per type for material texture
-4. Writes to `eheads`, `ebodys`, `elegss` arrays per column
-
-`project-enemy` scale factor (1.0 default, 2.0 for `:cyber`): multiplies both half-width and sprite height, so cyberdemons 2x wider AND taller (proportional). Centred vertically: feet at player horizon.
-
-Stores `tops/bots/mids/lowers` so row loop picks correct zone per row.
+`project-enemy` scale factor (1.0 default, 2.0 for `:cyber`): multiplies half-width and height proportionally. Centred vertically with feet at horizon. Stores `tops/bots/mids/lowers` for per-row zone selection.
 
 Aggro blink at distance < 1.8 units.
 
 ## Face overlay (post-pass)
 
-Per-enemy face glyph (`:enemy-face` or `:enemy-face-alt` on sin wave) at centre column, upper-third row. Depth-culled: paint only if enemy dist < wall dist at that column.
+Per-enemy face glyph (`:enemy-face` or `:enemy-face-alt` on sin wave) at centre column, upper-third row. Depth-culled: paint only if enemy dist < wall dist.
 
 ## blood-paint overlay buffer
 
-Blood splatters + heart pickups paint into PHP array (indexed `row*vw + col`). Inner loop reads first, so overlays override walls/floors/enemies.
+Blood splatters and pickups paint into a PHP array (indexed `row*vw + col`). Inner loop reads first, so overlays override walls/floors/enemies.
 
-### Front-most-enemy gate (shadows + faces)
-
-Two per-enemy overlays need depth-culling (issues #86, #91):
-
-- **Grounding shadow**: `sprite-shadow` at feet, written to `blood-paint` (top layer). Deferred pass after `edists` computed.
-- **Face glyph**: cursor-positioned after frame, gates on front-most enemy.
-
-Both use `enemy-front-visible-at?`: paint only if `d < dists[c]` (in front of wall) AND `d <= edists[c]` (nearest enemy at column). `edists` (per-column nearest depth) built during zone pass.
+Grounding shadow and face glyph need depth-culling: paint only if in front of wall AND nearest enemy at column. `enemy-front-visible-at?` gates both.
 
 ## Run-length encoding
 
@@ -133,20 +111,18 @@ Perf mode (>= 200 cols or > 12k cell area): `render-scale = 2` - cast once per 2
 
 ## Responsive help panel
 
-H/ESC info menu width-adaptive: max width `help-inner-width` (44), min `help-min-inner-width` (36). Drops CONTROLS section first (largest), then COMPASS HINT on squeeze. Content always fits in viewport.
+H/ESC info menu width-adaptive: max 44 chars, min 36. Drops CONTROLS section first, then COMPASS HINT on squeeze.
 
 ## Why so many overlay passes
 
-Walls/sky/floor/enemies go into one string via the inner row loop, top-to-bottom left-to-right. HUD, minimap, crosshair, pause menu use absolute cursor positioning escapes (`\e[r;cH`) to jump anywhere. Painted in any order; each knows where it goes.
-
-Alternate screen buffer + cursor-home redraw means each frame overwrites the previous in place. No flicker, no scroll, no full clear.
+Walls/sky/floor/enemies go into one string via the row loop. HUD, minimap, crosshair use absolute cursor positioning escapes (`\e[r;cH`) to paint anywhere. Alternate screen buffer + cursor-home redraw overwrites in place: no flicker, no scroll, no full clear.
 
 See [performance.md](performance.md).
 
 ## Minimap fog-of-war (issue #67)
 
-Minimap cells stay hidden behind a uniform dim `minimap-unseen` block until the player has visually crossed them. `core/engine/mark-visible-cells` runs once per frame in `tick-world`: scans a `visit-radius = 8` bounding box around the player, runs a Bresenham `los-clear?` test per candidate cell, and stamps an entry into the world's `:visited` PHP array (keyed by `y * width + x`). PHP arrays are copy-on-write so the local mutation is `assoc`d back into the world under `:visited`.
+Cells stay hidden behind `minimap-unseen` until the player visually crosses them. `mark-visible-cells` runs once per frame: scans `visit-radius = 8` bounding box, runs Bresenham `los-clear?` per cell, stamps `:visited` PHP array (keyed by `y * width + x`).
 
-`minimap-rows` reads `:visited` via the same key and short-circuits the wall / door / pickup paint when the block is unseen, painting `minimap-unseen` instead. The pulsing pickup glyphs (heart / ammo / berserk / etc.) are only painted if the underlying cell is already visited, so a hidden treasure room reveals its contents only after the player walks within line of sight.
+`minimap-rows` reads `:visited` and paints `minimap-unseen` for unseen blocks. Pickup glyphs only paint if visited.
 
-`:full-map?` (set by the `--full-map` / `-f` CLI flag) short-circuits the LOS scan and flips every cell; the minimap reads exactly as before this feature landed. Useful for level editors + screenshot capture.
+`:full-map?` (set by `--full-map` / `-f` CLI flag) marks all cells visited; useful for level editors and screenshots.

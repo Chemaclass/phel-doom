@@ -116,7 +116,7 @@ Each input byte from `glue/controls.phel` refreshes the matching counter. Each f
 
 `:sprint` is intent only - the actual speed boost is gated by `:stamina > 0` AND `not :sprint-blocked?`. See `physics.phel`'s `tick-stamina` + `sprinting?`.
 
-Hold-frame size is the only "feel" knob: shorter = snappier stop, longer = smoother sustained-hold (bridges OS auto-repeat gaps). Current: `move-hold-frames=12`, `turn-hold-frames=3`.
+Hold-frame size is the only "feel" knob: shorter = snappier stop, longer = smoother sustained-hold (bridges OS auto-repeat gaps). Current: `move-hold-frames=18` (~300ms at 60fps), `turn-hold-frames=3` (~50ms).
 
 ## Lives (half-heart HP pool)
 

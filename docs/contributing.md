@@ -150,7 +150,7 @@ Errors fail CI; warnings don't. If you need threading, use sequential `let` inst
 Phel persistent vectors use polymorphic dispatch on every `get`; render at 180×40 would drop from 60+ fps to <2 fps. We use php-arrays with compile-time macros:
 
 ```phel
-;; src/io/render.phel
+;; src/io/render/buffer.phel
 (defmacro buf-mk  []          `(php/array))
 (defmacro buf-set [b i v]     `(php/aset ~b ~i ~v))
 (defmacro buf-get [b i]       `(php/aget ~b ~i))
@@ -171,7 +171,7 @@ Phel's `+`, `-`, `*`, `<`, `=`, ... wrap PHP operators with `NumericOperations` 
 
 New kill-counter banner at top-right?
 
-1. Write `paint-kill-counter` in `src/io/render.phel`:
+1. Write `paint-kill-counter` in `src/io/render/paint.phel`:
    ```phel
    (defn- paint-kill-counter [parts stats vw]
      (let [k (or (get stats :kills) 0)]
@@ -180,9 +180,9 @@ New kill-counter banner at top-right?
      parts)
    ```
 
-2. Thread into `frame->string`'s paint chain.
+2. Thread into the paint chain (integrate with existing overlays in `paint.phel`).
 
-3. Optional: test if logic is non-trivial (`tests/io/render-overlay-test.phel`).
+3. Optional: test if logic is non-trivial (`tests/io/render-test.phel`).
 
 4. Run `composer ci`.
 

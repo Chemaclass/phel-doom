@@ -4,26 +4,12 @@ IO shell + pure per-frame transition. `src/commands/play.phel`.
 
 ## Top-level structure
 
-```phel
-(defn- run-play [ctx]
-  (init-input!)                    ; switch to alt screen + raw mode
-  (if (php/=== (show-start-menu!) :quit)
-    (do (restore!) (clear-screen) 0)
-    (do (clear-screen)
-        (run-levels)               ; play through L1..L5 with restart
-        (restore!)                 ; restore terminal
-        (clear-screen)
-        (cli/success ctx "Thanks for playing.")
-        (print-credits)
-        0)))
-```
-
 Four lifecycle layers:
 
-1. **`run-play`**: installs terminal mode, shows the start menu, plays one run, restores. Only function with cleanup responsibility.
-2. **`show-start-menu!`**: polls for any keypress while drawing `render-start-menu` each frame (so terminal resizes redraw cleanly). `q` aborts before the run begins.
-3. **`run-levels`**: loops levels carrying lives + kills + time. On death/victory calls `handle-end`, which writes the high-score file and shows the end screen. `r`/`R` restarts on the level you died on; victory restarts at L1.
-4. **`game-loop world0`**: one level. Reads input, calls render, calls `tick-world`, decides per frame: continue / died / stepped on door / quit.
+1. **`run-play`**: setup / start-menu / run-levels / cleanup. Only function with terminal restore responsibility.
+2. **`show-start-menu!`**: polling loop until player starts or quits. Redraws each frame so terminal resize works.
+3. **`run-levels`**: level loop carrying lives + kills + time. On death/victory, writes score + shows end screen. `r` restarts with fresh seed; `R` replays same seed.
+4. **`game-loop world0`**: one level. Per-frame: render / drain input / tick-world / decide (continue / death / door / quit).
 
 ## game-loop
 
@@ -56,77 +42,51 @@ Four lifecycle layers:
 ```
 
 1. Capture terminal size; clear buffer on resize.
-2. Render frame. `draw-frame` calls `render!` from `io/render.phel`, sleeps 1ms (yields CPU; render time is the real throttle).
-3. Drain input. `drain-keys` reads up to 64 bytes non-blocking. Held keys deliver multiple bytes per frame.
-4. Compute dt + edges. `ms-since` for elapsed wall-clock. `rising-edges` diffs key snapshots for one-shot actions.
-5. Tick world. `tick-world` is pure. Same call the tests use.
-6. Decide next: quit (Q), die (lives <= 0), step on door (advance / victory), or recur.
+2. Render frame via `draw-frame` + `render!` (io/render.phel); adaptive-sleep yields per frame budget.
+3. Drain input: `drain-keys` reads up to 64 bytes non-blocking. Held keys send multiple bytes per frame.
+4. Compute dt + edges: `ms-since` for wall-clock; `rising-edges` diffs key snapshots for one-shots.
+5. Tick world: pure `tick-world` call (used by tests too).
+6. Branch: quit (Q), die (lives <= 0), door (next level or victory), or recur.
 
 ## tick-world
 
-```phel
-(defn tick-world [world keys ^float dt edges]
-  (let [w0 (handle-toggles world edges)]
-    (cond
-      (:paused w0) w0
-      ;; Hit-stop: a meaty kill stamped :hit-stop-secs last frame. Freeze
-      ;; the whole gameplay step (just decay the timer) so the blow lands
-      ;; with weight; render keeps drawing the frozen frame. See combat.md.
-      (pos? (:hit-stop-secs w0))
-      (assoc w0 :hit-stop-secs (max 0.0 (- (:hit-stop-secs w0) dt)))
-      ;; Linear pipeline. Each step takes the previous world + own deps.
-      ;; Real code uses sequential `let` bindings, not `->` (Phel lint
-      ;; doesn't macro-expand `->`, false arity errors).
-      :else
-      (-> (refresh-from-keys w0 keys)
-          (switch-weapon-if-edge edges)
-          (try-reveal-secret  (:action edges))
-          (try-toggle-switch  (:action edges))
-          (mark-visible-cells)
-          (tick-stamina dt) (apply-physics dt)
-          (pickup-hearts) (pickup-armors) (pickup-armor-shards) (pickup-ammos)
-          (pickup-berserks) (pickup-invulns) (pickup-soulspheres)
-          (pickup-backpacks) (pickup-keycards) (pickup-weapon-pickups)
-          (tick-enemies dt)
-          (tick-projectiles dt)
-          (maybe-reload edges)
-          (tick-armory)
-          (tick-shooting (:fire edges) (:fire-held edges))
-          (damage-step dt)
-          (tick-heartbeat dt) (tick-flicker dt) (tick-scare dt)
-          (tick-blood-drops dt) (tick-door-face dt)
-          (decay-soul-overcap dt)
-          (advance-game-time dt)))))
-```
+Pure one-frame state machine. Returns `world'` (same type). Called identically from both the game-loop and unit tests.
+
+Three early-exit paths:
+1. If paused, return unchanged.
+2. If hit-stop timer > 0, decay it and return.
+3. Otherwise: full linear pipeline (input → physics → pickups → enemies → projectiles → combat → decay).
+
+The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself; the game-loop drains `:sfx` after tick and emits via `io/sound`, keeping tick pure.
 
 | Step group | What | Module |
 |---|---|---|
 | `handle-toggles` | Rising-edge: pause / map / sound / debug / about-face | `commands/play` |
 | `refresh-from-keys` | Refresh `:moves` counters from input bytes | `glue/controls` |
-| `switch-weapon` | 1/2/3/4 keys swap active weapon (no-op while reloading) | `core/weapons` |
-| `try-reveal-secret` / `try-toggle-switch` | `F` adjacent: unhide secret wall OR flip switch + linked cells | `commands/play` |
-| `mark-visible-cells` | Stamp visit + LOS cells onto `:visited` (fog-of-war) | `commands/play` |
-| `tick-stamina` + `apply-physics` | Drain sprint pool, then rotate + translate + decay counters | `core/physics` |
-| `pickup-*` | Hearts, armor + shards, ammo, berserk, invuln, soulsphere, backpack, keycards, weapon pickups | `commands/play` |
-| `tick-enemies` | Step alive enemies; tick respawn + AI + hit-flash | `core/enemy`, `enemy_ai` |
-| `tick-projectiles` | Spawn caster fireballs, march + cull bolts, resolve player impacts | `core/projectile` |
-| `reload` | R edge: drain `:ammo-reserve` into `:mag`, arm cooldown + anim | `core/combat` |
-| `tick-armory` | `--armory` flag: refill reserves to `armory-reserve` per frame | `core/combat` |
-| `tick-shooting` | Fire edge: resolve hitscan; empty mag arms CLICK prompt | `core/combat` |
-| `damage-step` | Decay timers; apply contact damage if `:iframes` is 0 | `core/combat` |
-| `tick-heartbeat` … `tick-door-face` | Horror layer: pulse, light flicker, jump-scare, ceiling drips, door eye | `commands/play` |
-| `decay-soul-overcap` | Drop one life per 5s while `:lives > max-lives` (soulsphere) | `core/state` |
-| `advance-game-time` | Add `dt` to pause-aware `:game-time` (drives render pulses) | `core/state` |
+| `switch-weapon` (1-8) | Key-edge swap active weapon (no-op while reloading) | `core/weapons` |
+| `try-reveal-secret` / `try-toggle-switch` | F-key adjacent: secret reveal OR switch toggle + targets | `commands/play` |
+| `mark-visible-cells` | Stamp LOS cells onto `:visited` (fog-of-war reveal) | `core/engine` |
+| `tick-stamina` + `apply-physics` | Drain sprint pool; rotate + translate + decay counters | `core/physics` |
+| `pickup-*` (x9) | Hearts, armor, armor-shards, ammo, berserk, invuln, soulsphere, backpack, weapon | `commands/play` |
+| `tick-enemies` | Step alive enemies; tick respawn + AI + hit-flash | `core/enemy`, `core/enemy_ai` |
+| `tick-projectiles` | Spawn bolts from released casters; march + cull; resolve player impacts | `core/projectile` |
+| `reload` | R edge: drain reserve into mag; arm cooldown | `core/combat` |
+| `tick-armory` | `--armory`: refill reserves per frame | `core/combat` |
+| `tick-shooting` | Fire edge: resolve hitscan; empty-mag CLICK prompt | `core/combat` |
+| `damage-step` | Decay iframes + timers; apply contact damage | `core/combat` |
+| `tick-heartbeat` / `tick-flicker` / `tick-scare` / `tick-blood-drops` / `tick-door-face` | Horror anims: heartbeat, light pulse, jumpscare, ceiling drips, door eye | `commands/play` |
+| `decay-soul-overcap` | Over-cap HP decay (soulsphere timer) | `core/state` |
+| `advance-game-time` | Add `dt` to pause-aware `:game-time` (render pulses) | `core/state` |
 
-`tick-world` calls no IO. Data in, data out. Sound is the one effect that looks tempting to fire inline (a pickup "should" beep): instead every cue (combat, pickups, secret reveal, switch toggle) enqueues a `{:name :vol}` event on the world's `:sfx` queue via `combat/push-sfx`. The queue is reset at the top of the tick and drained by the game loop afterwards, emitted via `io/sound` and gated on `:sound-on`. That keeps the whole transform pure, so tests drive entire frame sequences without touching the terminal. See [audio.md](audio.md).
+`tick-world` calls no IO. Every cue (pickups, combat, secret reveal, switch) enqueues `{:name :vol}` on `:sfx` via `push-sfx`. Queue reset at tick top, drained + emitted by game-loop after tick, gated on `:sound-on`. Keeps tick pure so tests run full frame sequences without side effects. See [audio.md](audio.md).
 
 ## Frame timing + adaptive FPS
 
 - **60 fps target** (16.667 ms) on standard terminals (< 200 cols OR area ≤ 12000 cells).
-- **30 fps** on big screens (≥ 200 cols OR area > 12000 cells) - perf-mode engagement via `core/perf.phel`.
-- `target-frame-us` reads terminal dimensions each loop and selects 16667 µs (60 fps) or 33333 µs (30 fps). Render time is the real bottleneck; sleep yields CPU.
-- `ms-since` computes wall-clock delta. Tagged `^float` on time params so Phel doesn't infer `int` from `* 1000` and trigger PHP 8.4+ implicit-conversion deprecation on microtime values.
-- `dt` is elapsed-seconds float used by every physics / AI / decay step. Same dt across sub-steps keeps simulation consistent inside a frame.
+- **30 fps** on big screens (area > 12000 cells) - perf-mode engagement via `core/perf.phel`.
+- `target-frame-us` reads terminal dimensions and selects 16667 µs (60 fps) or 33333 µs (30 fps). Render time is the real bottleneck; sleep yields CPU.
+- `ms-since` computes wall-clock delta. Args tagged `^float` so Phel doesn't infer `int` from `* 1000` and trigger PHP 8.4+ implicit-conversion deprecation on microtime values.
+- `dt` is elapsed-seconds float used by physics, AI, decay. Same dt across sub-steps keeps simulation consistent inside a frame.
 
 ## Per-level result kinds
 
@@ -139,8 +99,9 @@ Four lifecycle layers:
 
 `run-levels` matches on these to decide the next iteration.
 
-## Restart with same seed
+## Restart modes
 
-`run-levels` captures `(php/mt_rand)` before each `build-world` call and `mt_srand`s it. On `R` (capital) from an end screen, the captured seed is reused: identical map sequence. On `r` (lowercase) it picks a fresh seed. Lets the player replay a tough spawn.
+- `r` (restart, fresh): new PRNG seed, new level sequence.
+- `R` (replay, same): reuse the captured seed, replay identical levels.
 
-See [input.md](input.md) for how keys reach `tick-world` and [rendering.md](rendering.md) for what `render!` does on the way out.
+Lets the player practice a tough spawn or die-on level. See [input.md](input.md) for key flow and [rendering.md](rendering.md) for render pipeline.

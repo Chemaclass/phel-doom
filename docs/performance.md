@@ -4,7 +4,7 @@
 
 ## Big-screen perf mode
 
-Terminals ≥ 200 cols OR area > 12,000 cells automatically engage perf-mode: 30 fps cadence + 2× horizontal virtual-width (render-scale). Each cast ray is cast once and replicated into 2 adjacent columns; minimap caps at 40 cols. Physics + input tick once per loop frame, gameplay stays responsive.
+Terminals >= 200 cols or > 12,000 cells (cols x rows) automatically engage perf-mode: 30 fps cadence + 2x render-scale. Each ray casts once and replicates to 2 columns; minimap caps at 40 cols. Physics and input still tick per frame.
 
 ```phel
 (def perf-width-threshold  200)
@@ -14,219 +14,151 @@ Terminals ≥ 200 cols OR area > 12,000 cells automatically engage perf-mode: 30
 (defn render-scale [cols rows] (if (perf-mode? cols rows) 2 1))
 ```
 
-Auto-engages with zero config; large terminals now hit the frame budget cleanly without manual window resizing.
-
 ## PHP runtime: OPcache + JIT
 
-Phel compiles to PHP, so phel-doom's frame budget is bounded by whatever the PHP runtime does with that PHP. Two settings move the needle more than any single code change:
+Two settings matter most:
 
-- **OPcache.** Stores parsed + compiled bytecode so each new php-cli invocation doesn't re-parse the world. For a long-lived game-loop process this matters at start-up only, but it's a free win: the entire `vendor/phel-lang/` runtime gets cached on first hit.
-- **JIT (tracing mode).** PHP's tracing JIT specialises hot paths against observed types. The DDA inner loop, RLE walk, and shade lookups are exactly the shape (tight loops, type-stable PHP scalars) that benefit most.
+- **OPcache.** Caches parsed bytecode so startup doesn't re-parse `vendor/phel-lang/`. Free win for long-lived game loops.
+- **JIT (tracing mode).** Specialises hot paths (DDA loop, RLE walk, shade lookups) to native code. Tracing outperforms function mode on tight loops.
 
-Recommended `php.ini` for running the game:
+Recommended `php.ini`:
 
 ```ini
 opcache.enable=1
 opcache.enable_cli=1
 opcache.memory_consumption=128
 opcache.max_accelerated_files=20000
-opcache.validate_timestamps=0     ; production: don't stat each include
+opcache.validate_timestamps=0
 
 opcache.jit_buffer_size=128M
-opcache.jit=tracing               ; tracing > function for tight loops
+opcache.jit=tracing
 ```
 
-Verify it's actually loaded by the CLI:
+Verify:
 
 ```bash
-php -r 'var_dump(opcache_get_status(false));' | head -20
 php -r 'var_dump(opcache_get_status()["jit"] ?? "no jit");'
 ```
 
-You should see `"on" => true` plus a non-zero JIT buffer in the status. If `opcache.enable_cli` is off (the Linux distro default), the CLI process never hits OPcache and JIT never kicks in regardless of `jit_buffer_size`.
-
 Caveats:
-- Tracing JIT trades start-up time (warm-up) for steady-state speed. The first few frames are slower while traces compile; after that the inner loops run on native machine code paths. Bench at frame >= 60 to compare apples to apples.
-- `opcache.validate_timestamps=0` means PHP won't notice source edits without a manual `opcache_reset()`. Fine for shipping / Docker; set to `1` during dev.
-- Dockerfile in the repo root already ships OPcache enabled; JIT is the part to tune per host.
+- First few frames are slower while JIT compiles traces; bench at frame >= 60.
+- `opcache.validate_timestamps=0` disables source-file stat checks. Set to `1` during dev.
+- Dockerfile in repo root already enables OPcache; tune JIT per host.
 
 ## Direct PHP ops in the hot loop
 
-Unspecialised Phel `+`, `<`, and collection reads dispatch through the Phel
-runtime. Fine for app code, heavy per-cell. Latest Phel `main` can native-emit
-some typed primitive `phel.core` arithmetic and comparisons, but these hot loops
-keep the raw PHP path explicit.
-
-Renderer + raycaster use `php/+`, `php/<`, `php/aget`. Compile to `$a + $b`, `$a < $b`, `$arr[$k]` directly. No dispatch, no method call. ~5× speedup on the hot loop.
+Unspecialised Phel dispatch through the runtime. Hot loops use `php/+`, `php/<`, `php/aget` for direct PHP operations: `$a + $b`, `$a < $b`, `$arr[$k]`. No dispatch, no method call.
 
 ```phel
-(php/aget shade-table idx)   ; compiles to:  $shade_table[$idx]
-(php/+ a b)                  ; compiles to:  $a + $b
+(php/aget shade-table idx)   ; $shade_table[$idx]
+(php/+ a b)                  ; $a + $b
 ```
 
 ## Pre-baked shade tables
 
-24-step grayscale palette computed once at load:
+24-step grayscale computed once at load. Per-cell shade is one `php/aget`. No memoize, no allocation.
 
-```phel
-(def shade-table
-  (let [t (php/array)]
-    (loop [i 0]
-      (when (php/< i 24)
-        (php/aset t i (str "\e[48;5;" (php/+ 232 i) "m "))
-        (recur (php/+ i 1))))
-    t))
-```
-
-Per-cell shade is one `php/aget`. No memoize cache, no per-call allocation.
-
-Parallel `shade-code-table` holds the colour code as a string (`"240"`) for composing half-block edge cells. Avoids re-parsing the BG code out of the prebaked ANSI string.
+Parallel `shade-code-table` holds colour codes as strings for half-block edge composition (avoids re-parsing codes from ANSI strings).
 
 ## PHP-native nested array for the grid (`:pgrid`)
 
-Phel persistent vectors are great for pure updates but slow for indexed reads in a tight loop. `new-world` builds a PHP-array twin:
+Phel vectors are slow for indexed reads in tight loops. `new-world` builds a PHP-array twin:
 
 ```phel
 :pgrid (to-php-array (map to-php-array grid))
 ```
 
-Raycaster + minimap iterate `:pgrid` via direct subscript. Both `:grid` and `:pgrid` must update together on cell changes (door opens, etc.).
+Raycaster and minimap use `:pgrid` via direct subscript. Both `:grid` and `:pgrid` update together on cell changes.
 
 ## Flat distance arrays from cast-frame
 
-```phel
-{:dists <php-array> :hits <php-array> :hxs ... :hys ... :sides ...}
-```
-
-Renderer walks by column index. No lazy seqs, no Phel vector dispatch.
+`cast-frame` returns PHP arrays (`:dists`, `:hits`, `:hxs`, `:hys`, `:sides`). Renderer walks by column index; no lazy seqs, no Phel dispatch.
 
 ## Per-column shade pre-bake
 
-Each column's three shade strings (normal, top-edge, bot-edge) computed once in an outer loop; the per-row inner loop does an `aget` against the column array. Expensive math (distance, side darken, cell hash, clamp) runs once per column, not per cell.
-
-For 180×40 that's a 40× drop in shading work vs a naive per-cell approach.
+Compute each column's three shade strings (normal, top-edge, bot-edge) once in an outer loop; per-row inner loop does one `aget`. Expensive math (distance, side darken, clamp) runs once per column, not per cell. 40x reduction at 180x40.
 
 ## Run-length encoding
 
-Consecutive cells with the same ANSI escape coalesce into one paint + N spaces:
-
-```
-\e[48;5;240m            (set BG once)
-"          "            (12 spaces, terminal keeps the BG)
-```
-
-Cuts output 5-10× on same-colour rows. In-place state machine in the inner loop (`prev` + `run` counters). No separate buffer pass.
+Consecutive same-color cells coalesce: one escape, N spaces. Cuts output 5-10x on monochrome rows. In-place state machine with `prev` + `run` counters.
 
 ## Skip the minimap region
 
-Minimap overlay rewrites the top-right ~24×~22 cells via absolute cursor positioning **after** the main row loop. Cells underneath don't need to paint properly. Inner loop emits a cheap `sky-gradient[row]` placeholder for cells in the minimap region (detected by precomputed `mini-col0` + `visible-mh`). Skips blood-paint lookup, four-arm cond, and both shade lookups.
+Minimap overlay rewrites top-right ~24x~22 cells via cursor positioning after the row loop. Inner loop emits a cheap placeholder for cells in that region (detected by precomputed `mini-col0` + `visible-mh`). Skips blood-paint lookup and shade computations.
 
 ## Alt screen buffer + cursor-home redraw
 
-```phel
-\e[?1049h    ; enter alt screen
-\e[?25l      ; hide cursor
-\e[?7l       ; disable autowrap
-\e[H         ; cursor home each frame (no clear)
-```
-
-Terminal sees repeated home-and-overwrite. No flicker, no scroll, no full clear (which would flash). Previous frame's state is implicitly overwritten because we emit the same byte count each frame.
+Alt screen + cursor home each frame (no clear). Terminal sees home-and-overwrite: no flicker, no scroll. Previous frame overwritten implicitly.
 
 ## Float type tags
 
-PHP 8.4+ deprecates implicit float-to-int conversion when the cast loses precision. Phel's inferencer sees `(* x 1000)` and emits `int $x` in the signature. Perfect for ints, broken when callers pass `microtime(true)`.
-
-Hot-path numeric args get explicit `^float`:
+PHP 8.4+ deprecates implicit float-to-int conversion. Hot-path numeric args use explicit `^float` tags to avoid deprecation warnings.
 
 ```phel
 (defn- ms-since [^float t-then ^float t-now]
   (php/intval (php/* (php/- t-now t-then) 1000)))
 ```
 
-Phel emits `float $t_then, float $t_now`. No implicit cast, no deprecation, no log spam.
-
 ## DDA raycaster
 
-`cast-ray` and `cast-ray-hit` march from grid line to grid line via a Wolfenstein-style **DDA**: precompute step direction + per-axis `delta = |1/dir|`, advance whichever side-distance is smaller, check the cell. ~5-8 iterations per ray instead of the old fixed-step march's ~35, and the side bit + hit-cell coords fall out for free (so the brick-texture hash + corner shading get correct inputs without a second pass). Issue #2.
+Grid-line-to-grid-line march via Wolfenstein DDA: precompute step direction and per-axis delta, advance the smaller side-distance, check the cell. ~5-8 iterations per ray instead of ~35 fixed steps. Side bit and hit-cell coords are free (no second pass). Issue #2.
 
 ## Evaluated and shelved
 
-### Sprite occlusion z-buffer (issue #4 - closed without merge)
+### Sprite occlusion z-buffer (issue #4)
 
-The proposal: introduce a per-column min-z so the enemy paint loop can early-exit on cells already taken by a closer sprite, instead of the current back-to-front overwrite + per-cell wall-distance check.
+Proposal: per-column min-z to early-exit enemy paint on occluded cells.
 
-`frame->string` mean over 1500 iterations on `build-world 1 5` with enemies clustered directly in front of the player so they overlap on screen:
+Benchmark with enemies clustered in front on `build-world 1 5`:
 
-| Enemies on screen | 80×24 | 120×30 | 180×40 |
+| Enemies | 80x24 | 120x30 | 180x40 |
 |---|---|---|---|
 | 0 | 12.9 ms | 23.1 ms | 44.5 ms |
-| 1 | 13.1 ms | 23.4 ms | 45.1 ms |
-| 3 | 13.1 ms | 23.0 ms | 44.4 ms |
-| 8 | 13.3 ms | 23.3 ms | 44.5 ms |
 | 15 | 13.7 ms | 23.9 ms | 44.8 ms |
 
-(Absolute numbers are higher than the headline "<5 ms" because the bench measures the full `frame->string` on the larger level-1 map without the runtime's frame-budget sleep - relative deltas are what matters here.)
+Overlapping enemies add ~0.8 ms at 80x24, ~0.3 ms at 180x40. Existing code already does most of what z-buffer would do: `:dists` skips wall occlusions, `:edists` skips enemy occlusions, back-to-front sorting overwrites distant sprites.
 
-Going from no enemies to 15 overlapping enemies adds **~0.8 ms at 80×24, ~0.8 ms at 120×30, ~0.3 ms at 180×40** - and that *includes* the projection trig and the per-column writes the z-buffer would not eliminate. A best-case z-buffer fast path would shave a small fraction of that already-tiny slice.
+Verdict: sub-millisecond win, complexity cost not justified.
 
-Also: today's code already does most of what a z-buffer would do. `:dists` is consulted per cell to skip cells occluded by walls, `:edists` is consulted by the pickup paint to skip cells occluded by enemies, and `collect-enemy-projs` sorts enemies back-to-front so closer sprites overwrite further ones via the normal paint path. The "wasted writes" the z-buffer would avoid are bounded to dense overlap scenes, which already cost ~1 ms total.
+### Differential rendering (issue #3)
 
-Verdict: **win is sub-millisecond, complexity adds another implicit invariant (paint order must match z-buffer fill order) plus extra state. Not justified.** Issue closed without merging.
+Per-row diff against previous frame:
 
-### Differential rendering (issue #3 - closed without merge)
-
-Per-row diff against the previous frame, emitting only changed rows. Same `default-grid`, two-frame diff, bytes-emitted measured (lower = better):
-
-| Scenario | Viewport | Full repaint | Row-diff | Δ |
+| Scenario | Paused | Still | Moving | Turning |
 |---|---|---|---|---|
-| Paused (dt = 0) | 180×40 | 15693 B | 0 B | **-100 %** |
-| Still player, world ticks (HUD + pulses only) | 180×40 | 15693 B | 6121 B | **-61 %** |
-| Moving forward | 180×40 | 15583 B | 15864 B | **+2 %** |
-| Turning | 180×40 | 15616 B | 15897 B | **+2 %** |
+| Full repaint | 15693 B | 15693 B | 15583 B | 15616 B |
+| Row-diff | 0 B | 6121 B | 15864 B | 15897 B |
+| Delta | -100% | -61% | +2% | +2% |
 
-The static-scene wins are real but rare - once the player moves OR turns, every row's wall column changes and the diff cost (cursor-positioning overhead + the per-row string compare) makes it net *more* expensive than a single cursor-home full repaint. With the existing run-length encoding already keeping frames under ~16 KB at 180×40 and the cast+render budget under 5 ms, the saved bytes don't move the needle in the case that actually matters (active gameplay).
+Paused and still-player wins are real but rare. Active movement negates the win. Invalidation logic for resize, reset, alt-screen re-entry, pause overlay, minimap toggle, effects adds complexity.
 
-Add to that: invalidation logic for resize, scene reset, alt-screen re-entry, pause-menu overlay, minimap toggle, transient effects - every one of those would need a forced full-repaint flag, and getting any of them wrong leaves stale cells on screen.
-
-Verdict: **complexity cost > realistic win**. Issue closed without merging.
+Verdict: complexity cost > realistic win.
 
 ## Inlined DDA + prebaked FOV tables
 
-After DDA landed (issue #2), `cast-frame` was still doing one `atan` + one `cos` per output column per frame to compute the FOV offset, and one private-fn dispatch (`cast-ray-hit`) per ray returning a Phel persistent vector. Two follow-up changes collapsed that:
+After DDA, `cast-frame` was still running `atan` + `cos` per column and dispatching `cast-ray-hit` per ray. Two follow-ups:
 
-1. **Width-keyed `atan` / `cos` memo.** `offset-tables-for` builds `[col -> offset]` + `[col -> cos(offset)]` PHP arrays once per viewport width and caches them in an atom. The cast-frame loop reads two `aget`s instead of running trig per column.
-2. **Inlined DDA + `php/array` return.** `cast-ray-hit` was removed; its body lives directly in `cast-frame`. The inlined DDA returns a plain PHP array literal on hit (`(php/array dist hit side hx hy)`); destructuring is five `php/aget`s. The persistent-vector allocation the old `[d h side hx hy]` form paid is gone.
+1. **Width-keyed memo.** `offset-tables-for` caches per-width `[col -> offset]` + `[col -> cos(offset)]` arrays. Cast-frame reads two `aget`s instead of trig per column.
+2. **Inlined DDA.** `cast-ray-hit` inlined into `cast-frame`. DDA returns PHP arrays, not persistent vectors.
 
-Combined effect on `cast-frame` mean (2000-iter bench, `default-grid`, player spawn):
+Effect on `cast-frame` (2000-iter bench, `default-grid`):
 
 | Viewport | post-DDA | post-prebake+inline | Δ |
 |---|---|---|---|
-| 80×24 | 0.53 ms | 0.21 ms | -61 % |
-| 120×30 | 0.82 ms | 0.32 ms | -61 % |
-| 180×40 | 1.28 ms | 0.51 ms | -60 % |
+| 80x24 | 0.53 ms | 0.21 ms | -61% |
+| 120x30 | 0.82 ms | 0.32 ms | -61% |
+| 180x40 | 1.28 ms | 0.51 ms | -60% |
 
 ## Measured numbers
 
-`cast-frame` only, 2000-iteration mean from `default-grid` at the player spawn - bench harness lives in [`/perf-bench`](../.claude/skills/perf-bench/SKILL.md):
+`cast-frame` only, 2000-iter mean from `default-grid`:
 
-| Viewport | step-march (pre-#2) | DDA (post-#2) | prebake+inline | Δ vs step-march |
+| Viewport | step-march | DDA | prebake+inline | Δ |
 |---|---|---|---|---|
-| 80×24 | 0.81 ms | 0.53 ms | 0.21 ms | -74 % |
-| 120×30 | 1.26 ms | 0.82 ms | 0.32 ms | -75 % |
-| 180×40 | 2.04 ms | 1.28 ms | 0.51 ms | -75 % |
+| 80x24 | 0.81 ms | 0.53 ms | 0.21 ms | -74% |
+| 120x30 | 1.26 ms | 0.82 ms | 0.32 ms | -75% |
+| 180x40 | 2.04 ms | 1.28 ms | 0.51 ms | -75% |
 
-Cast time scales roughly linearly with column count; DDA's win grows with viewport width because each ray's traversal cost drops while the per-ray trig (cos/sin/atan) stays fixed.
+Cast scales linearly with column count. Whole-frame timing (cast + render + emit) lands well under 5 ms target. Live perf is available in-game via **F3** (cast/render split, bytes emitted, PHP memory, RLE compression).
 
-Whole-frame timing (cast + composition + ANSI emit) lands well under the 5 ms target at every viewport. Live perf numbers - including the cast/render split, bytes emitted, and PHP memory - are available in-game by pressing **F3** (issue #9). Game-loop overhead (`stty size`, `microtime`, `usleep`) adds ~2 ms; effective frame rate caps around 165 fps at 180×40.
-
-### Reading these live: the F3 debug overlay
-
-Press **F3** in-game to toggle a per-frame perf row that paints above the standard HUD footer. It surfaces (last-frame snapshot):
-
-- `frame` - total frame time in ms (same source as the existing fps counter).
-- `cast` / `render` - split of the frame budget between `cast-frame` and everything else `render!` does. Should add up to `frame` within timing jitter.
-- `bytes` - `strlen` of the emitted ANSI frame string. Tracks the hypothesis behind the differential-rendering investigation (issue #3).
-- `rle` - average bytes per `\e[` SGR prefix in the frame, a proxy for how effectively run-length encoding is collapsing same-colour runs (higher = better).
-- `mem` - current / peak PHP memory (`memory_get_usage(true)`).
-
-The overlay is **off by default and pays zero per-frame cost when off** - the instrumentation is fully gated behind the `:debug?` flag on the world, so production runs never call `microtime`, `strlen`, `substr_count`, or `memory_get_usage`. This is the canonical way to validate any future cast/render optimisation (issues #3, #4): toggle F3, read the numbers before and after.
+The overlay is off by default and costs zero per-frame when off (instrumentation gated behind `:debug?` flag).

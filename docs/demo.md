@@ -20,4 +20,4 @@ Demo = seed + per-frame `[key-bytes, dt-ms]` stream:
 `--record=FILE`: each frame appends live `[keys, ms]` and passes it through; on exit writes file.
 `--demo=FILE`: loads seed + frames, re-runs `game-loop` with recorded inputs, skips start menu.
 
-Seam is `demo/resolve-frame!` in `game-loop`: `:off` (live), `:record` (tap live), `:replay` (substituted). File IO in loop, never pure `tick-world`. When replay exhausts frames, returns `{:end? true}` and loop quits.
+Seam is `resolve-frame!` (`phel-doom.io.demo`) called from the play loop: `:off` (live), `:record` (tap live), `:replay` (substituted). File IO in loop, never pure `tick-world`. When replay exhausts frames, returns `{:end? true}` and loop quits.

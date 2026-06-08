@@ -20,11 +20,12 @@
 Every cell is one of these ints. Constants exported so no module uses raw `0/1/2/3/4/5/9` literals. `(= cell-door (cell g x y))` reads as purpose.
 
 `lock-colours` maps locked-door cell values to keycard keywords:
+
 ```phel
-{3 :blue   4 :red   5 :boss   9 :yellow}
+{3 :blue  4 :red  5 :boss  9 :yellow}
 ```
 
-`:boss` is a synthetic "colour" - no physical keycard item ever spawns for it; the kw is granted automatically by `combat/maybe-unlock-boss-door` when the boss is killed on a `:door-lock :boss` level.
+`:boss` is a synthetic "colour" - no physical keycard spawns for it; the kw is granted automatically by combat when the boss dies on a `:door-lock :boss` level.
 
 ## Lookup helpers
 
@@ -94,7 +95,7 @@ Hand-authored only (`:layout` char `T`). Level config supplies targets:
             {:at [16 14] :targets [[12 10]]}]
 ```
 
-`F`-press near a switch calls `toggle-switch`:
+`F`-press near a switch calls `toggle-switch(grid switches x y)`:
 1. Swap switch cell `off` ↔ `on`.
 2. Flip every target cell `wall` ↔ `floor` (doors skipped).
 3. Resync raycaster's cached grid view.

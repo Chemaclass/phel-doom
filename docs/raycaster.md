@@ -16,7 +16,7 @@ For each screen column, fire a ray from the player at an angle offset from facin
 
 ## DDA: grid-aligned traversal
 
-Step from grid-line to grid-line, not at fixed intervals. Two per-axis side-distances track distance to the next x/y crossing. Loop advances the nearer one, lands in the next cell, updates that axis's side-distance by `delta = |1/dir|`. Result: ~5-8 cell crossings per ray instead of ~35 fixed steps (see [performance.md](performance.md)).
+Step grid-line to grid-line instead of at fixed intervals. Two per-axis side-distances track the next x/y crossing. Loop advances the nearer side, lands in the next cell, updates that axis's delta by `|1/dir|`. Result: ~5-8 cell crossings per ray instead of ~35 fixed steps (see [performance.md](performance.md)).
 
 ```phel
 (let [dirx   (php/cos angle)
@@ -40,14 +40,12 @@ Step from grid-line to grid-line, not at fixed intervals. Two per-axis side-dist
 
 ## `cast-ray`: one ray
 
-Returns distance (raw, not fish-eye corrected). For detailed return with side/coords, use inline DDA in `do-cast`.
-
-Return tuple `[dist side hx hy]` available in `do-cast` for renderer:
+Returns raw (uncorrected) distance. Detailed tuple `[dist side hx hy]` is computed inline in `do-cast`:
 
 | Field | Meaning |
 |---|---|
-| `side` | 0: x-line (vertical face); 1: y-line (horizontal face) - enables side-shading |
-| `hx, hy` | Hit cell coords - feeds per-cell mottling hash to avoid flat bands |
+| `side` | 0: x-line (vertical face); 1: y-line (horizontal face) for directional shading |
+| `hx, hy` | Hit cell coords for texture variation |
 
 ## `cast-frame`: all rays at once
 
@@ -66,33 +64,23 @@ Cast `width / scale` rays; return 5 parallel PHP arrays (one per output column).
 
 ### Angular offset, not linear sweep
 
-```phel
-offset = atan((col - center) / proj-dist)
-```
-
-Each column's ray angle is `atan(col-offset / proj-dist)`. Constant wall scale on resize: making the terminal wider expands FOV (see more world) without changing wall heights. Linear FOV sweep would scale walls proportionally to width - feels wrong.
+Each column's ray angle is `atan(col-offset / proj-dist)`. Making the terminal wider expands FOV without scaling walls. A linear sweep would scale walls with width - wrong.
 
 ### Fish-eye correction
 
-```phel
-(php/* d (php/cos offset))
-```
-
-Edge rays travel further to reach the same wall plane than central rays. Multiply by `cos(offset)` to project onto the player's forward axis, flattening the wall. Without it: fish-eye barrel distortion. One multiply per column.
+Edge rays travel further than central rays to reach the same wall plane. Multiply by `cos(offset)` to project onto the player's forward axis. One multiply per column; without it: barrel distortion.
 
 ## Performance
 
-DDA averages ~5-8 cell crossings per ray instead of ~35 fixed steps. Cast phase: ~1.55 ms at 180 cols (24% faster than step-march). Hot loop uses direct PHP ops (`php/+`, `php/<`) and `:pgrid` (nested PHP array), not Phel vectors.
+DDA averages ~5-8 cell crossings per ray instead of ~35 fixed steps. Hot loop uses direct PHP ops (`php/+`, `php/<`) and `:pgrid` (nested PHP array).
 
 ## Caching (two memo atoms)
 
-The engine keeps two private atoms. Both memoize data that is fully determined by their inputs, so the casts stay referentially transparent despite the writes:
+Two private atoms memoize input-determined data, preserving referential transparency:
 
-- `offset-cache`: the per-column FOV offset table (`atan` + its `cos`) depends only on viewport width, never on game state. Built once per width and reused; same width always yields the same arrays, so it behaves like a lazy `def`.
-- `pause-cast-cache`: a single-slot copy of the last `cast-frame` result, consulted only while the world is paused. A paused world freezes player x / y / angle and the grid, so the next cast is provably identical to the last; the cache key is `[width scale x y angle]` (six `php/===` compares). Active (unpaused) frames never read or write it, so the hot path is untouched. This is what makes pause overlays and the help menu cost zero cast time per frame.
-
-Neither cache can change a result for given inputs; they only trade memory for recomputation.
+- `offset-cache`: per-column FOV offsets (depends only on width, not state). Built once per width.
+- `pause-cast-cache`: single-slot copy consulted only while paused (player x/y/angle + grid frozen, so cast is identical to previous frame). Active frames never touch it, so pause overlays and help menu are free.
 
 ## Why `core/`
 
-Pure deterministic logic: `(pgrid, x, y, angle) -> distance`. No IO or time-dependence; the two memo caches above are the only mutable state and are input-determined (see Caching), so the casts remain pure to callers. Tests (`tests/core/engine-test.phel`) verify distance accuracy, side bits, hit-cell coords, and array lengths.
+Pure deterministic logic: given grid, position, and angle, always same output. The two memo caches are input-determined (see Caching), so calls remain pure. Tests verify distance accuracy, side bits, hit-cell coords, and array lengths.

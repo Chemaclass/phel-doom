@@ -6,45 +6,47 @@ Pure `core/` (deterministic logic) → composition `glue/` (pure wiring) → eff
 src/
 ├── main.phel                        ; phel.cli wiring, CLI entrypoint
 ├── commands/play.phel               ; orchestration (game-loop, run-levels, tick-world)
-├── commands/demo.phel               ; tech-talk showcase command (progressive reveal)
-├── demo/                            ; pure tech-talk demo logic, isolated from the game
-│   └── phases.phel                  ; per-phase world->world transform (see docs/demo-showcase.md)
+├── commands/demo.phel               ; tech-talk showcase command
+├── demo/phases.phel                 ; per-phase world->world transform
 ├── core/                            ; pure, deterministic, no IO
 │   ├── state.phel                   ; world + player maps, gain-life, max-lives
 │   ├── map.phel                     ; grid generators, cell constants, wall? / door?
 │   ├── engine.phel                  ; raycaster (cast-ray, cast-frame)
 │   ├── physics.phel                 ; rotation + translation + counter decay + stamina
-│   ├── combat.phel                  ; fire-shot + damage-step + tunables
-│   ├── enemy.phel                   ; spawn-enemies, advance, shoot, respawn timer
-│   ├── enemy_ai.phel                ; AI state machine (dormant/wander/aware/hunting/pain/attacking)
-│   ├── enemies.phel                 ; enemy-type catalog (visuals + default HP)
-│   ├── projectile.phel              ; enemy fireballs: spawn + march + player impacts
-│   ├── level.phel                   ; 10-level catalog + build-world factory
-│   ├── weapons.phel                 ; per-weapon stat catalog + switch/reload
+│   ├── combat.phel                  ; fire-shot + damage-step + timers
+│   ├── enemy.phel                   ; spawn, step, shoot, respawn timer
+│   ├── enemy_ai.phel                ; AI state machine
+│   ├── enemies.phel                 ; enemy-type catalog
+│   ├── projectile.phel              ; enemy fireballs: spawn + march + impacts
+│   ├── level.phel                   ; level catalog + build-world factory
+│   ├── weapons.phel                 ; per-weapon stats + switch/reload
+│   ├── format.phel                  ; render format helpers
+│   ├── settings.phel                ; difficulty + volume + minimap settings
 │   ├── perf.phel                    ; big-screen perf-mode predicates
-│   ├── rng.phel                     ; seeded PRNG (deterministic runs / demos)
-│   └── difficulty.phel              ; easy/normal/hard/nightmare multipliers
-├── glue/                            ; pure wiring, needs both halves
-│   └── controls.phel                ; key bytes -> :moves counters + rising edges
+│   ├── rng.phel                     ; seeded PRNG
+│   ├── difficulty.phel              ; easy/normal/hard/nightmare multipliers
+│   └── version.phel                 ; version string
+├── glue/controls.phel               ; key bytes -> :moves counters + rising edges
 └── io/                              ; effects, touch the OS
-    ├── input.phel                   ; raw STDIN, alt screen buffer
-    ├── render.phel                  ; ANSI escape composition + flush
-    ├── sound.phel                   ; afplay/paplay/aplay shell-out (one-shot sfx)
-    ├── ambient.phel                 ; synthesised drone loop (crash-safe bg process)
-    ├── scores.phel                  ; JSON in $HOME
-    ├── savegame.phel                ; mid-level save/load (tagged JSON world dump)
-    ├── demo.phel                    ; record / replay input stream + seed
-    └── wad.phel                     ; .wad file format parser
+    ├── input.phel                   ; STDIN setup + drain
+    ├── render.phel + submodules      ; ANSI emit + layout
+    ├── sound.phel                   ; sfx shell-out
+    ├── ambient.phel                 ; music loop process
+    ├── scores.phel                  ; JSON high-score file
+    ├── settings.phel                ; settings JSON persist
+    ├── savegame.phel                ; mid-level save/load
+    ├── demo.phel                    ; record / replay harness
+    └── wad.phel                     ; .wad parser
 ```
 
 ## Dependency rules
 
-- `core/` may not require `io/` or `glue/`. Runs against in-memory data in isolation.
-- `io/` may require `core/`. Adapters speak the domain language.
-- `glue/` may require both. Only place that mixes effects with pure logic.
-- `commands/play.phel` is the top-level orchestrator. Composes every layer.
+- `core/` - pure, no `io/` or `glue/`. Runs on maps.
+- `glue/` - pure wiring, may require `core/`. No IO.
+- `io/` - effects, may require `core/` + `glue/`.
+- `commands/play.phel` - top-level orchestrator. Composes all three.
 
-Tests never need a fake terminal, audio device, or disk: all tests import from `core/`. Boundary is enforceable by reading `(:require ...)` lines.
+Tests only import from `core/` so no terminal, disk, or audio mocking needed. Enforceable via `(:require ...)` inspection.
 
 ## Data flow per frame
 
@@ -83,12 +85,10 @@ Tests never need a fake terminal, audio device, or disk: all tests import from `
               └───────────────────────────────┘
 ```
 
-See [game-loop.md](game-loop.md) for the full step table.
-
-IO shell does two things: drain input from stdin, flush a frame to stdout. Everything between is one pure `tick-world` call.
+See [game-loop.md](game-loop.md) for the full tick-world step table. Game-loop: read input -> pure tick-world -> render. Two IO boundaries only: drain stdin, flush stdout.
 
 ## Why this layout
 
-- Test cost visible from folder name. `core/` = unit test against a Phel map. `io/` integration-tested by running the binary.
-- Dependency arrows point one way. Easy to grep + reason about.
-- Refactors stay local. Wall-shade tweak touches only `core/engine.phel` + `io/render.phel`.
+- Test cost visible from folder: `core/` = unit tests (pure maps), `io/` = integration tests (run binary).
+- Dependency arrows point one way: no cycles, easy to grep.
+- Refactors stay local: wall-shade tweak touches `core/engine.phel` + `io/render.phel` only.

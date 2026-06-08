@@ -47,8 +47,8 @@ Sprint slot decays with movement counters, so releasing clears it the same frame
 
 Per byte, counter is set to its hold value; each frame physics decrements by 1. At 0 direction stops.
 
-- `move-hold-frames` = 18 (~300ms): bridges OS initial-key-repeat delay (250-500ms). Avoids stutter on press. Trade-off: ~300ms post-release glide on non-kitty terminals. Kitty release events (`:event` 3) override with instant clear.
-- `turn-hold-frames` = 3 (~50ms): quick halt for aiming, not movement.
+- `move-hold-frames` = 18 (~300ms at 60 fps): bridges OS initial-key-repeat delay (250-500ms). Avoids stutter on press. Trade-off: ~300ms post-release glide on non-kitty terminals. Kitty release events (event type 3) override with instant clear.
+- `turn-hold-frames` = 3 (~50ms at 60 fps): quick halt for aiming.
 
 ## Kitty keyboard protocol
 
@@ -56,12 +56,10 @@ When supported, `\e[>3u` opt-in makes the terminal emit structured events:
 - `\e[<code>;<mods>:<event>u` (ASCII + functional keys)
 - `\e[1;<mods>:<event><A|B|C|D>` (arrows, legacy suffix)
 
-Event codes: 1 = press, 2 = repeat, 3 = release. `refresh-from-keys` parses kitty events first (extract and clear), then falls back to legacy normalise + byte-walk on leftover.
-
-Mods encoded as `bits + 1`; bit 0 = SHIFT.
+Event codes: 1 = press, 2 = repeat, 3 = release. `refresh-from-keys` parses kitty events first, then falls back to legacy normalise + byte-walk on leftover. Mods encoded as `bits + 1`; bit 0 = SHIFT.
 
 Best-tier terminals: kitty, WezTerm, Ghostty, Alacritty >= 0.13, iTerm2 >= 3.5 (instant release).
-Legacy fallback: Terminal.app, GNOME Terminal, xterm (hold-frames only).
+Legacy fallback: Terminal.app, GNOME Terminal, xterm (hold-frames bridge only).
 
 In tmux: `set -g extended-keys on` + `setw -g xterm-keys on`.
 
@@ -75,9 +73,9 @@ F5 / F9 fire in `game-loop` (side-effect layer), not `tick-world`, so pure tick 
 
 Edges consumed by: `:fire` -> `tick-shooting`; `:reload` -> ammo refill; `:action` -> secrets; `:select-weapon*` -> `switch-weapon`; toggles -> `handle-toggles`.
 
-Note: `h` and `esc` are aliased to `:toggle-help` (pause-coupled info panel).
+Note: `h` and `esc` both toggle the info panel (pause-coupled).
 
-The settings page (see [settings.md](settings.md)) is the pause overlay. While `:paused` (and not in the `h` info panel) navigation is count-based via `nav-deltas`, not the one-shot edges above: it sums arrow presses (CSI / SS3 / kitty) and WASD in the drain string into net `{:cursor :value}` steps, so WASD is a fallback for unrecognised arrow encodings and a held key ramps a slider through OS key-repeat.
+The settings page is the pause overlay. While `:paused` (and not viewing the info panel) navigation uses `nav-deltas`, not rising-edges: it sums arrow + WASD keypresses into net `{:cursor :value}` steps so a held key ramps a slider through OS key-repeat.
 
 ## Architecture
 

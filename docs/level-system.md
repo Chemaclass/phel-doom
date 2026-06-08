@@ -7,36 +7,38 @@
 | # | Name | Type | Enemies |
 |---|---|---|---|
 | 1 | imps | random | 4 imps |
-| 2 | demons | random | 6 demons + shotgun |
-| 3 | cacodemons | random | 8 cacos + chaingun |
-| 4 | barons | random + blue lock | 5 barons |
-| 5 | cyberdemons | random + red lock | 7 cyberdemons |
-| 6 | spectres | random mix | 4 spectres + 2 imps |
-| 7 | revenants | random mix + yellow lock | 4 revenants + 2 demons |
+| 2 | demons | random | 5 demons + 2 imps + shotgun |
+| 3 | cacodemons | random | 4 cacos + 2 demons + 2 imps + chaingun |
+| 4 | barons | random + blue lock | 3 barons + 3 demons |
+| 5 | cyberdemons | random + red lock | 5 cyberdemons + 2 imps |
+| 6 | spectres | random mix | 4 spectres + 2 imps + 1 caco |
+| 7 | revenants | random mix + yellow lock | 4 revenants + 2 demons + 1 baron |
 | 8 | archvile court | random mix | 2 archviles + 3 cacos + 2 mancubi |
 | 9 | the brood | random mix | 3 pinkies + 3 barons + 2 mancubi |
 | 10 | the final | hand-authored boss arena | 1 cyberdemon boss (50 HP) + 2 imps (max 1 alive) |
 
 ## Catalog
 
-L1-L5: single-type procgen. L6-L9: mixed-monster procgen. L10: hand-authored arena with secrets + switches.
+L1: single-type procgen tutorial (imps only). L2-L9: mixed-monster procgen (melee secondary salted per level). L10: hand-authored arena with secrets + switches.
 
-Non-locked procgen levels seed up to 2 secret passages (seen in [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4/L5/L7) skip seeding to prevent bypassing the keycard door.
+Non-locked procgen levels seed up to 2 secret passages (see [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4, L5, L7) skip seeding to prevent keycard bypass.
 
 ```phel
 (def levels
   [{:size [22 16] :walls 12 :enemy :imp   :enemies 4 :chase 0.8 :name "imps"}
-   {:size [28 20] :walls 22 :enemy :demon :enemies 6 :chase 1.0 :name "demons"}
-   {:size [36 24] :walls 38 :enemy :caco  :enemies 8 :chase 1.2 :name "cacodemons"}
-   {:size [44 28] :walls 55 :enemy :baron :enemies 5 :chase 1.4 :name "barons"      :door-lock :blue}
-   {:size [52 32] :walls 75 :enemy :cyber :enemies 7 :chase 1.6 :name "cyberdemons" :door-lock :red}
+   {:size [28 20] :walls 22 :enemy :demon :chase 1.0 :name "demons"
+    :enemies [{:type :demon :count 5} {:type :imp :count 2}]}
+   {:size [36 24] :walls 38 :enemy :caco :chase 1.2 :name "cacodemons"
+    :enemies [{:type :caco :count 4} {:type :demon :count 2} {:type :imp :count 2}]}
+   {:size [44 28] :walls 55 :enemy :baron :chase 1.4 :name "barons" :door-lock :blue
+    :enemies [{:type :baron :count 3} {:type :demon :count 3}]}
+   {:size [52 32] :walls 75 :enemy :cyber :chase 1.6 :name "cyberdemons" :door-lock :red
+    :enemies [{:type :cyber :count 5} {:type :imp :count 2}]}
    ;; L6-L9: mixed specs. L10: :layout + :switches, :door-lock :boss.
    ...])
 ```
 
-Chase speed climbs monotonically L1-L9 (`0.8 1.0 1.2 1.4 1.6 1.7 1.8 1.9 2.0`) so difficulty never visibly dips; L10 eases to `1.6` because it is a single-boss dodging arena. L6 + L7 each carry one caster (a caco / baron) so ranged pressure never disappears across the mid-game stretch. Every enemy is also stamped with a depth-scaled `:aggression` cooldown multiplier (see [monsters.md](monsters.md)).
-
-Only the headline `:enemies` count is shown above; in practice L2-L5 are now mixed-spec vectors (a melee secondary salted into the headline type) so no early room is single-type, and L1 stays pure imps as the tutorial. Mixed specs that omit `:lives` inherit the type's catalog HP.
+Chase speed climbs monotonically L1-L9 (`0.8 1.0 1.2 1.4 1.6 1.7 1.8 1.9 2.0`); L10 eases to `1.6` (single-boss arena). L2-L9 mix a melee secondary into the headline type to prevent single-type monotony; L1 stays pure imps as a tutorial. L6-L7 each carry one caster (caco/baron) to maintain ranged pressure. Every enemy gets a depth-scaled `:aggression` cooldown multiplier (see [monsters.md](monsters.md)). Mixed specs omitting `:lives` inherit catalog HP.
 
 Required fields:
 
@@ -102,9 +104,10 @@ Level N config (1-indexed). Clamps out-of-range to nearest valid.
 Signature: `(build-world level-num lives backpack-level diff owned)` → new world state.
 
 Per build: grid (hand-authored or random), player spawn + angle, enemies from mixed specs. Pickups seeded:
-- Heart: only if `lives < max-lives` (avoid wasted pickups).
+- Heart: only if `lives < max-lives`.
 - Armor (50%), berserk (1/8), invuln (1/12), soulsphere (1/10), backpack (L2+, 1/5).
-- 3 armor shards per level. Keycard (if locked, not `:boss`). Weapon drops if not owned: shotgun (L2) / chaingun (L3) / chainsaw (L4) / rocket (L5) / incinerator (L6) / BFG (L7).
+- 3 armor shards per level.
+- Keycard if locked (not `:boss`); weapon drops if not owned: shotgun (L2), chaingun (L3), chainsaw (L4), rocket (L5), incinerator (L6), BFG (L7), super-shotgun (L8).
 - Ammo boxes: `max(2, ceil(total_hp / 8))` where `total_hp = sum(count * lives)`.
 
 Stamps: `:enemy` (primary type fallback), `:level-name`, `:difficulty`, `:intro-secs` (1.5s).

@@ -1,6 +1,6 @@
 # Audio
 
-One-shot SFX via `src/io/sound.phel` (shell-out) plus ambient drone via `src/io/ambient.phel`. No FFI, no PHP extensions.
+One-shot SFX via `src/io/sound.phel` (shell-out) plus a background OST riff via `src/io/music.phel`. No FFI, no PHP extensions.
 
 `audio-player` probes once and memoises: macOS uses `afplay` plus `/System/Library/Sounds/*.aiff`. Linux tries `paplay` / `aplay` / `play` or terminal bell (`\a`) fallback.
 
@@ -25,12 +25,12 @@ Each call shells out backgrounded (`&`). N key toggles `:sound-on`; mute is inst
 Settings page (`docs/settings.md`) drives two levels via `afplay -v` (macOS only; other players ignore `-v`):
 
 - SFX: `set-sfx-scalar!` stores 0..1 multiplier on sound state atom. `play-sfx!` scales every event by it. 0 mutes with no bell fallback. The audio probe (`ensure-probed!`) merges into state (never replaces), so settings never clobber a scalar set before first sound.
-- Music: `set-music-volume!` updates drone `-v` and restarts loop (immediate). 0 stops bed.
+- Music: `set-music-volume!` updates the OST `-v` and restarts the loop (immediate). 0 stops the soundtrack.
 
-## Ambient drone
+## Background OST
 
-Low pulsing background for dread (no shipped asset).
+A driving, dark melodic riff under the run to evoke the original DOOM (`src/io/music.phel`). The original DOOM soundtrack is copyrighted, so this is an ORIGINAL procedural composition: no WAD, no shipped asset, license-clean.
 
-Pure: `drone-wav-bytes` synthesises seamless 2s 16-bit mono 22050 Hz clip. Three partials (55/82/110 Hz, integer cycles no click) under 0.5 Hz tremolo. Written once to `sys_get_temp_dir()/phel-doom-ambient.wav`, reused.
+Pure: `riff-wav-bytes` synthesises a 16-bit mono 22050 Hz WAV from a note vector (`doom-riff`, an eighth-note ostinato in E minor). Each note is the fundamental plus a sub-octave and two harmonics, shaped by a fast-attack / exponential-decay / linear-release envelope. The release ramps every slot tail to zero, so note boundaries and the loop wrap are click-free (seamless). Written once to `sys_get_temp_dir()/phel-doom-music.wav`, reused.
 
-Lifecycle from `commands/play`: `start-ambient!` after menu, `sync-ambient!` on N toggle, `stop-ambient!` on teardown. Shell watches game PID and self-terminates if game crashes (no orphan loop). All entry points no-op under `PHEL_DOOM_SILENT` or when no audio player found.
+Rides the Music volume slider (`apply-audio-settings!` drives `music/set-music-volume!`). Lifecycle from `commands/play`: `start-music!` after menu, `sync-music!` on N toggle, `stop-music!` on teardown. The shell watches the game PID and self-terminates if the game crashes (no orphan loop). All entry points no-op under `PHEL_DOOM_SILENT` or when no audio player is found.

@@ -77,7 +77,7 @@ Triggered on life drop or enemy proximity:
 
 ## Audio
 
-OS audio: `afplay` (macOS) / `paplay`/`aplay`/`play` (Linux) or terminal bell. Distance-scaled kill volume. N key toggles sound. Ambient drone loop: synthesised 2s 16-bit mono 22050 Hz clip, crash-safe shell loop. Tests mute with `PHEL_DOOM_SILENT=1`.
+OS audio: `afplay` (macOS) / `paplay`/`aplay`/`play` (Linux) or terminal bell. Distance-scaled kill volume. N key toggles sound. Background OST: an original, license-clean riff synthesised to a 16-bit mono 22050 Hz WAV, looped by a crash-safe shell. Tests mute with `PHEL_DOOM_SILENT=1`.
 
 See [audio.md](audio.md).
 

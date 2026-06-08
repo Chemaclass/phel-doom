@@ -31,7 +31,7 @@ src/
     ├── input.phel                   ; STDIN setup + drain
     ├── render.phel + submodules      ; ANSI emit + layout
     ├── sound.phel                   ; sfx shell-out
-    ├── ambient.phel                 ; music loop process
+    ├── music.phel                   ; OST loop process
     ├── scores.phel                  ; JSON high-score file
     ├── settings.phel                ; settings JSON persist
     ├── savegame.phel                ; mid-level save/load

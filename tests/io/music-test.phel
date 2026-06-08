@@ -1,0 +1,64 @@
+(ns phel-doom-tests.io.music-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.io.music :refer [riff-wav-bytes doom-riff sync-music! proc
+                                       volume set-music-volume!]))
+
+;; ---------------------------------------------------------------------
+;; riff-wav-bytes: pure PCM WAV synthesis. No IO — safe to assert on the
+;; raw bytes. (The loop process itself can't be unit-tested; it is gated
+;; off entirely by PHEL_DOOM_SILENT during the suite.)
+;; ---------------------------------------------------------------------
+
+(deftest test-wav-has-riff-wave-header
+  (let [b (riff-wav-bytes 8000 [{:midi 40 :dur 0.05}])]
+    (is (= "RIFF" (php/substr b 0 4)) "starts with the RIFF tag")
+    (is (= "WAVE" (php/substr b 8 4)) "WAVE format tag at offset 8")
+    (is (= "data" (php/substr b 36 4)) "data chunk tag at offset 36")))
+
+(deftest test-wav-length-matches-sample-count
+  ;; 8000 Hz * 0.05s = 400 mono 16-bit samples = 800 data bytes, plus
+  ;; the 44-byte canonical PCM header. Two notes => doubled data.
+  (let [b (riff-wav-bytes 8000 [{:midi 40 :dur 0.05} {:midi 47 :dur 0.05}])]
+    (is (= (php/+ 44 1600) (php/strlen b)) "header + 2 bytes per sample")))
+
+(deftest test-wav-deterministic
+  (is (= (riff-wav-bytes 8000 doom-riff) (riff-wav-bytes 8000 doom-riff))
+      "same args -> identical bytes (pure)"))
+
+(deftest test-loop-boundary-is-silent
+  ;; Seamless loop contract: the per-note envelope ramps to zero inside
+  ;; every slot, so the final sample must be ~0 (no click at the wrap).
+  (let [b   (riff-wav-bytes 8000 doom-riff)
+        len (php/strlen b)
+        ;; Last 2 bytes are the final little-endian signed-16 sample.
+        u   (php/unpack "v" (php/substr b (php/- len 2) 2))
+        raw (php/aget u 1)
+        s   (if (php/> raw 32767) (php/- raw 65536) raw)]
+    (is (php/< (php/abs s) 64) "final sample is near zero")))
+
+;; ---------------------------------------------------------------------
+;; sync-music!: under PHEL_DOOM_SILENT (set by the test runner) every
+;; entry point is a no-op, so the process atom never gets a pid.
+;; ---------------------------------------------------------------------
+
+(deftest test-sync-is-noop-when-silent
+  (sync-music! true)
+  (is (nil? (:pid @proc)) "no loop process spawned while silent")
+  (sync-music! false)
+  (is (nil? (:pid @proc)) "stop stays a no-op too"))
+
+;; ---------------------------------------------------------------------
+;; set-music-volume!: settings drive the OST -v level. With no loop
+;; running (the suite never spawns one), it just stores a clamped value.
+;; ---------------------------------------------------------------------
+
+(deftest test-set-music-volume-stores-clamped-value
+  (set-music-volume! 0.42)
+  (is (= 0.42 @volume) "stores the value")
+  (set-music-volume! 5.0)
+  (is (= 1.0 @volume) "clamps above 1.0")
+  (set-music-volume! -2.0)
+  (is (= 0.0 @volume) "clamps below 0.0")
+  ;; Restore the default so test ordering can't leak state.
+  (set-music-volume! 0.25)
+  (is (= 0.25 @volume)))

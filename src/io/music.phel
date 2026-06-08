@@ -1,0 +1,209 @@
+(ns phel-doom.io.music
+  (:require phel-doom.io.sound :refer [audio-player]))
+
+;; ---------------------------------------------------------------------
+;; Background OST loop (issue #158).
+;;
+;; A driving, dark melodic riff under the run to evoke the original DOOM
+;; without using any copyrighted asset. The original DOOM soundtrack
+;; (Bobby Prince) is NOT free; several tracks also echo copyrighted
+;; metal songs. So this is an ORIGINAL procedural composition — no WAD,
+;; no shipped file — synthesised once into a temp WAV (riff-wav-bytes,
+;; pure) and looped by a backgrounded `sh` that re-runs the player
+;; binary forever, exactly like io/ambient's drone.
+;;
+;; This sits ABOVE the ambient drone (io/ambient): drone = sub-bass bed
+;; for dread, music = the tune. Both ride the Music volume slider.
+;;
+;; The loop guards on `kill -0 <game-pid>` each iteration, so a crashed
+;; / SIGKILLed game self-terminates the music within one clip instead of
+;; orphaning a forever-looping player. Lifecycle is driven from
+;; commands/play: start-music! when gameplay begins, stop-music! on
+;; teardown, sync-music! on the N (sound) toggle. All entry points are
+;; no-ops under PHEL_DOOM_SILENT and on hosts with no audio player.
+;; ---------------------------------------------------------------------
+
+(def sample-rate 22050)
+
+(def gain
+  "Peak amplitude as a fraction of full scale before the per-note
+   envelope. The riff sits over the drone but under the sfx, so it stays
+   moderate."
+  0.5)
+
+(def volume
+  "Current afplay -v playback value for the OST (other players ignore
+   it). Driven live from the settings Music slider via set-music-volume!.
+   0.0 means 'no soundtrack'. Default matches a 50% Music setting and is
+   a touch under the drone so footsteps / shots still cut through."
+  (atom 0.25))
+
+(def proc
+  "Session state for the loop process: `:pid` of the backgrounded
+   shell, or nil when not running."
+  (atom {:pid nil}))
+
+(def doom-riff
+  "An ORIGINAL driving riff in E minor (license-clean — not the E1M1
+   theme). Each entry is a MIDI note number and a slot length in
+   seconds; -1 is a rest. Eighth-note ostinato with a couple of
+   higher stabs for menace. Total length is the loop period; the
+   per-note envelope returns to silence inside every slot, so the wrap
+   from the last slot back to the first is click-free (seamless)."
+  [;; bar 1 — low chug on E with a minor-third lift
+   {:midi 40 :dur 0.20} {:midi 40 :dur 0.20} {:midi 43 :dur 0.20} {:midi 40 :dur 0.20}
+   {:midi 47 :dur 0.20} {:midi 40 :dur 0.20} {:midi 43 :dur 0.20} {:midi 45 :dur 0.20}
+   ;; bar 2 — climb to the b5 stab, then resolve back down
+   {:midi 40 :dur 0.20} {:midi 40 :dur 0.20} {:midi 47 :dur 0.20} {:midi 50 :dur 0.20}
+   {:midi 51 :dur 0.20} {:midi 50 :dur 0.20} {:midi 47 :dur 0.20} {:midi 43 :dur 0.20}])
+
+(defn- silent? []
+  (php/=== "1" (php/getenv "PHEL_DOOM_SILENT")))
+
+(defn- midi->freq
+  "Equal-temperament frequency for a MIDI note number (A4 = 69 = 440 Hz)."
+  [^int midi]
+  (php/* 440.0 (php/pow 2.0 (php// (php/- midi 69) 12.0))))
+
+(defn- note-bytes
+  "Return `dur` seconds of one voiced note (or a rest when midi < 0) at
+   `sr` Hz, as a packed little-endian signed-16 PCM string. The tone is
+   the fundamental plus a sub-octave for weight and two harmonics for
+   grit, shaped by a fast-attack / exponential-decay / linear-release
+   envelope. The release ramps the tail to exactly zero inside the slot
+   so note boundaries — and the loop wrap — never click."
+  [^int sr ^int midi ^float dur]
+  (let [n      (php/intval (php/* sr dur))
+        two-pi (php/* 2.0 php/M_PI)
+        f      (if (php/< midi 0) 0.0 (midi->freq midi))
+        ;; Decay constant: most of the note's energy is in its first
+        ;; third, giving the chug its percussive bite.
+        tau    (php/* dur 0.33)
+        ;; Sum of partial weights — normalise so the mix can't clip.
+        norm   (php// 1.0 2.4)
+        ;; Local accumulator: a PHP array is copy-on-write, so the buffer
+        ;; must be built and returned here rather than mutated through an
+        ;; argument (array_push on a passed-in array hits the copy).
+        buf    (php/array)]
+    (dotimes [i n]
+             (let [t   (php// i sr)
+                   ;; 4 ms attack ramp in, 15% linear release out.
+                   atk (php/min 1.0 (php// t 0.004))
+                   rel (php/min 1.0 (php// (php/- n i) (php/* 0.15 n)))
+                   env (php/* atk rel (php/exp (php// (php/* -1.0 t) tau)))
+                   sig (if (php/<= f 0.0)
+                         0.0
+                         (php/+ (php/* 1.0 (php/sin (php/* two-pi f t)))
+                                (php/* 0.6 (php/sin (php/* two-pi (php// f 2.0) t)))
+                                (php/* 0.5 (php/sin (php/* two-pi (php/* f 2.0) t)))
+                                (php/* 0.3 (php/sin (php/* two-pi (php/* f 3.0) t)))))
+                   v   (php/intval (php/round (php/* sig norm env gain 32767.0)))
+                   c   (php/max -32767 (php/min 32767 v))
+                   u   (if (php/< c 0) (php/+ 65536 c) c)]
+               (php/array_push buf (php/pack "v" u))))
+    (php/implode "" buf)))
+
+(defn riff-wav-bytes
+  "Synthesise `notes` (a vector of {:midi :dur}) into a complete 16-bit
+   mono PCM WAV (header + data) at `sr` Hz. Pure: same args → same
+   bytes, no IO. Exposed for unit tests (header + length pins)."
+  [^int sr notes]
+  (let [buf (php/array)]
+    (foreach [note notes]
+      (php/array_push buf (note-bytes sr (:midi note) (:dur note))))
+    (let [data     (php/implode "" buf)
+          data-len (php/strlen data)]
+      (str "RIFF"
+           (php/pack "V" (php/+ 36 data-len))
+           "WAVE"
+           "fmt "
+           (php/pack "V" 16)
+           (php/pack "v" 1)               ; PCM
+           (php/pack "v" 1)               ; mono
+           (php/pack "V" sr)
+           (php/pack "V" (php/* sr 2))    ; byte rate (1ch * 2 bytes)
+           (php/pack "v" 2)               ; block align
+           (php/pack "v" 16)              ; bits per sample
+           "data"
+           (php/pack "V" data-len)
+           data))))
+
+(defn- music-path []
+  (str (php/sys_get_temp_dir) "/phel-doom-music.wav"))
+
+(defn- ensure-wav!
+  "Write the riff WAV to the temp path once per host (content is fixed,
+   so an existing file is reused). Returns the path, or nil if the write
+   failed."
+  []
+  (let [path (music-path)]
+    (if (php/file_exists path)
+      path
+      (let [ok (php/file_put_contents path (riff-wav-bytes sample-rate doom-riff))]
+        (if (php/=== false ok) nil path)))))
+
+(defn- loop-command
+  "The backgrounded shell that re-plays `path` forever while the game
+   process (`ppid`) is alive. afplay gets a -v volume; others just play
+   the file. `& echo $!` prints the shell's PID so the caller can track
+   + kill it."
+  [player path ^int ppid]
+  (let [vol (if (php/=== player "afplay")
+              (str " -v " (php/number_format @volume 3))
+              "")]
+    (str "sh -c 'while kill -0 " ppid " 2>/dev/null; do "
+         player vol " " (php/escapeshellarg path) " >/dev/null 2>&1; "
+         "done' >/dev/null 2>&1 & echo $!")))
+
+(defn start-music!
+  "Begin the OST loop if it isn't already running. No-op under
+   PHEL_DOOM_SILENT, when no audio player is on PATH, when the WAV can't
+   be written, or when the music volume is 0 (player muted music in
+   settings). Idempotent: a second call while running does nothing."
+  []
+  (when (and (not (silent?))
+             (php/> @volume 0.0)
+             (nil? (:pid @proc)))
+    (let [player (audio-player)]
+      (when player
+        (let [path (ensure-wav!)]
+          (when path
+            (let [out (php/array)]
+              (php/exec (loop-command player path (php/getmypid)) out)
+              (let [pid (php/intval (or (php/aget out 0) 0))]
+                (when (php/> pid 0)
+                  (swap! proc assoc :pid pid))))))))))
+
+(defn stop-music!
+  "Stop the OST loop immediately: kill the loop shell (so it can't
+   relaunch) then any player still playing our temp file. No-op when
+   nothing is running. Safe to call on every teardown path."
+  []
+  (let [pid (:pid @proc)]
+    (when pid
+      (php/exec (str "kill " pid " 2>/dev/null"))
+      (php/exec (str "pkill -f " (php/escapeshellarg (music-path)) " 2>/dev/null"))
+      (swap! proc assoc :pid nil))))
+
+(defn set-music-volume!
+  "Set the OST playback volume (clamped [0.0, 1.0]) from the settings
+   page. When the loop is already running, restart it so the new -v
+   takes effect immediately: a volume of 0 stops the soundtrack, any
+   positive value relaunches at the new level. When nothing is running,
+   just store the value so the next start-music! uses it."
+  [^float v]
+  (let [cv       (php/max 0.0 (php/min 1.0 v))
+        running? (boolean (:pid @proc))]
+    (reset! volume cv)
+    (when running?
+      (stop-music!)
+      (when (php/> cv 0.0)
+        (start-music!)))))
+
+(defn sync-music!
+  "Start or stop the OST to match the sound-on flag. Called when the
+   player toggles sound (N)."
+  [sound-on?]
+  (if sound-on?
+    (start-music!)
+    (stop-music!)))

@@ -17,6 +17,7 @@
   (:require phel-doom.core.weapons  :refer [effective-reserve-cap give-weapon switch-weapon weapon-spec weapon-order weapons])
   (:require phel-doom.io.sound    :refer [play-sfx! mute-for! set-sfx-scalar!])
   (:require phel-doom.io.ambient  :refer [start-ambient! stop-ambient! sync-ambient! set-music-volume!])
+  (:require phel-doom.io.music    :as music)
   (:require phel-doom.core.settings :refer [navigate music-volume sfx-scalar valid-difficulty?])
   (:require phel-doom.io.settings :refer [load-settings save-settings!])
   (:require phel-doom.io.savegame :refer [save-game! load-game])
@@ -128,7 +129,10 @@
   "Push the current settings' volumes into the sfx + ambient layers."
   [settings]
   (set-sfx-scalar!   (sfx-scalar settings))
-  (set-music-volume! (music-volume settings)))
+  ;; The Music slider drives both layers: the ambient drone bed and the
+  ;; OST riff on top.
+  (set-music-volume!       (music-volume settings))
+  (music/set-music-volume! (music-volume settings)))
 
 (defn- step-settings!
   "Apply one frame of pause-page navigation from the raw input `keys`
@@ -892,7 +896,8 @@
               ;; drone to match. Comparing the flag (not the edge) also
               ;; catches any other path that flips :sound-on.
               (when (php/!== (:sound-on world) (:sound-on world'))
-                (sync-ambient! (:sound-on world')))
+                (sync-ambient!       (:sound-on world'))
+                (music/sync-music!   (:sound-on world')))
               (cond
                 (php/<= (:lives world') 0) (result-game-over world' t-start now)
                 (on-door? world')          (door-result      world' t-start now)
@@ -1207,8 +1212,10 @@
           ;; levels + end screens). N-toggle starts/stops it mid-run;
           ;; teardown always stops it so no loop process is orphaned.
           (start-ambient!)
+          (music/start-music!)
           (run-levels diff god? armory? full-map? nil lv init-seed settings)
           (stop-ambient!)
+          (music/stop-music!)
           (when record? (demo/save-recording! record-path))
           (demo/reset-off!)
           (restore!)
@@ -1234,12 +1241,13 @@
     (apply-audio-settings! settings0)
     (demo/reset-off!)
     (clear-screen)
-    (when audio? (start-ambient!))
+    (when audio? (start-ambient!) (music/start-music!))
     ;; god + armory (own every weapon, ammo refilled to :armory-reserve
     ;; = 99 each tick by combat/tick-armory) + full-map. The phase stamps
     ;; :show-map true so the corner minimap is visible by default.
     (run-levels :normal true true true phase 1 (rng/fresh-seed) settings0)
     (stop-ambient!)
+    (music/stop-music!)
     (demo/reset-off!)
     (restore!)
     (clear-screen)

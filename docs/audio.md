@@ -1,6 +1,6 @@
 # Audio
 
-One-shot SFX via `src/io/sound.phel` (shell-out) plus ambient drone via `src/io/ambient.phel`. No FFI, no PHP extensions.
+One-shot SFX via `src/io/sound.phel` (shell-out), ambient drone via `src/io/ambient.phel`, and a background OST riff via `src/io/music.phel`. No FFI, no PHP extensions.
 
 `audio-player` probes once and memoises: macOS uses `afplay` plus `/System/Library/Sounds/*.aiff`. Linux tries `paplay` / `aplay` / `play` or terminal bell (`\a`) fallback.
 
@@ -34,3 +34,11 @@ Low pulsing background for dread (no shipped asset).
 Pure: `drone-wav-bytes` synthesises seamless 2s 16-bit mono 22050 Hz clip. Three partials (55/82/110 Hz, integer cycles no click) under 0.5 Hz tremolo. Written once to `sys_get_temp_dir()/phel-doom-ambient.wav`, reused.
 
 Lifecycle from `commands/play`: `start-ambient!` after menu, `sync-ambient!` on N toggle, `stop-ambient!` on teardown. Shell watches game PID and self-terminates if game crashes (no orphan loop). All entry points no-op under `PHEL_DOOM_SILENT` or when no audio player found.
+
+## Background OST
+
+A driving, dark melodic riff under the run to evoke the original DOOM (`src/io/music.phel`). The original DOOM soundtrack is copyrighted, so this is an ORIGINAL procedural composition: no WAD, no shipped asset, license-clean.
+
+Pure: `riff-wav-bytes` synthesises a 16-bit mono 22050 Hz WAV from a note vector (`doom-riff`, an eighth-note ostinato in E minor). Each note is the fundamental plus a sub-octave and two harmonics, shaped by a fast-attack / exponential-decay / linear-release envelope. The release ramps every slot tail to zero, so note boundaries and the loop wrap are click-free (seamless). Written once to `sys_get_temp_dir()/phel-doom-music.wav`, reused.
+
+Plays on top of the ambient drone: drone is the sub-bass bed, music is the tune. Both ride the Music volume slider (`apply-audio-settings!` drives `ambient/set-music-volume!` and `music/set-music-volume!` together). Lifecycle mirrors the drone: `start-music!` after menu, `sync-music!` on N toggle, `stop-music!` on teardown. Same PID-guarded backgrounded loop, same `PHEL_DOOM_SILENT` / no-player no-ops.

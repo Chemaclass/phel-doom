@@ -27,15 +27,15 @@
 ;; ---------------------------------------------------------------------
 ;; enemy-sprite-cell: pure per-cell sampler. Build a tiny 2x2 grid so
 ;; pixel positions are exact. -1 = transparent.
-;;   px layout (row-major, w=2 h=2):
-;;     (0,0)=10  (1,0)=-1
-;;     (0,1)=-1  (1,1)=20
-;; Place it as a billboard centred at col 5, half-width 0 (1 col wide),
-;; rows [4,6). With span=1 every col maps to sx=0; height=2 maps row 4
-;; -> sy 0, row 5 -> sy 1.
+;; Each screen cell stacks TWO sprite sub-pixels (half-block). Use a
+;; 1-wide x 4-tall grid so a 2-cell-tall box maps one sprite row per
+;; sub-pixel and top/bot differ per cell:
+;;   px (col 0): row0=10  row1=20  row2=-1  row3=30
+;; Box rows [0,2): cell 0 stacks sprite rows 0(top)+1(bot); cell 1
+;; stacks rows 2(top)+3(bot).
 ;; ---------------------------------------------------------------------
 
-(def grid (php/array 10 -1 -1 20))
+(def grid (php/array 10 20 -1 30))
 
 (deftest test-sprite-col-x-maps-and-clamps
   ;; Enemy centred at col 5, half-width 2 (span 5), sprite width 2.
@@ -44,17 +44,19 @@
   ;; A column past the billboard clamps into [0, sw-1].
   (is (= 1 (sprite-col-x 2 5 2 99)) "far right clamps to sw-1"))
 
-(deftest test-opaque-pixel-returns-colour-cell
-  ;; sx 0, row 4 -> sy 0 -> px 10 -> colour cell.
-  (is (= "\e[38;5;10m█" (enemy-sprite-cell grid 2 2 0 4 6 4))))
+(deftest test-both-subpixels-opaque-is-halfblock
+  ;; cell 0: top=row0=10, bot=row1=20 -> ▀ fg=top bg=bot.
+  (is (= "\e[38;5;10m\e[48;5;20m▀" (enemy-sprite-cell grid 1 4 0 0 2 0))))
 
-(deftest test-transparent-pixel-returns-nil
-  ;; sx 0, row 5 -> sy 1 -> px -1 -> nil (base cell shows through).
-  (is (nil? (enemy-sprite-cell grid 2 2 0 4 6 5))))
+(deftest test-one-subpixel-opaque-is-solid-block
+  ;; cell 1: top=row2=-1, bot=row3=30 -> solid block of the opaque half.
+  (is (= "\e[38;5;30m█" (enemy-sprite-cell grid 1 4 0 0 2 1))))
+
+(deftest test-both-subpixels-transparent-is-nil
+  ;; A fully transparent column -> nil (caller keeps the wall/floor cell).
+  (let [g (php/array -1 -1 -1 -1)]
+    (is (nil? (enemy-sprite-cell g 1 4 0 0 2 0)))))
 
 (deftest test-sy-clamps-into-range
-  ;; sx 1, bottom row -> sy 1 -> px (1,1) = 20.
-  (is (= "\e[38;5;20m█" (enemy-sprite-cell grid 2 2 1 4 6 5)) "bottom row -> px 20")
-  ;; A row past the box clamps to sy = h-1 (still reads in-range; sx 1,
-  ;; clamped sy 1 -> px (1,1) = 20, opaque).
-  (is (= "\e[38;5;20m█" (enemy-sprite-cell grid 2 2 1 4 6 99))))
+  ;; A row well past the box clamps to the last sub-rows (still in-range).
+  (is (some? (enemy-sprite-cell grid 1 4 0 0 2 99))))

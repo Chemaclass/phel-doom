@@ -36,14 +36,27 @@
 ;; § Per-cell sampling
 ;; =====================================================================
 
-(def cell-cache
-  "Precomputed `\\e[38;5;<n>m█` cell string for every xterm-256 index
-   0..255. The sampler runs once per covered enemy cell every frame, so
-   building the string each call (str + intval) dominated the cost; a
-   flat lookup removes the per-cell allocation entirely."
+(defn- build-cache [tpl]
   (let [a (php/array)]
-    (dotimes [i 256] (php/aset a i (str "\e[38;5;" i "m█")))
+    (dotimes [i 256] (php/aset a i (php/sprintf tpl i)))
     a))
+
+(def block-cache
+  "Full-block `\\e[38;5;<n>m█` per xterm-256 index. Used for an edge
+   cell where only one of the two stacked sub-pixels is opaque: filling
+   the whole cell solid (rather than a half-block over an unknown
+   background) keeps the silhouette clean with no halo."
+  (build-cache "\e[38;5;%dm█"))
+
+(def fg-cache
+  "Foreground SGR `\\e[38;5;<n>m` per index, for the top sub-pixel of a
+   two-opaque half-block cell."
+  (build-cache "\e[38;5;%dm"))
+
+(def bg-cache
+  "Background SGR `\\e[48;5;<n>m` per index, for the bottom sub-pixel of
+   a two-opaque half-block cell."
+  (build-cache "\e[48;5;%dm"))
 
 (defn sprite-col-x
   "Map screen column `col` to a sprite x for an enemy centred at `ecol`
@@ -69,16 +82,22 @@
      ebot     - one past the last screen row (exclusive)
      row      - screen row to sample
 
-   Returns: a cached `\\e[38;5;<n>m█` cell string when the pixel is
-   opaque, or nil when it is transparent (caller keeps its base
-   wall/sky/floor cell). The full-block `█` is fg-only so the terminal
-   BG already printed (wall/floor) shows through — no halo on any
-   background. `sy` is clamped to [0, sh-1]."
+   Each screen cell stacks TWO sprite sub-pixels via a half-block, so an
+   enemy gets 2x the vertical resolution of a one-pixel-per-cell render
+   (much closer to the real Freedoom sprite):
+     - both sub-pixels opaque -> `▀` fg=top sub-pixel, bg=bottom
+     - only one opaque        -> solid `█` of that colour (clean edge,
+                                 no halo against the wall behind)
+     - both transparent       -> nil (caller keeps the wall/floor cell)
+   sy is clamped to [0, sh-1]."
   [px ^int sw ^int sh ^int sx ^int etop ^int ebot ^int row]
-  (let [height (php/max 1 (php/- ebot etop))
-        sy     (php/max 0 (php/min (php/- sh 1)
-                                   (php/intval (php// (php/* (php/- row etop) sh)
-                                                      height))))
-        p      (php/aget px (php/+ (php/* sy sw) sx))]
-    (when (php/!== p -1)
-      (php/aget cell-cache p))))
+  (let [h2  (php/max 1 (php/* 2 (php/- ebot etop)))
+        sub (php/* 2 (php/- row etop))
+        ty  (php/max 0 (php/min (php/- sh 1) (php/intval (php// (php/* sub sh) h2))))
+        by  (php/max 0 (php/min (php/- sh 1) (php/intval (php// (php/* (php/+ sub 1) sh) h2))))
+        top (php/aget px (php/+ (php/* ty sw) sx))
+        bot (php/aget px (php/+ (php/* by sw) sx))]
+    (cond
+      (php/=== top -1) (when (php/!== bot -1) (php/aget block-cache bot))
+      (php/=== bot -1) (php/aget block-cache top)
+      :else            (str (php/aget fg-cache top) (php/aget bg-cache bot) "▀"))))

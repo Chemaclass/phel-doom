@@ -457,14 +457,29 @@
                  d   (:dist proj)
                  dmg (or (:damage-ratio proj) 0.0)
                  sc  (or (:scale proj) 1.0)]
-             (let [c-from    (php/max 0 (php/- col hw))
-                   c-to      (php/min (php/- vw 1) (php/+ col hw))
-                   ;; `sc` scales the sprite vertically in lockstep with
+             (let [;; `sc` scales the sprite vertically in lockstep with
                    ;; :half-width so bosses (cyber, sc=2.0) stay
                    ;; proportional instead of stretching wide-but-flat.
                    h         (php/min vh (php/intval (php/* sc
                                                             (php// proj-dist
                                                                    (php/* (php/max 0.5 d) char-aspect)))))
+                   ;; Freedoom billboard sprite for this enemy (nil when
+                   ;; sprites are off or the type has none -> glyph path).
+                   spr       (when sprites-on (sprite-for-type (:type proj)))
+                   sw        (when spr (:w spr))
+                   sh        (when spr (:h spr))
+                   spx       (when spr (:px spr))
+                   ;; Box width from the sprite's NATIVE aspect, not the
+                   ;; glyph hitbox: half-width = round(h * sw / sh), since
+                   ;; a terminal cell is ~2:1 tall and a half-block packs
+                   ;; two sprite rows per cell. Keeps the monster
+                   ;; undistorted (the glyph hitbox is far too narrow and
+                   ;; squished the sprite). Glyph mode keeps the old hw.
+                   ehw       (if spr
+                               (php/max 1 (php/intval (php/round (php// (php/* h sw) sh))))
+                               hw)
+                   c-from    (php/max 0 (php/- col ehw))
+                   c-to      (php/min (php/- vw 1) (php/+ col ehw))
                    ;; Distance-fade factor: 0 at the player's feet,
                    ;; ~0.85 at max-depth. Squared so things stay
                    ;; saturated up close and only really dim once
@@ -514,16 +529,7 @@
                                        (enemy-shade-string body-code body-fade)
                                        :else
                                        ebody)
-                       flegs         (if legs-code (enemy-shade-string legs-code dist-fade) elegs)
-                       ;; Freedoom billboard sprite for this enemy (nil
-                       ;; when sprites are off or the type has none ->
-                       ;; falls back to the glyph zones). Resolved once
-                       ;; per enemy; the px/w/h are stashed per covered
-                       ;; column so the row loop never does a map lookup.
-                       spr           (when sprites-on (sprite-for-type (:type proj)))
-                       spx           (when spr (:px spr))
-                       sw            (when spr (:w spr))
-                       sh            (when spr (:h spr))]
+                       flegs         (if legs-code (enemy-shade-string legs-code dist-fade) elegs)]
                    (loop [c c-from]
                      (when (php/<= c c-to)
                        (when (php/< d (buf-get dists c))
@@ -534,7 +540,7 @@
                            (do
                              (buf-set e-stop c e-top)
                              (buf-set e-sbot c e-bot)
-                             (buf-set e-sx c (sprite-col-x sw col hw c))
+                             (buf-set e-sx c (sprite-col-x sw col ehw c))
                              (buf-set e-spx c spx)
                              (buf-set e-sw c sw)
                              (buf-set e-sh c sh)

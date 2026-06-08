@@ -64,7 +64,7 @@ shade-idx = clamp(0, 23,
   + (side == 0 ? 3 : 0))          ; vertical faces brighter
 ```
 
-The gamma 0.6 curve brightens mid-range; the `+3` bonus for vertical faces reads as directional lighting. Indexes `shade-table[0..23]`: 24-step grayscale (ANSI codes 232-255). One lookup per column.
+The gamma 0.6 curve brightens mid-range; the `+3` bonus for vertical faces reads as directional lighting. Walls index `wall-shade-table[0..23]`: a 24-step warm grey-brown Freedoom-stone ramp (xterm-256 cube, dark olive far -> pale tan near). Sky and floor keep the grayscale `shade-table`. Same 24-band structure as the old grayscale walls, so the RLE coalesces identically: the colour costs zero extra frame bytes. One lookup per column.
 
 Doors: `door-shade` (orange for unlocked, blue/red for keycards, bright red for boss-lock). Half-block edges mix door with sky/floor. Locked messages ("NEED BLUE KEY", "KILL THE BOSS") painted separately.
 

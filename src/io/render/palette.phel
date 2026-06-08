@@ -326,6 +326,37 @@
         (recur (php/+ i 1))))
     t))
 
+(defn- stone-code
+  "xterm-256 cube colour for wall shade level `i` (0 dark .. 23 light).
+   A warm grey-brown ramp (r >= g > b) so walls read as Freedoom stone
+   instead of flat grey, at the SAME 24-level structure as the grayscale
+   ramp -> identical RLE, zero extra frame bytes."
+  [i]
+  (let [t (php// i 23.0)
+        r (php/min 5 (php/intval (php/round (php/+ 1.0 (php/* t 4.0)))))
+        g (php/min 5 (php/intval (php/round (php/+ 0.6 (php/* t 3.4)))))
+        b (php/min 5 (php/intval (php/round (php/* t 2.4))))]
+    (php/+ 16 (php/* 36 r) (php/* 6 g) b)))
+
+(def wall-shade-table
+  "Walls-only stone-coloured replacement for shade-table (sky/floor keep
+   the grayscale ramp). Indexed by shade level 0-23."
+  (let [t (buf-mk)]
+    (loop [i 0]
+      (when (php/< i 24)
+        (buf-set t i (str "\e[48;5;" (stone-code i) "m "))
+        (recur (php/+ i 1))))
+    t))
+
+(def wall-shade-code-table
+  "Code-only twin of wall-shade-table for the half-block wall edges."
+  (let [t (buf-mk)]
+    (loop [i 0]
+      (when (php/< i 24)
+        (buf-set t i (php/strval (stone-code i)))
+        (recur (php/+ i 1))))
+    t))
+
 (def shade-table-blood
   "Red gradient palette swapped in for the duration of the player's
    post-hit i-frames so the whole viewport flushes red — instant 'you

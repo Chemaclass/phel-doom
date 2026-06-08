@@ -48,7 +48,7 @@ overlays (cursor-positioned):
   - crosshair, kill-streak, compass
   - game-info strip (level, kills, weapon, ammo, keys, diff)
   - health + armor HUD
-  - pistol sprite + reload animation
+  - weapon viewmodel (`paint-weapon-hud`): a baked Freedoom (BSD) sprite when the active weapon has one and it fits the viewport, else the hand-built ASCII silhouette (`paint-pistol-hud`); `PHEL_DOOM_NO_SPRITES=1` forces ASCII
   - muzzle flash (when firing)
   - dry-fire CLICK (out of ammo)
   - reload reminder (cadence)
@@ -126,3 +126,13 @@ Cells stay hidden behind `minimap-unseen` until the player visually crosses them
 `minimap-rows` reads `:visited` and paints `minimap-unseen` for unseen blocks. Pickup glyphs only paint if visited.
 
 `:full-map?` (set by `--full-map` / `-f` CLI flag) marks all cells visited; useful for level editors and screenshots.
+
+## Weapon viewmodel sprites (Freedoom)
+
+The first-person gun (`paint-weapon-hud`) uses baked Freedoom (BSD) viewmodels. `tools/bake-weapon-sprites.phel` decodes the Doom picture lumps from a Freedoom WAD, maps the palette to xterm-256, downsamples to a small bottom-strip height, and writes `src/io/render/weapon-sprites-data` (a per-weapon `{:w :h :px}` grid, -1 = transparent). License-clean, no binary asset in the repo; classic-DOOM weapons only (no super shotgun).
+
+`paint-weapon-sprite` pairs two pixel rows per half-block cell (`▀`/`▄`), bottom-anchored, reusing the reload drop + recoil kick. `weapon-row-string` keeps it cheap: fully transparent cells collapse to one cursor-forward (live floor shows through, no halo), half-lit cells back their transparent half with the row's floor colour, and a colour SGR is emitted only when it changes from the previous cell. Worst-case overlay (chaingun/BFG) is about 1.3 ms and 6 KB per frame; the env probe is memoised so there is no per-frame `getenv`.
+
+## Asset attribution
+
+Weapon sprites and weapon-fire sounds are derived from [Freedoom](https://freedoom.github.io/) (`freedoom1.wad`), distributed under the 3-clause BSD license. They are baked into `src/` data files by the scripts under `tools/`; re-bake from a Freedoom WAD rather than hand-editing.

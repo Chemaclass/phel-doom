@@ -107,7 +107,7 @@ Per build: grid (hand-authored or random), player spawn + angle, enemies from mi
 - Heart: only if `lives < max-lives`.
 - Armor (50%), berserk (1/8), invuln (1/12), soulsphere (1/10), backpack (L2+, 1/5).
 - 3 armor shards per level.
-- Keycard if locked (not `:boss`); weapon drops if not owned: shotgun (L2), chaingun (L3), chainsaw (L4), rocket (L5), incinerator (L6), BFG (L7), super-shotgun (L8).
+- Keycard if locked (not `:boss`); weapon drops if not owned: shotgun (L2), chaingun (L3), chainsaw (L4), rocket (L5), incinerator (L6), BFG (L7).
 - Ammo boxes: `max(2, ceil(total_hp / 8))` where `total_hp = sum(count * lives)`.
 
 Stamps: `:enemy` (primary type fallback), `:level-name`, `:difficulty`, `:intro-secs` (1.5s).

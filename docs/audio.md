@@ -6,11 +6,15 @@ One-shot SFX via `src/io/sound.phel` (shell-out) plus a background OST riff via 
 
 ## Event tags
 
-Combat enqueues events on the world's per-frame `:sfx` queue via `combat/push-sfx`: `:shoot`, `:shoot-shotgun`, `:shoot-chaingun`, `:shoot-chainsaw`, `:shoot-bfg`, `:shoot-incinerator`, `:shoot-rocket`, `:shoot-super-shotgun`, `:hit`, `:kill`, `:reload`, `:click`, `:door`, `:heartbeat`, `:berserk`, `:wound`.
+Combat enqueues events on the world's per-frame `:sfx` queue via `combat/push-sfx`: `:shoot`, `:shoot-shotgun`, `:shoot-chaingun`, `:shoot-chainsaw`, `:shoot-bfg`, `:shoot-incinerator`, `:shoot-rocket`, `:hit`, `:kill`, `:reload`, `:click`, `:door`, `:heartbeat`, `:berserk`, `:wound`.
 
 This queue keeps `tick-world` pure: no `play-sfx!` calls in-tick. `commands/play` drains it after `tick-world` and emits each event, gated on `:sound-on`. The queue clears at frame start so events never replay. (Level-transition cues like door advance play directly in the outer loop, outside the pure tick.)
 
-macOS sound map: Pop (pistol/kill), Blow (shotgun), Morse (chaingun), Purr (chainsaw), Glass (BFG), Frog (incinerator), Ping (rocket), Basso (super shotgun), Sosumi (player-hurt), Funk (reload), Tink (door/pickup), Submarine (wound), Bottle (heartbeat), Hero (berserk).
+Weapon-fire events play baked Freedoom (BSD) DMX reports (see "Weapon fire sounds" below). Everything else falls to the per-OS system map. macOS system map: Pop (pistol/kill), Blow (shotgun), Morse (chaingun), Purr (chainsaw), Glass (BFG), Frog (incinerator), Ping (rocket), Sosumi (player-hurt), Funk (reload), Tink (door/pickup), Submarine (wound), Bottle (heartbeat), Hero (berserk).
+
+## Weapon fire sounds (Freedoom)
+
+Each weapon-fire event prefers a baked Freedoom sound over the system map, so guns read with their real DOOM-style report. `tools/bake-weapon-sounds.phel` extracts the DMX lumps from a Freedoom WAD into `src/io/sound-data` as base64 8-bit-PCM WAVs (license-clean, no binary asset in the repo). `io/sound` decodes each to a temp WAV once (`ensure-sfx-file!`, memoised in `sfx-files`) and afplays it. Lumps: DSPISTOL (pistol + chaingun), DSSHOTGN (shotgun), DSSAWFUL (chainsaw), DSBFG (BFG), DSFIRSHT (incinerator), DSRLAUNC (rocket). All gated by `PHEL_DOOM_SILENT`, so tests never write or play.
 
 ## Per-weapon fire report
 

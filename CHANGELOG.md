@@ -9,6 +9,15 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Added
+
+- Freedoom weapon viewmodels: the first-person gun is now a real DOOM-style sprite (pistol, shotgun, chaingun, chainsaw, BFG, incinerator, rocket), baked from Freedoom (BSD) into a 256-colour grid and drawn as half-blocks. `PHEL_DOOM_NO_SPRITES=1` keeps the old ASCII guns. See `docs/rendering.md`.
+- Freedoom weapon-fire sounds: each weapon plays its real DOOM-style report (baked Freedoom DMX, license-clean, no binary asset). See `docs/audio.md`.
+
+### Removed
+
+- Super shotgun (weapon slot 8) and everything unique to it: weapon spec, slot-8 key, the L8 pickup drop, its ASCII silhouette and sound. The roster is the seven classic-DOOM weapons (slots 1-7), all with Freedoom sprites and sounds.
+
 ## [0.11.0] - 2026-06-08
 
 ### Added

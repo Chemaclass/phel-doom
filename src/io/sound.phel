@@ -1,4 +1,5 @@
-(ns phel-doom.io.sound)
+(ns phel-doom.io.sound
+  (:require phel-doom.io.sound-data :refer [freedoom-sfx]))
 
 ;; ---------------------------------------------------------------------
 ;; Sound effects via OS shell-out.
@@ -44,9 +45,6 @@
    ;; Rocket launcher (#123): a sharp metallic ping for the launch,
    ;; distinct from the other weapon reports.
    :shoot-rocket   "/System/Library/Sounds/Ping.aiff"
-   ;; Super shotgun (#126): a deep double-barrel boom, lower than the
-   ;; pump shotgun's Blow.
-   :shoot-super-shotgun "/System/Library/Sounds/Basso.aiff"
    :kill      "/System/Library/Sounds/Pop.aiff"
    :hit       "/System/Library/Sounds/Sosumi.aiff"
    :wound     "/System/Library/Sounds/Submarine.aiff"
@@ -63,6 +61,27 @@
    settings page drives via set-sfx-scalar!; every play-sfx! event
    volume is scaled by it."
   (atom {:player nil :sounds nil :probed false :sfx-scalar 1.0}))
+
+(def sfx-files
+  "Memoised temp-WAV paths for baked Freedoom weapon sounds, keyed by
+   event. Each baked sound is written to the temp dir once per session,
+   then reused (the bytes are fixed)."
+  (atom {}))
+
+(defn- ensure-sfx-file!
+  "If `event` has a baked Freedoom sound, decode it to a temp WAV (once)
+   and return the path; nil when the event has no baked sound. The WAV
+   is afplay/paplay-friendly 8-bit PCM. Only reached from play-sfx!,
+   which is fully gated under PHEL_DOOM_SILENT, so tests never write."
+  [event]
+  (let [b64 (get freedoom-sfx event)]
+    (when b64
+      (or (get @sfx-files event)
+          (let [path (str (php/sys_get_temp_dir) "/phel-doom-sfx-" (name event) ".wav")]
+            (when (not (php/file_exists path))
+              (php/file_put_contents path (php/base64_decode b64)))
+            (swap! sfx-files assoc event path)
+            path)))))
 
 (defn set-sfx-scalar!
   "Set the global sfx volume multiplier (clamped to [0.0, 1.0]). Called
@@ -177,7 +196,12 @@
                               (ensure-probed!)
                               (let [s    @state
                                     p    (:player s)
-                                    path (and (:sounds s) (get (:sounds s) evt))
+                                    ;; Prefer a baked Freedoom weapon sound
+                                    ;; (real DOOM-style report); fall back to
+                                    ;; the per-OS system sound for everything
+                                    ;; else (and on hosts without the baked map).
+                                    path (or (ensure-sfx-file! evt)
+                                             (and (:sounds s) (get (:sounds s) evt)))
                                     vol  (php/* volume (or (:sfx-scalar s) 1.0))]
                                 (cond
                                   ;; SFX volume turned to 0 in settings:

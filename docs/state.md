@@ -38,7 +38,7 @@ Pure data shapes that every other module operates on. `src/core/state.phel`.
  :difficulty <kw :easy|:normal|:hard|:nightmare>
  :god?       <bool, --god flag; no damage>
  :door-lock  <kw :blue|:red|:boss|nil>     ; lock colour on this level's exit (:boss = synthetic, no keycard pickup)
- :weapon     <kw :pistol|:shotgun|:chaingun|:chainsaw|:bfg|:incinerator|:rocket>  ; active weapon
+ :weapon     <kw :pistol|:shotgun|:chaingun|:chainsaw|:bfg|:incinerator|:rocket|:super-shotgun>  ; active weapon
  :owned-weapons <set of kw>                ; pistol owned by default; others must be picked up
  :weapon-pickups <vector of {:x :y :weapon}>
  :weapon-state {<kw> {:mag :reserve}}      ; per-weapon ammo bookkeeping
@@ -65,7 +65,7 @@ Pure data shapes that every other module operates on. `src/core/state.phel`.
 After `build-world` from `core/level.phel` stamps level metadata, the world also carries:
 
 ```phel
-{:level            <int 1..5>
+{:level            <int 1..10>
  :level-name       <string>           ; "imps", "demons", ...
  :chase-speed      <float>            ; enemy speed for this level
  :enemy-head-code  <int 256-color>    ; head zone BG

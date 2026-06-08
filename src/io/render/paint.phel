@@ -5,7 +5,7 @@
   (:require phel-doom.io.render.palette :refer [kill-flash death-slump death-collapse blood-mid blood-dim fireball-shade fireball-glyph])
   (:require phel-doom.io.render.frame-math :refer [sprite-h aggro-distance project-enemy collect-enemy-projs pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.weapon-sprites-data :refer [baked-weapons])
-  (:require phel-doom.io.render.enemy-sprites-data :refer [projectile-sprites death-sprites blood-sprites])
+  (:require phel-doom.io.render.enemy-sprites-data :refer [projectile-sprites death-sprites blood-sprites pickup-sprites])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-col-x enemy-sprite-cell])
   (:require phel-doom.core.combat :refer [fx-ttl-seconds corpse-ttl-seconds])
   (:require phel-doom.core.map :refer [find-door-cell]))
@@ -1271,47 +1271,48 @@
      (or (get stats :fx) []))))
 
 (defn paint-pickups-into
-  "Project each pickup (heart / armor) to screen and write its
-   coloured BG glow into `blood-paint`, then drop the icon glyph at
-   the centre cell. Same routine for both pickup types; only the
-   shade + glyph differ. Per-column visibility check honours both
-   walls AND enemies — pickups behind either don't draw.
+  "Project each pickup to screen. In sprite mode (and when a baked
+   `sprite` is supplied) it blits the Freedoom item sprite small,
+   floating; otherwise it falls back to the coloured BG glow + centre
+   icon glyph. Per-column visibility honours both walls AND enemies.
 
-   Returns the mutated buffer — PHP arrays pass by value, so the
-   caller must rebind to see the writes."
-  [blood-paint pickups player dists edists vw vh shade-now glyph-now]
-  (doseq [item pickups]
-         (let [proj (project-enemy item player vw)]
-           (when proj
-             (let [col    (:col proj)
-                   hw     (php/max 1 (php/intdiv (:half-width proj) 2))
-                   d      (:dist proj)
-                   c-from (php/max 0 (php/- col hw))
-                   c-to   (php/min (php/- vw 1) (php/+ col hw))
-                   h      (sprite-h vh d 1.0)
-                   mid    (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 2))
-                   r-top  (php/max 0 (php/- mid (php/intdiv h 6)))
-                   r-bot  (php/min vh (php/+ mid (php/intdiv h 6) 1))]
-               (loop [c c-from]
-                 (when (php/<= c c-to)
-                   (when (pickup-visible-at? d c dists edists)
-                     (loop [r r-top]
-                       (when (php/< r r-bot)
-                         (buf-set blood-paint (php/+ (php/* r vw) c) shade-now)
-                         (recur (php/+ r 1)))))
-                   (recur (php/+ c 1))))
-               ;; Centre icon overlay: single cell wins over the BG
-               ;; fill because the inner row loop reads blood-paint
-               ;; first.
-               (when (and (php/>= col 0)
-                          (php/< col vw)
-                          (php/>= mid 0)
-                          (php/< mid vh)
-                          (pickup-visible-at? d col dists edists))
-                 (buf-set blood-paint
-                          (php/+ (php/* mid vw) col)
-                          glyph-now))))))
-  blood-paint)
+   Returns the mutated buffer — PHP arrays pass by value, and the sprite
+   path goes through a helper, so the caller must rebind the result."
+  [blood-paint pickups player dists edists vw vh shade-now glyph-now sprite-key]
+  (let [use-spr (and (sprites-enabled?) (get pickup-sprites sprite-key))]
+    (reduce
+     (fn [bp item]
+       (let [proj (project-enemy item player vw)]
+         (if (nil? proj)
+           bp
+           (let [col (:col proj)
+                 d   (:dist proj)]
+             (if use-spr
+               ;; Freedoom item sprite, small + floating.
+               (blit-billboard-scaled bp use-spr col d 0.22 vw vh dists edists)
+               ;; Legacy coloured glow + centre icon glyph.
+               (let [hw     (php/max 1 (php/intdiv (:half-width proj) 2))
+                     c-from (php/max 0 (php/- col hw))
+                     c-to   (php/min (php/- vw 1) (php/+ col hw))
+                     h      (sprite-h vh d 1.0)
+                     mid    (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 2))
+                     r-top  (php/max 0 (php/- mid (php/intdiv h 6)))
+                     r-bot  (php/min vh (php/+ mid (php/intdiv h 6) 1))]
+                 (loop [c c-from]
+                   (when (php/<= c c-to)
+                     (when (pickup-visible-at? d c dists edists)
+                       (loop [r r-top]
+                         (when (php/< r r-bot)
+                           (buf-set bp (php/+ (php/* r vw) c) shade-now)
+                           (recur (php/+ r 1)))))
+                     (recur (php/+ c 1))))
+                 (when (and (php/>= col 0) (php/< col vw)
+                            (php/>= mid 0) (php/< mid vh)
+                            (pickup-visible-at? d col dists edists))
+                   (buf-set bp (php/+ (php/* mid vw) col) glyph-now))
+                 bp))))))
+     blood-paint
+     (or pickups []))))
 
 (defn paint-projectiles-into
   "Project each enemy fireball to screen and write its orange glow plus

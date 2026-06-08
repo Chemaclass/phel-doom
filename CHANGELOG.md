@@ -11,6 +11,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+- Freedoom pickup sprites: floating items (health, armor, ammo, berserk, invuln, soulsphere, backpack, keycards, weapon drops) now render as their real DOOM sprites instead of a coloured glow + glyph. `PHEL_DOOM_NO_SPRITES=1` keeps the glyphs.
+- Per-room wall tone: each level tints its walls with a different cool-grey stone tone so rooms read distinct (still zero extra frame bytes).
 - Stone-coloured walls: walls now use a warm grey-brown Freedoom-stone ramp instead of flat grey (sky/floor stay grey). Same 24-band shade structure, so the RLE is unchanged and it costs zero extra frame bytes - a free realism bump within the terminal's perf budget.
 - Freedoom enemy sprites: monsters now render as real DOOM-style billboards (imp, demon/pinky/spectre, cacodemon, baron, cyberdemon, revenant, archvile, mancubus), baked from Freedoom (BSD) and sampled with half-block sub-pixels at native aspect, depth-occluded (transparent pixels show the wall behind, no halo). `PHEL_DOOM_NO_SPRITES=1` keeps the legacy glyph enemies. See `docs/rendering.md`.
 - Freedoom death + fireball sprites: killing an enemy plays its Freedoom collapse-to-corpse animation (per type, by fade time) instead of a red block, and enemy fireballs render as the real DOOM projectile sprite. Both fall back to the old blood shade / orange glow under `PHEL_DOOM_NO_SPRITES=1`.

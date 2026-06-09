@@ -452,41 +452,41 @@
                                              (php/max 0 (php/- map-col 1))
                                              vw)]
     (doseq [proj enemy-projs]
-           (let [col (:col proj)
-                 hw  (:half-width proj)
-                 d   (:dist proj)
-                 dmg (or (:damage-ratio proj) 0.0)
-                 sc  (or (:scale proj) 1.0)]
-             (let [;; `sc` scales the sprite vertically in lockstep with
+      (let [col (:col proj)
+            hw  (:half-width proj)
+            d   (:dist proj)
+            dmg (or (:damage-ratio proj) 0.0)
+            sc  (or (:scale proj) 1.0)]
+        (let [;; `sc` scales the sprite vertically in lockstep with
                    ;; :half-width so bosses (cyber, sc=2.0) stay
                    ;; proportional instead of stretching wide-but-flat.
-                   h         (php/min vh (php/intval (php/* sc
-                                                            (php// proj-dist
-                                                                   (php/* (php/max 0.5 d) char-aspect)))))
+              h         (php/min vh (php/intval (php/* sc
+                                                       (php// proj-dist
+                                                              (php/* (php/max 0.5 d) char-aspect)))))
                    ;; Freedoom billboard sprite for this enemy (nil when
                    ;; sprites are off or the type has none -> glyph path).
-                   spr       (when sprites-on (sprite-for-type (:type proj)))
-                   sw        (when spr (:w spr))
-                   sh        (when spr (:h spr))
-                   spx       (when spr (:px spr))
+              spr       (when sprites-on (sprite-for-type (:type proj)))
+              sw        (when spr (:w spr))
+              sh        (when spr (:h spr))
+              spx       (when spr (:px spr))
                    ;; Box width from the sprite's NATIVE aspect, not the
                    ;; glyph hitbox: half-width = round(h * sw / sh), since
                    ;; a terminal cell is ~2:1 tall and a half-block packs
                    ;; two sprite rows per cell. Keeps the monster
                    ;; undistorted (the glyph hitbox is far too narrow and
                    ;; squished the sprite). Glyph mode keeps the old hw.
-                   ehw       (if spr
-                               (php/max 1 (php/intval (php/round (php// (php/* h sw) sh))))
-                               hw)
-                   c-from    (php/max 0 (php/- col ehw))
-                   c-to      (php/min (php/- vw 1) (php/+ col ehw))
+              ehw       (if spr
+                          (php/max 1 (php/intval (php/round (php// (php/* h sw) sh))))
+                          hw)
+              c-from    (php/max 0 (php/- col ehw))
+              c-to      (php/min (php/- vw 1) (php/+ col ehw))
                    ;; Distance-fade factor: 0 at the player's feet,
                    ;; ~0.85 at max-depth. Squared so things stay
                    ;; saturated up close and only really dim once
                    ;; they're past mid-range.
-                   dist-fade (php/min 0.85
-                                      (php/* (php// d max-depth)
-                                             (php// d max-depth)))
+              dist-fade (php/min 0.85
+                                 (php/* (php// d max-depth)
+                                        (php// d max-depth)))
                    ;; Wound tint: combine distance fade with the per-
                    ;; enemy damage ratio so wounded sprites read as
                    ;; darker/dirtier even up close. Multiplier kept
@@ -494,86 +494,86 @@
                    ;; mid-range still reads distinct from a healthy
                    ;; one far away. Capped at 0.85 so a near-dead
                    ;; enemy never fades to invisible.
-                   body-fade (php/min 0.85 (php/+ dist-fade (php/* dmg 0.35)))]
-               (let [e-top (php/intdiv (php/- vh h) 2)]
-                 (let [e-bot         (php/+ e-top h)
-                       e-mid         (php/+ e-top (php/intdiv h 3))
-                       e-lower       (php/+ e-top (php/intdiv (php/* h 2) 3))
+              body-fade (php/min 0.85 (php/+ dist-fade (php/* dmg 0.35)))]
+          (let [e-top (php/intdiv (php/- vh h) 2)]
+            (let [e-bot         (php/+ e-top h)
+                  e-mid         (php/+ e-top (php/intdiv h 3))
+                  e-lower       (php/+ e-top (php/intdiv (php/* h 2) 3))
                        ;; Per-enemy catalog lookup — mixed-monster rooms
                        ;; (boss + minions) pick the right palette per
                        ;; sprite, single-type rooms hit the same kw on
                        ;; every iteration so the cost is one map get.
-                       visuals       (visuals-for-type (:type proj) stats)
-                       head-code     (get visuals :head-code)
-                       body-code     (get visuals :body-code)
-                       legs-code     (get visuals :legs-code)
-                       body-glyph-fg (get visuals :body-glyph-fg)
-                       body-glyph    (if (php/< face-phase 0.0)
-                                       (get visuals :body-glyph)
-                                       (or (get visuals :body-glyph-alt)
-                                           (get visuals :body-glyph)))
+                  visuals       (visuals-for-type (:type proj) stats)
+                  head-code     (get visuals :head-code)
+                  body-code     (get visuals :body-code)
+                  legs-code     (get visuals :legs-code)
+                  body-glyph-fg (get visuals :body-glyph-fg)
+                  body-glyph    (if (php/< face-phase 0.0)
+                                  (get visuals :body-glyph)
+                                  (or (get visuals :body-glyph-alt)
+                                      (get visuals :body-glyph)))
                        ;; Faded shade strings for this enemy at its
                        ;; current distance. Computed ONCE per enemy
                        ;; and assigned to every column it covers.
-                       fhead         (cond
-                                       (and head-code (php/< d aggro-distance))
-                                       (enemy-aggro-head-string head-code aggro-bright?)
-                                       head-code
-                                       (enemy-shade-string head-code dist-fade)
-                                       :else
-                                       ehead)
-                       fbody         (cond
-                                       (and body-code body-glyph body-glyph-fg)
-                                       (enemy-textured-shade-string body-code body-fade body-glyph body-glyph-fg)
-                                       body-code
-                                       (enemy-shade-string body-code body-fade)
-                                       :else
-                                       ebody)
-                       flegs         (if legs-code (enemy-shade-string legs-code dist-fade) elegs)]
-                   (loop [c c-from]
-                     (when (php/<= c c-to)
-                       (when (php/< d (buf-get dists c))
-                         (if spr
+                  fhead         (cond
+                                  (and head-code (php/< d aggro-distance))
+                                  (enemy-aggro-head-string head-code aggro-bright?)
+                                  head-code
+                                  (enemy-shade-string head-code dist-fade)
+                                  :else
+                                  ehead)
+                  fbody         (cond
+                                  (and body-code body-glyph body-glyph-fg)
+                                  (enemy-textured-shade-string body-code body-fade body-glyph body-glyph-fg)
+                                  body-code
+                                  (enemy-shade-string body-code body-fade)
+                                  :else
+                                  ebody)
+                  flegs         (if legs-code (enemy-shade-string legs-code dist-fade) elegs)]
+              (loop [c c-from]
+                (when (php/<= c c-to)
+                  (when (php/< d (buf-get dists c))
+                    (if spr
                            ;; Sprite path: stash the billboard box +
                            ;; sprite ref. Leave wall tops/bots untouched
                            ;; so transparent pixels show the wall behind.
-                           (do
-                             (buf-set e-stop c e-top)
-                             (buf-set e-sbot c e-bot)
-                             (buf-set e-sx c (sprite-col-x sw col ehw c))
-                             (buf-set e-spx c spx)
-                             (buf-set e-sw c sw)
-                             (buf-set e-sh c sh)
-                             (buf-set emask c true))
-                           (do
-                             (buf-set tops c e-top)
-                             (buf-set bots c e-bot)
-                             (buf-set mids c e-mid)
-                             (buf-set lowers c e-lower)
+                      (do
+                        (buf-set e-stop c e-top)
+                        (buf-set e-sbot c e-bot)
+                        (buf-set e-sx c (sprite-col-x sw col ehw c))
+                        (buf-set e-spx c spx)
+                        (buf-set e-sw c sw)
+                        (buf-set e-sh c sh)
+                        (buf-set emask c true))
+                      (do
+                        (buf-set tops c e-top)
+                        (buf-set bots c e-bot)
+                        (buf-set mids c e-mid)
+                        (buf-set lowers c e-lower)
                              ;; Cyberdemon: carve a boss silhouette out of
                              ;; the rectangle so the form reads as helmet +
                              ;; arms + 2 legs instead of a giant imp brick.
-                             (let [[ph pb pl] (if (and (php/=== (:type proj) :cyber)
-                                                       body-code)
-                                                (boss-col-paint
-                                                 (php// (php/abs (php/- c col))
-                                                        (php/max 1 hw))
-                                                 fhead fbody flegs body-code body-fade
-                                                 (buf-get shades-normal c))
-                                                [fhead fbody flegs])]
-                               (buf-set eheads c ph)
-                               (buf-set ebodys c pb)
-                               (buf-set elegss c pl))
-                             (buf-set emask c true)))
+                        (let [[ph pb pl] (if (and (php/=== (:type proj) :cyber)
+                                                  body-code)
+                                           (boss-col-paint
+                                            (php// (php/abs (php/- c col))
+                                                   (php/max 1 hw))
+                                            fhead fbody flegs body-code body-fade
+                                            (buf-get shades-normal c))
+                                           [fhead fbody flegs])]
+                          (buf-set eheads c ph)
+                          (buf-set ebodys c pb)
+                          (buf-set elegss c pl))
+                        (buf-set emask c true)))
                          ;; Track nearest enemy distance for this col so
                          ;; pickups behind it occlude properly. Multiple
                          ;; enemies on the same col → keep the closest.
                          ;; The shadow pass below also reads this to keep
                          ;; only the front enemy's grounding shadow.
-                         (let [prev (buf-get edists c)]
-                           (when (or (php/=== prev nil) (php/< d prev))
-                             (buf-set edists c d))))
-                       (recur (php/+ c 1)))))))))
+                    (let [prev (buf-get edists c)]
+                      (when (or (php/=== prev nil) (php/< d prev))
+                        (buf-set edists c d))))
+                  (recur (php/+ c 1)))))))))
     ;; Grounding shadows, second pass. The shadow goes into blood-paint
     ;; (top-priority overlay), so it can't be painted inline during the
     ;; back-to-front zone pass: a FAR enemy's shadow row would sit over a
@@ -586,24 +586,24 @@
     ;; silhouette, so a painted shadow under them just muddies the sprite.
     (when (not sprites-on)
       (doseq [proj enemy-projs]
-             (let [col    (:col proj)
-                   hw     (:half-width proj)
-                   d      (:dist proj)
-                   sc     (or (:scale proj) 1.0)
-                   h      (php/min vh (php/intval (php/* sc
-                                                         (php// proj-dist
-                                                                (php/* (php/max 0.5 d) char-aspect)))))
-                   e-bot  (php/+ (php/intdiv (php/- vh h) 2) h)
-                   c-from (php/max 0 (php/- col hw))
-                   c-to   (php/min (php/- vw 1) (php/+ col hw))]
-               (when (php/< e-bot vh)
-                 (loop [c c-from]
-                   (when (php/<= c c-to)
-                     (when (enemy-front-visible-at? d c dists edists)
-                       (buf-set blood-paint
-                                (php/+ (php/* e-bot vw) c)
-                                sprite-shadow))
-                     (recur (php/+ c 1))))))))
+        (let [col    (:col proj)
+              hw     (:half-width proj)
+              d      (:dist proj)
+              sc     (or (:scale proj) 1.0)
+              h      (php/min vh (php/intval (php/* sc
+                                                    (php// proj-dist
+                                                           (php/* (php/max 0.5 d) char-aspect)))))
+              e-bot  (php/+ (php/intdiv (php/- vh h) 2) h)
+              c-from (php/max 0 (php/- col hw))
+              c-to   (php/min (php/- vw 1) (php/+ col hw))]
+          (when (php/< e-bot vh)
+            (loop [c c-from]
+              (when (php/<= c c-to)
+                (when (enemy-front-visible-at? d c dists edists)
+                  (buf-set blood-paint
+                           (php/+ (php/* e-bot vw) c)
+                           sprite-shadow))
+                (recur (php/+ c 1))))))))
     ;; Chain the fx + pickup painters: each one takes the current
     ;; blood-paint, returns a new buffer (PHP arrays pass by value, so
     ;; the helper owns the allocation). Rename per step to keep phel
@@ -691,72 +691,72 @@
                                         (:player world) dists edists vw vh)
           parts     (buf-mk)]
       (dotimes [row vh]
-               (loop [col 0 prev nil run 0]
-                 (if (php/>= col vw)
-                   (when (php/> run 0)
-                     (buf-push parts prev)
-                     (buf-push parts (php/str_repeat " " (php/- run 1))))
-                   (let [;; Blood-band sky/floor swap: cols in the
+        (loop [col 0 prev nil run 0]
+          (if (php/>= col vw)
+            (when (php/> run 0)
+              (buf-push parts prev)
+              (buf-push parts (php/str_repeat " " (php/- run 1))))
+            (let [;; Blood-band sky/floor swap: cols in the
                          ;; directional blood band use the pre-baked red
                          ;; gradients so sky + floor + walls all flush
                          ;; red on the affected side. Short-circuits to
                          ;; the normal gradients when no blood is active.
-                         in-blood? (and blood-sky-gradient
-                                        (php/> (buf-get blood-cols col) 0.4))
-                         sky-row   (buf-get (if in-blood? blood-sky-gradient sky-gradient) row)
-                         flr-row   (buf-get (if in-blood? blood-floor-gradient floor-gradient) row)
+                  in-blood? (and blood-sky-gradient
+                                 (php/> (buf-get blood-cols col) 0.4))
+                  sky-row   (buf-get (if in-blood? blood-sky-gradient sky-gradient) row)
+                  flr-row   (buf-get (if in-blood? blood-floor-gradient floor-gradient) row)
                          ;; Base cell: wall/sky/floor + (glyph mode only)
                          ;; the enemy zones. In sprite mode the glyph
                          ;; branch is skipped so this resolves the real
                          ;; wall behind the billboard.
-                         base      (cond
-                                     (php/< row (buf-get tops col))             sky-row
-                                     (php/>= row (buf-get bots col))            flr-row
-                                     (and (not sprites-on) (buf-get emask col))
-                                     (cond
-                                       (php/< row (buf-get mids col))   (buf-get eheads col)
-                                       (php/< row (buf-get lowers col)) (buf-get ebodys col)
-                                       :else                            (buf-get elegss col))
-                                     (php/=== row (buf-get tops col))
-                                     (buf-get shades-top-edge col)
-                                     (php/=== row (php/+ (buf-get tops col) 1))
-                                     (buf-get shades-top-shadow col)
-                                     (php/=== row (php/- (buf-get bots col) 1))
-                                     (buf-get shades-bot-edge col)
-                                     (php/=== row (php/- (buf-get bots col) 2))
-                                     (buf-get shades-bot-shadow col)
-                                     :else
-                                     (buf-get shades-normal col))
-                         c         (if (and (php/< row visible-mh) (php/>= col mini-col0))
-                                     sky-row
-                                     (or (buf-get bp-trc (php/+ (php/* row vw) col))
+                  base      (cond
+                              (php/< row (buf-get tops col))             sky-row
+                              (php/>= row (buf-get bots col))            flr-row
+                              (and (not sprites-on) (buf-get emask col))
+                              (cond
+                                (php/< row (buf-get mids col))   (buf-get eheads col)
+                                (php/< row (buf-get lowers col)) (buf-get ebodys col)
+                                :else                            (buf-get elegss col))
+                              (php/=== row (buf-get tops col))
+                              (buf-get shades-top-edge col)
+                              (php/=== row (php/+ (buf-get tops col) 1))
+                              (buf-get shades-top-shadow col)
+                              (php/=== row (php/- (buf-get bots col) 1))
+                              (buf-get shades-bot-edge col)
+                              (php/=== row (php/- (buf-get bots col) 2))
+                              (buf-get shades-bot-shadow col)
+                              :else
+                              (buf-get shades-normal col))
+                  c         (if (and (php/< row visible-mh) (php/>= col mini-col0))
+                              sky-row
+                              (or (buf-get bp-trc (php/+ (php/* row vw) col))
                                          ;; Sprite mode: overlay the sampled
                                          ;; Freedoom pixel on the base cell;
                                          ;; transparent pixels keep the base
                                          ;; (wall/floor shows through).
-                                         (and sprites-on
-                                              (buf-get emask col)
-                                              (php/>= row (buf-get e-stop col))
-                                              (php/< row (buf-get e-sbot col))
-                                              (enemy-sprite-cell
-                                               (buf-get e-spx col) (buf-get e-sw col) (buf-get e-sh col)
-                                               (buf-get e-sx col)
-                                               (buf-get e-stop col) (buf-get e-sbot col) row))
-                                         base))]
-                     (cond
-                       (php/=== run 0)  (recur (php/+ col 1) c 1)
-                       (php/=== c prev) (recur (php/+ col 1) prev (php/+ run 1))
-                       :else            (do
-                                          (buf-push parts prev)
-                                          (buf-push parts (php/str_repeat " " (php/- run 1)))
-                                          (recur (php/+ col 1) c 1))))))
-               (buf-push parts "\e[0m\n"))
+                                  (and sprites-on
+                                       (buf-get emask col)
+                                       (php/>= row (buf-get e-stop col))
+                                       (php/< row (buf-get e-sbot col))
+                                       (enemy-sprite-cell
+                                        (buf-get e-spx col) (buf-get e-sw col) (buf-get e-sh col)
+                                        (buf-get e-sx col)
+                                        (buf-get e-stop col) (buf-get e-sbot col) row))
+                                  base))]
+              (cond
+                (php/=== run 0)  (recur (php/+ col 1) c 1)
+                (php/=== c prev) (recur (php/+ col 1) prev (php/+ run 1))
+                :else            (do
+                                   (buf-push parts prev)
+                                   (buf-push parts (php/str_repeat " " (php/- run 1)))
+                                   (recur (php/+ col 1) c 1))))))
+        (buf-push parts "\e[0m\n"))
       (when (get stats :debug?)
         (buf-push parts (hud-debug-line world stats))
         (buf-push parts "\n"))
       (buf-push parts hud-line-str)
       (dotimes [i visible-mh]
-               (buf-push parts (str "\e[" (php/+ map-row i) ";" map-col "H" (buf-get mrows i))))
+        (buf-push parts (str "\e[" (php/+ map-row i) ";" map-col "H" (buf-get mrows i))))
       ;; Overlay chain: each helper returns the parts buffer because
       ;; PHP arrays pass by value across fn boundaries. Rebind every
       ;; step so the pushed escapes actually accumulate.

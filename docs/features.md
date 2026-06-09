@@ -34,7 +34,7 @@ See [level-system.md](level-system.md), [map.md](map.md).
 - Projectile casters: cacodemons + barons fire dodgeable fireballs (telegraphed windup, orange bolt). Bolts pass doors, stop at walls. Cost one armor/life on impact (i-frames cap burst to one hit). Strafe to dodge.
 - Cyber chase speed 0.55x for playability.
 - Hitscan: distance-attenuated kill/wound sfx, blood splatter, muzzle flash, 5-stage death, 3-6s respawn.
-- 8-slot loadout, DPS-balanced:
+- 7-slot loadout, DPS-balanced:
   - 1: pistol (1 dmg, 0.12s cd, mag 10, auto-fire, pierces every enemy in line)
   - 2: shotgun (3 dmg + 1 graze x3 cone, 0.6s cd, mag 4)
   - 3: chaingun (1 dmg, 0.05s cd, mag 30, auto-fire)

@@ -63,6 +63,55 @@
   (let [g (grid-str wad lump)]
     (when g (php/sprintf "\n   %s %s" k g))))
 
+;; Area-averaged downscale of `lump` so its longest side is <= `tmax`.
+;; Each target pixel averages the RGB of the opaque source pixels it
+;; covers (transparent ones excluded; all-transparent -> -1), then
+;; requantises to xterm-256. Pre-averaging makes a small on-screen
+;; pickup read as a clean colour blob instead of aliased point samples.
+;; Returns "{:w .. :h .. :px [..]}".
+(defn mip-str [wad lump tmax]
+  (let [e (find-lump (:dir wad) lump)]
+    (when e
+      (let [s   (:s wad) pal (:pal wad)
+            pic (decode-pic s (:offset e))
+            w   (:w pic) h   (:h pic) px  (:px pic)
+            mx  (php/max w h)
+            tw  (php/max 1 (php/intval (php/round (php// (php/* w tmax) mx))))
+            th  (php/max 1 (php/intval (php/round (php// (php/* h tmax) mx))))
+            row (php/array)]
+        (dotimes [ty th]
+                 (dotimes [tx tw]
+                          (let [sx0 (php/intdiv (php/* tx w) tw)
+                                sx1 (php/max (php/+ sx0 1) (php/intdiv (php/* (php/+ tx 1) w) tw))
+                                sy0 (php/intdiv (php/* ty h) th)
+                                sy1 (php/max (php/+ sy0 1) (php/intdiv (php/* (php/+ ty 1) h) th))
+                                acc (php/array)]
+                            (php/aset acc 0 0) (php/aset acc 1 0) (php/aset acc 2 0) (php/aset acc 3 0)
+                            (loop [sy sy0]
+                              (when (php/< sy sy1)
+                                (loop [sx sx0]
+                                  (when (php/< sx sx1)
+                                    (let [v (php/aget px (php/+ (php/* sy w) sx))]
+                                      (when (php/!== v -1)
+                                        (let [c (php/aget pal v)]
+                                          (php/aset acc 0 (php/+ (php/aget acc 0) (php/aget c 0)))
+                                          (php/aset acc 1 (php/+ (php/aget acc 1) (php/aget c 1)))
+                                          (php/aset acc 2 (php/+ (php/aget acc 2) (php/aget c 2)))
+                                          (php/aset acc 3 (php/+ (php/aget acc 3) 1)))))
+                                    (recur (php/+ sx 1))))
+                                (recur (php/+ sy 1))))
+                            (php/array_push row
+                                            (if (php/=== 0 (php/aget acc 3))
+                                              "-1"
+                                              (php/strval (rgb->256 (php/intdiv (php/aget acc 0) (php/aget acc 3))
+                                                                    (php/intdiv (php/aget acc 1) (php/aget acc 3))
+                                                                    (php/intdiv (php/aget acc 2) (php/aget acc 3)))))))))
+        (php/sprintf "{:w %d :h %d :px [%s]}" tw th (php/implode " " row))))))
+
+(defn mip-entry [wad k lump tmax]
+  (let [g (mip-str wad lump tmax)]
+    (when g (php/sprintf "\n   %s %s" k g))))
+
 ;; A death entry: "\n   :imp [<grid> <grid> ...]" of whatever frames
 ;; exist (collapse frames then corpse). nil when none resolve.
 (defn death-entry [wad k lumps]
@@ -115,7 +164,9 @@
                 [":keycard-blue" "BKEYA0"] [":keycard-red" "RKEYA0"] [":keycard-yellow" "YKEYA0"]
                 [":shotgun" "SHOTA0"] [":chaingun" "MGUNA0"] [":bfg" "BFUGA0"]
                 [":incinerator" "PLASA0"] [":rocket" "LAUNA0"] [":chainsaw" "CSAWA0"]]]
-    (let [s (entry w1 (php/aget pk 0) (php/aget pk 1))]
+           ;; Pickups render small on screen, so bake an area-averaged
+           ;; mip (longest side 18 px) -> clean at distance, not aliased.
+    (let [s (mip-entry w1 (php/aget pk 0) (php/aget pk 1) 18)]
       (when s (php/array_push sb s))))
   (php/array_push sb "})\n\n")
   ;; Per-type death frames: collapse frame(s) then corpse.

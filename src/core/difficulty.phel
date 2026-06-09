@@ -6,12 +6,15 @@
 ;; Selected via --difficulty CLI flag (see commands/play.phel); default
 ;; is :normal so the existing balance shipped by /play stays unchanged.
 ;;
-;; Multipliers scale chase speed, enemy HP, per-level enemy count, and
-;; the ammo-box budget. Other powerups are unaffected — the dial is
-;; combat density and lethality. `:ammo-mul` (issue #155) compensates
-;; for the higher miss rate faster enemies force on spray weapons: the
-;; HP-driven budget already grows with hp-mul * enemies-mul, but those
-;; assume every round lands.
+;; Multipliers scale chase speed, enemy HP, per-level enemy count, the
+;; ammo-box budget, and the deterministic heal/armor pickup counts.
+;; `:ammo-mul` (issue #155) compensates for the higher miss rate faster
+;; enemies force on spray weapons: the HP-driven budget already grows
+;; with hp-mul * enemies-mul, but those assume every round lands.
+;; `:pickup-mul` (issue #156) scales hearts + armor shards so supply
+;; tracks the denser roster instead of flattening into an attrition
+;; grind. Rare powerup odds (berserk/invuln/soulsphere) stay
+;; author-tuned and are NOT scaled.
 ;; ---------------------------------------------------------------------
 
 (def diff-table
@@ -19,19 +22,23 @@
   {:easy      {:speed-mul    0.7
                :hp-mul       1.0
                :enemies-mul  0.7
-               :ammo-mul     1.0}
+               :ammo-mul     1.0
+               :pickup-mul   1.0}
    :normal    {:speed-mul    1.0
                :hp-mul       1.0
                :enemies-mul  1.0
-               :ammo-mul     1.0}
+               :ammo-mul     1.0
+               :pickup-mul   1.0}
    :hard      {:speed-mul    1.3
                :hp-mul       1.3
                :enemies-mul  1.3
-               :ammo-mul     1.2}
+               :ammo-mul     1.2
+               :pickup-mul   1.2}
    :nightmare {:speed-mul    1.8
                :hp-mul       1.5
                :enemies-mul  1.5
-               :ammo-mul     1.5}})
+               :ammo-mul     1.5
+               :pickup-mul   1.5}})
 
 (def default-diff
   "Difficulty used when the CLI flag is absent / unrecognised."
@@ -69,9 +76,10 @@
    scales per-enemy HP + enemy count. For mixed-spec rooms
    (`:enemies` is a vector) scales each spec's :lives but leaves
    counts alone — the author's spec is the design, count tweaks
-   should be deliberate per-level. Also stamps :ammo-mul from the
-   difficulty spec so level/ammo-box-count can read it without
-   re-querying the spec."
+   should be deliberate per-level. Also stamps :ammo-mul and
+   :pickup-mul from the difficulty spec so level's budget fns
+   (ammo-box-count, heart-count, armor-shard-count) can read them
+   without re-querying the spec."
   [cfg diff]
   (let [d        (spec-for diff)
         chase    (or (:chase cfg) 1.0)
@@ -85,6 +93,7 @@
                                                            (:enemies-mul d))))))]
     (assoc cfg
            :ammo-mul    (:ammo-mul d)
+           :pickup-mul  (:pickup-mul d)
            :chase       (php/* chase (:speed-mul d))
            :enemy-lives (php/max 1 (php/intval (php/ceil (php/* (or (:enemy-lives cfg) 1)
                                                                 (:hp-mul d)))))

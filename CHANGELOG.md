@@ -12,6 +12,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 ### Changed
 
 - Ammo-box budget now scales with difficulty: hard spawns x1.2, nightmare x1.5 boxes on top of the enemy-HP baseline, so spray weapons (chaingun, incinerator) don't starve when faster enemies raise the miss rate.
+- Heal/armor pickups now scale with difficulty too: nightmare seeds 2 hearts + 5 armor shards per level (hard 1 + 4) vs the 1 + 3 baseline, so supply tracks the denser roster instead of flattening into an attrition grind. Rare powerup odds (berserk/invuln/soulsphere) stay flat.
 
 ## [0.12.0] - 2026-06-09
 

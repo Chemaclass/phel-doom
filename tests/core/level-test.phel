@@ -1,6 +1,6 @@
 (ns phel-doom-tests.core.level-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.level :refer [ammo-box-count config-for num-levels build-world place-secret-reward secret-trophies])
+  (:require phel-doom.core.level :refer [ammo-box-count armor-shard-count config-for heart-count num-levels build-world place-secret-reward secret-trophies])
   (:require phel-doom.core.rng :as rng))
 
 ;; ---------------------------------------------------------------------
@@ -277,3 +277,31 @@
   (let [specs [{:type :demon :count 2 :lives 3} {:type :imp :count 3 :lives 2}]]
     (is (= 2 (ammo-box-count {:enemies specs})))
     (is (= 3 (ammo-box-count {:enemies specs :ammo-mul 1.5})))))
+
+;; ---------------------------------------------------------------------
+;; Heal/armor pickup scaling (issue #156): deterministic pickup counts
+;; (hearts, armor shards) track the difficulty :pickup-mul. Rare
+;; powerup odds (berserk/invuln/soulsphere) stay author-tuned.
+;; ---------------------------------------------------------------------
+
+(deftest test-heart-count-rounds-pickup-mul
+  ;; round, not ceil: hard's x1.2 shouldn't double the heart supply.
+  (is (= 1 (heart-count {})))
+  (is (= 1 (heart-count {:pickup-mul 1.0})))
+  (is (= 1 (heart-count {:pickup-mul 1.2})))
+  (is (= 2 (heart-count {:pickup-mul 1.5}))))
+
+(deftest test-armor-shard-count-ceils-pickup-mul
+  ;; baseline 3 shards; ceil(3.6) = 4, ceil(4.5) = 5.
+  (is (= 3 (armor-shard-count {})))
+  (is (= 3 (armor-shard-count {:pickup-mul 1.0})))
+  (is (= 4 (armor-shard-count {:pickup-mul 1.2})))
+  (is (= 5 (armor-shard-count {:pickup-mul 1.5}))))
+
+(deftest test-build-world-nightmare-seeds-scaled-pickups
+  (rng/seed! 42)
+  ;; lives=1 < max-lives so hearts are not suppressed; level 1 is
+  ;; spacious so spawn-unique-pickups never bails early.
+  (let [w (build-world 1 1 0 :nightmare)]
+    (is (= 5 (count (:armor-shards w))) "nightmare seeds 5 shards")
+    (is (= 2 (count (:hearts w))) "nightmare seeds 2 hearts")))

@@ -4,7 +4,7 @@
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
   (:require phel-doom.io.render.palette :refer [kill-flash death-slump death-collapse blood-mid blood-dim fireball-shade fireball-glyph])
   (:require phel-doom.io.render.frame-math :refer [sprite-h aggro-distance project-enemy collect-enemy-projs pulse visuals-for-type enemy-front-visible-at?])
-  (:require phel-doom.io.render.weapon-sprites-data :refer [baked-weapons])
+  (:require phel-doom.io.render.weapon-sprites-data :refer [baked-weapons weapon-flashes])
   (:require phel-doom.io.render.enemy-sprites-data :refer [projectile-sprites death-sprites blood-sprites pickup-sprites])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-col-x enemy-sprite-cell])
   (:require phel-doom.core.combat :refer [fx-ttl-seconds corpse-ttl-seconds])
@@ -1060,9 +1060,11 @@
   "Paint a baked Freedoom viewmodel (`spr` = {:w :h :px}, an xterm-256
    pixel grid with -1 = transparent) centre-bottom, two pixel rows per
    half-block cell, anchored at `vh`. Reuses the reload drop + recoil
-   kick so the gun animates on fire. See weapon-row-string for the
-   per-row byte-saving (cursor-skip + SGR dedup)."
-  [parts stats spr vw vh floor-gradient]
+   kick so the gun animates on fire. `flash` (or nil) is a muzzle-flash
+   sprite overlaid at the gun's top while firing - the green/blue/fire
+   energy burst for the bfg / plasma / rocket. See weapon-row-string for
+   the per-row byte-saving (cursor-skip + SGR dedup)."
+  [parts stats spr vw vh floor-gradient flash]
   (let [w     (:w spr)
         rows  (php/intdiv (:h spr) 2)
         px    (:px spr)
@@ -1076,7 +1078,22 @@
                        bb   (php/+ tb w)
                        bg   (floor-row-bg floor-gradient (php/- sr 1))
                        line (weapon-row-string px tb bb w bg)]
-                   (buf-push parts (str "\e[" sr ";" c0 "H" line "\e[0m")))))))
+                   (buf-push parts (str "\e[" sr ";" c0 "H" line "\e[0m"))))))
+    ;; Muzzle flash burst: sits at the gun's top while firing.
+    (when flash
+      (let [fw    (:w flash)
+            frows (php/intdiv (:h flash) 2)
+            fpx   (:px flash)
+            fc0   (php/max 1 (php/+ (php/intdiv (php/- vw fw) 2) 1))
+            ftop  (php/+ (php/- r0 frows) shift 1)]
+        (dotimes [j frows]
+                 (let [sr (php/+ ftop j)]
+                   (when (and (php/<= sr vh) (php/>= sr 1))
+                     (let [tb   (php/* (php/* 2 j) fw)
+                           bb   (php/+ tb fw)
+                           bg   (floor-row-bg floor-gradient (php/- sr 1))
+                           line (weapon-row-string fpx tb bb fw bg)]
+                       (buf-push parts (str "\e[" sr ";" fc0 "H" line "\e[0m")))))))))
   parts)
 
 (defn paint-weapon-hud
@@ -1085,9 +1102,12 @@
    back to the hand-built ASCII silhouette otherwise (or when
    PHEL_DOOM_NO_SPRITES=1)."
   [parts stats vw vh floor-gradient]
-  (let [spr (get baked-weapons (or (get stats :weapon) :pistol))]
+  (let [wk      (or (get stats :weapon) :pistol)
+        spr     (get baked-weapons wk)
+        firing? (php/> (or (get stats :fire-anim) 0.0) 0.0)
+        flash   (when firing? (get weapon-flashes wk))]
     (if (and spr (sprites-enabled?) (php/<= (:w spr) vw))
-      (paint-weapon-sprite parts stats spr vw vh floor-gradient)
+      (paint-weapon-sprite parts stats spr vw vh floor-gradient flash)
       (paint-pistol-hud parts stats vw vh floor-gradient))))
 
 ;; =====================================================================

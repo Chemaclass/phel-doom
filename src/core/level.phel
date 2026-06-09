@@ -328,19 +328,22 @@
           0
           specs))
 
-(defn- ammo-box-count
+(defn ammo-box-count
   "Per-level ammo-box budget. Scales with the expected shot count
    (sum of `count * lives` across enemies) so bigger maps with
-   tougher monsters get more refill points. Floor of 2 so every
-   level has at least one fallback. Divisor 8 tuned to give
-   roughly 1.3 mags of ammo per expected kill."
+   tougher monsters get more refill points, then multiplies by the
+   difficulty `:ammo-mul` (issue #155) so faster enemies — and the
+   misses they force on spray weapons — don't starve the player.
+   Floor of 2 so every level has at least one fallback. Divisor 8
+   tuned to give roughly 1.3 mags of ammo per expected kill."
   [cfg]
   (let [enemies (:enemies cfg)
         hp      (cond
                   (vector? enemies) (specs-total-hp enemies)
                   :else             (php/* (or enemies 0)
-                                           (or (:enemy-lives cfg) 1)))]
-    (php/max 2 (php/intval (php/ceil (php// hp 8))))))
+                                           (or (:enemy-lives cfg) 1)))
+        mul     (or (:ammo-mul cfg) 1.0)]
+    (php/max 2 (php/intval (php/ceil (php/* mul (php// hp 8)))))))
 
 (defn- lock-cell-for
   "Map a lock-colour kw to the matching locked-door cell value."

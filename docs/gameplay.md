@@ -57,7 +57,7 @@ Hold `space` for auto-fire on pistol/chaingun/chainsaw/incinerator. Shotgun, BFG
 
 ## CLI flags
 
-- `--difficulty=easy|normal|hard|nightmare` (`-d`) - scale enemy speed, HP, count
+- `--difficulty=easy|normal|hard|nightmare` (`-d`) - scale enemy speed, HP, count, ammo-box budget
 - `--level=N` (`-l`) - start at level N
 - `--god` (`-g`) - invincible
 - `--armory` (`-a`) - start with all weapons

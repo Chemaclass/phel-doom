@@ -88,7 +88,7 @@ See [scores.md](scores.md), [savegame.md](savegame.md).
 
 ## CLI
 
-- `-d/--difficulty=easy|normal|hard|nightmare`: scales enemy speed, HP, count.
+- `-d/--difficulty=easy|normal|hard|nightmare`: scales enemy speed, HP, count, and the ammo-box budget (hard x1.2, nightmare x1.5 on top of the HP-driven baseline).
 - `-g/--god`: suppress contact damage, GOD badge. Dev.
 - `-a/--armory`: own all weapons, infinite reserves. Pairs with --god.
 - `-f/--full-map`: reveal minimap fog. Editor + screenshots.

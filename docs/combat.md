@@ -43,10 +43,10 @@ On kill, roll uniform float through `roll-loot-kind`:
 
 | Band | Drop | Notes |
 |------|------|-------|
-| [0.00, 0.15) | `:ammo` | Random owned weapon (excludes pistol); falls back to pistol |
-| [0.15, 0.22) | `:armor` | Absorb one hit |
-| [0.22, 0.25) | `:heart` | +1 life (suppressed at max health) |
-| [0.25, 1.00) | nothing | ~75% of kills |
+| [0.00, 0.22) | `:ammo` | Random owned weapon (excludes pistol); falls back to pistol |
+| [0.22, 0.30) | `:armor` | Absorb one hit |
+| [0.30, 0.35) | `:heart` | +1 life (suppressed at max health) |
+| [0.35, 1.00) | nothing | ~65% of kills |
 
 Drops push into `:hearts` / `:armors` / `:ammo-boxes` vectors (same as level spawns). `pickup-ammos` reads box's `:weapon` tag and refills that weapon's reserve.
 

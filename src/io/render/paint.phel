@@ -1283,15 +1283,18 @@
          (if (nil? proj)
            bp
            (let [col (:col proj)
-                 d   (:dist proj)]
-             (if use-spr
-               ;; Freedoom item sprite, small + floating. Height floored
-               ;; at 5 cells so a far pickup stays readable (clean mip)
-               ;; instead of collapsing to a couple of pixels.
-               (let [ph   (php/max 5 (php/intval (php/* (sprite-h vh d 1.0) 0.22)))
-                     etop (php/intdiv (php/- vh ph) 2)]
+                 d   (:dist proj)
+                 ;; LOD: far away a pickup is just a clean colour blob
+                 ;; (the glow below); only when it is close enough to show
+                 ;; detail (>= 7 cells tall) do we blit the Freedoom
+                 ;; sprite, capped at 16 cells so a point-blank item does
+                 ;; not swallow the view.
+                 ph  (php/min 16 (php/intval (php/* (sprite-h vh d 1.0) 0.4)))]
+             (if (and use-spr (php/>= ph 7))
+               ;; Near: detailed Freedoom item sprite.
+               (let [etop (php/intdiv (php/- vh ph) 2)]
                  (blit-sprite-into bp use-spr col d etop ph vw vh dists edists))
-               ;; Legacy coloured glow + centre icon glyph.
+               ;; Far / no-sprite: clean coloured glow + centre icon glyph.
                (let [hw     (php/max 1 (php/intdiv (:half-width proj) 2))
                      c-from (php/max 0 (php/- col hw))
                      c-to   (php/min (php/- vw 1) (php/+ col hw))

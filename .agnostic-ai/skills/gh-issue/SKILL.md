@@ -1,7 +1,7 @@
 ---
 description: Fetch a GitHub issue, branch, implement test-first, ship via /pr
 argument-hint: "[issue-number]"
-disable-model-invocation: true
+disable-model-invocation: false
 target: claude
 ---
 

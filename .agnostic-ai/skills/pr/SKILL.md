@@ -1,7 +1,7 @@
 ---
 description: Push branch, open PR with concise body, assign Chemaclass, apply correct label
 argument-hint: "[issue-number]"
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools: "Read, Edit, Bash(git *), Bash(gh *)"
 target: claude
 ---

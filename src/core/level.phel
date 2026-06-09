@@ -184,15 +184,33 @@
   [n]
   (get levels (php/max 0 (php/min (php/- num-levels 1) (php/- n 1)))))
 
+(defn- spawn-unique-pickups
+  "Seed `n` {:x :y} pickups at random open cells, retrying when
+   `random-spawn` collides with one already placed (otherwise stepping
+   on the shared cell silently consumes multiple pickups for a single
+   reward). Bails after `(* n 6)` attempts so a tight map can't
+   infinite-loop; the caller just gets the ones that fit."
+  [grid n]
+  (loop [acc [] attempts 0]
+    (cond
+      (php/>= (count acc) n)       acc
+      (php/> attempts (php/* n 6)) acc
+      :else
+      (let [[sx sy] (random-spawn grid)
+            dup?    (some (fn [p] (and (php/=== (:x p) sx) (php/=== (:y p) sy))) acc)]
+        (if dup?
+          (recur acc (php/+ attempts 1))
+          (recur (conj acc {:x sx :y sy}) (php/+ attempts 1)))))))
+
 (defn- maybe-spawn-heart
-  "Return a one-element vector with a heart pickup at a random open
-   cell, or [] when the player is already at max-lives (no point
-   spawning a heart they can't pick up)."
-  [grid lives]
+  "Return a vector with `n` heart pickups at random open cells, or []
+   when the player is already at max-lives (no point spawning hearts
+   they can't pick up). `n` > 1 only on harder difficulties (issue
+   #156, see heart-count)."
+  [grid lives n]
   (if (php/>= lives max-lives)
     []
-    (let [[hx hy] (random-spawn grid)]
-      [{:x hx :y hy}])))
+    (spawn-unique-pickups grid n)))
 
 (defn- maybe-spawn-armor
   "Roughly one in two levels carries an armor pickup. Picked up via
@@ -230,24 +248,6 @@
     (let [[sx sy] (random-spawn grid)]
       [{:x sx :y sy}])
     []))
-
-(defn- spawn-unique-pickups
-  "Seed `n` {:x :y} pickups at random open cells, retrying when
-   `random-spawn` collides with one already placed (otherwise stepping
-   on the shared cell silently consumes multiple pickups for a single
-   reward). Bails after `(* n 6)` attempts so a tight map can't
-   infinite-loop; the caller just gets the ones that fit."
-  [grid n]
-  (loop [acc [] attempts 0]
-    (cond
-      (php/>= (count acc) n)       acc
-      (php/> attempts (php/* n 6)) acc
-      :else
-      (let [[sx sy] (random-spawn grid)
-            dup?    (some (fn [p] (and (php/=== (:x p) sx) (php/=== (:y p) sy))) acc)]
-        (if dup?
-          (recur acc (php/+ attempts 1))
-          (recur (conj acc {:x sx :y sy}) (php/+ attempts 1)))))))
 
 (defn- spawn-armor-shards
   "Common armor shards (issue #68): seed `n` of them at random open
@@ -344,6 +344,22 @@
                                            (or (:enemy-lives cfg) 1)))
         mul     (or (:ammo-mul cfg) 1.0)]
     (php/max 2 (php/intval (php/ceil (php/* mul (php// hp 8)))))))
+
+(defn heart-count
+  "Hearts seeded per level: 1 baseline, scaled by the difficulty
+   :pickup-mul (issue #156). Rounded — hard's x1.2 keeps a single
+   heart, nightmare's x1.5 bumps to two — so heal supply tracks the
+   denser roster without trivialising mid difficulties."
+  [cfg]
+  (php/max 1 (php/intval (php/round (or (:pickup-mul cfg) 1.0)))))
+
+(defn armor-shard-count
+  "Armor shards seeded per level: `armor-shards-per-level` baseline,
+   scaled by the difficulty :pickup-mul (issue #156) and ceil'd —
+   hard gets 4, nightmare 5."
+  [cfg]
+  (php/intval (php/ceil (php/* armor-shards-per-level
+                               (or (:pickup-mul cfg) 1.0)))))
 
 (defn- lock-cell-for
   "Map a lock-colour kw to the matching locked-door cell value."
@@ -537,12 +553,12 @@
             :difficulty    diff'
             :backpack-level (pack->level pack)
             :owned-weapons (or owned #{:pistol})
-            :hearts        (maybe-spawn-heart grid life)
+            :hearts        (maybe-spawn-heart grid life (heart-count cfg))
             :armors        (maybe-spawn-armor grid)
             :berserks      (maybe-spawn-berserk grid)
             :invulns       (maybe-spawn-invuln grid)
             :soulspheres   (maybe-spawn-soulsphere grid)
-            :armor-shards  (spawn-armor-shards grid armor-shards-per-level)
+            :armor-shards  (spawn-armor-shards grid (armor-shard-count cfg))
             :backpacks     (maybe-spawn-backpack grid lv pack)
             :keycards      (maybe-spawn-keycard grid lock)
             :weapon-pickups (maybe-spawn-weapon-pickups grid lv (or owned #{:pistol}))

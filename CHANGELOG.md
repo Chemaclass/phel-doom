@@ -11,6 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+- Freedoom door texture: doors render the real DOOM door texture (banded metal) instead of a flat orange panel. Sampled per row at a fixed texture column so the cells RLE-coalesce - doors are only a few columns, so the cost stays tiny. `PHEL_DOOM_NO_SPRITES=1` keeps the flat door shade.
 - Freedoom pickup sprites: floating items (health, armor, ammo, berserk, invuln, soulsphere, backpack, keycards, weapon drops) now render as their real DOOM sprites instead of a coloured glow + glyph. `PHEL_DOOM_NO_SPRITES=1` keeps the glyphs.
 - Per-room wall tone: each level tints its walls with a different cool-grey stone tone so rooms read distinct (still zero extra frame bytes).
 - Stone-coloured walls: walls now use a warm grey-brown Freedoom-stone ramp instead of flat grey (sky/floor stay grey). Same 24-band shade structure, so the RLE is unchanged and it costs zero extra frame bytes - a free realism bump within the terminal's perf budget.

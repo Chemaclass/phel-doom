@@ -5,7 +5,7 @@
   (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade sky-code floor-code door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright char-aspect shade-table shade-code-table shade-table-blood shade-code-table-blood])
   (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type sprite-col-x enemy-sprite-cell])
-  (:require phel-doom.io.render.hud :refer [minimap-door minimap-door-pulse minimap-rows hud-debug-line hud-debug-line-2 hud-line-str help-menu-string settings-menu-string])
+  (:require phel-doom.io.render.hud :refer [minimap-door minimap-door-pulse minimap-rows hud-debug-line hud-line-str help-menu-string settings-menu-string])
   (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-door-face paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-flicker paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-weapon-hud paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
   (:require phel-doom.core.perf :refer [render-scale])
@@ -752,11 +752,7 @@
                                           (recur (php/+ col 1) c 1))))))
                (buf-push parts "\e[0m\n"))
       (when (get stats :debug?)
-        ;; Both debug rows sit in-flow at the bottom, above the footer
-        ;; (layout reserves two rows for them when :debug? is on).
         (buf-push parts (hud-debug-line world stats))
-        (buf-push parts "\n")
-        (buf-push parts (hud-debug-line-2 world stats))
         (buf-push parts "\n"))
       (buf-push parts hud-line-str)
       (dotimes [i visible-mh]
@@ -890,23 +886,12 @@
    already stashed by frame->string). Render-ms is whatever's left
    after subtracting cast — the same accounting the manual sanity
    check in issue #9 uses (`cast + render ≈ frame`)."
-  [^string frame-str ^float total-ms world stats]
+  [^string frame-str ^float total-ms]
   (let [bytes     (php/strlen frame-str)
         sgr-count (php/max 1 (php/substr_count frame-str "\e["))
         avg-rle   (php// bytes sgr-count)
         cast-ms   (or (get @perf-snapshot :cast-ms) 0.0)
-        render-ms (php/max 0.0 (php/- total-ms cast-ms))
-        ;; Movement readout: world units/sec from the per-frame
-        ;; displacement, so the debug row shows the player actually
-        ;; moving (and how fast) - a 10/10 movement sanity check.
-        p         (:player world)
-        prev      @perf-snapshot
-        px        (or (get prev :px) (:x p))
-        py        (or (get prev :py) (:y p))
-        ddx       (php/- (:x p) px)
-        ddy       (php/- (:y p) py)
-        frame-ms  (php/max 1.0 (php/* 1.0 (or (get stats :frame-ms) 16)))
-        speed     (php// (php/* 1000.0 (php/sqrt (php/+ (php/* ddx ddx) (php/* ddy ddy)))) frame-ms)]
+        render-ms (php/max 0.0 (php/- total-ms cast-ms))]
     (swap! perf-snapshot
            (fn [snap]
              (assoc (or snap {})
@@ -914,9 +899,6 @@
                     :render-ms    render-ms
                     :bytes        bytes
                     :avg-rle      avg-rle
-                    :speed        speed
-                    :px           (:x p)
-                    :py           (:y p)
                     :php-mem      (php/memory_get_usage true)
                     :php-mem-peak (php/memory_get_peak_usage true))))))
 
@@ -947,7 +929,7 @@
               frame    (frame->string world stats cols rows)
               total-ms (php/* (php/- (php/microtime true) t-start) 1000.0)]
           (print frame)
-          (update-perf-snapshot! frame total-ms world stats))
+          (update-perf-snapshot! frame total-ms))
         (print (frame->string world stats cols rows)))))
   (php/flush))
 ;; =====================================================================

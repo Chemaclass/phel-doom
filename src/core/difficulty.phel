@@ -6,25 +6,32 @@
 ;; Selected via --difficulty CLI flag (see commands/play.phel); default
 ;; is :normal so the existing balance shipped by /play stays unchanged.
 ;;
-;; Multipliers scale chase speed, enemy HP, and per-level enemy count.
-;; Powerups + ammo are unaffected — the dial is purely combat density
-;; and lethality.
+;; Multipliers scale chase speed, enemy HP, per-level enemy count, and
+;; the ammo-box budget. Other powerups are unaffected — the dial is
+;; combat density and lethality. `:ammo-mul` (issue #155) compensates
+;; for the higher miss rate faster enemies force on spray weapons: the
+;; HP-driven budget already grows with hp-mul * enemies-mul, but those
+;; assume every round lands.
 ;; ---------------------------------------------------------------------
 
 (def diff-table
   "Per-difficulty multipliers. Keys must match the CLI keyword."
   {:easy      {:speed-mul    0.7
                :hp-mul       1.0
-               :enemies-mul  0.7}
+               :enemies-mul  0.7
+               :ammo-mul     1.0}
    :normal    {:speed-mul    1.0
                :hp-mul       1.0
-               :enemies-mul  1.0}
+               :enemies-mul  1.0
+               :ammo-mul     1.0}
    :hard      {:speed-mul    1.3
                :hp-mul       1.3
-               :enemies-mul  1.3}
+               :enemies-mul  1.3
+               :ammo-mul     1.2}
    :nightmare {:speed-mul    1.8
                :hp-mul       1.5
-               :enemies-mul  1.5}})
+               :enemies-mul  1.5
+               :ammo-mul     1.5}})
 
 (def default-diff
   "Difficulty used when the CLI flag is absent / unrecognised."
@@ -62,7 +69,9 @@
    scales per-enemy HP + enemy count. For mixed-spec rooms
    (`:enemies` is a vector) scales each spec's :lives but leaves
    counts alone — the author's spec is the design, count tweaks
-   should be deliberate per-level."
+   should be deliberate per-level. Also stamps :ammo-mul from the
+   difficulty spec so level/ammo-box-count can read it without
+   re-querying the spec."
   [cfg diff]
   (let [d        (spec-for diff)
         chase    (or (:chase cfg) 1.0)
@@ -75,6 +84,7 @@
                    (php/max 1 (php/intval (php/ceil (php/* (or enemies 1)
                                                            (:enemies-mul d))))))]
     (assoc cfg
+           :ammo-mul    (:ammo-mul d)
            :chase       (php/* chase (:speed-mul d))
            :enemy-lives (php/max 1 (php/intval (php/ceil (php/* (or (:enemy-lives cfg) 1)
                                                                 (:hp-mul d)))))

@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Changed
+
+- Ammo-box budget now scales with difficulty: hard spawns x1.2, nightmare x1.5 boxes on top of the enemy-HP baseline, so spray weapons (chaingun, incinerator) don't starve when faster enemies raise the miss rate.
+
 ## [0.12.0] - 2026-06-09
 
 ### Added

@@ -1,6 +1,6 @@
 (ns phel-doom-tests.core.level-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.level :refer [config-for num-levels build-world place-secret-reward secret-trophies])
+  (:require phel-doom.core.level :refer [ammo-box-count config-for num-levels build-world place-secret-reward secret-trophies])
   (:require phel-doom.core.rng :as rng))
 
 ;; ---------------------------------------------------------------------
@@ -251,3 +251,29 @@
 
 (deftest test-secret-trophies-are-the-rare-powerups
   (is (= [:soulspheres :berserks :invulns] secret-trophies)))
+
+;; ---------------------------------------------------------------------
+;; ammo-box-count: per-level ammo budget scales with the difficulty
+;; ammo multiplier (issue #155) on top of the enemy-HP scaling.
+;; ---------------------------------------------------------------------
+
+(deftest test-ammo-box-count-baseline-hp-over-divisor
+  ;; 6 enemies x 4 HP = 24 hp -> 24 / 8 = 3 boxes.
+  (is (= 3 (ammo-box-count {:enemies 6 :enemy-lives 4})))
+  (is (= 3 (ammo-box-count {:enemies 6 :enemy-lives 4 :ammo-mul 1.0}))))
+
+(deftest test-ammo-box-count-scales-with-ammo-mul
+  ;; x1.5 -> ceil(3 * 1.5) = 5 boxes.
+  (is (= 5 (ammo-box-count {:enemies 6 :enemy-lives 4 :ammo-mul 1.5})))
+  ;; x1.2 -> ceil(3 * 1.2) = 4 boxes.
+  (is (= 4 (ammo-box-count {:enemies 6 :enemy-lives 4 :ammo-mul 1.2}))))
+
+(deftest test-ammo-box-count-keeps-floor-of-two
+  (is (= 2 (ammo-box-count {:enemies 1 :enemy-lives 1})))
+  (is (= 2 (ammo-box-count {:enemies 1 :enemy-lives 1 :ammo-mul 1.5}))))
+
+(deftest test-ammo-box-count-mixed-spec-uses-total-hp
+  ;; specs: 2x3hp + 3x2hp = 12 hp -> 12/8 = 1.5 -> ceil 2; x1.5 -> ceil(2.25) = 3.
+  (let [specs [{:type :demon :count 2 :lives 3} {:type :imp :count 3 :lives 2}]]
+    (is (= 2 (ammo-box-count {:enemies specs})))
+    (is (= 3 (ammo-box-count {:enemies specs :ammo-mul 1.5})))))

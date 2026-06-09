@@ -64,7 +64,7 @@ shade-idx = clamp(0, 23,
   + (side == 0 ? 3 : 0))          ; vertical faces brighter
 ```
 
-The gamma 0.6 curve brightens mid-range; the `+3` bonus for vertical faces reads as directional lighting. Walls index a 24-step cool grey stone ramp chosen per level by `wall-shade-table-for (:level world)` (one of several `wall-tones` so each room reads with its own tone); sky and floor keep the grayscale `shade-table`. Same 24-band structure as the old grayscale walls, so the RLE coalesces identically: the colour costs zero extra frame bytes. One lookup per column.
+The gamma 0.6 curve brightens mid-range; the `+3` bonus for vertical faces reads as directional lighting. Walls, sky, and floor all index the same 24-step grayscale `shade-table` (no colour, no per-room tinting) so the place reads dark and neutral. One lookup per column; consecutive same-shade cells RLE-coalesce.
 
 Doors: `door-shade` (orange for unlocked, blue/red for keycards, bright red for boss-lock). Half-block edges mix door with sky/floor. Locked messages ("NEED BLUE KEY", "KILL THE BOSS") painted separately.
 

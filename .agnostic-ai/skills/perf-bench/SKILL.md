@@ -1,7 +1,6 @@
 ---
 description: Measure cast/render phase timing before/after a change at 80×24, 120×30, 180×40
 argument-hint: "[baseline-ref] [candidate-ref]"
-disable-model-invocation: true
 allowed-tools: "Read, Bash(vendor/bin/phel *), Bash(composer *), Bash(git *)"
 target: claude
 ---

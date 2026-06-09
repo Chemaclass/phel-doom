@@ -6,7 +6,7 @@
   (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type sprite-col-x enemy-sprite-cell])
   (:require phel-doom.io.render.hud :refer [minimap-door minimap-door-pulse minimap-rows hud-debug-line hud-line-str help-menu-string settings-menu-string])
-  (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-wall-lights paint-crosshair paint-intro-splash paint-locked-bump paint-door-face paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-flicker paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-weapon-hud paint-blood-fx-into paint-pickups-into paint-projectiles-into build-blood-cols])
+  (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-door-face paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-flicker paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-weapon-hud paint-blood-fx-into paint-pickups-into paint-projectiles-into build-blood-cols])
   (:require phel-doom.io.render.enemy-sprites-data :refer [door-tex])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
   (:require phel-doom.core.perf :refer [render-scale])
@@ -73,14 +73,12 @@
     a))
 
 (defn- door-cell
-  "Sample the door texture for a wall row `r` inside the door's vertical
-   span [`top`, `bot`). A fixed centre texture-x is sampled, so the door
-   reads as its horizontal Freedoom banding and the cell stays identical
-   across the door's columns (RLE coalesces -> cheap). 128x128 texture."
-  [r top bot]
+  "Sample the 128x128 Freedoom door texture at column texture-x `tx` and
+   wall row `r` within the door's vertical span [`top`, `bot`)."
+  [r top bot tx]
   (let [ty (php/max 0 (php/min 127 (php/intdiv (php/* (php/- r top) 128)
                                                (php/max 1 (php/- bot top)))))]
-    (php/aget door-cell-cache (php/aget door-px (php/+ (php/* ty 128) 64)))))
+    (php/aget door-cell-cache (php/aget door-px (php/+ (php/* ty 128) tx)))))
 ;; =====================================================================
 ;; § Per-column wall shading
 ;; =====================================================================
@@ -116,8 +114,11 @@
         top-shadow                                                     (buf-mk)
         bot-shadow                                                     (buf-mk)
         ;; Marks door body columns so the row loop samples the Freedoom
-        ;; door texture instead of the flat door shade.
-        door-mask                                                      (buf-mk)]
+        ;; door texture; door-tx holds each door column's texture-x
+        ;; (0-127), assigned across the door's column run for a proper 2D
+        ;; sample (no shearing).
+        door-mask                                                      (buf-mk)
+        door-tx                                                        (buf-mk)]
     (loop [col 0]
       (when (php/< col vw)
         (let [dist         (buf-get dists col)
@@ -181,10 +182,25 @@
                 (buf-set top-shadow col shd-bg)
                 (buf-set bot-shadow col shd-bg))))
           (recur (php/+ col 1)))))
+    ;; Second pass: map each contiguous door-column run to texture-x
+    ;; 0-127 so the door samples as a whole 2D image (no per-column
+    ;; shear). Cheap - only the few door columns are touched.
+    (loop [c 0]
+      (when (php/< c vw)
+        (if (buf-get door-mask c)
+          (let [end  (loop [e c]
+                       (if (and (php/< e vw) (buf-get door-mask e)) (recur (php/+ e 1)) e))
+                span (php/max 1 (php/- (php/- end c) 1))]
+            (loop [k c]
+              (when (php/< k end)
+                (buf-set door-tx k (php/intdiv (php/* (php/- k c) 127) span))
+                (recur (php/+ k 1))))
+            (recur end))
+          (recur (php/+ c 1)))))
     {:tops tops :bots bots :normal normal
      :top-edge top-edge :bot-edge bot-edge
      :top-shadow top-shadow :bot-shadow bot-shadow
-     :door-mask door-mask}))
+     :door-mask door-mask :door-tx door-tx}))
 ;; =====================================================================
 ;; § Pulse cadences + near-death haze
 ;; =====================================================================
@@ -295,7 +311,7 @@
         ;; Halves cast + wall-shade work with a chunky-per-2-cols
         ;; look. Standard sizes return 1 → identical to before.
         scale                              (render-scale vw vh)
-        {:keys [dists hits sides hxs hys]}
+        {:keys [dists hits sides]}
         (cast-frame world vw scale)
         _                                  (when debug?
                                              (record-cast-ms!
@@ -405,7 +421,8 @@
          :bot-edge          shades-bot-edge
          :top-shadow        shades-top-shadow
          :bot-shadow        shades-bot-shadow
-         :door-mask         door-mask}
+         :door-mask         door-mask
+         :door-tx           door-tx}
         (compute-wall-shades vw vh haze-shift
                              {:dists dists :hits hits :sides sides}
                              {:stbl stbl :ctbl ctbl
@@ -754,7 +771,8 @@
                                      ;; texture (cheap - doors are few cols
                                      ;; and the cell RLE-coalesces).
                                      (and sprites-on (buf-get door-mask col))
-                                     (door-cell row (buf-get tops col) (buf-get bots col))
+                                     (door-cell row (buf-get tops col) (buf-get bots col)
+                                                (buf-get door-tx col))
                                      :else
                                      (buf-get shades-normal col))
                          c         (if (and (php/< row visible-mh) (php/>= col mini-col0))
@@ -840,8 +858,7 @@
             ;; Freedoom sprites already show a face, so skip it in sprite mode.
             p1          (if sprites-on parts
                             (paint-face-overlay parts world stats vw vh dists edists face-phase))
-            p2          (paint-wall-lights        p1 t vw vh hits hxs hys tops)
-            p3          (paint-door-face          p2 stats vw vh hits tops bots)
+            p3          (paint-door-face          p1 stats vw vh hits tops bots)
             p4          (paint-crosshair          p3 stats vw vh center-bg)
             p5          (paint-intro-splash       p4 stats vw vh)
             p6          (paint-blood-drops        p5 stats vw vh)

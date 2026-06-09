@@ -11,14 +11,18 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Freedoom pickup sprites with distance LOD: floating items (health, armor, ammo, berserk, invuln, soulsphere, backpack, keycards, weapon drops) render as their real DOOM sprites up close and as a clean coloured blob at distance (one/two tones), so far pickups read clearly instead of as aliased pixels. `PHEL_DOOM_NO_SPRITES=1` keeps the glyphs.
-- Energy-weapon muzzle flash: the BFG, incinerator, and rocket overlay their Freedoom muzzle-flash burst while firing (the on-screen energy "fire" the sound was missing). Hitscan guns stay flash-free so their recoil bounce reads.
-- Traveling BFG ball + rocket: firing those weapons launches a cosmetic Freedoom projectile that flies from the muzzle to the impact and recedes as it travels. Damage stays instant; the tracer is purely visual.
-- Weapon recoil: every gun visibly snaps up and settles when fired (bigger, longer kick so it reads even if the frame rate dips).
-- Freedoom enemy sprites: monsters now render as real DOOM-style billboards (imp, demon/pinky/spectre, cacodemon, baron, cyberdemon, revenant, archvile, mancubus), baked from Freedoom (BSD) and sampled with half-block sub-pixels at native aspect, depth-occluded (transparent pixels show the wall behind, no halo). `PHEL_DOOM_NO_SPRITES=1` keeps the legacy glyph enemies. See `docs/rendering.md`.
-- Freedoom death + fireball sprites: killing an enemy plays its Freedoom collapse-to-corpse animation (per type, by fade time) instead of a red block, and enemy fireballs render as the real DOOM projectile sprite. Both fall back to the old blood shade / orange glow under `PHEL_DOOM_NO_SPRITES=1`.
-- Freedoom weapon viewmodels: the first-person gun is now a real DOOM-style sprite (pistol, shotgun, chaingun, chainsaw, BFG, incinerator, rocket), baked from Freedoom (BSD) into a 256-colour grid and drawn as half-blocks. `PHEL_DOOM_NO_SPRITES=1` keeps the old ASCII guns. See `docs/rendering.md`.
-- Freedoom weapon-fire sounds: each weapon plays its real DOOM-style report (baked Freedoom DMX, license-clean, no binary asset). See `docs/audio.md`.
+- Freedoom enemy sprites: monsters render as real DOOM-style billboards (imp, demon/pinky/spectre, cacodemon, baron, cyberdemon, revenant, archvile, mancubus), half-block sub-pixels at native aspect, depth-occluded. `PHEL_DOOM_NO_SPRITES=1` keeps the glyph enemies. See `docs/rendering.md`.
+- Freedoom death + fireball sprites: kills play a per-type collapse-to-corpse animation instead of a red block; enemy fireballs use the real DOOM projectile sprite. Both fall back under `PHEL_DOOM_NO_SPRITES=1`.
+- Freedoom weapon viewmodels: first-person guns (pistol, shotgun, chaingun, chainsaw, BFG, incinerator, rocket) drawn as Freedoom sprites. `PHEL_DOOM_NO_SPRITES=1` keeps the ASCII guns.
+- Freedoom weapon-fire sounds: each weapon plays its real DOOM-style report (baked Freedoom DMX, license-clean). See `docs/audio.md`.
+- Freedoom pickup sprites with distance LOD: floating items render as real DOOM sprites up close and as a clean colour blob at distance, so far pickups read clearly. `PHEL_DOOM_NO_SPRITES=1` keeps the glyphs.
+- Energy-weapon muzzle flash: BFG, incinerator, and rocket show a Freedoom muzzle burst while firing; hitscan guns stay flash-free so their recoil reads.
+- Traveling BFG ball + rocket: a cosmetic Freedoom projectile flies from muzzle to impact and recedes as it travels (damage stays instant).
+- Weapon recoil: every gun snaps up and settles when fired.
+
+### Fixed
+
+- Quitting no longer leaves a stray escape sequence (e.g. `3;1:3u`) on the shell prompt: the terminal's kitty key-release report is drained before cooked mode returns.
 
 ### Removed
 

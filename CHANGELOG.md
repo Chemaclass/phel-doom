@@ -9,6 +9,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-06-09
+
 ### Added
 
 - Freedoom enemy sprites: monsters render as real DOOM-style billboards (imp, demon/pinky/spectre, cacodemon, baron, cyberdemon, revenant, archvile, mancubus), half-block sub-pixels at native aspect, depth-occluded. `PHEL_DOOM_NO_SPRITES=1` keeps the glyph enemies. See `docs/rendering.md`.
@@ -288,7 +290,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `cast + render` under 5 ms per frame at 120×30.
 - Flat PHP arrays on hot paths; `:tag` types for OPcache JIT tracing.
 
-[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/Chemaclass/phel-doom/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/Chemaclass/phel-doom/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Chemaclass/phel-doom/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/Chemaclass/phel-doom/compare/v0.8.0...v0.9.0

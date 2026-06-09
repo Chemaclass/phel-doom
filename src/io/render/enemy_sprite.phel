@@ -1,0 +1,103 @@
+;; Pure helpers for sampling baked Freedoom enemy sprite pixels.
+;; No side effects; used by main.phel's row loop.
+(ns phel-doom.io.render.enemy-sprite
+  (:require phel-doom.io.render.enemy-sprites-data :refer [enemy-sprites]))
+
+;; =====================================================================
+;; § Sprite-id resolution
+;; =====================================================================
+
+(def sprite-type-map
+  "Maps every in-game enemy `:type` keyword to the baked sprite-id.
+   `:pinky` and `:spectre` reuse the `:demon` sprite (same visual
+   appearance). Any type absent from this map has no baked sprite
+   and falls back to the glyph path."
+  {:imp      :imp
+   :demon    :demon
+   :pinky    :demon
+   :spectre  :demon
+   :caco     :caco
+   :baron    :baron
+   :cyber    :cyber
+   :revenant :revenant
+   :archvile :archvile
+   :mancubus :mancubus})
+
+(defn sprite-for-type
+  "Return the `{:w :h :px}` sprite map for enemy `:type` keyword
+   `type-kw`, or nil when the type has no baked sprite (unknown
+   type / no entry in `enemy-sprites`). Pure; no side effects."
+  [type-kw]
+  (let [sid (get sprite-type-map type-kw)]
+    (when sid
+      (get enemy-sprites sid))))
+
+;; =====================================================================
+;; § Per-cell sampling
+;; =====================================================================
+
+(defn- build-cache [tpl]
+  (let [a (php/array)]
+    (dotimes [i 256] (php/aset a i (php/sprintf tpl i)))
+    a))
+
+(def block-cache
+  "Full-block `\\e[38;5;<n>m█` per xterm-256 index. Used for an edge
+   cell where only one of the two stacked sub-pixels is opaque: filling
+   the whole cell solid (rather than a half-block over an unknown
+   background) keeps the silhouette clean with no halo."
+  (build-cache "\e[38;5;%dm█"))
+
+(def fg-cache
+  "Foreground SGR `\\e[38;5;<n>m` per index, for the top sub-pixel of a
+   two-opaque half-block cell."
+  (build-cache "\e[38;5;%dm"))
+
+(def bg-cache
+  "Background SGR `\\e[48;5;<n>m` per index, for the bottom sub-pixel of
+   a two-opaque half-block cell."
+  (build-cache "\e[48;5;%dm"))
+
+(defn sprite-col-x
+  "Map screen column `col` to a sprite x for an enemy centred at `ecol`
+   with half-width `ehw` and native width `sw`. Depends only on the
+   column, so the zone pass computes it once per covered column instead
+   of once per cell. Clamped to [0, sw-1]."
+  [^int sw ^int ecol ^int ehw ^int col]
+  (let [span (php/max 1 (php/+ (php/* 2 ehw) 1))]
+    (php/max 0 (php/min (php/- sw 1)
+                        (php/intval (php// (php/* (php/- col (php/- ecol ehw)) sw)
+                                           span))))))
+
+(defn enemy-sprite-cell
+  "Sample one cell from a baked enemy sprite at screen `row`, given the
+   precomputed sprite column `sx` (see sprite-col-x) and the enemy's
+   vertical screen extent [`etop`, `ebot`).
+
+   Parameters:
+     px       - flat row-major xterm-256 php-array (-1 = transparent)
+     sw sh    - native sprite width / height in pixels
+     sx       - sprite x for this screen column (precomputed)
+     etop     - first screen row covered by the enemy billboard
+     ebot     - one past the last screen row (exclusive)
+     row      - screen row to sample
+
+   Each screen cell stacks TWO sprite sub-pixels via a half-block, so an
+   enemy gets 2x the vertical resolution of a one-pixel-per-cell render
+   (much closer to the real Freedoom sprite):
+     - both sub-pixels opaque -> `▀` fg=top sub-pixel, bg=bottom
+     - only one opaque        -> solid `█` of that colour (clean edge,
+                                 no halo against the wall behind)
+     - both transparent       -> nil (caller keeps the wall/floor cell)
+   sy is clamped to [0, sh-1]."
+  [px ^int sw ^int sh ^int sx ^int etop ^int ebot ^int row]
+  (let [h2  (php/max 1 (php/* 2 (php/- ebot etop)))
+        sub (php/* 2 (php/- row etop))
+        ty  (php/max 0 (php/min (php/- sh 1) (php/intval (php// (php/* sub sh) h2))))
+        by  (php/max 0 (php/min (php/- sh 1) (php/intval (php// (php/* (php/+ sub 1) sh) h2))))
+        top (php/aget px (php/+ (php/* ty sw) sx))
+        bot (php/aget px (php/+ (php/* by sw) sx))]
+    (cond
+      (php/=== top -1) (when (php/!== bot -1) (php/aget block-cache bot))
+      (php/=== bot -1) (php/aget block-cache top)
+      :else            (str (php/aget fg-cache top) (php/aget bg-cache bot) "▀"))))

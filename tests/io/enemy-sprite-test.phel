@@ -1,0 +1,96 @@
+(ns phel-doom-tests.io.enemy-sprite-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type sprite-col-x enemy-sprite-cell])
+  (:require phel-doom.io.render.enemy-sprites-data :refer [projectile-sprites death-sprites blood-sprites pickup-sprites]))
+
+;; ---------------------------------------------------------------------
+;; sprite-for-type: every game enemy type resolves to a baked sprite,
+;; with pinky + spectre reusing the demon sprite. Unknown types fall
+;; back to nil (glyph path).
+;; ---------------------------------------------------------------------
+
+(deftest test-sprite-for-type-covers-every-enemy
+  (foreach [t [:imp :demon :pinky :spectre :caco :baron :cyber
+               :revenant :archvile :mancubus]]
+    (let [spr (sprite-for-type t)]
+      (is (not (nil? spr)) (str "baked sprite for " t))
+      (is (php/> (:w spr) 0) (str (name t) " has width"))
+      (is (php/> (:h spr) 0) (str (name t) " has height")))))
+
+(deftest test-pinky-and-spectre-reuse-demon
+  (is (= (sprite-for-type :demon) (sprite-for-type :pinky)) "pinky reuses demon")
+  (is (= (sprite-for-type :demon) (sprite-for-type :spectre)) "spectre reuses demon"))
+
+(deftest test-sprite-for-type-unknown-is-nil
+  (is (nil? (sprite-for-type :not-a-monster)))
+  (is (nil? (sprite-for-type nil))))
+
+;; ---------------------------------------------------------------------
+;; enemy-sprite-cell: pure per-cell sampler. Build a tiny 2x2 grid so
+;; pixel positions are exact. -1 = transparent.
+;; Each screen cell stacks TWO sprite sub-pixels (half-block). Use a
+;; 1-wide x 4-tall grid so a 2-cell-tall box maps one sprite row per
+;; sub-pixel and top/bot differ per cell:
+;;   px (col 0): row0=10  row1=20  row2=-1  row3=30
+;; Box rows [0,2): cell 0 stacks sprite rows 0(top)+1(bot); cell 1
+;; stacks rows 2(top)+3(bot).
+;; ---------------------------------------------------------------------
+
+(def grid (php/array 10 20 -1 30))
+
+(deftest test-sprite-col-x-maps-and-clamps
+  ;; Enemy centred at col 5, half-width 2 (span 5), sprite width 2.
+  (is (= 0 (sprite-col-x 2 5 2 3)) "left edge -> sx 0")
+  (is (= 1 (sprite-col-x 2 5 2 7)) "right edge -> sx 1")
+  ;; A column past the billboard clamps into [0, sw-1].
+  (is (= 1 (sprite-col-x 2 5 2 99)) "far right clamps to sw-1"))
+
+(deftest test-both-subpixels-opaque-is-halfblock
+  ;; cell 0: top=row0=10, bot=row1=20 -> ▀ fg=top bg=bot.
+  (is (= "\e[38;5;10m\e[48;5;20m▀" (enemy-sprite-cell grid 1 4 0 0 2 0))))
+
+(deftest test-one-subpixel-opaque-is-solid-block
+  ;; cell 1: top=row2=-1, bot=row3=30 -> solid block of the opaque half.
+  (is (= "\e[38;5;30m█" (enemy-sprite-cell grid 1 4 0 0 2 1))))
+
+(deftest test-both-subpixels-transparent-is-nil
+  ;; A fully transparent column -> nil (caller keeps the wall/floor cell).
+  (let [g (php/array -1 -1 -1 -1)]
+    (is (nil? (enemy-sprite-cell g 1 4 0 0 2 0)))))
+
+(deftest test-sy-clamps-into-range
+  ;; A row well past the box clamps to the last sub-rows (still in-range).
+  (is (some? (enemy-sprite-cell grid 1 4 0 0 2 99))))
+
+;; ---------------------------------------------------------------------
+;; Projectile + death sprite data (baked from Freedoom).
+;; ---------------------------------------------------------------------
+
+(deftest test-fireball-projectile-baked
+  (let [f (get projectile-sprites :fireball)]
+    (is (not (nil? f)) "fireball sprite present")
+    (is (php/> (:w f) 0))
+    (is (php/> (count (:px f)) 0))))
+
+(deftest test-death-sequences-baked
+  ;; Each baked death seq is a non-empty vector of {:w :h :px} frames,
+  ;; collapse..corpse. (revenant frames are absent in Freedoom -> it
+  ;; gracefully falls back to the blood shade, so it is not required.)
+  (foreach [t [:imp :demon :caco :baron :cyber :mancubus :archvile]]
+    (let [seq (get death-sprites t)]
+      (is (not (nil? seq)) (str "death seq for " t))
+      (is (php/> (count seq) 0) (str (name t) " has frames"))
+      (let [corpse (php/aget seq (php/- (count seq) 1))]
+        (is (php/> (:w corpse) 0) (str (name t) " corpse has size"))))))
+
+(deftest test-blood-spurt-frames-baked
+  (is (php/> (count blood-sprites) 0) "blood spurt frames present")
+  (foreach [g blood-sprites]
+    (is (php/> (:w g) 0) "blood frame has width")))
+
+(deftest test-pickup-sprites-baked
+  (foreach [k [:heart :armor :ammo :berserk :invuln :soulsphere :backpack
+               :keycard-blue :keycard-red :keycard-yellow :shotgun :rocket]]
+    (let [g (get pickup-sprites k)]
+      (is (not (nil? g)) (str "pickup sprite for " k))
+      (is (php/> (:w g) 0) (str (name k) " has size")))))

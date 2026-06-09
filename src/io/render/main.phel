@@ -4,8 +4,9 @@
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
   (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade sky-code floor-code door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright char-aspect shade-table shade-code-table shade-table-blood shade-code-table-blood])
   (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
+  (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type sprite-col-x enemy-sprite-cell])
   (:require phel-doom.io.render.hud :refer [minimap-door minimap-door-pulse minimap-rows hud-debug-line hud-line-str help-menu-string settings-menu-string])
-  (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-wall-lights paint-crosshair paint-intro-splash paint-locked-bump paint-door-face paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-flicker paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-weapon-hud paint-blood-fx-into paint-pickups-into paint-projectiles-into build-blood-cols])
+  (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-door-face paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-flicker paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-weapon-hud paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
   (:require phel-doom.core.perf :refer [render-scale])
   (:require phel-doom.core.format :refer [format-duration])
@@ -38,6 +39,27 @@
   [^float ms]
   (swap! perf-snapshot
          (fn [snap] (if (nil? snap) {:cast-ms ms} (assoc snap :cast-ms ms)))))
+
+;; =====================================================================
+;; § Enemy sprite toggle
+;; =====================================================================
+
+(def enemy-sprites-on?
+  "Memoised PHEL_DOOM_NO_SPRITES probe for enemy billboard sprites.
+   Reads the same env var as the weapon sprite toggle so one flag
+   disables all Freedoom bitmaps. nil = not yet probed."
+  (atom nil))
+
+(defn- enemy-sprites-enabled?
+  "Enemy billboard sprites are ON by default. PHEL_DOOM_NO_SPRITES=1
+   forces the legacy glyph path (A/B compare, CI, narrow terminals)."
+  []
+  (let [cached @enemy-sprites-on?]
+    (if (nil? cached)
+      (let [on (not (php/=== "1" (php/getenv "PHEL_DOOM_NO_SPRITES")))]
+        (reset! enemy-sprites-on? on)
+        on)
+      cached)))
 ;; =====================================================================
 ;; § Per-column wall shading
 ;; =====================================================================
@@ -246,7 +268,7 @@
         ;; Halves cast + wall-shade work with a chunky-per-2-cols
         ;; look. Standard sizes return 1 → identical to before.
         scale                              (render-scale vw vh)
-        {:keys [dists hits sides hxs hys]}
+        {:keys [dists hits sides]}
         (cast-frame world vw scale)
         _                                  (when debug?
                                              (record-cast-ms!
@@ -389,6 +411,25 @@
         ;; Pickups read it to occlude themselves behind enemies the same
         ;; way `dists` occludes them behind walls.
         edists                             (buf-mk)
+        ;; Per-column billboard sprite buffers. Only written when
+        ;; enemy-sprites-enabled? AND the enemy type resolves to a
+        ;; baked sprite. The zone pass populates these INSTEAD of
+        ;; tops/bots/eheads/ebodys/elegss so the wall extent is
+        ;; preserved behind transparent pixels.
+        ;;   e-stop  : billboard top screen row
+        ;;   e-sbot  : billboard bottom screen row (exclusive)
+        ;;   e-sx    : sprite x for this column (precomputed, see sprite-col-x)
+        ;;   e-spx   : sprite `:px` php-array ref
+        ;;   e-sw    : sprite native width
+        ;;   e-sh    : sprite native height
+        e-stop                             (buf-mk)
+        e-sbot                             (buf-mk)
+        e-sx                               (buf-mk)
+        e-spx                              (buf-mk)
+        e-sw                               (buf-mk)
+        e-sh                               (buf-mk)
+        ;; Resolved once per frame — avoids per-column getenv overhead.
+        sprites-on                         (enemy-sprites-enabled?)
         blood-paint                        (buf-mk)
         ;; Project + depth-sort enemies once: the zone pass paints them
         ;; back-to-front, then a second pass grounds the shadows reading
@@ -416,14 +457,29 @@
                  d   (:dist proj)
                  dmg (or (:damage-ratio proj) 0.0)
                  sc  (or (:scale proj) 1.0)]
-             (let [c-from    (php/max 0 (php/- col hw))
-                   c-to      (php/min (php/- vw 1) (php/+ col hw))
-                   ;; `sc` scales the sprite vertically in lockstep with
+             (let [;; `sc` scales the sprite vertically in lockstep with
                    ;; :half-width so bosses (cyber, sc=2.0) stay
                    ;; proportional instead of stretching wide-but-flat.
                    h         (php/min vh (php/intval (php/* sc
                                                             (php// proj-dist
                                                                    (php/* (php/max 0.5 d) char-aspect)))))
+                   ;; Freedoom billboard sprite for this enemy (nil when
+                   ;; sprites are off or the type has none -> glyph path).
+                   spr       (when sprites-on (sprite-for-type (:type proj)))
+                   sw        (when spr (:w spr))
+                   sh        (when spr (:h spr))
+                   spx       (when spr (:px spr))
+                   ;; Box width from the sprite's NATIVE aspect, not the
+                   ;; glyph hitbox: half-width = round(h * sw / sh), since
+                   ;; a terminal cell is ~2:1 tall and a half-block packs
+                   ;; two sprite rows per cell. Keeps the monster
+                   ;; undistorted (the glyph hitbox is far too narrow and
+                   ;; squished the sprite). Glyph mode keeps the old hw.
+                   ehw       (if spr
+                               (php/max 1 (php/intval (php/round (php// (php/* h sw) sh))))
+                               hw)
+                   c-from    (php/max 0 (php/- col ehw))
+                   c-to      (php/min (php/- vw 1) (php/+ col ehw))
                    ;; Distance-fade factor: 0 at the player's feet,
                    ;; ~0.85 at max-depth. Squared so things stay
                    ;; saturated up close and only really dim once
@@ -477,25 +533,38 @@
                    (loop [c c-from]
                      (when (php/<= c c-to)
                        (when (php/< d (buf-get dists c))
-                         (buf-set tops c e-top)
-                         (buf-set bots c e-bot)
-                         (buf-set mids c e-mid)
-                         (buf-set lowers c e-lower)
-                         ;; Cyberdemon: carve a boss silhouette out of
-                         ;; the rectangle so the form reads as helmet +
-                         ;; arms + 2 legs instead of a giant imp brick.
-                         (let [[ph pb pl] (if (and (php/=== (:type proj) :cyber)
-                                                   body-code)
-                                            (boss-col-paint
-                                             (php// (php/abs (php/- c col))
-                                                    (php/max 1 hw))
-                                             fhead fbody flegs body-code body-fade
-                                             (buf-get shades-normal c))
-                                            [fhead fbody flegs])]
-                           (buf-set eheads c ph)
-                           (buf-set ebodys c pb)
-                           (buf-set elegss c pl))
-                         (buf-set emask c true)
+                         (if spr
+                           ;; Sprite path: stash the billboard box +
+                           ;; sprite ref. Leave wall tops/bots untouched
+                           ;; so transparent pixels show the wall behind.
+                           (do
+                             (buf-set e-stop c e-top)
+                             (buf-set e-sbot c e-bot)
+                             (buf-set e-sx c (sprite-col-x sw col ehw c))
+                             (buf-set e-spx c spx)
+                             (buf-set e-sw c sw)
+                             (buf-set e-sh c sh)
+                             (buf-set emask c true))
+                           (do
+                             (buf-set tops c e-top)
+                             (buf-set bots c e-bot)
+                             (buf-set mids c e-mid)
+                             (buf-set lowers c e-lower)
+                             ;; Cyberdemon: carve a boss silhouette out of
+                             ;; the rectangle so the form reads as helmet +
+                             ;; arms + 2 legs instead of a giant imp brick.
+                             (let [[ph pb pl] (if (and (php/=== (:type proj) :cyber)
+                                                       body-code)
+                                                (boss-col-paint
+                                                 (php// (php/abs (php/- c col))
+                                                        (php/max 1 hw))
+                                                 fhead fbody flegs body-code body-fade
+                                                 (buf-get shades-normal c))
+                                                [fhead fbody flegs])]
+                               (buf-set eheads c ph)
+                               (buf-set ebodys c pb)
+                               (buf-set elegss c pl))
+                             (buf-set emask c true)))
                          ;; Track nearest enemy distance for this col so
                          ;; pickups behind it occlude properly. Multiple
                          ;; enemies on the same col → keep the closest.
@@ -513,25 +582,28 @@
     ;; nearest dist per column lets us drop a shadow cell only for the
     ;; column's front-most enemy (d <= edists[c]); farther enemies skip
     ;; it. Still wall-gated (d < dists[c]). (issue #86)
-    (doseq [proj enemy-projs]
-           (let [col    (:col proj)
-                 hw     (:half-width proj)
-                 d      (:dist proj)
-                 sc     (or (:scale proj) 1.0)
-                 h      (php/min vh (php/intval (php/* sc
-                                                       (php// proj-dist
-                                                              (php/* (php/max 0.5 d) char-aspect)))))
-                 e-bot  (php/+ (php/intdiv (php/- vh h) 2) h)
-                 c-from (php/max 0 (php/- col hw))
-                 c-to   (php/min (php/- vw 1) (php/+ col hw))]
-             (when (php/< e-bot vh)
-               (loop [c c-from]
-                 (when (php/<= c c-to)
-                   (when (enemy-front-visible-at? d c dists edists)
-                     (buf-set blood-paint
-                              (php/+ (php/* e-bot vw) c)
-                              sprite-shadow))
-                   (recur (php/+ c 1)))))))
+    ;; Glyph-mode only: the Freedoom billboards carry their own grounded
+    ;; silhouette, so a painted shadow under them just muddies the sprite.
+    (when (not sprites-on)
+      (doseq [proj enemy-projs]
+             (let [col    (:col proj)
+                   hw     (:half-width proj)
+                   d      (:dist proj)
+                   sc     (or (:scale proj) 1.0)
+                   h      (php/min vh (php/intval (php/* sc
+                                                         (php// proj-dist
+                                                                (php/* (php/max 0.5 d) char-aspect)))))
+                   e-bot  (php/+ (php/intdiv (php/- vh h) 2) h)
+                   c-from (php/max 0 (php/- col hw))
+                   c-to   (php/min (php/- vw 1) (php/+ col hw))]
+               (when (php/< e-bot vh)
+                 (loop [c c-from]
+                   (when (php/<= c c-to)
+                     (when (enemy-front-visible-at? d c dists edists)
+                       (buf-set blood-paint
+                                (php/+ (php/* e-bot vw) c)
+                                sprite-shadow))
+                     (recur (php/+ c 1))))))))
     ;; Chain the fx + pickup painters: each one takes the current
     ;; blood-paint, returns a new buffer (PHP arrays pass by value, so
     ;; the helper owns the allocation). Rename per step to keep phel
@@ -540,80 +612,83 @@
     (let [bp-fx     (paint-blood-fx-into blood-paint stats world dists vw vh)
           bp-hearts (paint-pickups-into  bp-fx (or (:hearts world) [])
                                          (:player world) dists edists vw vh
-                                         heart-shade-now heart-glyph-now)
+                                         heart-shade-now heart-glyph-now :heart)
           bp-armors (paint-pickups-into  bp-hearts (or (:armors world) [])
                                          (:player world) dists edists vw vh
-                                         armor-shade-now armor-glyph-now)
+                                         armor-shade-now armor-glyph-now :armor)
           bp-shards (paint-pickups-into  bp-armors (or (:armor-shards world) [])
                                          (:player world) dists edists vw vh
-                                         armor-shard-shade-now armor-shard-glyph-now)
+                                         armor-shard-shade-now armor-shard-glyph-now :armor-shard)
           bp-ammos  (paint-pickups-into  bp-shards (or (:ammo-boxes world) [])
                                          (:player world) dists edists vw vh
-                                         ammo-shade-now ammo-glyph-now)
+                                         ammo-shade-now ammo-glyph-now :ammo)
           bp-bers   (paint-pickups-into  bp-ammos (or (:berserks world) [])
                                          (:player world) dists edists vw vh
-                                         berserk-shade-now berserk-glyph-now)
+                                         berserk-shade-now berserk-glyph-now :berserk)
           bp-inv    (paint-pickups-into  bp-bers (or (:invulns world) [])
                                          (:player world) dists edists vw vh
-                                         invuln-shade-now invuln-glyph-now)
+                                         invuln-shade-now invuln-glyph-now :invuln)
           bp-soul   (paint-pickups-into  bp-inv (or (:soulspheres world) [])
                                          (:player world) dists edists vw vh
-                                         soulsphere-shade-now soulsphere-glyph-now)
+                                         soulsphere-shade-now soulsphere-glyph-now :soulsphere)
           bp-pack   (paint-pickups-into  bp-soul (or (:backpacks world) [])
                                          (:player world) dists edists vw vh
-                                         backpack-shade-now backpack-glyph-now)
+                                         backpack-shade-now backpack-glyph-now :backpack)
           bp-kb     (paint-pickups-into  bp-pack
                                          (apply vector
                                                 (filter (fn [k] (php/=== (:colour k) :blue))
                                                         (or (:keycards world) [])))
                                          (:player world) dists edists vw vh
-                                         keycard-blue-shade-now keycard-blue-glyph-now)
+                                         keycard-blue-shade-now keycard-blue-glyph-now :keycard-blue)
           bp-kr     (paint-pickups-into  bp-kb
                                          (apply vector
                                                 (filter (fn [k] (php/=== (:colour k) :red))
                                                         (or (:keycards world) [])))
                                          (:player world) dists edists vw vh
-                                         keycard-red-shade-now keycard-red-glyph-now)
+                                         keycard-red-shade-now keycard-red-glyph-now :keycard-red)
           bp-ky     (paint-pickups-into  bp-kr
                                          (apply vector
                                                 (filter (fn [k] (php/=== (:colour k) :yellow))
                                                         (or (:keycards world) [])))
                                          (:player world) dists edists vw vh
-                                         keycard-yellow-shade-now keycard-yellow-glyph-now)
+                                         keycard-yellow-shade-now keycard-yellow-glyph-now :keycard-yellow)
           bp-ws     (paint-pickups-into  bp-ky
                                          (apply vector
                                                 (filter (fn [w] (php/=== (:weapon w) :shotgun))
                                                         (or (:weapon-pickups world) [])))
                                          (:player world) dists edists vw vh
-                                         shotgun-pickup-shade-now shotgun-pickup-glyph-now)
+                                         shotgun-pickup-shade-now shotgun-pickup-glyph-now :shotgun)
           bp-wc     (paint-pickups-into  bp-ws
                                          (apply vector
                                                 (filter (fn [w] (php/=== (:weapon w) :chaingun))
                                                         (or (:weapon-pickups world) [])))
                                          (:player world) dists edists vw vh
-                                         chaingun-pickup-shade-now chaingun-pickup-glyph-now)
+                                         chaingun-pickup-shade-now chaingun-pickup-glyph-now :chaingun)
           bp-wb     (paint-pickups-into  bp-wc
                                          (apply vector
                                                 (filter (fn [w] (php/=== (:weapon w) :bfg))
                                                         (or (:weapon-pickups world) [])))
                                          (:player world) dists edists vw vh
-                                         bfg-pickup-shade-now bfg-pickup-glyph-now)
+                                         bfg-pickup-shade-now bfg-pickup-glyph-now :bfg)
           bp-wi     (paint-pickups-into  bp-wb
                                          (apply vector
                                                 (filter (fn [w] (php/=== (:weapon w) :incinerator))
                                                         (or (:weapon-pickups world) [])))
                                          (:player world) dists edists vw vh
-                                         incinerator-pickup-shade-now incinerator-pickup-glyph-now)
+                                         incinerator-pickup-shade-now incinerator-pickup-glyph-now :incinerator)
           bp-wr     (paint-pickups-into  bp-wi
                                          (apply vector
                                                 (filter (fn [w] (php/=== (:weapon w) :rocket))
                                                         (or (:weapon-pickups world) [])))
                                          (:player world) dists edists vw vh
-                                         rocket-pickup-shade-now rocket-pickup-glyph-now)
+                                         rocket-pickup-shade-now rocket-pickup-glyph-now :rocket)
           ;; Fireballs paint last into the overlay so an incoming bolt
           ;; sits on top of every pickup glow it crosses.
           bp-proj   (paint-projectiles-into bp-wr (or (:projectiles world) [])
                                             (:player world) dists edists vw vh)
+          ;; Player BFG ball / rocket tracers fly on top of everything.
+          bp-trc    (paint-tracers-into bp-proj (or (:shot-tracers world) [])
+                                        (:player world) dists edists vw vh)
           parts     (buf-mk)]
       (dotimes [row vh]
                (loop [col 0 prev nil run 0]
@@ -630,27 +705,44 @@
                                         (php/> (buf-get blood-cols col) 0.4))
                          sky-row   (buf-get (if in-blood? blood-sky-gradient sky-gradient) row)
                          flr-row   (buf-get (if in-blood? blood-floor-gradient floor-gradient) row)
+                         ;; Base cell: wall/sky/floor + (glyph mode only)
+                         ;; the enemy zones. In sprite mode the glyph
+                         ;; branch is skipped so this resolves the real
+                         ;; wall behind the billboard.
+                         base      (cond
+                                     (php/< row (buf-get tops col))             sky-row
+                                     (php/>= row (buf-get bots col))            flr-row
+                                     (and (not sprites-on) (buf-get emask col))
+                                     (cond
+                                       (php/< row (buf-get mids col))   (buf-get eheads col)
+                                       (php/< row (buf-get lowers col)) (buf-get ebodys col)
+                                       :else                            (buf-get elegss col))
+                                     (php/=== row (buf-get tops col))
+                                     (buf-get shades-top-edge col)
+                                     (php/=== row (php/+ (buf-get tops col) 1))
+                                     (buf-get shades-top-shadow col)
+                                     (php/=== row (php/- (buf-get bots col) 1))
+                                     (buf-get shades-bot-edge col)
+                                     (php/=== row (php/- (buf-get bots col) 2))
+                                     (buf-get shades-bot-shadow col)
+                                     :else
+                                     (buf-get shades-normal col))
                          c         (if (and (php/< row visible-mh) (php/>= col mini-col0))
                                      sky-row
-                                     (or (buf-get bp-proj (php/+ (php/* row vw) col))
-                                         (cond
-                                           (php/< row (buf-get tops col))             sky-row
-                                           (php/>= row (buf-get bots col))            flr-row
-                                           (buf-get emask col)
-                                           (cond
-                                             (php/< row (buf-get mids col))   (buf-get eheads col)
-                                             (php/< row (buf-get lowers col)) (buf-get ebodys col)
-                                             :else                            (buf-get elegss col))
-                                           (php/=== row (buf-get tops col))
-                                           (buf-get shades-top-edge col)
-                                           (php/=== row (php/+ (buf-get tops col) 1))
-                                           (buf-get shades-top-shadow col)
-                                           (php/=== row (php/- (buf-get bots col) 1))
-                                           (buf-get shades-bot-edge col)
-                                           (php/=== row (php/- (buf-get bots col) 2))
-                                           (buf-get shades-bot-shadow col)
-                                           :else
-                                           (buf-get shades-normal col))))]
+                                     (or (buf-get bp-trc (php/+ (php/* row vw) col))
+                                         ;; Sprite mode: overlay the sampled
+                                         ;; Freedoom pixel on the base cell;
+                                         ;; transparent pixels keep the base
+                                         ;; (wall/floor shows through).
+                                         (and sprites-on
+                                              (buf-get emask col)
+                                              (php/>= row (buf-get e-stop col))
+                                              (php/< row (buf-get e-sbot col))
+                                              (enemy-sprite-cell
+                                               (buf-get e-spx col) (buf-get e-sw col) (buf-get e-sh col)
+                                               (buf-get e-sx col)
+                                               (buf-get e-stop col) (buf-get e-sbot col) row))
+                                         base))]
                      (cond
                        (php/=== run 0)  (recur (php/+ col 1) c 1)
                        (php/=== c prev) (recur (php/+ col 1) prev (php/+ run 1))
@@ -681,20 +773,32 @@
             c-row       (php/+ (php/intdiv vh 2) (if firing? -1 0))
             top-col     (buf-get tops c-col)
             bot-col     (buf-get bots c-col)
-            center-cell (or (buf-get bp-proj (php/+ (php/* c-row vw) c-col))
-                            (cond
-                              (php/< c-row top-col)             (buf-get sky-gradient c-row)
-                              (php/>= c-row bot-col)            (buf-get floor-gradient c-row)
-                              (buf-get emask c-col)
-                              (cond
-                                (php/< c-row (buf-get mids c-col))   (buf-get eheads c-col)
-                                (php/< c-row (buf-get lowers c-col)) (buf-get ebodys c-col)
-                                :else                                (buf-get elegss c-col))
-                              (php/=== c-row top-col)           (buf-get shades-top-edge c-col)
-                              (php/=== c-row (php/+ top-col 1)) (buf-get shades-top-shadow c-col)
-                              (php/=== c-row (php/- bot-col 1)) (buf-get shades-bot-edge c-col)
-                              (php/=== c-row (php/- bot-col 2)) (buf-get shades-bot-shadow c-col)
-                              :else                             (buf-get shades-normal c-col)))
+            ;; Mirror the inner row loop's priority so the crosshair `+`
+            ;; lands on the real cell colour, including a sampled enemy
+            ;; sprite pixel in sprite mode (glyph zones only in glyph mode).
+            center-base (cond
+                          (php/< c-row top-col)                        (buf-get sky-gradient c-row)
+                          (php/>= c-row bot-col)                       (buf-get floor-gradient c-row)
+                          (and (not sprites-on) (buf-get emask c-col))
+                          (cond
+                            (php/< c-row (buf-get mids c-col))   (buf-get eheads c-col)
+                            (php/< c-row (buf-get lowers c-col)) (buf-get ebodys c-col)
+                            :else                                (buf-get elegss c-col))
+                          (php/=== c-row top-col)                      (buf-get shades-top-edge c-col)
+                          (php/=== c-row (php/+ top-col 1))            (buf-get shades-top-shadow c-col)
+                          (php/=== c-row (php/- bot-col 1))            (buf-get shades-bot-edge c-col)
+                          (php/=== c-row (php/- bot-col 2))            (buf-get shades-bot-shadow c-col)
+                          :else                                        (buf-get shades-normal c-col))
+            center-cell (or (buf-get bp-trc (php/+ (php/* c-row vw) c-col))
+                            (and sprites-on
+                                 (buf-get emask c-col)
+                                 (php/>= c-row (buf-get e-stop c-col))
+                                 (php/< c-row (buf-get e-sbot c-col))
+                                 (enemy-sprite-cell
+                                  (buf-get e-spx c-col) (buf-get e-sw c-col) (buf-get e-sh c-col)
+                                  (buf-get e-sx c-col)
+                                  (buf-get e-stop c-col) (buf-get e-sbot c-col) c-row))
+                            center-base)
             center-bg   (php/mb_substr center-cell 0
                                        (php/max 0 (php/- (php/mb_strlen center-cell) 1)))
             ;; Overlay chain: each helper takes the parts buffer plus
@@ -702,9 +806,11 @@
             ;; Numbered rebinds so phel lint's shadowed-binding stays
             ;; quiet without changing semantics. Threading (->) would
             ;; be cleaner but trips arity-mismatch lint.
-            p1          (paint-face-overlay       parts world stats vw vh dists edists face-phase)
-            p2          (paint-wall-lights        p1 t vw vh hits hxs hys tops)
-            p3          (paint-door-face          p2 stats vw vh hits tops bots)
+            ;; Face glyph (blinking eyes) is a glyph-era tell; the
+            ;; Freedoom sprites already show a face, so skip it in sprite mode.
+            p1          (if sprites-on parts
+                            (paint-face-overlay parts world stats vw vh dists edists face-phase))
+            p3          (paint-door-face          p1 stats vw vh hits tops bots)
             p4          (paint-crosshair          p3 stats vw vh center-bg)
             p5          (paint-intro-splash       p4 stats vw vh)
             p6          (paint-blood-drops        p5 stats vw vh)

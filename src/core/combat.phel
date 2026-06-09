@@ -68,14 +68,35 @@
   1.0)
 
 (def fire-anim-seconds
-  "Visibility duration of the muzzle flash + tracer after a shot."
-  0.09)
+  "Visibility duration of the recoil kick + muzzle flash + tracer after a
+   shot. Long enough that the gun's bounce reads even if the frame rate
+   dips (a too-short window collapsed the kick into one frame)."
+  0.13)
+
+(def tracer-flight-seconds
+  "Flight time of a cosmetic shot tracer (BFG ball / rocket). The shot's
+   damage is instant (hitscan splash); the tracer is a purely visual
+   projectile that flies from the muzzle to the impact over this window."
+  0.32)
+
+(def tracer-spawn-offset
+  "World-units ahead of the player a tracer spawns, so it clears the
+   muzzle instead of filling the screen on frame one."
+  1.0)
 
 (def fx-ttl-seconds
   "Initial life of a blood splatter. Render slices this lifetime into
    stages (kill flash → slump → collapse → blood gradient) so the
    enemy reads as dying in pieces instead of vanishing instantly."
   0.7)
+
+(def corpse-ttl-seconds
+  "Lifetime of a KILL fx (one carrying the dead enemy's :type, rendered
+   as a Freedoom corpse sprite). Longer than a wound splatter so the
+   body reads after the quick collapse, but short enough that corpses
+   clear fast and don't litter the floor. The renderer normalises the
+   death-frame timeline by this value."
+  0.5)
 
 (def streak-window-seconds
   "Time after a kill during which the next kill chains the streak.
@@ -482,11 +503,52 @@
            (cast-wall-dist world)
            shot-hit-radius max-range dmg dmg-type)))
 
-(defn- push-blood-fx [world hit-pos]
-  (update world :fx
-          (fn [fx]
-            (conj (or fx [])
-                  {:x (:x hit-pos) :y (:y hit-pos) :ttl fx-ttl-seconds}))))
+(defn- push-blood-fx
+  "Append a blood/death fx at `hit-pos`. On a kill the caller passes the
+   dead enemy's `type-kw`, which the renderer uses to draw a collapsing
+   Freedoom corpse sprite; wounds (no type) stay a blood splatter."
+  ([w hp] (push-blood-fx w hp nil))
+  ([world hit-pos type-kw]
+   (update world :fx
+           (fn [fx]
+             (conj (or fx [])
+                   (if type-kw
+                     {:x (:x hit-pos) :y (:y hit-pos) :ttl corpse-ttl-seconds :type type-kw}
+                     {:x (:x hit-pos) :y (:y hit-pos) :ttl fx-ttl-seconds}))))))
+
+(defn- spawn-shot-tracer
+  "Append a cosmetic projectile (`kind` -> a sprite) flying from just
+   ahead of the player toward the impact (`ix`, `iy`). Purely visual; the
+   damage was already applied by the splash."
+  [world kind ix iy]
+  (let [p  (:player world)
+        sx (php/+ (:x p) (php/* tracer-spawn-offset (php/cos (:angle p))))
+        sy (php/+ (:y p) (php/* tracer-spawn-offset (php/sin (:angle p))))]
+    (update world :shot-tracers
+            (fn [ts] (conj (or ts [])
+                           {:x sx :y sy :tx ix :ty iy :kind kind
+                            :t 0.0 :dur tracer-flight-seconds})))))
+
+(defn- corpse-type-at
+  "Type of a just-killed enemy sitting at `hit-pos` (the corpse cell), or
+   nil. The multi-target shots (pistol pierce, shotgun spread, BFG) only
+   know a hit-pos + kill count, so this recovers the primary kill's type
+   from `enemies` (alive false within half a cell of hit-pos) to tag the
+   blood fx for the death-sprite renderer."
+  [enemies hit-pos]
+  (when hit-pos
+    (let [hx (:x hit-pos) hy (:y hit-pos) n (count enemies)]
+      ;; Nearest dead enemy within ~1.5 cells of the impact point.
+      (loop [i 0 best nil bestd 2.25]
+        (if (php/>= i n)
+          (when best (:type best))
+          (let [e  (get enemies i)
+                dx (php/- (:x e) hx)
+                dy (php/- (:y e) hy)
+                d2 (php/+ (php/* dx dx) (php/* dy dy))]
+            (if (and (false? (:alive e)) (php/< d2 bestd))
+              (recur (php/+ i 1) e d2)
+              (recur (php/+ i 1) best bestd))))))))
 
 (def loot-drop-chance
   "Probability cutoffs for a kill drop, layered on a single uniform roll
@@ -617,7 +679,8 @@
                     (let [hs (hit-stop-for (or (:max-lives killed-e) 1))]
                       (if (php/> hs 0.0) (assoc with-loot :hit-stop-secs hs) with-loot))
                     with-loot)]
-    (push-blood-fx (assoc juiced :fire-anim fire-anim-seconds) hit-pos)))
+    (push-blood-fx (assoc juiced :fire-anim fire-anim-seconds) hit-pos
+                   (when killed? (:type killed-e)))))
 
 (defn- on-shot-miss [world]
   (assoc world :fire-anim fire-anim-seconds))
@@ -778,12 +841,17 @@
         juiced       (if killed?
                        (assoc unlocked :hit-stop-secs
                               (if boss-killed? hit-stop-boss-seconds hit-stop-tough-seconds))
-                       unlocked)]
+                       unlocked)
+        ;; Cosmetic flying projectile: a green BFG ball or a rocket.
+        tracered     (spawn-shot-tracer juiced
+                                        (if (php/=== (:weapon world) :bfg) :bfg-ball :rocket)
+                                        ix iy)]
     ;; bfg has no wound-only signal (splash returns just a kill count), so
     ;; a kill is the hit proxy: a killing blast attenuates by the impact
     ;; distance, a wall hit / whiff plays at full volume.
     (enqueue-shot-sfx
-     (apply-heat (push-blood-fx (assoc juiced :fire-anim fire-anim-seconds) hit-pos))
+     (apply-heat (push-blood-fx (assoc tracered :fire-anim fire-anim-seconds) hit-pos
+                                (when killed? (corpse-type-at woken hit-pos))))
      world killed? killed? hit-pos)))
 
 (defn- finish-multikill
@@ -823,7 +891,10 @@
                        unlocked)
         based        (assoc juiced :fire-anim fire-anim-seconds)]
     (enqueue-shot-sfx
-     (apply-heat (if hit? (push-blood-fx based hit-pos) based))
+     (apply-heat (if hit?
+                   (push-blood-fx based hit-pos
+                                  (when killed? (corpse-type-at enemies-after hit-pos)))
+                   based))
      world hit? killed? (or hit-pos {:x (:x p) :y (:y p)}))))
 
 (defn- pierce-fire

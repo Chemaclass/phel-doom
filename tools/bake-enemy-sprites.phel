@@ -1,0 +1,191 @@
+(ns bake-enemies (:require phel-doom.io.wad :refer [parse-header parse-directory find-lump]))
+
+;; Bake Freedoom (BSD) enemy front-facing sprites into a committed
+;; 256-colour data file. Render samples these into the billboard span,
+;; so they are kept at native resolution (no downsample here).
+;; Usage: vendor/bin/phel run tools/bake-enemy-sprites.phel <freedoom1.wad> <freedoom2.wad>
+
+(defn u16 [s o] (php/aget (php/unpack "v" (php/substr s o 2)) 1))
+(defn u32 [s o] (php/aget (php/unpack "V" (php/substr s o 4)) 1))
+(defn u8  [s o] (php/ord (php/substr s o 1)))
+
+(defn decode-pic [s base]
+  (let [w (u16 s base) h (u16 s (php/+ base 2)) px (php/array)]
+    (dotimes [i (php/* w h)] (php/aset px i -1))
+    (dotimes [col w]
+             (let [colofs (u32 s (php/+ base 8 (php/* col 4)))]
+               (loop [p (php/+ base colofs)]
+                 (let [td (u8 s p)]
+                   (when (php/!== td 255)
+                     (let [len (u8 s (php/+ p 1)) dat (php/+ p 3)]
+                       (dotimes [k len]
+                                (let [y (php/+ td k)]
+                                  (when (php/< y h) (php/aset px (php/+ (php/* y w) col) (u8 s (php/+ dat k))))))
+                       (recur (php/+ dat len 1))))))))
+    {:w w :h h :px px}))
+
+(defn palette [s base]
+  (let [pal (php/array)]
+    (dotimes [i 256]
+             (php/aset pal i [(u8 s (php/+ base (php/* i 3)))
+                              (u8 s (php/+ base (php/* i 3) 1))
+                              (u8 s (php/+ base (php/* i 3) 2))]))
+    pal))
+
+(defn rgb->256 [r g b]
+  (if (and (php/=== r g) (php/=== g b))
+    (cond (php/< r 8)   16 (php/> r 248) 231
+          :else         (php/+ 232 (php/intval (php/round (php// (php/* (php/- r 8) 24) 247)))))
+    (php/+ 16 (php/* 36 (php/intval (php/round (php// (php/* r 5) 255))))
+           (php/* 6 (php/intval (php/round (php// (php/* g 5) 255))))
+           (php/intval (php/round (php// (php/* b 5) 255))))))
+
+(defn load-wad [path]
+  (let [s (php/file_get_contents path) dir (parse-directory s (parse-header s))]
+    {:s s :dir dir :pal (palette s (:offset (find-lump dir "PLAYPAL")))}))
+
+;; Return "{:w .. :h .. :px [..]}" for `lump`, or nil if absent.
+(defn grid-str [wad lump]
+  (let [e (find-lump (:dir wad) lump)]
+    (when e
+      (let [s   (:s wad) pal (:pal wad)
+            pic (decode-pic s (:offset e))
+            w   (:w pic) h   (:h pic) px  (:px pic) row (php/array)]
+        (dotimes [i (php/* w h)]
+                 (let [v (php/aget px i)]
+                   (php/array_push row (if (php/=== v -1) "-1"
+                                           (php/strval (rgb->256 (php/aget (php/aget pal v) 0)
+                                                                 (php/aget (php/aget pal v) 1)
+                                                                 (php/aget (php/aget pal v) 2)))))))
+        (php/sprintf "{:w %d :h %d :px [%s]}" w h (php/implode " " row))))))
+
+(defn entry [wad k lump]
+  (let [g (grid-str wad lump)]
+    (when g (php/sprintf "\n   %s %s" k g))))
+
+;; Area-averaged downscale of `lump` so its longest side is <= `tmax`.
+;; Each target pixel averages the RGB of the opaque source pixels it
+;; covers (transparent ones excluded; all-transparent -> -1), then
+;; requantises to xterm-256. Pre-averaging makes a small on-screen
+;; pickup read as a clean colour blob instead of aliased point samples.
+;; Returns "{:w .. :h .. :px [..]}".
+(defn mip-str [wad lump tmax]
+  (let [e (find-lump (:dir wad) lump)]
+    (when e
+      (let [s   (:s wad) pal (:pal wad)
+            pic (decode-pic s (:offset e))
+            w   (:w pic) h   (:h pic) px  (:px pic)
+            mx  (php/max w h)
+            tw  (php/max 1 (php/intval (php/round (php// (php/* w tmax) mx))))
+            th  (php/max 1 (php/intval (php/round (php// (php/* h tmax) mx))))
+            row (php/array)]
+        (dotimes [ty th]
+                 (dotimes [tx tw]
+                          (let [sx0 (php/intdiv (php/* tx w) tw)
+                                sx1 (php/max (php/+ sx0 1) (php/intdiv (php/* (php/+ tx 1) w) tw))
+                                sy0 (php/intdiv (php/* ty h) th)
+                                sy1 (php/max (php/+ sy0 1) (php/intdiv (php/* (php/+ ty 1) h) th))
+                                acc (php/array)]
+                            (php/aset acc 0 0) (php/aset acc 1 0) (php/aset acc 2 0) (php/aset acc 3 0)
+                            (loop [sy sy0]
+                              (when (php/< sy sy1)
+                                (loop [sx sx0]
+                                  (when (php/< sx sx1)
+                                    (let [v (php/aget px (php/+ (php/* sy w) sx))]
+                                      (when (php/!== v -1)
+                                        (let [c (php/aget pal v)]
+                                          (php/aset acc 0 (php/+ (php/aget acc 0) (php/aget c 0)))
+                                          (php/aset acc 1 (php/+ (php/aget acc 1) (php/aget c 1)))
+                                          (php/aset acc 2 (php/+ (php/aget acc 2) (php/aget c 2)))
+                                          (php/aset acc 3 (php/+ (php/aget acc 3) 1)))))
+                                    (recur (php/+ sx 1))))
+                                (recur (php/+ sy 1))))
+                            (php/array_push row
+                                            (if (php/=== 0 (php/aget acc 3))
+                                              "-1"
+                                              (php/strval (rgb->256 (php/intdiv (php/aget acc 0) (php/aget acc 3))
+                                                                    (php/intdiv (php/aget acc 1) (php/aget acc 3))
+                                                                    (php/intdiv (php/aget acc 2) (php/aget acc 3)))))))))
+        (php/sprintf "{:w %d :h %d :px [%s]}" tw th (php/implode " " row))))))
+
+(defn mip-entry [wad k lump tmax]
+  (let [g (mip-str wad lump tmax)]
+    (when g (php/sprintf "\n   %s %s" k g))))
+
+;; A death entry: "\n   :imp [<grid> <grid> ...]" of whatever frames
+;; exist (collapse frames then corpse). nil when none resolve.
+(defn death-entry [wad k lumps]
+  (let [parts (php/array)]
+    (foreach [l lumps]
+      (let [g (grid-str wad l)]
+        (when g (php/array_push parts g))))
+    (when (php/> (php/count parts) 0)
+      (php/sprintf "\n   %s [%s]" k (php/implode " " parts)))))
+
+(let [argv   (php/aget php/$_SERVER "argv")
+      wad1   (if (php/>= (php/count argv) 4) (php/aget argv 3) "/tmp/fd1.wad")
+      wad2   (if (php/>= (php/count argv) 5) (php/aget argv 4) "/tmp/fd2.wad")
+      w1     (load-wad wad1)
+      w2     (load-wad wad2)
+      ;; sprite-id -> [wad lump]. demon sprite is shared by pinky+spectre.
+      specs  [[":imp" w1 "TROOA1"] [":demon" w1 "SARGA1"] [":caco" w1 "HEADA1"]
+              [":baron" w1 "BOSSA1"] [":cyber" w1 "CYBRA1"] [":mancubus" w2 "FATTA1"]
+              [":revenant" w2 "SKELA1D1"] [":archvile" w2 "VILEA1D1"]]
+      ;; type -> [collapse... corpse] death frames; missing frames are
+      ;; filtered, so the render gracefully uses whatever baked.
+      deaths [[":imp" w1 ["TROOJ0" "TROOL0" "TROOM0"]]
+              [":demon" w1 ["SARGJ0" "SARGL0" "SARGN0"]]
+              [":caco" w1 ["HEADI0" "HEADK0" "HEADL0"]]
+              [":baron" w1 ["BOSSJ0" "BOSSL0" "BOSSN0"]]
+              [":cyber" w1 ["CYBRJ0" "CYBRM0" "CYBRP0"]]
+              [":mancubus" w2 ["FATTJ0" "FATTL0" "FATTN0"]]
+              [":revenant" w2 ["SKELH0" "SKELJ0" "SKELL0"]]
+              [":archvile" w2 ["VILEJ0" "VILEM0" "VILEP0"]]]
+      sb     (php/array) n      (php/array) nd     (php/array)]
+  (php/aset n 0 0) (php/aset nd 0 0)
+  (php/array_push sb "(ns phel-doom.io.render.enemy-sprites-data)\n\n")
+  (php/array_push sb ";; GENERATED by tools/bake-enemy-sprites.phel from Freedoom (BSD).\n")
+  (php/array_push sb ";; Native-res xterm-256 grids (w*h, -1 transparent). pinky + spectre\n")
+  (php/array_push sb ";; reuse :demon. Re-bake (do not hand-edit).\n\n")
+  (php/array_push sb "(def enemy-sprites\n  {")
+  (foreach [spec specs]
+    (let [s (entry (php/aget spec 1) (php/aget spec 0) (php/aget spec 2))]
+      (when s (php/array_push sb s) (php/aset n 0 (php/+ (php/aget n 0) 1)))))
+  (php/array_push sb "})\n\n")
+  ;; Projectile sprites: enemy fireball + the player's flying BFG ball,
+  ;; rocket and plasma bolt (cosmetic tracers).
+  (php/array_push sb "(def projectile-sprites\n  {")
+  (php/array_push sb (entry w1 ":fireball" "BAL1A0"))
+  (php/array_push sb (entry w1 ":bfg-ball" "BFS1A0"))
+  (php/array_push sb (entry w1 ":rocket" "MISLB0"))
+  (php/array_push sb (entry w1 ":plasma" "PLSSA0"))
+  (php/array_push sb "})\n\n")
+  ;; Floating pickup items (ammo, health, armor, keys, weapons, powerups).
+  (php/array_push sb "(def pickup-sprites\n  {")
+  (foreach [pk [[":heart" "MEDIA0"] [":armor" "ARM1A0"] [":armor-shard" "BON2A0"]
+                [":ammo" "AMMOA0"] [":berserk" "PSTRA0"] [":invuln" "PINVA0"]
+                [":soulsphere" "SOULA0"] [":backpack" "BPAKA0"]
+                [":keycard-blue" "BKEYA0"] [":keycard-red" "RKEYA0"] [":keycard-yellow" "YKEYA0"]
+                [":shotgun" "SHOTA0"] [":chaingun" "MGUNA0"] [":bfg" "BFUGA0"]
+                [":incinerator" "PLASA0"] [":rocket" "LAUNA0"] [":chainsaw" "CSAWA0"]]]
+           ;; Pickups render small on screen, so bake an area-averaged
+           ;; mip (longest side 18 px) -> clean at distance, not aliased.
+    (let [s (mip-entry w1 (php/aget pk 0) (php/aget pk 1) 18)]
+      (when s (php/array_push sb s))))
+  (php/array_push sb "})\n\n")
+  ;; Per-type death frames: collapse frame(s) then corpse.
+  (php/array_push sb "(def death-sprites\n  {")
+  (foreach [d deaths]
+    (let [s (death-entry (php/aget d 1) (php/aget d 0) (php/aget d 2))]
+      (when s (php/array_push sb s) (php/aset nd 0 (php/+ (php/aget nd 0) 1)))))
+  (php/array_push sb "})\n\n")
+  ;; Blood spurt frames (big -> small) for a wound hit splat.
+  (php/array_push sb "(def blood-sprites\n  ")
+  (let [grids (php/array)]
+    (foreach [l ["BLUDA0" "BLUDB0" "BLUDC0"]]
+      (let [g (grid-str w1 l)] (when g (php/array_push grids g))))
+    (php/array_push sb (php/sprintf "[%s]" (php/implode " " grids))))
+  (php/array_push sb ")\n")
+  (php/file_put_contents "src/io/render/enemy_sprites_data.phel" (php/implode "" sb))
+  (php/printf "wrote enemy_sprites_data.phel (%d enemies, %d death seqs, 1 projectile, 1 blood seq)\n"
+              (php/aget n 0) (php/aget nd 0)))

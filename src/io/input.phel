@@ -17,11 +17,30 @@
   (php/stream_set_blocking php/STDIN false)
   (print "\e[?1049h\e[?25l\e[?7l\e[2J\e[H\e[>3u"))
 
+(defn- drain-stdin!
+  "Read and discard pending STDIN bytes for up to `ms` milliseconds.
+   Used on teardown to swallow an in-flight kitty key-release report for
+   the quit key, which would otherwise echo onto the shell prompt once
+   cooked mode is restored."
+  [^int ms]
+  (let [deadline (php/+ (php/microtime true) (php// (php/* 1.0 ms) 1000.0))]
+    (loop []
+      (php/fread php/STDIN 256)
+      (php/usleep 10000)
+      (when (php/< (php/microtime true) deadline)
+        (recur)))))
+
 (defn restore!
   "Pop any kitty keyboard flags this session pushed, restore cooked
    terminal mode and leave the alternate screen buffer."
   []
-  (print "\e[<u\e[?25h\e[?7h\e[?1049l")
+  ;; Pop the kitty protocol first so the terminal stops emitting key
+  ;; reports, then swallow the trailing release event for the quit key
+  ;; before cooked mode (echo on) would print it to the shell.
+  (print "\e[<u")
+  (php/flush)
+  (drain-stdin! 120)
+  (print "\e[?25h\e[?7h\e[?1049l")
   (php/exec "stty sane"))
 
 (defn read-key

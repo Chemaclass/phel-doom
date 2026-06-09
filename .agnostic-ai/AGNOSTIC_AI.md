@@ -30,6 +30,7 @@ Authoritative for their topic. Load skill before guessing. Match workflow first,
 - `/fix` → auto-format + lint (`.claude/skills/fix/SKILL.md`)
 - `/changelog [entry]` → update `## Unreleased` (`.claude/skills/changelog/SKILL.md`)
 - `/changelog-simplify` → tighten + de-dup `## [Unreleased]`, commit + push (`.claude/skills/changelog-simplify/SKILL.md`)
+- `/release [version]` → cut release via `tools/release.sh` + verify phar/GH artifact (`.claude/skills/release/SKILL.md`)
 - `/phel-repl <expr>` → eval Phel expression (`.claude/skills/phel-repl/SKILL.md`)
 - `/perf-bench [scope]` → cast/render phase timing (`.claude/skills/perf-bench/SKILL.md`)
 - `/play` → launch game, smoke-test feature manually (`.claude/skills/play/SKILL.md`)

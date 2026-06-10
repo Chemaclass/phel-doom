@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Performance
+
+- Big screens are no longer capped at 30fps. The perf-mode cadence ceiling was artificial: on hardware fast enough to render a wide-terminal frame inside the 60fps budget the player was pinned to 30fps for no reason, and on slower hardware the per-frame sleep already floored at the minimum yield. Cadence is now a uniform 60fps target at every terminal size; framerate tracks render capability and degrades smoothly toward render-native below it.
+
 ### Fixed
 
 - Horizontal FOV is now clamped at 90° on wide terminals. Past 140 cols the ray spread stops widening (it bowed out toward 110°+ on ultrawide / fullscreen terminals, warping walls at the screen edges); the extra columns now add horizontal resolution instead of fisheye distortion. Terminals at or below 140 cols are unchanged. Wall scale is untouched.

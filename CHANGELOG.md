@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Added
+
+- `--max-cols=N` / `--max-rows=N` flags cap the render size on a larger terminal: the game draws a smaller inset frame and leaves the surplus as a blank border. Useful on ultrawide / fullscreen terminals where a full-width cast is heavy and (past the 90-degree FOV clamp) adds no field of view - cap to ~140 cols for a crisp, cheap render. 0 / unset fills the terminal. Caps only shrink, never grow past the real terminal, and never below a small playable floor. The inset is anchored top-left; centered letterboxing is a possible follow-up (the HUD/minimap overlays use absolute cursor positioning that would need a global offset).
+
 ### Changed
 
 - Wide terminals now render crisp 1:1 walls. The big-screen "perf mode" that cast one ray per 2 columns and replicated it (chunky-looking walls past 200 cols / 12,000 cells) has been removed; every terminal size now uses the exact 1:1 cast. Combined with the uniform 60fps cadence, big screens render at full quality and let framerate track the machine instead of snapping to a degraded mode.

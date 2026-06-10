@@ -24,7 +24,7 @@
   (:require phel-doom.demo.phases :as showcase)
   (:require phel-doom.core.rng    :as rng)
   (:require phel-doom.core.level    :refer [build-world num-levels place-secret-reward])
-  (:require phel-doom.core.perf     :refer [target-frame-us])
+  (:require phel-doom.core.perf     :refer [target-frame-us cap-dims])
   (:require phel-doom.core.version  :refer [version])
   (:require phel-doom.io.scores   :refer [update-scores!])
   (:require phel-doom.io.render   :refer [render! clear-screen
@@ -828,7 +828,7 @@
         (assoc world :save-flash-secs save-flash-seconds :save-flash-msg "NO SAVE")))
     :else         world))
 
-(defn- game-loop [world0]
+(defn- game-loop [world0 max-rows max-cols]
   (let [t-start (php/microtime true)]
     (loop [world     world0
            t-last    t-start
@@ -836,7 +836,12 @@
            fps       0
            prev-keys initial-key-snapshot
            dims      [0 0]]
-      (let [[rows cols] (term-size)]
+      ;; Cap the live terminal size to the configured render bounds
+      ;; (--max-cols / --max-rows). A 0 cap fills the terminal; a
+      ;; positive cap shrinks the render area, leaving the surplus as a
+      ;; blank inset border (clear-screen on resize keeps it clean).
+      (let [[trows tcols] (term-size)
+            [rows cols]   (cap-dims trows tcols max-rows max-cols)]
         (redraw-if-resized dims rows cols)
         (let [render-start (php/microtime true)]
           (draw-frame world fps frame-ms rows cols)
@@ -989,8 +994,12 @@
    clamped. Death + retry reset to L1 (the start-level only seeds
    the initial loop entry). `demo-phase` (nil for normal play, 1..4 for
    the tech-talk showcase) applies a per-phase world transform after
-   build-world (see phel-doom.demo.phases/apply-phase)."
-  [diff god? armory? full-map? demo-phase start-level init-seed init-settings]
+   build-world (see phel-doom.demo.phases/apply-phase). `max-rows` /
+   `max-cols` (from --max-rows / --max-cols, 0 = uncapped) clamp the
+   per-frame render size; the game-loop applies them to the live
+   terminal size so a big terminal renders a smaller inset frame."
+  [diff god? armory? full-map? demo-phase start-level init-seed init-settings
+   max-rows max-cols]
   (loop [level       (php/max 1 (php/min num-levels (or start-level 1)))
          lives       max-lives
          carry-kills 0
@@ -1040,7 +1049,7 @@
           ;; Tech-talk showcase: strip subsystems this phase hasn't
           ;; revealed yet. Pure world->world; no-op for normal play.
           w3d    (if demo-phase (showcase/apply-phase demo-phase w3) w3)
-          result (game-loop w3d)]
+          result (game-loop w3d max-rows max-cols)]
       (cond
         (= result :quit)
         nil
@@ -1162,6 +1171,14 @@
       d
       (:difficulty settings))))
 
+(defn- opt-int
+  "Coerce a CLI option string to a non-negative int. nil / empty / a
+   non-numeric value → 0 (treated as 'no cap' by the render-size caps)."
+  [raw]
+  (if (or (nil? raw) (= raw ""))
+    0
+    (php/max 0 (php/intval raw))))
+
 (defn- run-play [ctx]
   (init-input!)
   (let [diff-raw    (cli/opt ctx "difficulty")
@@ -1174,6 +1191,11 @@
                       (nil? lv-raw) nil
                       (= lv-raw "") nil
                       :else         (php/intval lv-raw))
+        ;; Render-size caps (--max-cols / --max-rows). Empty / nil / 0 →
+        ;; no cap on that axis (fill the terminal). A positive value
+        ;; shrinks the render area, leaving a blank inset border.
+        max-cols    (opt-int (cli/opt ctx "max-cols"))
+        max-rows    (opt-int (cli/opt ctx "max-rows"))
         ;; Demo (issue #64): --demo replays a recorded run (forces its
         ;; seed + input stream, skips the menu); --record captures the
         ;; run's seed + per-frame input to a file on exit.
@@ -1208,7 +1230,8 @@
           ;; + end screens). N-toggle starts/stops it mid-run; teardown
           ;; always stops it so no loop process is orphaned.
           (music/start-music!)
-          (run-levels diff god? armory? full-map? nil lv init-seed settings)
+          (run-levels diff god? armory? full-map? nil lv init-seed settings
+                      max-rows max-cols)
           (music/stop-music!)
           (when record? (demo/save-recording! record-path))
           (demo/reset-off!)
@@ -1239,7 +1262,7 @@
     ;; god + armory (own every weapon, ammo refilled to :armory-reserve
     ;; = 99 each tick by combat/tick-armory) + full-map. The phase stamps
     ;; :show-map true so the corner minimap is visible by default.
-    (run-levels :normal true true true phase 1 (rng/fresh-seed) settings0)
+    (run-levels :normal true true true phase 1 (rng/fresh-seed) settings0 0 0)
     (music/stop-music!)
     (demo/reset-off!)
     (restore!)
@@ -1281,5 +1304,13 @@
           {:name    "demo"
            :mode    :optional
            :doc     "Replay a demo file recorded with --record (skips the start menu)."
+           :default ""}
+          {:name    "max-cols"
+           :mode    :optional
+           :doc     "Cap the render width to N columns on a wider terminal (the surplus becomes a blank inset border). 0 / unset fills the terminal. Handy on ultrawide / fullscreen terminals where a full-width cast is heavy and adds no FOV past the 90-degree clamp."
+           :default ""}
+          {:name    "max-rows"
+           :mode    :optional
+           :doc     "Cap the render height to N rows on a taller terminal (surplus becomes a blank inset border). 0 / unset fills the terminal."
            :default ""}]
    :run  run-play})

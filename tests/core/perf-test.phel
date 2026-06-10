@@ -1,7 +1,8 @@
 (ns phel-doom-tests.core.perf-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.perf :refer [target-frame-us render-scale
-                                        standard-frame-us standard-scale]))
+                                        standard-frame-us standard-scale
+                                        cap-dims min-render-cols min-render-rows]))
 
 (deftest test-target-frame-us-uniform-60fps
   ;; Cadence is a uniform ~60fps (16.67ms budget) at EVERY size. The
@@ -25,3 +26,28 @@
   ;; Pin the actual value: crisp means 1, not "some small N".
   (is (= 1 standard-scale))
   (is (= 1 (render-scale 500 120))))
+
+(deftest test-cap-dims-zero-cap-fills-terminal
+  ;; A cap of 0 on an axis means "use the full terminal" on that axis.
+  (is (= [60 240] (cap-dims 60 240 0 0)))
+  (is (= [60 120] (cap-dims 60 240 0 120)))   ; only cols capped
+  (is (= [40 240] (cap-dims 60 240 40 0))))   ; only rows capped
+
+(deftest test-cap-dims-shrinks-only
+  ;; Caps shrink the render area; they never grow past the real terminal.
+  (is (= [30 120] (cap-dims 30 120 60 240)))  ; caps exceed terminal → no-op
+  (is (= [30 120] (cap-dims 30 120 30 120)))) ; cap == terminal → no-op
+
+(deftest test-cap-dims-applies-cap-below-terminal
+  ;; A cap below the terminal size clamps the render area; the surplus
+  ;; becomes a blank inset border.
+  (is (= [40 160] (cap-dims 80 320 40 160))))
+
+(deftest test-cap-dims-respects-floor
+  ;; A cap below the hard floor is raised to the floor (viewport never
+  ;; collapses) — as long as the terminal itself is at least the floor.
+  (is (= [min-render-rows min-render-cols]
+         (cap-dims 100 200 5 10)))
+  ;; …but a terminal smaller than the floor still wins (can't draw
+  ;; wider than the terminal).
+  (is (= [10 20] (cap-dims 10 20 5 10))))

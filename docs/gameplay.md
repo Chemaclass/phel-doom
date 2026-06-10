@@ -62,3 +62,5 @@ Hold `space` for auto-fire on pistol/chaingun/chainsaw/incinerator. Shotgun, BFG
 - `--god` (`-g`) - invincible
 - `--armory` (`-a`) - start with all weapons
 - `--full-map` (`-f`) - reveal map
+- `--max-cols=N` - cap render width to N columns on a wider terminal; the surplus becomes a blank inset border (0 / unset fills the terminal)
+- `--max-rows=N` - cap render height to N rows on a taller terminal (0 / unset fills the terminal)

@@ -13,7 +13,7 @@ For each screen column, fire a ray from the player at an angle offset from facin
 
 - `max-depth`: ray stops at 12 units (beyond renders sky/floor)
 - `proj-dist`: 70 cell perspective constant (controls wall scale)
-- `fov-proj-dist`: width-aware projection distance for ray spread; clamps FOV at 90° past 140 cols (see Angular offset below)
+- `fov-proj-dist`: width-aware projection distance for ray spread; clamps FOV at 100° (`fov-max-deg`) on wide terminals (see Angular offset below)
 
 ## DDA: grid-aligned traversal
 
@@ -67,7 +67,7 @@ Cast `width / scale` rays; return 5 parallel PHP arrays (one per output column).
 
 Each column's ray angle is `atan(col-offset / fov-proj-dist)`. Making the terminal wider expands FOV without scaling walls. A linear sweep would scale walls with width - wrong.
 
-FOV is clamped at 90°. `fov-proj-dist` returns the flat `proj-dist` below `fov-clamp-width` (= `2 * proj-dist` = 140 cols), so narrow terminals widen naturally (80 cols ~60°, 120 cols ~81°). At or above 140 cols it scales `proj-dist` up with width, pinning the horizontal FOV at 90° so ultrawide terminals gain horizontal resolution instead of bowing out into edge fisheye. Wall-height projection still uses the flat `proj-dist`, so the clamp never touches wall scale.
+FOV is clamped at `fov-max-deg` (100°, the widescreen sweet spot - roomy without warp). `fov-proj-dist` returns the flat `proj-dist` below `fov-clamp-width` (~167 cols, derived so the natural FOV reaches 100° there), so narrow terminals widen naturally (80 cols ~60°, 120 cols ~81°, 140 cols ~90°). At or above the clamp width it scales `proj-dist` up with width, pinning the horizontal FOV at 100° so ultrawide terminals gain horizontal resolution instead of bowing out into edge fisheye (which set in past ~110°). Wall-height projection still uses the flat `proj-dist`, so the clamp never touches wall scale.
 
 ### Fish-eye correction
 

@@ -184,9 +184,10 @@
    Indexes 0..2vh-1; the horizon sits at sub-row `vh`. Sub-rows below it
    map to `k / (s+0.5 - vh)`, clamped to `max-depth`; sub-rows at/above
    the horizon get `max-depth` (never sampled as floor). `k` is the
-   projection numerator for ONE sub-row of drop: `floor-cast-k-sub` at
-   full detail (sub-row = half a terminal row), `floor-cast-k` in
-   pixel-doubled mode (sub-row = one whole terminal row)."
+   projection numerator for ONE sub-row of drop (`floor-cast-k-sub`,
+   sub-row = half a terminal row). The pixel-doubled renderer passes
+   `vh` = 2x its scene height so the table covers its 4-per-scene-row
+   sub-pixel space - the same sub-pixel density as full detail."
   [^int vh ^float k]
   (let [arr    (php/array)
         sub    (php/* 2 vh)
@@ -476,7 +477,7 @@
         ;; Pixel-doubled sky: the same sub-row gradient curve left as raw
         ;; codes so the emitter can paint sub-row 2r on the upper output
         ;; row and 2r+1 on the lower as two solid cells.
-        sky-sub-codes                      (when px2? (build-sky-codes-sub svh shade-code-table))
+        sky-sub-codes                      (when px2? (build-sky-codes-sub (php/* 2 svh) shade-code-table))
         ;; Floor: same grey gradient with subtle tile banding (odd
         ;; rows one fade step darker).
         floor-gradient                     (:floor grads)
@@ -552,8 +553,8 @@
         {:x pfx :y pfy}                    (:player world)
         floor-dperp                        (build-floor-dperp svh)
         floor-level                        (build-floor-level floor-dperp svh)
-        floor-dperp-sub                    (build-floor-dperp-sub svh (if px2? floor-cast-k floor-cast-k-sub))
-        floor-level-sub                    (build-floor-level-sub floor-dperp-sub svh)
+        floor-dperp-sub                    (build-floor-dperp-sub (if px2? (php/* 2 svh) svh) floor-cast-k-sub)
+        floor-level-sub                    (build-floor-level-sub floor-dperp-sub (if px2? (php/* 2 svh) svh))
         _                                  (when debug?
                                              (record-cast-ms!
                                               (php/* (php/- (php/microtime true) t-cast-start) 1000.0)))
@@ -1031,10 +1032,12 @@
               (if (php/>= col svw)
                 (do (when (php/> ra 0)
                       (buf-push parts pa)
-                      (buf-push parts (php/str_repeat " " (php/- ra 1))))
+                      (buf-push parts (php/str_repeat (if (php/str_ends_with pa "▀") "▀" " ")
+                                                      (php/- ra 1))))
                     (when (php/> rb 0)
                       (buf-push rowb pb)
-                      (buf-push rowb (php/str_repeat " " (php/- rb 1)))))
+                      (buf-push rowb (php/str_repeat (if (php/str_ends_with pb "▀") "▀" " ")
+                                                     (php/- rb 1)))))
                 ;; NOTE: every buf-push in this loop lives in STATEMENT
                 ;; position (the body below, before recur). A push inside
                 ;; a let-binding VALUE compiles into an IIFE closure;
@@ -1067,30 +1070,52 @@
                                   (php/< r2 tops-c)
                                   (if in-blood?
                                     -3
-                                    (php/+ (php/* (php/aget sky-sub-codes (php/* 2 r2)) 256)
-                                           (php/aget sky-sub-codes (php/+ (php/* 2 r2) 1))))
+                                    (let [s4 (php/* 4 r2)]
+                                      (php/+ (php/* (php/+ (php/* (php/+ (php/* (php/aget sky-sub-codes s4) 256)
+                                                                         (php/aget sky-sub-codes (php/+ s4 1)))
+                                                                  256)
+                                                           (php/aget sky-sub-codes (php/+ s4 2)))
+                                                    256)
+                                             (php/aget sky-sub-codes (php/+ s4 3)))))
                                   (php/>= r2 bots-c)
                                   (if (or in-blood? (not floor-tex-on?))
                                     -4
-                                    (let [st  (php/* 2 r2)
-                                          sb  (php/+ st 1)
+                                    (let [s4  (php/* 4 r2)
+                                          s4b (php/+ s4 1)
+                                          s4c (php/+ s4 2)
+                                          s4d (php/+ s4 3)
                                           fdx (buf-get floordxs col)
                                           fdy (buf-get floordys col)
-                                          dpt (php/aget floor-dperp-sub st)
-                                          dpb (php/aget floor-dperp-sub sb)
-                                          fxt (php/+ pfx (php/* dpt fdx))
-                                          fyt (php/+ pfy (php/* dpt fdy))
-                                          fxb (php/+ pfx (php/* dpb fdx))
-                                          fyb (php/+ pfy (php/* dpb fdy))
-                                          txt (php/intval (php/* (php/- fxt (php/floor fxt)) 64))
-                                          tyt (php/intval (php/* (php/- fyt (php/floor fyt)) 64))
-                                          txb (php/intval (php/* (php/- fxb (php/floor fxb)) 64))
-                                          tyb (php/intval (php/* (php/- fyb (php/floor fyb)) 64))]
-                                      (php/+ (php/* (php/aget (php/aget tex-fade-table (php/aget floor-level-sub st))
-                                                              (php/aget floor-tex-px (php/+ (php/* tyt 64) txt)))
+                                          dp0 (php/aget floor-dperp-sub s4)
+                                          dp1 (php/aget floor-dperp-sub s4b)
+                                          dp2 (php/aget floor-dperp-sub s4c)
+                                          dp3 (php/aget floor-dperp-sub s4d)
+                                          fx0 (php/+ pfx (php/* dp0 fdx))
+                                          fy0 (php/+ pfy (php/* dp0 fdy))
+                                          fx1 (php/+ pfx (php/* dp1 fdx))
+                                          fy1 (php/+ pfy (php/* dp1 fdy))
+                                          fx2 (php/+ pfx (php/* dp2 fdx))
+                                          fy2 (php/+ pfy (php/* dp2 fdy))
+                                          fx3 (php/+ pfx (php/* dp3 fdx))
+                                          fy3 (php/+ pfy (php/* dp3 fdy))
+                                          tc0 (php/aget floor-tex-px
+                                                        (php/+ (php/* (php/intval (php/* (php/- fy0 (php/floor fy0)) 64)) 64)
+                                                               (php/intval (php/* (php/- fx0 (php/floor fx0)) 64))))
+                                          tc1 (php/aget floor-tex-px
+                                                        (php/+ (php/* (php/intval (php/* (php/- fy1 (php/floor fy1)) 64)) 64)
+                                                               (php/intval (php/* (php/- fx1 (php/floor fx1)) 64))))
+                                          tc2 (php/aget floor-tex-px
+                                                        (php/+ (php/* (php/intval (php/* (php/- fy2 (php/floor fy2)) 64)) 64)
+                                                               (php/intval (php/* (php/- fx2 (php/floor fx2)) 64))))
+                                          tc3 (php/aget floor-tex-px
+                                                        (php/+ (php/* (php/intval (php/* (php/- fy3 (php/floor fy3)) 64)) 64)
+                                                               (php/intval (php/* (php/- fx3 (php/floor fx3)) 64))))]
+                                      (php/+ (php/* (php/+ (php/* (php/+ (php/* (php/aget (php/aget tex-fade-table (php/aget floor-level-sub s4)) tc0) 256)
+                                                                         (php/aget (php/aget tex-fade-table (php/aget floor-level-sub s4b)) tc1))
+                                                                  256)
+                                                           (php/aget (php/aget tex-fade-table (php/aget floor-level-sub s4c)) tc2))
                                                     256)
-                                             (php/aget (php/aget tex-fade-table (php/aget floor-level-sub sb))
-                                                       (php/aget floor-tex-px (php/+ (php/* tyb 64) txb))))))
+                                             (php/aget (php/aget tex-fade-table (php/aget floor-level-sub s4d)) tc3))))
                                   (and (not sprites-on) (buf-get emask col)) -5
                                   (php/=== r2 tops-c)                        -6
                                   (php/=== r2 (php/+ tops-c 1))              -7
@@ -1101,19 +1126,28 @@
                                     (if (and tex-on? (php/>= lvl 0))
                                       (let [wh   (php/max 1 (php/- bots-c tops-c))
                                             u    (buf-get shades-tex-u col)
-                                            rel2 (php/* 2 (php/- r2 tops-c))
+                                            rel4 (php/* 4 (php/- r2 tops-c))
                                             fade (php/aget tex-fade-table lvl)]
-                                        (php/+ (php/* (php/aget fade
-                                                                (php/aget wall-tex-px
-                                                                          (php/+ (php/* (php/min 63 (php/intdiv (php/* rel2 32) wh)) 64) u)))
+                                        (php/+ (php/* (php/+ (php/* (php/+ (php/* (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* rel4 16) wh)) 64) u))) 256)
+                                                                           (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel4 1) 16) wh)) 64) u))))
+                                                                    256)
+                                                             (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel4 2) 16) wh)) 64) u))))
                                                       256)
-                                               (php/aget fade
-                                                         (php/aget wall-tex-px
-                                                                   (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel2 1) 32) wh)) 64) u)))))
+                                               (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel4 3) 16) wh)) 64) u)))))
                                       -10)))
                       split?    (php/>= pack 0)
+                      ;; Unpack the 4 vertical sub-samples and compose the
+                      ;; row pair as half-block cells: full vertical colour
+                      ;; fidelity (2 sub-pixels per output row, same as the
+                      ;; full-detail ▀ path), only horizontal is doubled.
+                      sp3       (php/% pack 256)
+                      spq1      (php/intdiv pack 256)
+                      sp2       (php/% spq1 256)
+                      spq2      (php/intdiv spq1 256)
+                      sp1       (php/% spq2 256)
+                      sp0       (php/intdiv spq2 256)
                       base-a    (if split?
-                                  (php/aget bg-cell-cache (php/intdiv pack 256))
+                                  (halfblock sp0 sp1)
                                   (cond
                                     (php/=== pack -1) (buf-get sky-gradient r2)
                                     (php/=== pack -3) (buf-get blood-sky-gradient r2)
@@ -1131,7 +1165,7 @@
                                     (php/=== pack -9) (buf-get shades-bot-shadow col)
                                     :else             (buf-get shades-normal col)))
                       base-b    (if split?
-                                  (php/aget bg-cell-cache (php/% pack 256))
+                                  (halfblock sp2 sp3)
                                   base-a)
                       ;; Solid = safe to run-length-coalesce with space
                       ;; continuation (pure BG paint, no glyph). Shadows +
@@ -1214,14 +1248,16 @@
                         run-b?   (and row-bot? sb? (php/=== b1 b2))]
                     (when (and (not match-a?) (php/> ra 0))
                       (buf-push parts pa)
-                      (buf-push parts (php/str_repeat " " (php/- ra 1))))
+                      (buf-push parts (php/str_repeat (if (php/str_ends_with pa "▀") "▀" " ")
+                                                      (php/- ra 1))))
                     (when (and (not match-a?) (not run-a?))
                       (buf-push parts a1)
                       (when dbl? (buf-push parts a2)))
                     (when row-bot?
                       (when (and (not match-b?) (php/> rb 0))
                         (buf-push rowb pb)
-                        (buf-push rowb (php/str_repeat " " (php/- rb 1))))
+                        (buf-push rowb (php/str_repeat (if (php/str_ends_with pb "▀") "▀" " ")
+                                                       (php/- rb 1))))
                       (when (and (not match-b?) (not run-b?))
                         (buf-push rowb b1)
                         (when dbl? (buf-push rowb b2))))

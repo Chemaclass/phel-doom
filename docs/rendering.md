@@ -119,6 +119,12 @@ Consecutive same-color cells coalesce: one escape + N spaces (terminal repeats B
 
 `render-scale` is a uniform 1 at every terminal size: one ray per output column, exact 1:1 cast, crisp walls. The old big-screen perf mode (cast once per 2 cols and replicate, for a chunky look on wide terminals) has been removed. `cast-frame` still accepts a `scale` argument so the replication path stays available, it is just always called with 1.
 
+## Textured walls
+
+Plain stone walls are sampled from the baked Freedoom flat `wall-tex` (WALL70_2, 64x64, in `wall_texture_data.phel`). Per wall-body cell: `u` = `wallxs[col] * 64` (the ray's wall-hit fraction from the cast), `v` = row-within-wall * 64 / wall-height. The texture code is fogged by the column's 0..23 shade level through `tex-fade-table` (a prebaked 24x256 fade LUT) and resolved to a ready cell via `bg-cell-cache` - one nested `aget`, no per-cell `fade-256` or string alloc, so texturing costs ~2% over flat shading.
+
+Doors, the boss door, and blood-band columns are NOT textured (`tex-level = -1`): they keep their flat shade so nav glyphs / the red hit-wash stay clean. Wall-top/bottom `▀` seams are unchanged. `PHEL_DOOM_FLAT_WALLS=1` forces the old flat-shaded stone.
+
 ## Responsive help panel
 
 H/ESC info menu width-adaptive: max 44 chars, min 36. Drops CONTROLS section first, then COMPASS HINT on squeeze.

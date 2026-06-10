@@ -3,7 +3,8 @@
 (ns phel-doom.io.render.main
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
   (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade sky-code floor-code door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright char-aspect shade-table shade-code-table shade-table-blood shade-code-table-blood])
-  (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
+  (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table bg-cell-cache collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
+  (:require phel-doom.io.render.wall-texture-data :refer [wall-tex])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type sprite-col-x enemy-sprite-cell])
   (:require phel-doom.io.render.hud :refer [minimap-door minimap-door-pulse minimap-rows hud-debug-line hud-line-str help-menu-string settings-menu-string])
   (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-door-face paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-flicker paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-weapon-hud paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols])
@@ -61,6 +62,26 @@
         on)
       cached)))
 ;; =====================================================================
+;; § Wall texture (baked Freedoom WALL70_2)
+;; =====================================================================
+
+(def wall-tex-px
+  "Flat row-major xterm-256 palette array of the baked stone wall
+   texture, sampled per wall cell by (u, v)."
+  (:px wall-tex))
+
+(def wall-tex-w
+  "Wall texture width/height (square, 64). Both the U and V sample wrap
+   into [0, wall-tex-w)."
+  (:w wall-tex))
+
+(defn- wall-textures-enabled?
+  "Textured walls are ON by default; PHEL_DOOM_FLAT_WALLS=1 forces the
+   old flat-shaded stone (A/B compare, or taste). Resolved per frame."
+  []
+  (not (php/=== "1" (php/getenv "PHEL_DOOM_FLAT_WALLS"))))
+
+;; =====================================================================
 ;; § Per-column wall shading
 ;; =====================================================================
 
@@ -82,7 +103,7 @@
    `haze-shift` int 0-23: how many shade-table steps to pull walls
                 toward black. Doors are kept bright as a nav cue."
   [vw vh haze-shift cast palette blood-cols]
-  (let [{:keys [dists hits sides]}                                     cast
+  (let [{:keys [dists hits sides wallxs]}                              cast
         {:keys [stbl ctbl sky-c floor-c door-shade-now door-code-now
                 boss-door-shade-now boss-door-code-now
                 sky-code-grad floor-code-grad
@@ -93,7 +114,15 @@
         top-edge                                                       (buf-mk)
         bot-edge                                                       (buf-mk)
         top-shadow                                                     (buf-mk)
-        bot-shadow                                                     (buf-mk)]
+        bot-shadow                                                     (buf-mk)
+        ;; Per-column wall-texture sampling state. `tex-u` is the
+        ;; texture column (0..63) from the ray's wall-hit fraction;
+        ;; `tex-level` is the 0..23 distance/side brightness used to fog
+        ;; the texture, or -1 to mark a cell that is NOT textured (door,
+        ;; boss door, or a blood-band column — those keep the flat
+        ;; `normal` shade so the red wash / nav glyphs stay clean).
+        tex-u                                                          (buf-mk)
+        tex-level                                                      (buf-mk)]
     (loop [col 0]
       (when (php/< col vw)
         (let [dist         (buf-get dists col)
@@ -120,6 +149,7 @@
               h            (buf-get hits col)]
           (buf-set tops col top)
           (buf-set bots col (php/+ top wall-h))
+          (buf-set tex-level col -1)            ; default: not textured
           (cond
             (php/=== 5 h)
             (do (buf-set normal      col boss-door-shade-now)
@@ -153,11 +183,20 @@
                 (buf-set top-edge   col (str "\e[48;5;" edge-code ";38;5;" sky-edge-c "m▀"))
                 (buf-set bot-edge   col (str "\e[48;5;" flr-edge-c ";38;5;" edge-code "m▀"))
                 (buf-set top-shadow col shd-bg)
-                (buf-set bot-shadow col shd-bg))))
+                (buf-set bot-shadow col shd-bg)
+                ;; Plain stone walls get the baked texture (unless blood
+                ;; is washing this column - then the flat red `normal`
+                ;; reads cleaner than a tinted texture). `idx` doubles as
+                ;; the texture fog level so depth + EW side-shading match
+                ;; the flat path exactly.
+                (when (not blood?)
+                  (buf-set tex-u     col (php/min 63 (php/intval (php/* (buf-get wallxs col) 64))))
+                  (buf-set tex-level col idx)))))
           (recur (php/+ col 1)))))
     {:tops tops :bots bots :normal normal
      :top-edge top-edge :bot-edge bot-edge
-     :top-shadow top-shadow :bot-shadow bot-shadow}))
+     :top-shadow top-shadow :bot-shadow bot-shadow
+     :tex-u tex-u :tex-level tex-level}))
 ;; =====================================================================
 ;; § Pulse cadences + near-death haze
 ;; =====================================================================
@@ -299,8 +338,9 @@
         ;; crisp walls. cast-frame still takes the factor so the
         ;; replication path stays available if ever needed.
         scale                              (render-scale vw vh)
-        {:keys [dists hits sides]}
+        {:keys [dists hits sides wallxs]}
         (cast-frame world vw scale)
+        tex-on?                            (wall-textures-enabled?)
         _                                  (when debug?
                                              (record-cast-ms!
                                               (php/* (php/- (php/microtime true) t-cast-start) 1000.0)))
@@ -408,9 +448,11 @@
          :top-edge          shades-top-edge
          :bot-edge          shades-bot-edge
          :top-shadow        shades-top-shadow
-         :bot-shadow        shades-bot-shadow}
+         :bot-shadow        shades-bot-shadow
+         :tex-u             shades-tex-u
+         :tex-level         shades-tex-level}
         (compute-wall-shades vw vh haze-shift
-                             {:dists dists :hits hits :sides sides}
+                             {:dists dists :hits hits :sides sides :wallxs wallxs}
                              {:stbl stbl :ctbl ctbl
                               :sky-c sky-c :floor-c floor-c
                               :door-shade-now door-shade-now
@@ -757,7 +799,23 @@
                               (php/=== row (php/- (buf-get bots col) 2))
                               (buf-get shades-bot-shadow col)
                               :else
-                              (buf-get shades-normal col))
+                              ;; Wall body: baked stone texture sampled by
+                              ;; (u = per-col wall-hit fraction, v = row
+                              ;; within the wall), fogged by the column's
+                              ;; shade level via tex-fade-table. tex-level
+                              ;; < 0 (door / boss / blood column, or
+                              ;; textures disabled) falls back to the flat
+                              ;; shade.
+                              (let [lvl (buf-get shades-tex-level col)]
+                                (if (and tex-on? (php/>= lvl 0))
+                                  (let [wtop (buf-get tops col)
+                                        wh   (php/max 1 (php/- (buf-get bots col) wtop))
+                                        tv   (php/min 63 (php/intdiv (php/* (php/- row wtop) 64) wh))
+                                        tc   (php/aget wall-tex-px
+                                                       (php/+ (php/* tv 64) (buf-get shades-tex-u col)))]
+                                    (php/aget bg-cell-cache
+                                              (php/aget (php/aget tex-fade-table lvl) tc)))
+                                  (buf-get shades-normal col))))
                   c         (if (and (php/< row visible-mh) (php/>= col mini-col0))
                               sky-row
                               (or (buf-get bp-trc (php/+ (php/* row vw) col))

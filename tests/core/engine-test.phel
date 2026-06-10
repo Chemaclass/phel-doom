@@ -108,7 +108,26 @@
     (is (= 8 (php/count (:sides c))))
     (is (= 8 (php/count (:hxs c))))
     (is (= 8 (php/count (:hys c))))
-    (is (= 8 (php/count (:wallxs c))))))
+    (is (= 8 (php/count (:wallxs c))))
+    (is (= 8 (php/count (:floordxs c))))
+    (is (= 8 (php/count (:floordys c))))))
+
+(deftest test-cast-frame-floor-basis-fisheye-corrected
+  ;; :floordxs/:floordys are the ray direction divided by cos(offset),
+  ;; so `player + dperp * (floordx, floordy)` lands on the ground plane
+  ;; with no fish-eye bow. The CENTRE column has zero offset → the basis
+  ;; equals the raw view direction (unit length); off-centre columns get
+  ;; scaled up (1/cos > 1).
+  (let [w   (new-world chamber-grid (new-player 2.5 2.5 0.0))
+        c   (cast-frame w 9 1)
+        mid 4]                              ; centre of 9 columns
+    ;; centre column faces east (angle 0): floordx≈1, floordy≈0.
+    (is (< (php/abs (php/- (php/aget (:floordxs c) mid) 1.0)) 0.05))
+    (is (< (php/abs (php/aget (:floordys c) mid)) 0.05))
+    ;; an edge column's basis is longer than the centre's (1/cos > 1).
+    (is (> (php/sqrt (php/+ (php/* (php/aget (:floordxs c) 0) (php/aget (:floordxs c) 0))
+                            (php/* (php/aget (:floordys c) 0) (php/aget (:floordys c) 0))))
+           1.0))))
 
 (deftest test-cast-frame-wallx-is-texture-fraction
   ;; :wallxs is the per-column wall-hit fraction (texture U), one entry

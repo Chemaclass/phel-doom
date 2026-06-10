@@ -175,7 +175,9 @@
         sides               (php/array)
         hxs                 (php/array)
         hys                 (php/array)
-        wallxs              (php/array)]
+        wallxs              (php/array)
+        floordxs            (php/array)
+        floordys            (php/array)]
      ;; DDA traversal is inlined: avoids one fn call per column AND
      ;; replaces the per-ray Phel-vector `[d h side hx hy]` return
      ;; with a cheap `php/array` so the hot loop allocates a plain
@@ -228,7 +230,15 @@
               ;; fish-eye-corrected one. In [0, 1) → texture column.
               wallx   (if (php/=== side 0)
                         (let [wy (php/+ y (php/* rawd diry))] (php/- wy (php/floor wy)))
-                        (let [wx (php/+ x (php/* rawd dirx))] (php/- wx (php/floor wx))))]
+                        (let [wx (php/+ x (php/* rawd dirx))] (php/- wx (php/floor wx))))
+              ;; Floor-cast basis for this column: the ray direction
+              ;; divided by cos(offset). A floor cell at perpendicular
+              ;; distance `dperp` (a per-ROW constant the renderer knows)
+              ;; sits at world `player + dperp * (floordx, floordy)`, so
+              ;; the renderer needs no per-cell trig — just two mul-adds.
+              inv-cos (php// 1.0 (php/aget cos-offs col))
+              floordx (php/* dirx inv-cos)
+              floordy (php/* diry inv-cos)]
            ;; Replicate this sample across the next `scale` output
            ;; columns. `scale` is 1 today (crisp 1:1 walls everywhere),
            ;; so this fills exactly one cell; the loop keeps the
@@ -246,9 +256,12 @@
               (php/aset hxs c hx)
               (php/aset hys c hy)
               (php/aset wallxs c wallx)
+              (php/aset floordxs c floordx)
+              (php/aset floordys c floordy)
               (recur (php/+ c 1) (php/+ fill 1))))
           (recur (php/+ col scale)))))
-    {:dists dists :hits hits :sides sides :hxs hxs :hys hys :wallxs wallxs}))
+    {:dists dists :hits hits :sides sides :hxs hxs :hys hys :wallxs wallxs
+     :floordxs floordxs :floordys floordys}))
 
 (def visit-radius
   "Square radius (cells) around the player scanned each frame for

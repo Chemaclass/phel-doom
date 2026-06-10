@@ -81,6 +81,60 @@
   []
   (not (php/=== "1" (php/getenv "PHEL_DOOM_FLAT_WALLS"))))
 
+(defn- floor-textures-enabled?
+  "Textured floor (floor-casting) is ON by default; PHEL_DOOM_FLAT_FLOOR=1
+   forces the old flat grey floor gradient. Also gated by the wall-texture
+   flag (no point casting a floor texture with textures off)."
+  []
+  (not (php/=== "1" (php/getenv "PHEL_DOOM_FLAT_FLOOR"))))
+
+(def floor-cast-k
+  "Numerator of the floor-cast perpendicular distance: a floor cell `p`
+   pixels below the horizon sits at perp-distance `floor-cast-k / p`.
+   Derived from the wall projection with a half-unit camera eye height:
+   `proj-dist * 0.5 / char-aspect`."
+  (php// (php/* proj-dist 0.5) char-aspect))
+
+(defn- build-floor-dperp
+  "Per-row perpendicular ground distance for floor-casting. Row centres
+   below the horizon (`vh/2`) map to `floor-cast-k / (row+0.5 - vh/2)`,
+   clamped to `max-depth`. Rows at/above the horizon get `max-depth`
+   (never sampled as floor — walls/sky cover them). One pass over vh."
+  [^int vh]
+  (let [arr    (php/array)
+        center (php/* 0.5 vh)]
+    (loop [r 0]
+      (when (php/< r vh)
+        (let [p (php/- (php/+ r 0.5) center)]
+          (php/aset arr r (if (php/<= p 0.0)
+                            max-depth
+                            (php/min max-depth (php// floor-cast-k p)))))
+        (recur (php/+ r 1))))
+    arr))
+
+(def floor-darken
+  "Shade steps the textured floor sits below a wall at the same distance.
+   The floor is lit at a grazing angle and reads as in-shadow stone; a
+   few steps darker also calms the high-frequency texel aliasing near the
+   camera so the floor reads as ground, not noise."
+  4)
+
+(defn- build-floor-level
+  "Per-row fog level (0..23) for the textured floor, from `build-floor-dperp`.
+   Same gamma falloff as the walls, pulled `floor-darken` steps darker so
+   the ground reads as shadowed stone distinct from the lit walls."
+  [floor-dperp ^int vh]
+  (let [arr (php/array)]
+    (loop [r 0]
+      (when (php/< r vh)
+        (let [d (php/aget floor-dperp r)]
+          (php/aset arr r (php/max 0
+                                   (php/min 23
+                                            (php/- (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// d max-depth))) 0.6) 23))
+                                                   floor-darken)))))
+        (recur (php/+ r 1))))
+    arr))
+
 ;; =====================================================================
 ;; § Per-column wall shading
 ;; =====================================================================
@@ -338,9 +392,15 @@
         ;; crisp walls. cast-frame still takes the factor so the
         ;; replication path stays available if ever needed.
         scale                              (render-scale vw vh)
-        {:keys [dists hits sides wallxs]}
+        {:keys [dists hits sides wallxs floordxs floordys]}
         (cast-frame world vw scale)
         tex-on?                            (wall-textures-enabled?)
+        floor-tex-on?                      (and tex-on? (floor-textures-enabled?))
+        ;; Floor-cast inputs: player position + per-row perpendicular
+        ;; distance / fog level for the textured ground plane.
+        {:x pfx :y pfy}                    (:player world)
+        floor-dperp                        (build-floor-dperp vh)
+        floor-level                        (build-floor-level floor-dperp vh)
         _                                  (when debug?
                                              (record-cast-ms!
                                               (php/* (php/- (php/microtime true) t-cast-start) 1000.0)))
@@ -784,7 +844,23 @@
                          ;; wall behind the billboard.
                   base      (cond
                               (php/< row (buf-get tops col))             sky-row
-                              (php/>= row (buf-get bots col))            flr-row
+                              (php/>= row (buf-get bots col))
+                              ;; Floor: cast the ground plane and sample the
+                              ;; stone texture. Player + per-row perp-distance
+                              ;; × the column's floor basis gives the world
+                              ;; floor point; frac → texture (u, v); fog by
+                              ;; the row's floor level. Blood-band columns +
+                              ;; the flat-floor flag keep the grey gradient.
+                              (if (and floor-tex-on? (not in-blood?))
+                                (let [dp (buf-get floor-dperp row)
+                                      fx (php/+ pfx (php/* dp (buf-get floordxs col)))
+                                      fy (php/+ pfy (php/* dp (buf-get floordys col)))
+                                      tx (php/intval (php/* (php/- fx (php/floor fx)) 64))
+                                      ty (php/intval (php/* (php/- fy (php/floor fy)) 64))
+                                      tc (php/aget wall-tex-px (php/+ (php/* ty 64) tx))]
+                                  (php/aget bg-cell-cache
+                                            (php/aget (php/aget tex-fade-table (buf-get floor-level row)) tc)))
+                                flr-row)
                               (and (not sprites-on) (buf-get emask col))
                               (cond
                                 (php/< row (buf-get mids col))   (buf-get eheads col)

@@ -19,6 +19,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Performance
 
+- Sky/floor gradients are memoized by viewport height. They were rebuilt from scratch every frame (6 arrays sized to the viewport) though they depend only on the height; a single-slot cache now rebuilds them only on resize. Worth ~0.3-0.5ms/frame at 40-100 rows - small in absolute terms but a meaningful slice of the sub-5ms frame budget on the JIT runtime.
 - Big screens are no longer capped at 30fps. The perf-mode cadence ceiling was artificial: on hardware fast enough to render a wide-terminal frame inside the 60fps budget the player was pinned to 30fps for no reason, and on slower hardware the per-frame sleep already floored at the minimum yield. Cadence is now a uniform 60fps target at every terminal size; framerate tracks render capability and degrades smoothly toward render-native below it.
 
 ### Fixed

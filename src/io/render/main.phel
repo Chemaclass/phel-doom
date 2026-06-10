@@ -198,6 +198,36 @@
 ;; § Per-frame pipeline
 ;; =====================================================================
 
+;; Sky / floor gradients (shade arrays + their code twins, normal +
+;; blood variants) depend ONLY on `vh`: the palettes are compile-time
+;; constants and the floor base-code / banding are literals. They were
+;; rebuilt from scratch every frame (6 × O(vh) allocations); now a
+;; single-slot atom memoizes the whole bundle keyed by vh, so they
+;; rebuild only when the viewport height changes (resize / F3 toggle).
+;; Input-determined cache — same vh always yields the same arrays — so
+;; it preserves frame->string's referential transparency, same as the
+;; engine's offset-cache.
+(def- gradient-cache (atom {:vh -1}))
+
+(defn- frame-gradients
+  "Memoized sky/floor gradient bundle for viewport height `vh`. Returns
+   a map of the 6 gradient arrays (normal + blood, shade + code twins),
+   rebuilding only on a vh change. Blood variants are always built here;
+   the caller still gates their USE on the live `bloody?` flag."
+  [^int vh]
+  (let [c @gradient-cache]
+    (if (php/=== vh (:vh c))
+      c
+      (let [bundle {:vh             vh
+                    :sky            (build-horizon-gradient vh shade-table)
+                    :floor          (build-themed-gradient vh 239 true)
+                    :sky-code       (build-horizon-gradient-codes vh shade-code-table)
+                    :floor-code     (build-themed-gradient-codes vh 239 true)
+                    :blood-sky      (build-horizon-gradient vh shade-table-blood)
+                    :blood-sky-code (build-horizon-gradient-codes vh shade-code-table-blood)}]
+        (reset! gradient-cache bundle)
+        bundle))))
+
 (defn frame->string
   "Render the world sized to cols x rows. Walls project at a constant
    scale (proj-dist from engine) with a 2:1 character-aspect correction,
@@ -213,17 +243,20 @@
         ;; horizon. No per-level wall tinting; level distinction comes
         ;; from enemy sprites + intro splash + audio.
         stbl                               shade-table
-        sky-gradient                       (build-horizon-gradient vh shade-table)
+        ;; Sky/floor gradients (+ blood + code twins) are memoized by vh
+        ;; (see frame-gradients); the per-frame rebuild is gone.
+        grads                              (frame-gradients vh)
+        sky-gradient                       (:sky grads)
         ;; Floor: same grey gradient with subtle tile banding (odd
         ;; rows one fade step darker).
-        floor-gradient                     (build-themed-gradient vh 239 true)
+        floor-gradient                     (:floor grads)
         ;; Pre-baked red gradients used when a column sits inside the
         ;; blood band: sky + floor go red for those cols so the band
         ;; reads as a coherent red corner, not red walls floating in a
-        ;; grey ceiling. Built only when bloody?; otherwise nil and
-        ;; the inner row loop short-circuits the blood swap.
-        blood-sky-gradient                 (when bloody?
-                                             (build-horizon-gradient vh shade-table-blood))
+        ;; grey ceiling. nil unless bloody? so the inner row loop
+        ;; short-circuits the blood swap (the cache always holds them;
+        ;; the bloody? gate keeps the nil-when-inactive contract).
+        blood-sky-gradient                 (when bloody? (:blood-sky grads))
         ;; Intentional alias: floor reuses the sky red gradient so the
         ;; blood band is one uniform red wash top-to-bottom (not a copy
         ;; -paste slip). A separate floor curve would split the corner.
@@ -233,10 +266,9 @@
         ;; in FG; using a flat sky-code produced a dark notch at the seam
         ;; wherever the gradient is brighter than code 236. Similarly the
         ;; bot-edge blends the floor shade at its row into the BG half.
-        sky-code-gradient                  (build-horizon-gradient-codes vh shade-code-table)
-        floor-code-gradient                (build-themed-gradient-codes vh 239 true)
-        blood-sky-code-gradient            (when bloody?
-                                             (build-horizon-gradient-codes vh shade-code-table-blood))
+        sky-code-gradient                  (:sky-code grads)
+        floor-code-gradient                (:floor-code grads)
+        blood-sky-code-gradient            (when bloody? (:blood-sky-code grads))
         blood-floor-code-gradient          blood-sky-code-gradient
         ;; Directional blood mask: per-column intensity in [0, 1]. Only
         ;; non-zero during i-frames AND when :hurt-side is set. Fades

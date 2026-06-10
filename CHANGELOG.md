@@ -29,6 +29,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Fixed
 
+- Aiming crosshair no longer reads as a translucent smudge. The idle reticle used the faint/dim SGR attribute (`\e[..;2m`), which was barely visible against the busier half-block floor. It is now a solid bold bright-white `+` (bold bright-yellow on fire, paired with the existing one-row recoil jump) so it reads clearly on any background.
 - Wall/floor stone texture no longer shows colored confetti. The baked WALL70_2 flat carried colored seam columns, a corrupt top band, and scattered saturated specks; sampled across the floor (each cell hits a random texel) and walls they read as red/green/blue speckle on what should be neutral grey stone. The bake is now sanitized to a pure grayscale ramp (luminance-remapped, corrupt rows + border columns repaired), matching the grayscale-walls-so-enemies-pop design. Stone structure is preserved; only the stray colors are gone.
 - Horizontal FOV is now clamped at 100° on wide terminals (the widescreen sweet spot - roomy without warp). The ray spread widens naturally up to ~167 cols, then holds at 100° instead of bowing out toward 110°+ edge fisheye on ultrawide / fullscreen terminals; the extra columns add horizontal resolution. Narrower terminals are unchanged. Wall scale is untouched.
 

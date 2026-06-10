@@ -125,6 +125,10 @@ Plain stone walls are sampled from the baked Freedoom flat `wall-tex` (WALL70_2,
 
 Doors, the boss door, and blood-band columns are NOT textured (`tex-level = -1`): they keep their flat shade so nav glyphs / the red hit-wash stay clean. Wall-top/bottom `▀` seams are unchanged. `PHEL_DOOM_FLAT_WALLS=1` forces the old flat-shaded stone.
 
+## Textured floor (floor-casting)
+
+The ground plane is cast per cell instead of drawn as a flat gradient. A floor cell `p` pixels below the horizon (`vh/2`) sits at perpendicular distance `floor-cast-k / p` (`build-floor-dperp`, per-row); the world floor point is `player + dperp * (floordxs[col], floordys[col])` - the `floordxs/floordys` basis (ray direction / cos(offset)) comes from the cast, so there is no per-cell trig. `frac` of the world point → texture (u, v); the same stone texture as the walls is sampled, fogged by the row's `floor-level` (pulled `floor-darken` = 4 steps darker than a wall at the same distance, so the ground reads as shadowed and the grazing-angle texel aliasing calms down). Blood columns keep the red gradient; `PHEL_DOOM_FLAT_FLOOR=1` restores the flat floor. Cost ~+12% (no-JIT local; the angular ray model rules out the linear per-row floor-step shortcut, so it stays a per-cell mul-add).
+
 ## Responsive help panel
 
 H/ESC info menu width-adaptive: max 44 chars, min 36. Drops CONTROLS section first, then COMPASS HINT on squeeze.

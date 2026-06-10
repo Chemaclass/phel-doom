@@ -69,6 +69,26 @@
                         (php/intval (php// (php/* (php/- col (php/- ecol ehw)) sw)
                                            span))))))
 
+(defn sprite-subcol-x
+  "Sprite x for the RIGHT half of screen column `col` (sampled at
+   col+0.5), the horizontal companion to `sprite-col-x`'s left/centre
+   sample. The two samples feed the 2×2 quadrant cell so a downscaled
+   sprite (more sprite px than screen cols) shows horizontal detail
+   within a single cell. Clamped to [0, sw-1]."
+  [^int sw ^int ecol ^int ehw ^int col]
+  (let [span (php/max 1 (php/+ (php/* 2 ehw) 1))]
+    (php/max 0 (php/min (php/- sw 1)
+                        (php/intval (php// (php/* (php/+ (php/- col (php/- ecol ehw)) 0.5) sw)
+                                           span))))))
+
+(def quadrant-glyph
+  "Glyph for a 2×2 sub-cell, keyed by the bitmask of which corners take
+   the FOREGROUND colour: TL=8, TR=4, BL=2, BR=1. The top-left corner is
+   always the fg reference (bit 8 always set), so only masks 8..15 occur.
+   Off corners take the background colour."
+  {8  "▘" 12 "▀" 10 "▌" 9  "▚"
+   14 "▛" 13 "▜" 11 "▙" 15 "█"})
+
 (defn enemy-sprite-cell
   "Sample one cell from a baked enemy sprite at screen `row`, given the
    precomputed sprite column `sx` (see sprite-col-x) and the enemy's
@@ -90,14 +110,36 @@
                                  no halo against the wall behind)
      - both transparent       -> nil (caller keeps the wall/floor cell)
    sy is clamped to [0, sh-1]."
-  [px ^int sw ^int sh ^int sx ^int etop ^int ebot ^int row]
+  [px ^int sw ^int sh ^int sx ^int sxr ^int etop ^int ebot ^int row]
   (let [h2  (php/max 1 (php/* 2 (php/- ebot etop)))
         sub (php/* 2 (php/- row etop))
         ty  (php/max 0 (php/min (php/- sh 1) (php/intval (php// (php/* sub sh) h2))))
         by  (php/max 0 (php/min (php/- sh 1) (php/intval (php// (php/* (php/+ sub 1) sh) h2))))
-        top (php/aget px (php/+ (php/* ty sw) sx))
-        bot (php/aget px (php/+ (php/* by sw) sx))]
+        ;; 2×2 sub-pixel sample: top/bottom rows × left(sx)/right(sxr) cols.
+        tl  (php/aget px (php/+ (php/* ty sw) sx))
+        tr  (php/aget px (php/+ (php/* ty sw) sxr))
+        bl  (php/aget px (php/+ (php/* by sw) sx))
+        br  (php/aget px (php/+ (php/* by sw) sxr))]
     (cond
-      (php/=== top -1) (when (php/!== bot -1) (php/aget block-cache bot))
-      (php/=== bot -1) (php/aget block-cache top)
-      :else            (str (php/aget fg-cache top) (php/aget bg-cache bot) "▀"))))
+      ;; Fully-opaque interior cell: render a 2×2 quadrant for horizontal
+      ;; detail. Reduce the (up to 4) colours to fg = top-left and bg =
+      ;; the first differing corner; the quadrant glyph paints which
+      ;; corners take fg. Uniform 4 → solid block. When there is no
+      ;; horizontal variation (tl=tr, bl=br) the mask is 12 → ▀, i.e.
+      ;; byte-identical to the previous half-block, so only genuinely
+      ;; varying interior cells change.
+      (and (php/!== tl -1) (php/!== tr -1) (php/!== bl -1) (php/!== br -1))
+      (if (and (php/=== tl tr) (php/=== tl bl) (php/=== tl br))
+        (php/aget block-cache tl)
+        (let [c2 (cond (php/!== tr tl) tr (php/!== bl tl) bl :else br)
+              m  (php/+ 8
+                        (if (php/=== tr tl) 4 0)
+                        (if (php/=== bl tl) 2 0)
+                        (if (php/=== br tl) 1 0))]
+          (str (php/aget fg-cache tl) (php/aget bg-cache c2) (get quadrant-glyph m))))
+      ;; Edge / transparent cells: unchanged vertical half-block behaviour
+      ;; on the left sample, so silhouettes stay clean (no halo, no
+      ;; wall-behind dependency).
+      (php/=== tl -1)                                                       (when (php/!== bl -1) (php/aget block-cache bl))
+      (php/=== bl -1)                                                       (php/aget block-cache tl)
+      :else                                                                 (str (php/aget fg-cache tl) (php/aget bg-cache bl) "▀"))))

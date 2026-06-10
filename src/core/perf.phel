@@ -35,14 +35,15 @@
       (php/> (php/* cols rows) perf-area-threshold)))
 
 (def standard-frame-us
-  "Cadence target (µs) for standard terminals — ~60fps."
+  "Cadence target (µs) for one game-loop iteration — ~60fps, used at
+   EVERY terminal size. Big screens used to drop to ~30fps, but that
+   was an artificial ceiling: on hardware fast enough to render a
+   perf-mode frame inside this budget the player was still pinned to
+   30fps for no reason, and on hardware too slow to make it the sleep
+   already floors at `min-yield-us` (so the cap never bought anything
+   there either). Cadence is now uniform; framerate tracks render
+   capability up to this 60fps ceiling and degrades naturally below it."
   16667)
-
-(def perf-frame-us
-  "Cadence target (µs) for perf-mode terminals — ~30fps. Doubling the
-   budget lets a genuinely heavier frame finish in time instead of the
-   loop pegging a core chasing an unreachable 60."
-  33333)
 
 (def standard-scale
   "Horizontal render-scale on standard terminals: exact 1:1 path."
@@ -56,20 +57,23 @@
 (defn perf-profile
   "Single source of truth for big-screen perf policy: maps terminal
    dimensions to {:frame-us … :scale …}. `target-frame-us` and
-   `render-scale` are thin reads off this so the cadence + scale policy
-   lives in one place (and stays mutually consistent under future
-   tuning). Pure function of dimensions — safe to read per frame."
+   `render-scale` are thin reads off this so the policy lives in one
+   place. Pure function of dimensions — safe to read per frame.
+
+   `:frame-us` is now `standard-frame-us` at every size (cadence is
+   uniform 60fps, see that def); only `:scale` still varies by size."
   [^int cols ^int rows]
   (if (perf-mode? cols rows)
-    {:frame-us perf-frame-us :scale perf-scale}
+    {:frame-us standard-frame-us :scale perf-scale}
     {:frame-us standard-frame-us :scale standard-scale}))
 
 (defn target-frame-us
-  "Microsecond cadence target for one game-loop iteration: ~60fps on
-   standard terminals, ~30fps on perf-mode ones (see `perf-profile`).
-   Physics / input still tick once per loop, just less often per
-   wall-clock second on big screens — gameplay stays responsive, the
-   loop doesn't peg a core trying to outrun its render budget."
+  "Microsecond cadence target for one game-loop iteration: a uniform
+   ~60fps at every terminal size (see `standard-frame-us`). Big screens
+   no longer drop to 30fps; the per-iteration sleep fills whatever is
+   left of this budget and floors at `min-yield-us` when a heavy frame
+   overruns, so framerate degrades smoothly toward render-native
+   instead of snapping to a 30fps ceiling."
   [^int cols ^int rows]
   (:frame-us (perf-profile cols rows)))
 

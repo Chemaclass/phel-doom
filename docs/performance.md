@@ -4,9 +4,11 @@
 
 ## Big-screen perf mode
 
-Terminals >= 200 cols or > 12,000 cells (cols x rows) automatically engage perf-mode: 30 fps cadence + 2x render-scale. Each ray casts once and replicates to 2 columns; minimap caps at 40 cols. Physics and input still tick per frame.
+Terminals >= 200 cols or > 12,000 cells (cols x rows) engage perf-mode: 2x render-scale (each ray casts once and replicates to 2 columns; minimap caps at 40 cols). Physics and input tick per frame.
 
-`perf-profile` is the single source of truth: it maps dimensions to `{:frame-us :scale}`, and `target-frame-us` / `render-scale` are thin reads off it so cadence and scale stay mutually consistent.
+Cadence is a **uniform ~60fps at every size**. Big screens used to drop to 30fps, but that was an artificial ceiling: on hardware fast enough to render a perf-mode frame inside the 16.67ms budget the player was pinned to 30fps for no reason, and on hardware too slow to make it the per-iteration sleep already floors at `min-yield-us`. Framerate now tracks render capability up to the 60fps ceiling and degrades smoothly toward render-native below it.
+
+`perf-profile` is the single source of truth: it maps dimensions to `{:frame-us :scale}`, and `target-frame-us` / `render-scale` are thin reads off it.
 
 ```phel
 (def perf-width-threshold 200)
@@ -14,9 +16,9 @@ Terminals >= 200 cols or > 12,000 cells (cols x rows) automatically engage perf-
 (defn perf-mode? [cols rows] (or (>= cols 200) (> (* cols rows) 12000)))
 (defn perf-profile [cols rows]
   (if (perf-mode? cols rows)
-    {:frame-us perf-frame-us     :scale perf-scale}      ; 33333 µs, 2
+    {:frame-us standard-frame-us :scale perf-scale}      ; 16667 µs, 2
     {:frame-us standard-frame-us :scale standard-scale})) ; 16667 µs, 1
-(defn target-frame-us [cols rows] (:frame-us (perf-profile cols rows)))
+(defn target-frame-us [cols rows] (:frame-us (perf-profile cols rows)))  ; uniform 60fps
 (defn render-scale    [cols rows] (:scale    (perf-profile cols rows)))
 ```
 

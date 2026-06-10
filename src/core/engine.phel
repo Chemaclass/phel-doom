@@ -35,16 +35,32 @@
    'never crosses this axis'."
   1.0e9)
 
+(def fov-clamp-width
+  "Viewport width at which horizontal FOV hits its 90° cap and stops
+   widening. At this width `proj-dist` already yields exactly 90°
+   (`2 * atan(width / 2 / proj-dist)` with `width = 2 * proj-dist`), so
+   the cap is the classic DOOM-ish horizontal FOV. Narrower terminals
+   keep the flat `proj-dist` (FOV grows naturally, 80→~60°, 120→~81°);
+   wider terminals scale `proj-dist` up in lock-step with width so the
+   angle holds at 90° instead of bowing out into edge fisheye."
+  (php/intval (php/* 2.0 proj-dist)))
+
 (defn fov-proj-dist
   "Projection distance used for the per-column RAY SPREAD (FOV), as
    distinct from `proj-dist` which scales wall HEIGHT. Horizontal FOV
    is `2 * atan(width / 2 / (fov-proj-dist width))`, so a larger return
-   value narrows the spread. Today it returns the flat `proj-dist` for
-   every width (FOV widens freely with the terminal); it exists as the
-   single seam where a width-aware FOV clamp can live without touching
-   wall-height projection."
+   value narrows the spread.
+
+   Below `fov-clamp-width` the flat `proj-dist` is returned and FOV
+   widens with the terminal as before. At or above it the distance
+   scales linearly with width (`proj-dist * width / fov-clamp-width`),
+   which pins the horizontal FOV at 90° for every wider terminal: the
+   extra columns buy horizontal RESOLUTION, not a wider, warped view.
+   Wall-height projection is untouched (still flat `proj-dist`)."
   [^int width]
-  proj-dist)
+  (if (php/<= width fov-clamp-width)
+    proj-dist
+    (php// (php/* proj-dist width) fov-clamp-width)))
 
 ;; Per-column FOV offset (atan) and its cos are pure functions of the
 ;; ray's column index and the viewport width. They never change at

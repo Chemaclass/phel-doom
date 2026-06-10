@@ -2,17 +2,40 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.map    :refer [default-grid])
   (:require phel-doom.core.state  :refer [new-world new-player])
-  (:require phel-doom.core.engine :refer [cast-ray cast-frame mark-visible-cells max-depth visited? visit-radius fov-proj-dist proj-dist]))
+  (:require phel-doom.core.engine :refer [cast-ray cast-frame mark-visible-cells max-depth visited? visit-radius fov-proj-dist fov-clamp-width proj-dist]))
 
 (def pgrid (to-php-array (map to-php-array default-grid)))
 
-(deftest test-fov-proj-dist-flat-across-widths
-  ;; Seam contract: FOV projection distance is the flat `proj-dist` at
-  ;; every width today, so the horizontal FOV widens freely with the
-  ;; terminal. The FOV-clamp change lives here and only here.
+(defn- fov-degrees
+  "Full horizontal FOV in degrees for a viewport width, derived from
+   the live fov-proj-dist seam."
+  [width]
+  (php/* 2.0 (php/rad2deg (php/atan (php// (php/* 0.5 width) (fov-proj-dist width))))))
+
+(deftest test-fov-proj-dist-flat-below-clamp
+  ;; Narrow terminals keep the flat proj-dist: FOV widens with width
+  ;; exactly as before the clamp landed.
   (is (= proj-dist (fov-proj-dist 80)))
   (is (= proj-dist (fov-proj-dist 120)))
-  (is (= proj-dist (fov-proj-dist 400))))
+  (is (= proj-dist (fov-proj-dist fov-clamp-width))))   ; boundary stays flat
+
+(deftest test-fov-proj-dist-scales-above-clamp
+  ;; Past the clamp the distance grows linearly with width so the angle
+  ;; holds steady instead of bowing out.
+  (is (> (fov-proj-dist 200) proj-dist))
+  (is (> (fov-proj-dist 400) (fov-proj-dist 200))))
+
+(deftest test-fov-capped-at-90-degrees-on-wide-terminals
+  ;; The whole point: wide terminals top out at a 90° horizontal FOV
+  ;; instead of stretching toward 110°+ edge fisheye.
+  (is (< (php/abs (php/- (fov-degrees fov-clamp-width) 90.0)) 0.001))
+  (is (< (php/abs (php/- (fov-degrees 200) 90.0)) 0.001))
+  (is (< (php/abs (php/- (fov-degrees 400) 90.0)) 0.001)))
+
+(deftest test-fov-widens-naturally-below-clamp
+  ;; Below the clamp FOV still grows with width (no premature pinning).
+  (is (< (fov-degrees 80) (fov-degrees 120)))
+  (is (< (fov-degrees 120) (fov-degrees fov-clamp-width))))
 
 (deftest test-ray-hits-wall-eventually
   (let [d (cast-ray pgrid 8.0 8.0 0.0)]

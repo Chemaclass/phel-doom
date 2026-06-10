@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Fixed
+
+- Horizontal FOV is now clamped at 90° on wide terminals. Past 140 cols the ray spread stops widening (it bowed out toward 110°+ on ultrawide / fullscreen terminals, warping walls at the screen edges); the extra columns now add horizontal resolution instead of fisheye distortion. Terminals at or below 140 cols are unchanged. Wall scale is untouched.
+
 ### Changed
 
 - Ammo-box budget now scales with difficulty: hard spawns x1.2, nightmare x1.5 boxes on top of the enemy-HP baseline, so spray weapons (chaingun, incinerator) don't starve when faster enemies raise the miss rate.

@@ -200,6 +200,67 @@
         (recur (php/+ r 1))))
     arr))
 
+;; ---------------------------------------------------------------------
+;; Half-block sky/floor: each terminal ROW carries TWO vertical gradient
+;; sub-samples via the ▀ upper-half-block glyph (fg = upper sub-row,
+;; bg = lower sub-row). Sampling the same gradient curve at 2×vh
+;; resolution doubles the vertical gradient detail across the large
+;; sky/floor regions without changing the wall band. The cell ends in a
+;; single ▀ glyph so the RLE coalescer (now fill-glyph aware) still
+;; collapses a uniform row to one escape + a ▀ run.
+;; ---------------------------------------------------------------------
+
+(defn- horizon-sub-idx
+  "Shade-table index (0..23) for sky/floor sub-row `s` of a `sub-vh`
+   (= 2×vh) sub-grid: brightest at the screen edges, darkest at the
+   horizon line. Same curve as build-horizon-gradient, finer sampled."
+  [^int s ^int vh]
+  (php/max 0
+           (php/min 23
+                    (php/intval (php/* (php/- 1.0
+                                              (php// (php/abs (php/- s vh))
+                                                     (php/max 1 vh)))
+                                       23)))))
+
+(defn build-horizon-gradient-halfblock
+  "Half-block twin of build-horizon-gradient: per-row ▀ cells whose top
+   half is the sky/floor shade at sub-row 2r and bottom half at 2r+1,
+   doubling the vertical gradient resolution. `ctbl` is a code table."
+  [^int vh ctbl]
+  (let [arr (buf-mk)]
+    (loop [r 0]
+      (when (php/< r vh)
+        (let [top (buf-get ctbl (horizon-sub-idx (php/* 2 r) vh))
+              bot (buf-get ctbl (horizon-sub-idx (php/+ (php/* 2 r) 1) vh))]
+          (buf-set arr r (str "\e[38;5;" top "m\e[48;5;" bot "m▀")))
+        (recur (php/+ r 1))))
+    arr))
+
+(defn- themed-sub-code
+  "fade-256 floor/sky code for sub-row `s` of a 2×vh sub-grid. Stripe
+   banding lands per SUB-row (finer tile lines than the full-cell path)."
+  [^int s ^int vh ^int base-code stripe?]
+  (let [t     (php// (php/abs (php/- s vh)) (php/max 1 vh))
+        fade  (php/- 1.0 t)
+        fade' (if (and stripe? (php/=== (mod s 2) 1))
+                (php/max 0.0 (php/- fade 0.12))
+                fade)]
+    (fade-256 base-code fade')))
+
+(defn build-themed-gradient-halfblock
+  "Half-block twin of build-themed-gradient: per-row ▀ cells, top half
+   sampled at sub-row 2r, bottom at 2r+1, for 2× vertical floor/sky
+   detail with sub-row tile banding."
+  [^int vh ^int base-code stripe?]
+  (let [arr (buf-mk)]
+    (loop [r 0]
+      (when (php/< r vh)
+        (let [top (themed-sub-code (php/* 2 r) vh base-code stripe?)
+              bot (themed-sub-code (php/+ (php/* 2 r) 1) vh base-code stripe?)]
+          (buf-set arr r (str "\e[38;5;" top "m\e[48;5;" bot "m▀")))
+        (recur (php/+ r 1))))
+    arr))
+
 (defn direction-char
   "Map an angle in radians to one of 8 unicode arrow chars, snapping to
    the nearest π/4 sector. Public so the minimap layer and tests can

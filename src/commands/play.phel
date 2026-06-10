@@ -24,7 +24,7 @@
   (:require phel-doom.demo.phases :as showcase)
   (:require phel-doom.core.rng    :as rng)
   (:require phel-doom.core.level    :refer [build-world num-levels place-secret-reward])
-  (:require phel-doom.core.perf     :refer [target-frame-us cap-dims])
+  (:require phel-doom.core.perf     :refer [target-frame-us cap-dims auto-cap-dims auto-cal-frames])
   (:require phel-doom.core.version  :refer [version])
   (:require phel-doom.io.scores   :refer [update-scores!])
   (:require phel-doom.io.render   :refer [render! clear-screen
@@ -828,84 +828,120 @@
         (assoc world :save-flash-secs save-flash-seconds :save-flash-msg "NO SAVE")))
     :else         world))
 
+(defn- next-cal
+  "Advance the auto-cap calibration. `cal` is
+   {:cap [rows cols]|nil :n int :best ms :tdims [trows tcols]}. In auto
+   mode the first `auto-cal-frames` frames render full-size; this tracks
+   the min render-ms across them (warm, least-noisy) and locks the
+   scaled-down smooth cap once enough land. A terminal-size change
+   restarts calibration so the cap re-fits the new size. No-op when auto
+   is off (the player set an explicit --max-cols/--max-rows)."
+  [cal auto? ^int trows ^int tcols ^float render-ms]
+  (if (not auto?)
+    cal
+    (let [tdims [trows tcols]]
+      (cond
+        (not= tdims (:tdims cal)) {:cap nil :n 1 :best render-ms :tdims tdims}
+        (:cap cal)                cal
+        :else
+        (let [n'    (php/+ (:n cal) 1)
+              best' (php/min (:best cal) render-ms)]
+          (if (php/>= n' auto-cal-frames)
+            {:cap (auto-cap-dims trows tcols best') :n n' :best best' :tdims tdims}
+            {:cap nil :n n' :best best' :tdims tdims}))))))
+
 (defn- game-loop [world0 max-rows max-cols]
-  (let [t-start (php/microtime true)]
+  (let [t-start (php/microtime true)
+        ;; Auto-cap mode: neither --max-cols nor --max-rows was passed
+        ;; (both -1). The loop renders full-size for a few frames, measures,
+        ;; then locks the render to the cell count that holds a smooth
+        ;; frame budget (see next-cal / auto-cap-dims). An explicit cap (or
+        ;; 0 = fill) opts out and uses the player's value directly.
+        auto?   (and (php/< max-cols 0) (php/< max-rows 0))]
     (loop [world     world0
            t-last    t-start
            frame-ms  0
            fps       0
            prev-keys initial-key-snapshot
-           dims      [0 0]]
-      ;; Cap the live terminal size to the configured render bounds
-      ;; (--max-cols / --max-rows). A 0 cap fills the terminal; a
-      ;; positive cap shrinks the render area, leaving the surplus as a
-      ;; blank inset border (clear-screen on resize keeps it clean).
+           dims      [0 0]
+           cal       {:cap nil :n 0 :best 1.0e9 :tdims [0 0]}]
+      ;; Cap the live terminal size: the auto-cap's locked dims while
+      ;; calibrating renders full ([0 0]); a positive cap shrinks the
+      ;; render area, leaving the surplus as a blank inset border
+      ;; (clear-screen on resize keeps it clean).
       (let [[trows tcols] (term-size)
-            [rows cols]   (cap-dims trows tcols max-rows max-cols)]
+            [cap-r cap-c] (cond
+                            (not auto?) [max-rows max-cols]
+                            (:cap cal)  (:cap cal)
+                            :else       [0 0])
+            [rows cols]   (cap-dims trows tcols cap-r cap-c)]
         (redraw-if-resized dims rows cols)
-        (let [render-start (php/microtime true)]
-          (draw-frame world fps frame-ms rows cols)
-          (adaptive-sleep! render-start cols rows))
-        (let [live-keys (drain-keys)
-              now       (php/microtime true)
-              live-ms   (ms-since t-last now)
+        (let [render-start (php/microtime true)
+              _draw        (draw-frame world fps frame-ms rows cols)
+              render-ms    (php/* (php/- (php/microtime true) render-start) 1000.0)
+              _sleep       (adaptive-sleep! render-start cols rows)
+              cal'         (next-cal cal auto? trows tcols render-ms)]
+          (let [live-keys (drain-keys)
+                now       (php/microtime true)
+                live-ms   (ms-since t-last now)
               ;; Input source: live terminal, or — under demo record /
               ;; replay — the recorder taps the stream / the player
               ;; feeds recorded frames (issue #64). A replay that runs
               ;; out of frames sets `:end?` and the cond below quits.
-              frame     (demo/resolve-frame! live-keys live-ms)
-              keys      (or (:keys frame) "")
-              ms        (or (:ms frame) live-ms)
-              now-keys  (key-states keys)
-              edges     (rising-edges now-keys prev-keys)]
-          (cond
+                frame     (demo/resolve-frame! live-keys live-ms)
+                keys      (or (:keys frame) "")
+                ms        (or (:ms frame) live-ms)
+                now-keys  (key-states keys)
+                edges     (rising-edges now-keys prev-keys)]
+            (cond
             ;; Quitting straight from the pause/settings page still
             ;; persists edits (q never hits the resume transition).
-            (or (:end? frame) (str/contains? keys "q"))
-            (do (when (:paused world) (persist-settings! world))
-                :quit)
+              (or (:end? frame) (str/contains? keys "q"))
+              (do (when (:paused world) (persist-settings! world))
+                  :quit)
 
-            :else
-            (let [ticked0 (tick-world world keys (php// ms 1000.0) edges)
+              :else
+              (let [ticked0 (tick-world world keys (php// ms 1000.0) edges)
                   ;; Pause IS the settings page: while paused (and not
                   ;; in the H info panel), the arrows / WASD tune the
                   ;; options shown in the overlay. tick-world already
                   ;; froze the gameplay step, so this only edits settings.
-                  ticked  (if (and (:paused ticked0) (not (:help? ticked0)))
-                            (step-settings! ticked0 keys)
-                            ticked0)
+                    ticked  (if (and (:paused ticked0) (not (:help? ticked0)))
+                              (step-settings! ticked0 keys)
+                              ticked0)
                   ;; F5 / F9 quick-save / load run here (file IO),
                   ;; outside the pure tick. Load swaps the whole world;
                   ;; both stamp a brief HUD flash so the player sees it
                   ;; took.
-                  world'  (handle-save-load ticked edges)]
+                    world'  (handle-save-load ticked edges)]
               ;; Resuming out of the pause/settings page persists the
               ;; player's choices (volumes were already applied live).
-              (when (resumed-pause? world world')
-                (persist-settings! world'))
+                (when (resumed-pause? world world')
+                  (persist-settings! world'))
               ;; Drain the per-frame combat sfx queue that core/combat
               ;; built (gun reports, kill cues, pain, dry-fire clicks).
               ;; core/ stays effect-free; emission lives here, gated on
               ;; :sound-on like every other cue.
-              (when (:sound-on world')
-                (doseq [ev (:sfx world')]
-                  (play-sfx! (:name ev) (:vol ev))))
-              (when (and (:heartbeat-tick? world') (:sound-on world'))
-                (play-sfx! :heartbeat 0.35))
-              (when (and (:silence-tick? world') (:sound-on world'))
-                (mute-for! 0.4))
+                (when (:sound-on world')
+                  (doseq [ev (:sfx world')]
+                    (play-sfx! (:name ev) (:vol ev))))
+                (when (and (:heartbeat-tick? world') (:sound-on world'))
+                  (play-sfx! :heartbeat 0.35))
+                (when (and (:silence-tick? world') (:sound-on world'))
+                  (mute-for! 0.4))
               ;; N toggled sound this frame: start / stop the OST loop
               ;; to match. Comparing the flag (not the edge) also
               ;; catches any other path that flips :sound-on.
-              (when (php/!== (:sound-on world) (:sound-on world'))
-                (music/sync-music! (:sound-on world')))
-              (cond
-                (php/<= (:lives world') 0) (result-game-over world' t-start now)
-                (on-door? world')          (door-result      world' t-start now)
-                :else                      (recur world' now ms
-                                                  (fps-from-ms ms)
-                                                  now-keys
-                                                  [rows cols])))))))))
+                (when (php/!== (:sound-on world) (:sound-on world'))
+                  (music/sync-music! (:sound-on world')))
+                (cond
+                  (php/<= (:lives world') 0) (result-game-over world' t-start now)
+                  (on-door? world')          (door-result      world' t-start now)
+                  :else                      (recur world' now ms
+                                                    (fps-from-ms ms)
+                                                    now-keys
+                                                    [rows cols]
+                                                    cal'))))))))))
 
 ;; =====================================================================
 ;; § End screens (death / victory)
@@ -995,9 +1031,11 @@
    the initial loop entry). `demo-phase` (nil for normal play, 1..4 for
    the tech-talk showcase) applies a per-phase world transform after
    build-world (see phel-doom.demo.phases/apply-phase). `max-rows` /
-   `max-cols` (from --max-rows / --max-cols, 0 = uncapped) clamp the
-   per-frame render size; the game-loop applies them to the live
-   terminal size so a big terminal renders a smaller inset frame."
+   `max-cols` (from --max-rows / --max-cols; -1 = unset → auto-cap,
+   0 = fill, N = fixed cap) clamp the per-frame render size; the
+   game-loop applies them to the live terminal size so a big terminal
+   renders a smaller inset frame (auto-sized for a smooth framerate
+   unless overridden)."
   [diff god? armory? full-map? demo-phase start-level init-seed init-settings
    max-rows max-cols]
   (loop [level       (php/max 1 (php/min num-levels (or start-level 1)))
@@ -1172,11 +1210,14 @@
       (:difficulty settings))))
 
 (defn- opt-int
-  "Coerce a CLI option string to a non-negative int. nil / empty / a
-   non-numeric value → 0 (treated as 'no cap' by the render-size caps)."
+  "Coerce a CLI render-size-cap option to an int. nil / empty (the flag
+   was not passed) → -1, the 'auto' sentinel: when BOTH axes are -1 the
+   game-loop auto-calibrates a smooth render cap. An explicit value wins:
+   0 = fill the terminal (no cap, opts out of auto), a positive N caps
+   that axis to N."
   [raw]
   (if (or (nil? raw) (= raw ""))
-    0
+    -1
     (php/max 0 (php/intval raw))))
 
 (defn- run-play [ctx]
@@ -1191,9 +1232,10 @@
                       (nil? lv-raw) nil
                       (= lv-raw "") nil
                       :else         (php/intval lv-raw))
-        ;; Render-size caps (--max-cols / --max-rows). Empty / nil / 0 →
-        ;; no cap on that axis (fill the terminal). A positive value
-        ;; shrinks the render area, leaving a blank inset border.
+        ;; Render-size caps (--max-cols / --max-rows). Unset → -1 on both
+        ;; → the game-loop auto-calibrates a smooth render size. An
+        ;; explicit 0 fills the terminal (opts out of auto); a positive
+        ;; value caps that axis, leaving a blank inset border.
         max-cols    (opt-int (cli/opt ctx "max-cols"))
         max-rows    (opt-int (cli/opt ctx "max-rows"))
         ;; Demo (issue #64): --demo replays a recorded run (forces its
@@ -1307,10 +1349,10 @@
            :default ""}
           {:name    "max-cols"
            :mode    :optional
-           :doc     "Cap the render width to N columns on a wider terminal (the surplus becomes a blank inset border). 0 / unset fills the terminal. Handy on ultrawide / fullscreen terminals where a full-width cast is heavy and adds no FOV past the 90-degree clamp."
+           :doc     "Cap the render width to N columns (surplus becomes a blank inset border). Unset (default) auto-calibrates a smooth render size for your machine; 0 forces the full terminal (uncapped); N caps to N. Handy to override the auto-cap on ultrawide / fullscreen terminals."
            :default ""}
           {:name    "max-rows"
            :mode    :optional
-           :doc     "Cap the render height to N rows on a taller terminal (surplus becomes a blank inset border). 0 / unset fills the terminal."
+           :doc     "Cap the render height to N rows (surplus becomes a blank inset border). Unset (default) auto-calibrates; 0 forces the full terminal; N caps to N."
            :default ""}]
    :run  run-play})

@@ -79,3 +79,34 @@
   [^int rows ^int cols ^int max-rows ^int max-cols]
   [(cap-axis rows max-rows min-render-rows)
    (cap-axis cols max-cols min-render-cols)])
+
+(def auto-target-frame-ms
+  "Render-time budget (ms) the auto-cap aims to hold per frame. The 3D
+   render cost is ~linear in the cell count and dominates the loop (cast
+   is ~free), so capping the render to the cell count that fits this
+   budget keeps movement smooth on slow hardware. Sub-16.7ms (60fps) is
+   not achievable on interpreted PHP at any real size, so this targets a
+   comfortably-smooth ~35-40fps and leaves headroom for input + terminal
+   IO. A fast machine renders the full terminal inside this budget and is
+   never capped."
+  24.0)
+
+(def auto-cal-frames
+  "Full-size frames to measure before locking the auto-cap. The min
+   render-ms over these is used (warm, least-noisy). Kept small so the
+   brief full-size stutter hides under the intro splash."
+  5)
+
+(defn auto-cap-dims
+  "Compute the [rows cols] the auto-cap should render at so a full-size
+   render measured at `full-ms` scales down to fit `auto-target-frame-ms`.
+   Render cost scales ~linearly with cols×rows, so to cut it by ratio r
+   each axis scales by sqrt(r) - preserving the aspect ratio (the surplus
+   terminal becomes a blank inset border). Returns the full [rows cols]
+   unchanged when it already fits; never below the playable floors."
+  [^int rows ^int cols ^float full-ms]
+  (if (php/<= full-ms auto-target-frame-ms)
+    [rows cols]
+    (let [s (php/sqrt (php// auto-target-frame-ms full-ms))]
+      [(php/max min-render-rows (php/intval (php/* rows s)))
+       (php/max min-render-cols (php/intval (php/* cols s)))])))

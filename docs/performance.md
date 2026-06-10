@@ -175,4 +175,10 @@ Half-block sub-pixel rendering (`frame->string`, 200-iter mean, no-JIT local so 
 
 The 2-colour `halfblock` cell cache is what makes the +2% possible: the earlier full-frame half-block attempt was rejected at +50% because it built the `\e[..m▀` string per cell. The remaining cost is bytes/frame (denser SGR, less RLE coalescing), an I/O cost not a CPU one - cap it with `--max-cols` on ultra-wide terminals.
 
+## Render is per-cell bound; the auto-cap
+
+The 3D render (`frame->string`) is the loop's bottleneck: cast is ~1 ms, render is the rest and scales ~linearly with the cell count (cols×rows). On one measured machine the corridor scene ran ~51 ms at 100×28 up to ~172 ms at 200×50 (interpreted). Crucially, **opcache + tracing JIT measured ~0% improvement, and the compiled/built artifact was not faster than `phel run`** - PHP's JIT does not accelerate this call/array/string-heavy loop. (This corrects the older "build is ~10x faster / phel run absolutes are inflated" assumption: the per-frame generated PHP is the same either way.) So sub-16.7 ms (60 fps) at a big terminal is not reachable on interpreted PHP; the doc's optimistic "sub-5 ms" figures hold only on hardware/PHP where the JIT does fire on this code.
+
+The only lever that cuts render cost is fewer cells. The game therefore **auto-calibrates a render cap** (see `docs/game-loop.md` + `auto-cap-dims`): measure a few full-size frames, then lock the render to the largest size that holds `auto-target-frame-ms` (~24 ms render → ~35-40 fps after overhead), scaling each axis by `sqrt(budget/measured)`. Half-block keeps the smaller render sharp. Override with `--max-cols` / `--max-rows`; `--max-cols=0` forces the full terminal.
+
 The overlay is off by default and costs zero per-frame when off (instrumentation gated behind `:debug?` flag).

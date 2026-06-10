@@ -6,6 +6,7 @@
 - Half-block sub-pixel floor/walls/sky: `▀` cells with independent top/bottom colours give 2x vertical resolution (smaller pixels, no colour loss), memoized so CPU cost is ~+2% (`PHEL_DOOM_NO_SUBPIXEL=1` for the one-colour-per-cell path)
 - Sub-5ms `frame->string` at 180x40 (2ms at 80x24, 3ms at 120x30)
 - Uniform ~60fps target + crisp 1:1 walls at every terminal size (no big-screen 30fps / chunky-scale degradation)
+- Auto-calibrated smooth render size: measures the machine at startup and caps the render to hold ~35-40fps on a big terminal (half-block keeps the smaller render sharp); recalibrates on resize. `--max-cols=N` fixes it, `--max-cols=0` forces full terminal
 - `proj-dist` decoupled from viewport width - resize widens FOV, not zoom - FOV clamps at 100° on wide terminals so they gain horizontal resolution, not edge fisheye
 - Half-block sub-cell shading on wall edges; brick glyphs (4% of cells)
 - 5-stage death animation: flash -> slump -> collapse -> blood mid -> blood dim

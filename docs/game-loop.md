@@ -82,9 +82,8 @@ The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself; the g
 
 ## Frame timing + adaptive FPS
 
-- **60 fps target** (16.667 ms) on standard terminals (< 200 cols OR area ≤ 12000 cells).
-- **30 fps** on big screens (area > 12000 cells) - perf-mode engagement via `core/perf.phel`.
-- `target-frame-us` reads terminal dimensions and selects 16667 µs (60 fps) or 33333 µs (30 fps). Render time is the real bottleneck; sleep yields CPU.
+- **60 fps target** (16.667 ms) at every terminal size, via `core/perf.phel`. The old big-screen 30fps cap was removed - it was an artificial ceiling (see `docs/performance.md`).
+- `target-frame-us` returns a uniform 16667 µs. Render time is the real bottleneck on big screens; `adaptive-sleep!` fills the remainder of the budget and floors at `min-yield-us`, so framerate degrades smoothly toward render-native instead of snapping to 30fps.
 - `ms-since` computes wall-clock delta. Args tagged `^float` so Phel doesn't infer `int` from `* 1000` and trigger PHP 8.4+ implicit-conversion deprecation on microtime values.
 - `dt` is elapsed-seconds float used by physics, AI, decay. Same dt across sub-steps keeps simulation consistent inside a frame.
 

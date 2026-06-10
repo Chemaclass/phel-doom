@@ -115,9 +115,9 @@ Grounding shadow and face glyph need depth-culling: paint only if in front of wa
 
 Consecutive same-color cells coalesce: one escape + N spaces (terminal repeats BG). Cuts output 5-10x on monochrome rows. State machine tracks `prev` + `run`, flushes on color change.
 
-## Render-scale on big screens
+## Render-scale: uniform crisp walls
 
-Perf mode (>= 200 cols or > 12k cell area): `render-scale = 2` - cast once per 2 cols, horizontally replicate. Wall data accurate per original ray; horizontally stretched but not distorted.
+`render-scale` is a uniform 1 at every terminal size: one ray per output column, exact 1:1 cast, crisp walls. The old big-screen perf mode (cast once per 2 cols and replicate, for a chunky look on wide terminals) has been removed. `cast-frame` still accepts a `scale` argument so the replication path stays available, it is just always called with 1.
 
 ## Responsive help panel
 

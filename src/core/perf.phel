@@ -1,92 +1,48 @@
 (ns phel-doom.core.perf)
 
 ;; ---------------------------------------------------------------------
-;; Big-screen perf mode.
+;; Frame cadence + render scale.
 ;;
-;; Pure predicates + scaling helpers used by the play loop (cadence
-;; throttle) and the renderer (virtual-width emit, future expansions).
-;; At standard terminal sizes (80×24, 120×30) every helper here is a
-;; no-op — perf mode only kicks in once the terminal crosses a width
-;; or area threshold where the 1:1 60fps render path stops fitting
-;; cleanly inside a frame budget.
+;; Both are now UNIFORM across every terminal size. The old "big-screen
+;; perf mode" (a width/area threshold that dropped wide terminals to
+;; 30fps and a chunky 2× render-scale) is gone:
+;;   - cadence: the 30fps cap was artificial — capable hardware was
+;;     pinned to 30fps for no reason, and slow hardware already floored
+;;     at min-yield-us. See `standard-frame-us`.
+;;   - scale: wide terminals now render crisp 1:1 walls instead of
+;;     replicated 2× pairs.
+;; `cast-frame` still accepts a `scale` argument (replication capability
+;; is intact), it is just always called with 1.
 ;; ---------------------------------------------------------------------
 
-(def perf-width-threshold
-  "Column count at or above which a terminal counts as 'wide' for
-   perf-mode purposes. 200 covers the realistic gap between a
-   regular tiling-WM pane (~120-180) and a true ultrawide /
-   full-screen 4K terminal (300-500+). Below 200 → 1:1 path."
-  200)
-
-(def perf-area-threshold
-  "Cell-count threshold (cols × rows) — a tall-but-narrow terminal
-   (say 120×60) still benefits from perf mode because the renderer
-   walks rows too. 12000 cells ≈ 200×60 OR 300×40 OR 400×30, all of
-   which strain the 16ms frame budget on the standard render path."
-  12000)
-
-(defn perf-mode?
-  "True when the terminal is wide / tall enough that big-screen perf
-   optimisations should engage (cadence drop to 30fps, virtual-width
-   2× emit, etc). Pure function of dimensions so it's safe to read
-   per frame — `term-size` is the only varying input."
-  [^int cols ^int rows]
-  (or (php/>= cols perf-width-threshold)
-      (php/> (php/* cols rows) perf-area-threshold)))
-
 (def standard-frame-us
-  "Cadence target (µs) for one game-loop iteration — ~60fps, used at
-   EVERY terminal size. Big screens used to drop to ~30fps, but that
-   was an artificial ceiling: on hardware fast enough to render a
-   perf-mode frame inside this budget the player was still pinned to
-   30fps for no reason, and on hardware too slow to make it the sleep
-   already floors at `min-yield-us` (so the cap never bought anything
-   there either). Cadence is now uniform; framerate tracks render
-   capability up to this 60fps ceiling and degrades naturally below it."
+  "Cadence target (µs) for one game-loop iteration — ~60fps, at EVERY
+   terminal size. Big screens used to drop to ~30fps, but that was an
+   artificial ceiling: on hardware fast enough to render a wide-terminal
+   frame inside this budget the player was still pinned to 30fps, and on
+   hardware too slow to make it the per-iteration sleep already floors
+   at `min-yield-us`. Framerate now tracks render capability up to this
+   60fps ceiling and degrades naturally below it."
   16667)
 
 (def standard-scale
-  "Horizontal render-scale on standard terminals: exact 1:1 path."
+  "Horizontal render-scale: exact 1:1 path (one ray per output column)
+   at EVERY terminal size — crisp walls, no chunky 2× replication."
   1)
-
-(def perf-scale
-  "Horizontal render-scale on perf-mode terminals: one ray per 2 output
-   columns, replicated across the pair (chunky-but-readable walls)."
-  2)
-
-(defn perf-profile
-  "Single source of truth for big-screen perf policy: maps terminal
-   dimensions to {:frame-us … :scale …}. `target-frame-us` and
-   `render-scale` are thin reads off this so the policy lives in one
-   place. Pure function of dimensions — safe to read per frame.
-
-   `:frame-us` is now `standard-frame-us` at every size (cadence is
-   uniform 60fps, see that def); only `:scale` still varies by size."
-  [^int cols ^int rows]
-  (if (perf-mode? cols rows)
-    {:frame-us standard-frame-us :scale perf-scale}
-    {:frame-us standard-frame-us :scale standard-scale}))
 
 (defn target-frame-us
   "Microsecond cadence target for one game-loop iteration: a uniform
-   ~60fps at every terminal size (see `standard-frame-us`). Big screens
-   no longer drop to 30fps; the per-iteration sleep fills whatever is
-   left of this budget and floors at `min-yield-us` when a heavy frame
-   overruns, so framerate degrades smoothly toward render-native
-   instead of snapping to a 30fps ceiling."
+   ~60fps at every terminal size (see `standard-frame-us`). Takes the
+   live dimensions so the call site stays stable, but the budget no
+   longer varies by size."
   [^int cols ^int rows]
-  (:frame-us (perf-profile cols rows)))
+  standard-frame-us)
 
 (defn render-scale
-  "Horizontal render-scale factor consumed by `cast-frame`: it casts
-   one ray per N output columns and replicates the sample across the
-   next N entries of the dists/hits/sides/hxs/hys arrays. Downstream
-   row-loop code is unchanged — it still reads vw-sized buffers column
-   by column, just with N-wide runs of identical values.
-
-   2 on perf-mode terminals (cuts cast + per-col wall-shade work
-   roughly in half), 1 on standard terminals (exact 1:1 path). See
-   `perf-profile`. Sprites + HUD operate at full vw so the chunky look
-   is contained to the wall band."
+  "Horizontal render-scale factor consumed by `cast-frame`. A uniform
+   1 (exact 1:1 cast) at every terminal size — wide terminals render
+   crisp walls rather than the chunky 2× pairs the old perf mode used.
+   Takes the live dimensions so the call site stays stable, but the
+   factor no longer varies by size."
   [^int cols ^int rows]
-  (:scale (perf-profile cols rows)))
+  standard-scale)

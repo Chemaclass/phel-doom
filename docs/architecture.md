@@ -22,7 +22,7 @@ src/
 │   ├── weapons.phel                 ; per-weapon stats + switch/reload
 │   ├── format.phel                  ; render format helpers
 │   ├── settings.phel                ; difficulty + volume + minimap settings
-│   ├── perf.phel                    ; big-screen perf-mode predicates
+│   ├── perf.phel                    ; frame cadence + render-scale (uniform)
 │   ├── rng.phel                     ; seeded PRNG
 │   ├── difficulty.phel              ; easy/normal/hard/nightmare multipliers
 │   └── version.phel                 ; version string

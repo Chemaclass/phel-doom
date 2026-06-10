@@ -24,7 +24,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Fixed
 
-- Horizontal FOV is now clamped at 90° on wide terminals. Past 140 cols the ray spread stops widening (it bowed out toward 110°+ on ultrawide / fullscreen terminals, warping walls at the screen edges); the extra columns now add horizontal resolution instead of fisheye distortion. Terminals at or below 140 cols are unchanged. Wall scale is untouched.
+- Horizontal FOV is now clamped at 100° on wide terminals (the widescreen sweet spot - roomy without warp). The ray spread widens naturally up to ~167 cols, then holds at 100° instead of bowing out toward 110°+ edge fisheye on ultrawide / fullscreen terminals; the extra columns add horizontal resolution. Narrower terminals are unchanged. Wall scale is untouched.
 
 ### Changed
 

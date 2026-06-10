@@ -3,7 +3,7 @@
 - 256-color ANSI raycaster, full viewport
 - Sub-5ms `frame->string` at 180x40 (2ms at 80x24, 3ms at 120x30)
 - Uniform ~60fps target + crisp 1:1 walls at every terminal size (no big-screen 30fps / chunky-scale degradation)
-- `proj-dist` decoupled from viewport width - resize widens FOV, not zoom - FOV clamps at 90° past 140 cols so wide terminals gain horizontal resolution, not edge fisheye
+- `proj-dist` decoupled from viewport width - resize widens FOV, not zoom - FOV clamps at 100° on wide terminals so they gain horizontal resolution, not edge fisheye
 - Half-block sub-cell shading on wall edges; brick glyphs (4% of cells)
 - 5-stage death animation: flash -> slump -> collapse -> blood mid -> blood dim
 - Responsive help panel, collapses on tight screens

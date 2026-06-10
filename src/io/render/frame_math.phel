@@ -38,6 +38,38 @@
 
     :else             code))
 
+(def tex-fade-table
+  "24-level × 256-code distance-fog lookup for textured walls:
+   `tex-fade-table[level][code]` is `code` darkened toward black by
+   `1 - level/23`. Level 23 = full brightness (near wall), 0 = darkest
+   (far). Lets the wall-texture path apply per-cell fog with a single
+   nested `aget` instead of a `fade-256` call per cell. Built once at
+   load (24×256 fade-256 calls); pure + immutable thereafter."
+  (let [outer (php/array)]
+    (loop [lvl 0]
+      (when (php/< lvl 24)
+        (let [inner (php/array)
+              t     (php/- 1.0 (php// lvl 23.0))]
+          (loop [c 0]
+            (when (php/< c 256)
+              (php/aset inner c (fade-256 c t))
+              (recur (php/+ c 1))))
+          (php/aset outer lvl inner))
+        (recur (php/+ lvl 1))))
+    outer))
+
+(def bg-cell-cache
+  "256 pre-baked BG paint cells `\\e[48;5;<code>m ` (escape + one space),
+   indexed by 256-colour code. The textured-wall path resolves a faded
+   code via `tex-fade-table` then fetches its ready cell here — no
+   per-cell string allocation."
+  (let [a (php/array)]
+    (loop [c 0]
+      (when (php/< c 256)
+        (php/aset a c (str "\e[48;5;" c "m "))
+        (recur (php/+ c 1))))
+    a))
+
 (defn enemy-shade-string
   "Compose the ANSI BG-only paint cell for one enemy zone at the
    given fade factor."

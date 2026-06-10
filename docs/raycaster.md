@@ -55,11 +55,12 @@ Returns raw (uncorrected) distance. Detailed tuple `[dist side hx hy]` is comput
   ...returns {:dists :hits :sides :hxs :hys})
 ```
 
-Cast `width / scale` rays; return 5 parallel PHP arrays (one per output column).
+Cast `width / scale` rays; return 6 parallel PHP arrays (one per output column).
 - `dists`: fish-eye corrected wall distance
 - `hits`: cell value at hit (0 if escaped to max-depth)
 - `sides`: 0 = vertical, 1 = horizontal (side-shading)
 - `hxs, hys`: hit cell coordinates
+- `wallxs`: wall-hit fraction in [0, 1) - the texture U coordinate (frac of world-y on a vertical face, world-x on a horizontal face, from the raw perpendicular distance)
 
 ## Two key details
 

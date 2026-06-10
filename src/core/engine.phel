@@ -174,7 +174,8 @@
         hits                (php/array)
         sides               (php/array)
         hxs                 (php/array)
-        hys                 (php/array)]
+        hys                 (php/array)
+        wallxs              (php/array)]
      ;; DDA traversal is inlined: avoids one fn call per column AND
      ;; replaces the per-ray Phel-vector `[d h side hx hy]` return
      ;; with a cheap `php/array` so the hot loop allocates a plain
@@ -214,11 +215,20 @@
                               (php/!== 0 hit)        (php/array dist hit 1 cx cy')
                               :else
                               (recur cx cy' sidex (php/+ sidey deltay))))))
-              d-corr  (php/* (php/aget hit-arr 0) (php/aget cos-offs col))
+              rawd    (php/aget hit-arr 0)
+              d-corr  (php/* rawd (php/aget cos-offs col))
               h       (php/aget hit-arr 1)
               side    (php/aget hit-arr 2)
               hx      (php/aget hit-arr 3)
-              hy      (php/aget hit-arr 4)]
+              hy      (php/aget hit-arr 4)
+              ;; Texture U: fractional position along the wall face where
+              ;; the ray hit. Vertical face (side 0) → frac of world-y at
+              ;; the hit; horizontal face (side 1) → frac of world-x.
+              ;; Uses the raw (perpendicular) side distance, not the
+              ;; fish-eye-corrected one. In [0, 1) → texture column.
+              wallx   (if (php/=== side 0)
+                        (let [wy (php/+ y (php/* rawd diry))] (php/- wy (php/floor wy)))
+                        (let [wx (php/+ x (php/* rawd dirx))] (php/- wx (php/floor wx))))]
            ;; Replicate this sample across the next `scale` output
            ;; columns. `scale` is 1 today (crisp 1:1 walls everywhere),
            ;; so this fills exactly one cell; the loop keeps the
@@ -235,9 +245,10 @@
               (php/aset sides c side)
               (php/aset hxs c hx)
               (php/aset hys c hy)
+              (php/aset wallxs c wallx)
               (recur (php/+ c 1) (php/+ fill 1))))
           (recur (php/+ col scale)))))
-    {:dists dists :hits hits :sides sides :hxs hxs :hys hys}))
+    {:dists dists :hits hits :sides sides :hxs hxs :hys hys :wallxs wallxs}))
 
 (def visit-radius
   "Square radius (cells) around the player scanned each frame for

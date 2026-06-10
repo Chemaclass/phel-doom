@@ -141,6 +141,15 @@ The cost that killed the earlier full-frame attempt was the per-cell string buil
 
 (Caveat for `def-`: it does NOT accept a string docstring - the string is stored AS the value. `half-cell-cache` keeps its doc in a `;;` comment for this reason.)
 
+## Pixel-doubled mode (auto, slow machines)
+
+When the game-loop's startup calibration finds full detail too slow for a smooth framerate (see `docs/game-loop.md`), `frame->string` gets `:px2? true` in stats: the scene renders at half resolution (svw x svh) and each scene cell paints a 2x2 terminal block - quarter the per-cell work, still the whole terminal. Key invariants:
+
+- **Same framing, no zoom.** The cast runs at the FULL width with `scale 2` (full-width FOV tables, one ray per two columns) and is compacted to scene width by `compact-cast-2`; wall heights, enemy projection and the billboard painters all take an explicit `pd` (= `proj-dist / 2`) so on-screen sizes match full detail exactly.
+- **Row-pair split instead of ▀.** The sky / floor / wall branches sample both vertical sub-texels per scene cell (packed into one `top*256+bot` int by a single branch dispatch) and paint the top sample on the upper output row, the bottom on the lower - the same two vertical samples the half-block path packs into one cell.
+- **Sprites keep their detail.** `enemy-sprite-quad` returns the raw 2x2 texel quad and the emitter spreads it over the real 2x2 block; transparent texels fall back to the base pair per quadrant.
+- **Emission.** The upper row streams into `parts` with the usual cell + N-spaces RLE (solid BG cells only); the lower row accumulates in a per-row buffer appended after the upper row's newline. Composite glyph cells (doors, edges, pickups) are pushed literally twice so glyphs survive the doubling. Text/HUD overlays (crosshair, compass, weapon sprite, minimap) keep full-resolution coordinates; the scene-coordinate painters (`paint-door-face`, `paint-face-overlay`) take a pixel-scale factor instead.
+
 ## Responsive help panel
 
 H/ESC info menu width-adaptive: max 44 chars, min 36. Drops CONTROLS section first, then COMPASS HINT on squeeze.

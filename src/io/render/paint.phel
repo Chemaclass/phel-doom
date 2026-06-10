@@ -3,10 +3,11 @@
 (ns phel-doom.io.render.paint
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
   (:require phel-doom.io.render.palette :refer [kill-flash death-slump death-collapse blood-mid blood-dim fireball-shade fireball-glyph])
-  (:require phel-doom.io.render.frame-math :refer [sprite-h aggro-distance project-enemy collect-enemy-projs pulse visuals-for-type enemy-front-visible-at?])
+  (:require phel-doom.io.render.frame-math :refer [sprite-h sprite-h-pd aggro-distance project-enemy project-enemy-pd collect-enemy-projs pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.weapon-sprites-data :refer [baked-weapons weapon-flashes])
   (:require phel-doom.io.render.enemy-sprites-data :refer [projectile-sprites death-sprites blood-sprites pickup-sprites])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-col-x sprite-subcol-x enemy-sprite-cell])
+  (:require phel-doom.core.engine :refer [proj-dist])
   (:require phel-doom.core.combat :refer [fx-ttl-seconds corpse-ttl-seconds])
   (:require phel-doom.core.map :refer [find-door-cell]))
 
@@ -44,8 +45,12 @@
 
    `edists` (nearest enemy depth per column, built during the zone
    pass) gates the glyph so a face behind a closer sprite doesn't bleed
-   through — same fix as the grounding shadow (issue #91)."
-  [parts world stats vw vh dists edists face-phase]
+   through — same fix as the grounding shadow (issue #91).
+
+   `sc` is the render pixel scale: `vw`/`vh`/`dists`/`edists` live in
+   SCENE cells, so the emitted terminal coordinates multiply by `sc`
+   (1 = full detail, identity; 2 = pixel-doubled scene)."
+  [parts world stats vw vh dists edists face-phase ^int sc]
   (let [scare? (php/> (or (get stats :scare-secs) 0.0) 0.0)]
     (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
       (let [col         (:col proj)
@@ -67,8 +72,8 @@
                 face-row (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 6))]
             (when (and (php/>= face-row 1) (php/<= face-row vh))
               (buf-push parts
-                        (str "\e[" face-row ";"
-                             (php/+ col 1) "H" glyph))))))))
+                        (str "\e[" (php/* sc face-row) ";"
+                             (php/+ (php/* sc col) 1) "H" glyph))))))))
   parts)
 
 ;; =====================================================================
@@ -181,8 +186,9 @@
   "Disembodied red eye blinks at the upper third of every visible
    door column during the door-face active window. Re-uses the
    hits/tops/bots buffers from compute-wall-shades so we don't have
-   to re-cast rays."
-  [parts stats vw vh hits tops bots]
+   to re-cast rays. `sc` is the render pixel scale: the buffers live in
+   SCENE cells, so emitted terminal coordinates multiply by `sc`."
+  [parts stats vw vh hits tops bots ^int sc]
   (when (php/> (or (get stats :door-face-active-secs) 0.0) 0.0)
     (let [glyph "\e[5;48;5;232;38;5;196;1mʘ\e[0m"]
       (loop [col 0]
@@ -192,7 +198,8 @@
                   b (buf-get bots col)
                   r (php/+ t (php/intdiv (php/max 1 (php/- b t)) 3))]
               (when (and (php/>= r 1) (php/<= r vh))
-                (buf-push parts (str "\e[" r ";" (php/+ col 1) "H" glyph)))))
+                (buf-push parts (str "\e[" (php/* sc r) ";"
+                                     (php/+ (php/* sc col) 1) "H" glyph)))))
           (recur (php/+ col 1))))))
   parts)
 
@@ -1167,15 +1174,15 @@
 (defn- blit-billboard
   "blit-sprite-into at full projected enemy height, centred vertically
    (corpses, fireballs)."
-  [buf sprite ^int col ^float d ^int vw ^int vh dists edists]
-  (let [h (sprite-h vh d 1.0)]
+  [buf sprite ^int col ^float d ^int vw ^int vh ^float pd dists edists]
+  (let [h (sprite-h-pd pd vh d 1.0)]
     (blit-sprite-into buf sprite col d (php/intdiv (php/- vh h) 2) h vw vh dists edists)))
 
 (defn- blit-billboard-scaled
   "blit-billboard at `scale` x the projected enemy height, kept centred
    (corpses render a bit smaller than a live enemy)."
-  [buf sprite ^int col ^float d ^float scale ^int vw ^int vh dists edists]
-  (let [h (php/max 2 (php/intval (php/* (sprite-h vh d 1.0) scale)))]
+  [buf sprite ^int col ^float d ^float scale ^int vw ^int vh ^float pd dists edists]
+  (let [h (php/max 2 (php/intval (php/* (sprite-h-pd pd vh d 1.0) scale)))]
     (blit-sprite-into buf sprite col d (php/intdiv (php/- vh h) 2) h vw vh dists edists)))
 
 (defn- death-frame
@@ -1208,8 +1215,8 @@
 (defn- blit-blood-splat
   "Blit a small blood-spurt `splat` at the enemy's torso (a third of the
    projected height, upper-mid). Returns the buffer."
-  [buf splat ^int col ^float d ^int vw ^int vh dists no-enemies]
-  (let [eh   (sprite-h vh d 1.0)
+  [buf splat ^int col ^float d ^int vw ^int vh ^float pd dists no-enemies]
+  (let [eh   (sprite-h-pd pd vh d 1.0)
         bh   (php/max 2 (php/intdiv eh 3))
         mid  (php/+ (php/intdiv (php/- vh eh) 2) (php/intdiv eh 3))
         etop (php/- mid (php/intdiv bh 2))]
@@ -1223,12 +1230,12 @@
    NO_SPRITES both fall back to the ttl-tiered red shade. Wall-occluded
    cells skip. Returns the mutated buffer (rebind it — PHP arrays pass by
    value, and the sprite blits go through helpers)."
-  [blood-paint stats world dists vw vh]
+  [blood-paint stats world dists vw vh ^float pd]
   (let [no-enemies (buf-mk)              ; sprites occlude on walls only
         on?        (sprites-enabled?)]
     (reduce
      (fn [bp fx]
-       (let [proj (project-enemy fx (:player world) vw)]
+       (let [proj (project-enemy-pd pd fx (:player world) vw)]
          (if (nil? proj)
            bp
            (let [col    (:col proj)
@@ -1243,16 +1250,16 @@
                ;; Kill: collapse->corpse, plus a fresh spurt for the first
                ;; ~0.45s so even a one-life one-shot kill bleeds.
                corpse
-               (let [bp1     (blit-billboard-scaled bp corpse col d 0.5 vw vh dists no-enemies)
+               (let [bp1     (blit-billboard-scaled bp corpse col d 0.5 vw vh pd dists no-enemies)
                      elapsed (php/- corpse-ttl-seconds ttl)
                      ksplat  (when (php/< elapsed 0.45)
                                (blood-frame (php/max 0.0 (php/- 1.0 (php// elapsed 0.45)))))]
                  (if ksplat
-                   (blit-blood-splat bp1 ksplat col d vw vh dists no-enemies)
+                   (blit-blood-splat bp1 ksplat col d vw vh pd dists no-enemies)
                    bp1))
                ;; Wound: small Freedoom blood spurt at the torso.
                wsplat
-               (blit-blood-splat bp wsplat col d vw vh dists no-enemies)
+               (blit-blood-splat bp wsplat col d vw vh pd dists no-enemies)
                ;; NO_SPRITES: ttl-tiered red shade block.
                :else
                (let [hw     (:half-width proj)
@@ -1263,7 +1270,7 @@
                                   :else            blood-dim)
                      c-from (php/max 0 (php/- col hw))
                      c-to   (php/min (php/- vw 1) (php/+ col hw))
-                     h      (sprite-h vh d 1.0)
+                     h      (sprite-h-pd pd vh d 1.0)
                      r-top  (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv (php/* h 2) 3))
                      r-bot  (php/min vh (php/+ (php/intdiv (php/- vh h) 2) h))]
                  (loop [c c-from]
@@ -1286,22 +1293,26 @@
 
    Returns the mutated buffer — PHP arrays pass by value, and the sprite
    path goes through a helper, so the caller must rebind the result."
-  [blood-paint pickups player dists edists vw vh shade-now glyph-now sprite-key]
+  [blood-paint pickups player dists edists vw vh ^float pd shade-now glyph-now sprite-key]
   (let [use-spr (and (sprites-enabled?) (get pickup-sprites sprite-key))]
     (reduce
      (fn [bp item]
-       (let [proj (project-enemy item player vw)]
+       (let [proj (project-enemy-pd pd item player vw)]
          (if (nil? proj)
            bp
-           (let [col (:col proj)
-                 d   (:dist proj)
+           (let [col  (:col proj)
+                 d    (:dist proj)
                  ;; LOD: far away a pickup is just a clean colour blob
                  ;; (the glow below); only when it is close enough to show
-                 ;; detail (>= 7 cells tall) do we blit the Freedoom
-                 ;; sprite, capped at 16 cells so a point-blank item does
-                 ;; not swallow the view.
-                 ph  (php/min 16 (php/intval (php/* (sprite-h vh d 1.0) 0.4)))]
-             (if (and use-spr (php/>= ph 7))
+                 ;; detail (>= 7 full-detail cells tall) do we blit the
+                 ;; Freedoom sprite, capped at 16 so a point-blank item
+                 ;; does not swallow the view. Both thresholds scale by
+                 ;; pd/proj-dist so the pixel-doubled scene (cells twice
+                 ;; the size) switches detail at the same ON-SCREEN size.
+                 lodr (php// pd proj-dist)
+                 ph   (php/min (php/max 4 (php/intval (php/* 16 lodr)))
+                               (php/intval (php/* (sprite-h-pd pd vh d 1.0) 0.4)))]
+             (if (and use-spr (php/>= ph (php/max 3 (php/intval (php/* 7 lodr)))))
                ;; Near: detailed Freedoom item sprite.
                (let [etop (php/intdiv (php/- vh ph) 2)]
                  (blit-sprite-into bp use-spr col d etop ph vw vh dists edists))
@@ -1309,7 +1320,7 @@
                (let [hw     (php/max 1 (php/intdiv (:half-width proj) 2))
                      c-from (php/max 0 (php/- col hw))
                      c-to   (php/min (php/- vw 1) (php/+ col hw))
-                     h      (sprite-h vh d 1.0)
+                     h      (sprite-h-pd pd vh d 1.0)
                      mid    (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 2))
                      r-top  (php/max 0 (php/- mid (php/intdiv h 6)))
                      r-bot  (php/min vh (php/+ mid (php/intdiv h 6) 1))]
@@ -1343,11 +1354,11 @@
 
    Returns the mutated buffer — PHP arrays pass by value, so the caller
    must rebind to see the writes."
-  [blood-paint projectiles player dists edists vw vh]
+  [blood-paint projectiles player dists edists vw vh ^float pd]
   (let [fireball (and (sprites-enabled?) (get projectile-sprites :fireball))]
     (reduce
      (fn [bp pr]
-       (let [proj (project-enemy pr player vw)]
+       (let [proj (project-enemy-pd pd pr player vw)]
          (if (nil? proj)
            bp
            (let [col (:col proj)
@@ -1355,14 +1366,14 @@
              (if fireball
                ;; Freedoom fireball billboard at half the projected enemy
                ;; height so the bolt reads as a compact ball in flight.
-               (let [fh   (php/max 2 (php/intdiv (sprite-h vh d 1.0) 2))
+               (let [fh   (php/max 2 (php/intdiv (sprite-h-pd pd vh d 1.0) 2))
                      etop (php/intdiv (php/- vh fh) 2)]
                  (blit-sprite-into bp fireball col d etop fh vw vh dists edists))
                ;; Legacy orange glow + white-hot core (NO_SPRITES).
                (let [hw     (php/max 1 (php/intdiv (:half-width proj) 2))
                      c-from (php/max 0 (php/- col hw))
                      c-to   (php/min (php/- vw 1) (php/+ col hw))
-                     h      (sprite-h vh d 1.0)
+                     h      (sprite-h-pd pd vh d 1.0)
                      mid    (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 2))
                      r-top  (php/max 0 (php/- mid (php/intdiv h 6)))
                      r-bot  (php/min vh (php/+ mid (php/intdiv h 6) 1))]
@@ -1387,7 +1398,7 @@
    its spawn toward the impact by `:t`/`:dur`, projected and blitted as a
    Freedoom projectile sprite that recedes (shrinks) as it travels.
    Wall-occluded. Returns the mutated buffer (rebind it)."
-  [blood-paint tracers player dists edists vw vh]
+  [blood-paint tracers player dists edists vw vh ^float pd]
   (if (not (sprites-enabled?))
     blood-paint
     (reduce
@@ -1395,10 +1406,10 @@
        (let [frac (php// (:t tr) (php/max 0.001 (:dur tr)))
              cx   (php/+ (:x tr) (php/* (php/- (:tx tr) (:x tr)) frac))
              cy   (php/+ (:y tr) (php/* (php/- (:ty tr) (:y tr)) frac))
-             proj (project-enemy {:x cx :y cy} player vw)
+             proj (project-enemy-pd pd {:x cx :y cy} player vw)
              spr  (get projectile-sprites (:kind tr))]
          (if (and proj spr)
-           (blit-billboard-scaled bp spr (:col proj) (:dist proj) 0.7 vw vh dists edists)
+           (blit-billboard-scaled bp spr (:col proj) (:dist proj) 0.7 vw vh pd dists edists)
            bp)))
      blood-paint
      (or tracers []))))

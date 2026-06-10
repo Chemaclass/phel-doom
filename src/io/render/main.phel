@@ -3,9 +3,9 @@
 (ns phel-doom.io.render.main
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
   (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade sky-code floor-code door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright char-aspect shade-table shade-code-table shade-table-blood shade-code-table-blood])
-  (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table bg-cell-cache halfblock build-sky-halfblock collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
+  (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table bg-cell-cache halfblock build-sky-halfblock build-sky-codes-sub collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.wall-texture-data :refer [wall-tex])
-  (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type sprite-col-x sprite-subcol-x enemy-sprite-cell])
+  (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type sprite-col-x sprite-subcol-x enemy-sprite-cell enemy-sprite-quad])
   (:require phel-doom.io.render.hud :refer [minimap-door minimap-door-pulse minimap-rows hud-debug-line hud-line-str help-menu-string settings-menu-string])
   (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-door-face paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-flicker paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-weapon-hud paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
@@ -182,9 +182,12 @@
 (defn- build-floor-dperp-sub
   "Per-SUB-ROW perpendicular ground distance for the half-block floor.
    Indexes 0..2vh-1; the horizon sits at sub-row `vh`. Sub-rows below it
-   map to `floor-cast-k-sub / (s+0.5 - vh)`, clamped to `max-depth`;
-   sub-rows at/above the horizon get `max-depth` (never sampled as floor)."
-  [^int vh]
+   map to `k / (s+0.5 - vh)`, clamped to `max-depth`; sub-rows at/above
+   the horizon get `max-depth` (never sampled as floor). `k` is the
+   projection numerator for ONE sub-row of drop: `floor-cast-k-sub` at
+   full detail (sub-row = half a terminal row), `floor-cast-k` in
+   pixel-doubled mode (sub-row = one whole terminal row)."
+  [^int vh ^float k]
   (let [arr    (php/array)
         sub    (php/* 2 vh)
         center (php/* 1.0 vh)]
@@ -193,7 +196,7 @@
         (let [p (php/- (php/+ s 0.5) center)]
           (php/aset arr s (if (php/<= p 0.0)
                             max-depth
-                            (php/min max-depth (php// floor-cast-k-sub p)))))
+                            (php/min max-depth (php// k p)))))
         (recur (php/+ s 1))))
     arr))
 
@@ -234,8 +237,12 @@
                  :blood-floor-code-grad}
    `blood-cols` per-col directional blood mask (from build-blood-cols)
    `haze-shift` int 0-23: how many shade-table steps to pull walls
-                toward black. Doors are kept bright as a nav cue."
-  [vw vh haze-shift cast palette blood-cols]
+                toward black. Doors are kept bright as a nav cue.
+   `pd`         wall-height projection numerator: `proj-dist` at full
+                detail, half of it in pixel-doubled mode (scene rows are
+                two terminal rows tall, so heights halve to keep the
+                same on-screen wall size)."
+  [vw vh haze-shift cast palette blood-cols ^float pd]
   (let [{:keys [dists hits sides wallxs]}                              cast
         {:keys [stbl ctbl sky-c floor-c door-shade-now door-code-now
                 boss-door-shade-now boss-door-code-now
@@ -260,7 +267,7 @@
       (when (php/< col vw)
         (let [dist         (buf-get dists col)
               wall-h       (php/min vh (php/intval
-                                        (php// proj-dist (php/* (php/max 0.3 dist) char-aspect))))
+                                        (php// pd (php/* (php/max 0.3 dist) char-aspect))))
               top          (php/intdiv (php/- vh wall-h) 2)
               blood?       (php/> (buf-get blood-cols col) 0.4)
               stbl-l       (if blood? shade-table-blood stbl)
@@ -381,6 +388,32 @@
 ;; engine's offset-cache.
 (def- gradient-cache (atom {:vh -1}))
 
+(defn- compact-cast-2
+  "Compact a full-width cast done at scale 2 (one ray per two output
+   columns, replicated) into scene-width arrays for the pixel-doubled
+   renderer: every second column carries the sample, and the offset
+   tables were built for the FULL width — so the half-res scene keeps
+   the full-size FOV instead of zooming like a half-size terminal."
+  [cast ^int svw]
+  (let [{:keys [dists hits sides wallxs floordxs floordys]} cast
+        d                                                   (php/array)
+        h                                                   (php/array)
+        s                                                   (php/array)
+        w                                                   (php/array)
+        fx                                                  (php/array)
+        fy                                                  (php/array)]
+    (loop [i 0]
+      (when (php/< i svw)
+        (let [j (php/* 2 i)]
+          (php/aset d i (php/aget dists j))
+          (php/aset h i (php/aget hits j))
+          (php/aset s i (php/aget sides j))
+          (php/aset w i (php/aget wallxs j))
+          (php/aset fx i (php/aget floordxs j))
+          (php/aset fy i (php/aget floordys j)))
+        (recur (php/+ i 1))))
+    {:dists d :hits h :sides s :wallxs w :floordxs fx :floordys fy}))
+
 (defn- frame-gradients
   "Memoized sky/floor gradient bundle for viewport height `vh`. Returns
    a map of the 6 gradient arrays (normal + blood, shade + code twins),
@@ -409,6 +442,19 @@
   [world stats cols rows]
   (let [{:keys [vw vh map-col map-row map-step]}
         (layout cols rows (count (first (:grid world))) stats)
+        ;; Pixel-doubled mode (auto-picked by the game loop on machines
+        ;; where full detail can't hold a smooth framerate): the SCENE
+        ;; renders at half resolution (svw × svh, the view a half-size
+        ;; terminal would show) and each scene cell paints a 2×2
+        ;; terminal block, quartering the per-cell render cost while
+        ;; still filling the whole terminal. Text/HUD overlays keep
+        ;; full-resolution coordinates. px-sc scales scene-coordinate
+        ;; painters (door face, glyph-mode enemy faces) back to
+        ;; terminal coordinates.
+        px2?                               (boolean (get stats :px2?))
+        px-sc                              (if px2? 2 1)
+        svw                                (if px2? (php/intdiv (php/+ vw 1) 2) vw)
+        svh                                (if px2? (php/intdiv (php/+ vh 1) 2) vh)
         bloody?                            (php/> (or (get stats :iframes) 0.0) 0.0)
         ;; Walls + sky + floor are ALL pure grayscale: enemy colours
         ;; pop against neutral stonework, and far walls fade toward
@@ -416,15 +462,21 @@
         ;; horizon. No per-level wall tinting; level distinction comes
         ;; from enemy sprites + intro splash + audio.
         stbl                               shade-table
-        ;; Sky/floor gradients (+ blood + code twins) are memoized by vh
-        ;; (see frame-gradients); the per-frame rebuild is gone.
-        grads                              (frame-gradients vh)
+        ;; Sky/floor gradients (+ blood + code twins) are memoized by the
+        ;; SCENE height (see frame-gradients); the per-frame rebuild is
+        ;; gone. In pixel-doubled mode every scene-side consumer keys off
+        ;; svh, so the memo stays single-keyed and stable across frames.
+        grads                              (frame-gradients svh)
         sky-gradient                       (:sky grads)
         ;; Half-block sky: per-row ▀ cell stacking two sub-rows of the
         ;; horizon gradient (2× vertical smoothness). Row-constant, so it
         ;; still RLE-coalesces. Used when subpixel? is on (blood keeps the
         ;; flat red gradient).
         sky-hb                             (:sky-hb grads)
+        ;; Pixel-doubled sky: the same sub-row gradient curve left as raw
+        ;; codes so the emitter can paint sub-row 2r on the upper output
+        ;; row and 2r+1 on the lower as two solid cells.
+        sky-sub-codes                      (when px2? (build-sky-codes-sub svh shade-code-table))
         ;; Floor: same grey gradient with subtle tile banding (odd
         ;; rows one fade step darker).
         floor-gradient                     (:floor grads)
@@ -454,7 +506,7 @@
         ;; the centre. Drives the per-col red-shade swap inside the
         ;; col-setup loop below. One vw-sized PHP array built per
         ;; frame; lookup is O(1) inside the loop.
-        blood-cols                         (build-blood-cols vw bloody? (get stats :hurt-side))
+        blood-cols                         (build-blood-cols svw bloody? (get stats :hurt-side))
         ehead                              enemy-head
         ebody                              enemy-body
         elegs                              enemy-body ; intentional: default legs = body colour (no separate legs def)
@@ -476,9 +528,16 @@
         ;; render-scale is a uniform 1 at every size: exact 1:1 cast,
         ;; crisp walls. cast-frame still takes the factor so the
         ;; replication path stays available if ever needed.
-        scale                              (render-scale vw vh)
+        scale                              (render-scale svw svh)
+        ;; Pixel-doubled cast: cast at the FULL width with scale 2 (one
+        ;; ray per two columns, full-width FOV tables) and compact every
+        ;; second sample to scene width — same framing as full detail,
+        ;; no zoom. Wall/sprite heights below scale through scene-pd.
         {:keys [dists hits sides wallxs floordxs floordys]}
-        (cast-frame world vw scale)
+        (if px2?
+          (compact-cast-2 (cast-frame world vw 2) svw)
+          (cast-frame world svw scale))
+        scene-pd                           (if px2? (php/* 0.5 proj-dist) proj-dist)
         tex-on?                            (wall-textures-enabled?)
         floor-tex-on?                      (and tex-on? (floor-textures-enabled?))
         ;; Half-block sub-pixel rendering: ▀ cells with independent
@@ -491,10 +550,10 @@
         ;; res arrays drive the legacy single-texel floor; the sub arrays
         ;; (2× vertical) drive the half-block floor.
         {:x pfx :y pfy}                    (:player world)
-        floor-dperp                        (build-floor-dperp vh)
-        floor-level                        (build-floor-level floor-dperp vh)
-        floor-dperp-sub                    (build-floor-dperp-sub vh)
-        floor-level-sub                    (build-floor-level-sub floor-dperp-sub vh)
+        floor-dperp                        (build-floor-dperp svh)
+        floor-level                        (build-floor-level floor-dperp svh)
+        floor-dperp-sub                    (build-floor-dperp-sub svh (if px2? floor-cast-k floor-cast-k-sub))
+        floor-level-sub                    (build-floor-level-sub floor-dperp-sub svh)
         _                                  (when debug?
                                              (record-cast-ms!
                                               (php/* (php/- (php/microtime true) t-cast-start) 1000.0)))
@@ -605,7 +664,7 @@
          :bot-shadow        shades-bot-shadow
          :tex-u             shades-tex-u
          :tex-level         shades-tex-level}
-        (compute-wall-shades vw vh haze-shift
+        (compute-wall-shades svw svh haze-shift
                              {:dists dists :hits hits :sides sides :wallxs wallxs}
                              {:stbl stbl :ctbl ctbl
                               :sky-c sky-c :floor-c floor-c
@@ -617,7 +676,8 @@
                               :floor-code-grad       floor-code-gradient
                               :blood-sky-code-grad   blood-sky-code-gradient
                               :blood-floor-code-grad blood-floor-code-gradient}
-                             blood-cols)
+                             blood-cols
+                             scene-pd)
         ;; Enemy sprite zone boundaries (head/body/legs). For each
         ;; column carrying an enemy:
         ;;   row in [tops, mids)   -> head
@@ -662,6 +722,10 @@
         ;; Project + depth-sort enemies once: the zone pass paints them
         ;; back-to-front, then a second pass grounds the shadows reading
         ;; the completed `edists` (see below).
+        ;; Enemy projection always runs at the FULL width (full-FOV
+        ;; column mapping); the zone passes halve cols/widths into scene
+        ;; cells in pixel-doubled mode so sprites keep their on-screen
+        ;; size and position.
         enemy-projs                        (collect-enemy-projs (:enemies world) (:player world) vw)
         ;; Pulse the minimap door glyph on the same beat as the 3D
         ;; door shade so the exit catches the eye both in first-person
@@ -680,17 +744,17 @@
                                              (php/max 0 (php/- map-col 1))
                                              vw)]
     (doseq [proj enemy-projs]
-      (let [col (:col proj)
-            hw  (:half-width proj)
+      (let [col (if px2? (php/intdiv (:col proj) 2) (:col proj))
+            hw  (if px2? (php/max 1 (php/intdiv (:half-width proj) 2)) (:half-width proj))
             d   (:dist proj)
             dmg (or (:damage-ratio proj) 0.0)
             sc  (or (:scale proj) 1.0)]
         (let [;; `sc` scales the sprite vertically in lockstep with
                    ;; :half-width so bosses (cyber, sc=2.0) stay
                    ;; proportional instead of stretching wide-but-flat.
-              h         (php/min vh (php/intval (php/* sc
-                                                       (php// proj-dist
-                                                              (php/* (php/max 0.5 d) char-aspect)))))
+              h         (php/min svh (php/intval (php/* sc
+                                                        (php// scene-pd
+                                                               (php/* (php/max 0.5 d) char-aspect)))))
                    ;; Freedoom billboard sprite for this enemy (nil when
                    ;; sprites are off or the type has none -> glyph path).
               spr       (when sprites-on (sprite-for-type (:type proj)))
@@ -707,7 +771,7 @@
                           (php/max 1 (php/intval (php/round (php// (php/* h sw) sh))))
                           hw)
               c-from    (php/max 0 (php/- col ehw))
-              c-to      (php/min (php/- vw 1) (php/+ col ehw))
+              c-to      (php/min (php/- svw 1) (php/+ col ehw))
                    ;; Distance-fade factor: 0 at the player's feet,
                    ;; ~0.85 at max-depth. Squared so things stay
                    ;; saturated up close and only really dim once
@@ -723,7 +787,7 @@
                    ;; one far away. Capped at 0.85 so a near-dead
                    ;; enemy never fades to invisible.
               body-fade (php/min 0.85 (php/+ dist-fade (php/* dmg 0.35)))]
-          (let [e-top (php/intdiv (php/- vh h) 2)]
+          (let [e-top (php/intdiv (php/- svh h) 2)]
             (let [e-bot         (php/+ e-top h)
                   e-mid         (php/+ e-top (php/intdiv h 3))
                   e-lower       (php/+ e-top (php/intdiv (php/* h 2) 3))
@@ -815,22 +879,22 @@
     ;; silhouette, so a painted shadow under them just muddies the sprite.
     (when (not sprites-on)
       (doseq [proj enemy-projs]
-        (let [col    (:col proj)
-              hw     (:half-width proj)
+        (let [col    (if px2? (php/intdiv (:col proj) 2) (:col proj))
+              hw     (if px2? (php/max 1 (php/intdiv (:half-width proj) 2)) (:half-width proj))
               d      (:dist proj)
               sc     (or (:scale proj) 1.0)
-              h      (php/min vh (php/intval (php/* sc
-                                                    (php// proj-dist
-                                                           (php/* (php/max 0.5 d) char-aspect)))))
-              e-bot  (php/+ (php/intdiv (php/- vh h) 2) h)
+              h      (php/min svh (php/intval (php/* sc
+                                                     (php// scene-pd
+                                                            (php/* (php/max 0.5 d) char-aspect)))))
+              e-bot  (php/+ (php/intdiv (php/- svh h) 2) h)
               c-from (php/max 0 (php/- col hw))
-              c-to   (php/min (php/- vw 1) (php/+ col hw))]
-          (when (php/< e-bot vh)
+              c-to   (php/min (php/- svw 1) (php/+ col hw))]
+          (when (php/< e-bot svh)
             (loop [c c-from]
               (when (php/<= c c-to)
                 (when (enemy-front-visible-at? d c dists edists)
                   (buf-set blood-paint
-                           (php/+ (php/* e-bot vw) c)
+                           (php/+ (php/* e-bot svw) c)
                            sprite-shadow))
                 (recur (php/+ c 1))))))))
     ;; Chain the fx + pickup painters: each one takes the current
@@ -838,180 +902,423 @@
     ;; the helper owns the allocation). Rename per step to keep phel
     ;; lint happy about shadowed-binding without losing the chain.
     ;; Threading (->) would be cleaner but trips arity-mismatch lint.
-    (let [bp-fx      (paint-blood-fx-into blood-paint stats world dists vw vh)
-          bp-hearts  (paint-pickups-into  bp-fx (or (:hearts world) [])
-                                          (:player world) dists edists vw vh
-                                          heart-shade-now heart-glyph-now :heart)
-          bp-armors  (paint-pickups-into  bp-hearts (or (:armors world) [])
-                                          (:player world) dists edists vw vh
-                                          armor-shade-now armor-glyph-now :armor)
-          bp-shards  (paint-pickups-into  bp-armors (or (:armor-shards world) [])
-                                          (:player world) dists edists vw vh
-                                          armor-shard-shade-now armor-shard-glyph-now :armor-shard)
-          bp-ammos   (paint-pickups-into  bp-shards (or (:ammo-boxes world) [])
-                                          (:player world) dists edists vw vh
-                                          ammo-shade-now ammo-glyph-now :ammo)
-          bp-bers    (paint-pickups-into  bp-ammos (or (:berserks world) [])
-                                          (:player world) dists edists vw vh
-                                          berserk-shade-now berserk-glyph-now :berserk)
-          bp-inv     (paint-pickups-into  bp-bers (or (:invulns world) [])
-                                          (:player world) dists edists vw vh
-                                          invuln-shade-now invuln-glyph-now :invuln)
-          bp-soul    (paint-pickups-into  bp-inv (or (:soulspheres world) [])
-                                          (:player world) dists edists vw vh
-                                          soulsphere-shade-now soulsphere-glyph-now :soulsphere)
-          bp-pack    (paint-pickups-into  bp-soul (or (:backpacks world) [])
-                                          (:player world) dists edists vw vh
-                                          backpack-shade-now backpack-glyph-now :backpack)
-          bp-kb      (paint-pickups-into  bp-pack
-                                          (apply vector
-                                                 (filter (fn [k] (php/=== (:colour k) :blue))
-                                                         (or (:keycards world) [])))
-                                          (:player world) dists edists vw vh
-                                          keycard-blue-shade-now keycard-blue-glyph-now :keycard-blue)
-          bp-kr      (paint-pickups-into  bp-kb
-                                          (apply vector
-                                                 (filter (fn [k] (php/=== (:colour k) :red))
-                                                         (or (:keycards world) [])))
-                                          (:player world) dists edists vw vh
-                                          keycard-red-shade-now keycard-red-glyph-now :keycard-red)
-          bp-ky      (paint-pickups-into  bp-kr
-                                          (apply vector
-                                                 (filter (fn [k] (php/=== (:colour k) :yellow))
-                                                         (or (:keycards world) [])))
-                                          (:player world) dists edists vw vh
-                                          keycard-yellow-shade-now keycard-yellow-glyph-now :keycard-yellow)
-          bp-ws      (paint-pickups-into  bp-ky
-                                          (apply vector
-                                                 (filter (fn [w] (php/=== (:weapon w) :shotgun))
-                                                         (or (:weapon-pickups world) [])))
-                                          (:player world) dists edists vw vh
-                                          shotgun-pickup-shade-now shotgun-pickup-glyph-now :shotgun)
-          bp-wc      (paint-pickups-into  bp-ws
-                                          (apply vector
-                                                 (filter (fn [w] (php/=== (:weapon w) :chaingun))
-                                                         (or (:weapon-pickups world) [])))
-                                          (:player world) dists edists vw vh
-                                          chaingun-pickup-shade-now chaingun-pickup-glyph-now :chaingun)
-          bp-wb      (paint-pickups-into  bp-wc
-                                          (apply vector
-                                                 (filter (fn [w] (php/=== (:weapon w) :bfg))
-                                                         (or (:weapon-pickups world) [])))
-                                          (:player world) dists edists vw vh
-                                          bfg-pickup-shade-now bfg-pickup-glyph-now :bfg)
-          bp-wi      (paint-pickups-into  bp-wb
-                                          (apply vector
-                                                 (filter (fn [w] (php/=== (:weapon w) :incinerator))
-                                                         (or (:weapon-pickups world) [])))
-                                          (:player world) dists edists vw vh
-                                          incinerator-pickup-shade-now incinerator-pickup-glyph-now :incinerator)
-          bp-wr      (paint-pickups-into  bp-wi
-                                          (apply vector
-                                                 (filter (fn [w] (php/=== (:weapon w) :rocket))
-                                                         (or (:weapon-pickups world) [])))
-                                          (:player world) dists edists vw vh
-                                          rocket-pickup-shade-now rocket-pickup-glyph-now :rocket)
+    (let [bp-fx               (paint-blood-fx-into blood-paint stats world dists svw svh scene-pd)
+          bp-hearts           (paint-pickups-into  bp-fx (or (:hearts world) [])
+                                                   (:player world) dists edists svw svh scene-pd
+                                                   heart-shade-now heart-glyph-now :heart)
+          bp-armors           (paint-pickups-into  bp-hearts (or (:armors world) [])
+                                                   (:player world) dists edists svw svh scene-pd
+                                                   armor-shade-now armor-glyph-now :armor)
+          bp-shards           (paint-pickups-into  bp-armors (or (:armor-shards world) [])
+                                                   (:player world) dists edists svw svh scene-pd
+                                                   armor-shard-shade-now armor-shard-glyph-now :armor-shard)
+          bp-ammos            (paint-pickups-into  bp-shards (or (:ammo-boxes world) [])
+                                                   (:player world) dists edists svw svh scene-pd
+                                                   ammo-shade-now ammo-glyph-now :ammo)
+          bp-bers             (paint-pickups-into  bp-ammos (or (:berserks world) [])
+                                                   (:player world) dists edists svw svh scene-pd
+                                                   berserk-shade-now berserk-glyph-now :berserk)
+          bp-inv              (paint-pickups-into  bp-bers (or (:invulns world) [])
+                                                   (:player world) dists edists svw svh scene-pd
+                                                   invuln-shade-now invuln-glyph-now :invuln)
+          bp-soul             (paint-pickups-into  bp-inv (or (:soulspheres world) [])
+                                                   (:player world) dists edists svw svh scene-pd
+                                                   soulsphere-shade-now soulsphere-glyph-now :soulsphere)
+          bp-pack             (paint-pickups-into  bp-soul (or (:backpacks world) [])
+                                                   (:player world) dists edists svw svh scene-pd
+                                                   backpack-shade-now backpack-glyph-now :backpack)
+          bp-kb               (paint-pickups-into  bp-pack
+                                                   (apply vector
+                                                          (filter (fn [k] (php/=== (:colour k) :blue))
+                                                                  (or (:keycards world) [])))
+                                                   (:player world) dists edists svw svh scene-pd
+                                                   keycard-blue-shade-now keycard-blue-glyph-now :keycard-blue)
+          bp-kr               (paint-pickups-into  bp-kb
+                                                   (apply vector
+                                                          (filter (fn [k] (php/=== (:colour k) :red))
+                                                                  (or (:keycards world) [])))
+                                                   (:player world) dists edists svw svh scene-pd
+                                                   keycard-red-shade-now keycard-red-glyph-now :keycard-red)
+          bp-ky               (paint-pickups-into  bp-kr
+                                                   (apply vector
+                                                          (filter (fn [k] (php/=== (:colour k) :yellow))
+                                                                  (or (:keycards world) [])))
+                                                   (:player world) dists edists svw svh scene-pd
+                                                   keycard-yellow-shade-now keycard-yellow-glyph-now :keycard-yellow)
+          bp-ws               (paint-pickups-into  bp-ky
+                                                   (apply vector
+                                                          (filter (fn [w] (php/=== (:weapon w) :shotgun))
+                                                                  (or (:weapon-pickups world) [])))
+                                                   (:player world) dists edists svw svh scene-pd
+                                                   shotgun-pickup-shade-now shotgun-pickup-glyph-now :shotgun)
+          bp-wc               (paint-pickups-into  bp-ws
+                                                   (apply vector
+                                                          (filter (fn [w] (php/=== (:weapon w) :chaingun))
+                                                                  (or (:weapon-pickups world) [])))
+                                                   (:player world) dists edists svw svh scene-pd
+                                                   chaingun-pickup-shade-now chaingun-pickup-glyph-now :chaingun)
+          bp-wb               (paint-pickups-into  bp-wc
+                                                   (apply vector
+                                                          (filter (fn [w] (php/=== (:weapon w) :bfg))
+                                                                  (or (:weapon-pickups world) [])))
+                                                   (:player world) dists edists svw svh scene-pd
+                                                   bfg-pickup-shade-now bfg-pickup-glyph-now :bfg)
+          bp-wi               (paint-pickups-into  bp-wb
+                                                   (apply vector
+                                                          (filter (fn [w] (php/=== (:weapon w) :incinerator))
+                                                                  (or (:weapon-pickups world) [])))
+                                                   (:player world) dists edists svw svh scene-pd
+                                                   incinerator-pickup-shade-now incinerator-pickup-glyph-now :incinerator)
+          bp-wr               (paint-pickups-into  bp-wi
+                                                   (apply vector
+                                                          (filter (fn [w] (php/=== (:weapon w) :rocket))
+                                                                  (or (:weapon-pickups world) [])))
+                                                   (:player world) dists edists svw svh scene-pd
+                                                   rocket-pickup-shade-now rocket-pickup-glyph-now :rocket)
           ;; Fireballs paint last into the overlay so an incoming bolt
           ;; sits on top of every pickup glow it crosses.
-          bp-proj    (paint-projectiles-into bp-wr (or (:projectiles world) [])
-                                             (:player world) dists edists vw vh)
+          bp-proj             (paint-projectiles-into bp-wr (or (:projectiles world) [])
+                                                      (:player world) dists edists svw svh scene-pd)
           ;; Player BFG ball / rocket tracers fly on top of everything.
-          bp-trc     (paint-tracers-into bp-proj (or (:shot-tracers world) [])
-                                         (:player world) dists edists vw vh)
-          parts      (buf-mk)
+          bp-trc              (paint-tracers-into bp-proj (or (:shot-tracers world) [])
+                                                  (:player world) dists edists svw svh scene-pd)
+          parts               (buf-mk)
           ;; Crosshair centre cell, captured live from the row loop (1-slot
           ;; php-array). The reticle paints its `+` on the REAL rendered
           ;; cell under it (wall texture / floor / sky / sprite), so its BG
           ;; always matches the surroundings - no recomputed flat-shade
           ;; mismatch that read as a fake light box on textured walls.
-          cap-col    (php/intdiv vw 2)
-          cap-row    (php/+ (php/intdiv vh 2)
-                            (if (php/> (or (get stats :fire-anim) 0.0) 0.0) -1 0))
-          center-cap (php/array)]
-      (dotimes [row vh]
-        (loop [col 0 prev nil run 0]
-          (if (php/>= col vw)
-            (when (php/> run 0)
-              (buf-push parts prev)
-              (buf-push parts (php/str_repeat " " (php/- run 1))))
-            (let [;; Blood-band sky/floor swap: cols in the
+          cap-col             (php/intdiv vw 2)
+          cap-row             (php/+ (php/intdiv vh 2)
+                                     (if (php/> (or (get stats :fire-anim) 0.0) 0.0) -1 0))
+          center-cap          (php/array)
+          ;; Scene-space capture coords: in pixel-doubled mode the centre
+          ;; terminal cell maps to internal cell (cap-row/2, cap-col/2);
+          ;; the row/col parity picks which quadrant of the 2×2 block.
+          cap-sr              (php/intdiv cap-row px-sc)
+          cap-scl             (php/intdiv cap-col px-sc)
+          cap-bot?            (and px2? (php/=== 1 (php/% cap-row 2)))
+          cap-right?          (and px2? (php/=== 1 (php/% cap-col 2)))
+          ;; Minimap skip region in scene cells (the blit itself stays at
+          ;; full terminal coordinates).
+          mini-scol0          (php/intdiv mini-col0 px-sc)
+          mini-srow-lim       (php/intdiv (php/+ visible-mh (php/- px-sc 1)) px-sc)
+          ;; Full-resolution floor gradient for the weapon-sprite painter
+          ;; (it paints at terminal coordinates; the scene gradient is
+          ;; half-res in pixel-doubled mode).
+          floor-gradient-full (if px2?
+                                (build-themed-gradient vh 239 true)
+                                floor-gradient)]
+      (if px2?
+        ;; ----- Pixel-doubled scene emitter -------------------------
+        ;; Walk the half-res scene; each internal cell emits two output
+        ;; columns on TWO output rows. The sky / floor / wall-texture
+        ;; branches resolve their two vertical sub-samples into the row
+        ;; PAIR (upper row = top sub-sample, lower = bottom) instead of
+        ;; packing them into one ▀ cell, so vertical detail matches the
+        ;; half-block look at 2× the pixel size. Sprite cells spread
+        ;; their 2×2 texel quad over the real 2×2 block (full sprite
+        ;; detail). Composite glyph cells (doors, edges, pickups) repeat
+        ;; verbatim. Solid BG cells run-length-coalesce like the px1
+        ;; loop (cell + N spaces); composite cells push literally so
+        ;; glyphs survive the doubling. Upper row streams straight into
+        ;; `parts`; the lower row accumulates in `rowb` and is appended
+        ;; after the upper row's newline.
+        (dotimes [r2 svh]
+          (let [row-bot? (php/< (php/+ (php/* 2 r2) 1) vh)
+                rowb     (buf-mk)]
+            (loop [col 0 pa nil ra 0 pb nil rb 0]
+              (if (php/>= col svw)
+                (do (when (php/> ra 0)
+                      (buf-push parts pa)
+                      (buf-push parts (php/str_repeat " " (php/- ra 1))))
+                    (when (php/> rb 0)
+                      (buf-push rowb pb)
+                      (buf-push rowb (php/str_repeat " " (php/- rb 1)))))
+                ;; NOTE: every buf-push in this loop lives in STATEMENT
+                ;; position (the body below, before recur). A push inside
+                ;; a let-binding VALUE compiles into an IIFE closure;
+                ;; PHP `use` copies arrays into closures, so the write
+                ;; lands on a copy and is silently lost. The bindings
+                ;; here are all pure reads for the same reason.
+                (let [dbl?      (php/< (php/+ (php/* 2 col) 1) vw)
+                      n-out     (if dbl? 2 1)
+                      mini?     (and (php/< r2 mini-srow-lim) (php/>= col mini-scol0))
+                      in-blood? (and blood-sky-gradient
+                                     (php/> (buf-get blood-cols col) 0.4))
+                      tops-c    (buf-get tops col)
+                      bots-c    (buf-get bots col)
+                      ;; Plain wall hit (1) / no hit: shade cells are solid
+                      ;; BG paints; doors (2-4, 9) + boss (5) carry glyphs.
+                      plain?    (php/< (buf-get hits col) 2)
+                      ;; Base (under-overlay) pair, resolved by ONE cond:
+                      ;; the split kinds (sky / floor texture / wall
+                      ;; texture) sample BOTH vertical sub-texels here and
+                      ;; pack them as `top*256 + bot` (one branch dispatch
+                      ;; per cell, two codes out — the same key shape as
+                      ;; the halfblock cache). Negative values mark the
+                      ;; composite kinds resolved below:
+                      ;;   -1 minimap placeholder  -3 sky flat (blood)
+                      ;;   -4 floor flat           -5 enemy glyph zone
+                      ;;   -6 top edge   -7 top shadow
+                      ;;   -8 bot edge   -9 bot shadow   -10 wall flat
+                      pack      (cond
+                                  mini?                                      -1
+                                  (php/< r2 tops-c)
+                                  (if in-blood?
+                                    -3
+                                    (php/+ (php/* (php/aget sky-sub-codes (php/* 2 r2)) 256)
+                                           (php/aget sky-sub-codes (php/+ (php/* 2 r2) 1))))
+                                  (php/>= r2 bots-c)
+                                  (if (or in-blood? (not floor-tex-on?))
+                                    -4
+                                    (let [st  (php/* 2 r2)
+                                          sb  (php/+ st 1)
+                                          fdx (buf-get floordxs col)
+                                          fdy (buf-get floordys col)
+                                          dpt (php/aget floor-dperp-sub st)
+                                          dpb (php/aget floor-dperp-sub sb)
+                                          fxt (php/+ pfx (php/* dpt fdx))
+                                          fyt (php/+ pfy (php/* dpt fdy))
+                                          fxb (php/+ pfx (php/* dpb fdx))
+                                          fyb (php/+ pfy (php/* dpb fdy))
+                                          txt (php/intval (php/* (php/- fxt (php/floor fxt)) 64))
+                                          tyt (php/intval (php/* (php/- fyt (php/floor fyt)) 64))
+                                          txb (php/intval (php/* (php/- fxb (php/floor fxb)) 64))
+                                          tyb (php/intval (php/* (php/- fyb (php/floor fyb)) 64))]
+                                      (php/+ (php/* (php/aget (php/aget tex-fade-table (php/aget floor-level-sub st))
+                                                              (php/aget floor-tex-px (php/+ (php/* tyt 64) txt)))
+                                                    256)
+                                             (php/aget (php/aget tex-fade-table (php/aget floor-level-sub sb))
+                                                       (php/aget floor-tex-px (php/+ (php/* tyb 64) txb))))))
+                                  (and (not sprites-on) (buf-get emask col)) -5
+                                  (php/=== r2 tops-c)                        -6
+                                  (php/=== r2 (php/+ tops-c 1))              -7
+                                  (php/=== r2 (php/- bots-c 1))              -8
+                                  (php/=== r2 (php/- bots-c 2))              -9
+                                  :else
+                                  (let [lvl (buf-get shades-tex-level col)]
+                                    (if (and tex-on? (php/>= lvl 0))
+                                      (let [wh   (php/max 1 (php/- bots-c tops-c))
+                                            u    (buf-get shades-tex-u col)
+                                            rel2 (php/* 2 (php/- r2 tops-c))
+                                            fade (php/aget tex-fade-table lvl)]
+                                        (php/+ (php/* (php/aget fade
+                                                                (php/aget wall-tex-px
+                                                                          (php/+ (php/* (php/min 63 (php/intdiv (php/* rel2 32) wh)) 64) u)))
+                                                      256)
+                                               (php/aget fade
+                                                         (php/aget wall-tex-px
+                                                                   (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel2 1) 32) wh)) 64) u)))))
+                                      -10)))
+                      split?    (php/>= pack 0)
+                      base-a    (if split?
+                                  (php/aget bg-cell-cache (php/intdiv pack 256))
+                                  (cond
+                                    (php/=== pack -1) (buf-get sky-gradient r2)
+                                    (php/=== pack -3) (buf-get blood-sky-gradient r2)
+                                    (php/=== pack -4) (buf-get (if in-blood?
+                                                                 blood-floor-gradient
+                                                                 floor-gradient)
+                                                               r2)
+                                    (php/=== pack -5) (cond
+                                                        (php/< r2 (buf-get mids col))   (buf-get eheads col)
+                                                        (php/< r2 (buf-get lowers col)) (buf-get ebodys col)
+                                                        :else                           (buf-get elegss col))
+                                    (php/=== pack -6) (buf-get shades-top-edge col)
+                                    (php/=== pack -7) (buf-get shades-top-shadow col)
+                                    (php/=== pack -8) (buf-get shades-bot-edge col)
+                                    (php/=== pack -9) (buf-get shades-bot-shadow col)
+                                    :else             (buf-get shades-normal col)))
+                      base-b    (if split?
+                                  (php/aget bg-cell-cache (php/% pack 256))
+                                  base-a)
+                      ;; Solid = safe to run-length-coalesce with space
+                      ;; continuation (pure BG paint, no glyph). Shadows +
+                      ;; flat wall shades are solid only on plain wall hits
+                      ;; (door columns carry the ▌ glyph cell there).
+                      base-sl?  (if split?
+                                  true
+                                  (cond
+                                    (php/=== pack -1)  true
+                                    (php/=== pack -3)  true
+                                    (php/=== pack -4)  true
+                                    (php/=== pack -7)  plain?
+                                    (php/=== pack -9)  plain?
+                                    (php/=== pack -10) plain?
+                                    :else              false))
+                      ;; Overlay merge: tracer/pickup buffer wins the whole
+                      ;; block; a sprite quad overrides per quadrant with
+                      ;; transparent texels keeping the base pair.
+                      bp-cell   (if mini? nil (buf-get bp-trc (php/+ (php/* r2 svw) col)))
+                      quad      (when (and (not mini?) (nil? bp-cell) sprites-on
+                                           (buf-get emask col)
+                                           (php/>= r2 (buf-get e-stop col))
+                                           (php/< r2 (buf-get e-sbot col)))
+                                  (enemy-sprite-quad
+                                   (buf-get e-spx col) (buf-get e-sw col) (buf-get e-sh col)
+                                   (buf-get e-sx col) (buf-get e-sxr col)
+                                   (buf-get e-stop col) (buf-get e-sbot col) r2))
+                      qa1       (when quad (php/aget quad 0))
+                      qa2       (when quad (php/aget quad 1))
+                      qb1       (when quad (php/aget quad 2))
+                      qb2       (when quad (php/aget quad 3))
+                      a1        (if bp-cell
+                                  bp-cell
+                                  (if quad
+                                    (if (php/=== qa1 -1) base-a (php/aget bg-cell-cache qa1))
+                                    base-a))
+                      a2        (if bp-cell
+                                  bp-cell
+                                  (if quad
+                                    (if (php/=== qa2 -1) base-a (php/aget bg-cell-cache qa2))
+                                    base-a))
+                      b1        (if bp-cell
+                                  bp-cell
+                                  (if quad
+                                    (if (php/=== qb1 -1) base-b (php/aget bg-cell-cache qb1))
+                                    base-b))
+                      b2        (if bp-cell
+                                  bp-cell
+                                  (if quad
+                                    (if (php/=== qb2 -1) base-b (php/aget bg-cell-cache qb2))
+                                    base-b))
+                      sa?       (if bp-cell
+                                  false
+                                  (if quad
+                                    (cond
+                                      (and (php/=== qa1 -1) (php/=== qa2 -1)) base-sl?
+                                      (and (php/!== qa1 -1) (php/!== qa2 -1)) true
+                                      :else                                   false)
+                                    base-sl?))
+                      sb?       (if bp-cell
+                                  false
+                                  (if quad
+                                    (cond
+                                      (and (php/=== qb1 -1) (php/=== qb2 -1)) base-sl?
+                                      (and (php/!== qb1 -1) (php/!== qb2 -1)) true
+                                      :else                                   false)
+                                    base-sl?))]
+                  ;; Stash the real rendered quadrant under the crosshair
+                  ;; (same contract as the px1 capture).
+                  (when (php/=== r2 cap-sr)
+                    (when (php/=== col cap-scl)
+                      (php/aset center-cap 0
+                                (if cap-bot?
+                                  (if cap-right? b2 b1)
+                                  (if cap-right? a2 a1)))))
+                  ;; RLE step, pushes in statement position (see NOTE).
+                  (let [match-a? (and sa? (php/=== a1 a2) (php/=== a1 pa))
+                        run-a?   (and sa? (php/=== a1 a2))
+                        match-b? (and row-bot? sb? (php/=== b1 b2) (php/=== b1 pb))
+                        run-b?   (and row-bot? sb? (php/=== b1 b2))]
+                    (when (and (not match-a?) (php/> ra 0))
+                      (buf-push parts pa)
+                      (buf-push parts (php/str_repeat " " (php/- ra 1))))
+                    (when (and (not match-a?) (not run-a?))
+                      (buf-push parts a1)
+                      (when dbl? (buf-push parts a2)))
+                    (when row-bot?
+                      (when (and (not match-b?) (php/> rb 0))
+                        (buf-push rowb pb)
+                        (buf-push rowb (php/str_repeat " " (php/- rb 1))))
+                      (when (and (not match-b?) (not run-b?))
+                        (buf-push rowb b1)
+                        (when dbl? (buf-push rowb b2))))
+                    (recur (php/+ col 1)
+                           (if match-a? pa (if run-a? a1 nil))
+                           (if match-a? (php/+ ra n-out) (if run-a? n-out 0))
+                           (if match-b? pb (if run-b? b1 nil))
+                           (if match-b? (php/+ rb n-out) (if run-b? n-out 0)))))))
+            (buf-push parts "\e[0m\n")
+            (when row-bot?
+              (buf-push parts (php/implode "" rowb))
+              (buf-push parts "\e[0m\n"))))
+        ;; ----- Full-detail (px1) row loop ---------------------------
+        (dotimes [row vh]
+          (loop [col 0 prev nil run 0]
+            (if (php/>= col vw)
+              (when (php/> run 0)
+                (buf-push parts prev)
+                (buf-push parts (php/str_repeat " " (php/- run 1))))
+              (let [;; Blood-band sky/floor swap: cols in the
                          ;; directional blood band use the pre-baked red
                          ;; gradients so sky + floor + walls all flush
                          ;; red on the affected side. Short-circuits to
                          ;; the normal gradients when no blood is active.
-                  in-blood? (and blood-sky-gradient
-                                 (php/> (buf-get blood-cols col) 0.4))
-                  sky-row   (buf-get (if in-blood? blood-sky-gradient sky-gradient) row)
-                  flr-row   (buf-get (if in-blood? blood-floor-gradient floor-gradient) row)
+                    in-blood? (and blood-sky-gradient
+                                   (php/> (buf-get blood-cols col) 0.4))
+                    sky-row   (buf-get (if in-blood? blood-sky-gradient sky-gradient) row)
+                    flr-row   (buf-get (if in-blood? blood-floor-gradient floor-gradient) row)
                          ;; Base cell: wall/sky/floor + (glyph mode only)
                          ;; the enemy zones. In sprite mode the glyph
                          ;; branch is skipped so this resolves the real
                          ;; wall behind the billboard.
-                  base      (cond
-                              (php/< row (buf-get tops col))
+                    base      (cond
+                                (php/< row (buf-get tops col))
                               ;; Half-block sky stacks two gradient sub-rows
                               ;; per cell (2× vertical). Blood columns keep
                               ;; the flat red wash.
-                              (if (and subpixel? (not in-blood?))
-                                (buf-get sky-hb row)
-                                sky-row)
-                              (php/>= row (buf-get bots col))
+                                (if (and subpixel? (not in-blood?))
+                                  (buf-get sky-hb row)
+                                  sky-row)
+                                (php/>= row (buf-get bots col))
                               ;; Floor: cast the ground plane and sample the
                               ;; stone texture. Player + per-row perp-distance
                               ;; × the column's floor basis gives the world
                               ;; floor point; frac → texture (u, v); fog by
                               ;; the row's floor level. Blood-band columns +
                               ;; the flat-floor flag keep the grey gradient.
-                              (cond
-                                (or in-blood? (not floor-tex-on?))
-                                flr-row
+                                (cond
+                                  (or in-blood? (not floor-tex-on?))
+                                  flr-row
                                 ;; Half-block floor: sample two stacked
                                 ;; ground points per cell (top sub-row =
                                 ;; farther, bottom = nearer) for 2× vertical
                                 ;; resolution, then pack both faded texels
                                 ;; into one ▀ cell.
-                                subpixel?
-                                (let [fdx   (buf-get floordxs col)
-                                      fdy   (buf-get floordys col)
-                                      s-top (php/* 2 row)
-                                      s-bot (php/+ s-top 1)
-                                      dpt   (php/aget floor-dperp-sub s-top)
-                                      dpb   (php/aget floor-dperp-sub s-bot)
-                                      fxt   (php/+ pfx (php/* dpt fdx))
-                                      fyt   (php/+ pfy (php/* dpt fdy))
-                                      fxb   (php/+ pfx (php/* dpb fdx))
-                                      fyb   (php/+ pfy (php/* dpb fdy))
-                                      txt   (php/intval (php/* (php/- fxt (php/floor fxt)) 64))
-                                      tyt   (php/intval (php/* (php/- fyt (php/floor fyt)) 64))
-                                      txb   (php/intval (php/* (php/- fxb (php/floor fxb)) 64))
-                                      tyb   (php/intval (php/* (php/- fyb (php/floor fyb)) 64))
-                                      tct   (php/aget floor-tex-px (php/+ (php/* tyt 64) txt))
-                                      tcb   (php/aget floor-tex-px (php/+ (php/* tyb 64) txb))]
-                                  (halfblock (php/aget (php/aget tex-fade-table (php/aget floor-level-sub s-top)) tct)
-                                             (php/aget (php/aget tex-fade-table (php/aget floor-level-sub s-bot)) tcb)))
+                                  subpixel?
+                                  (let [fdx   (buf-get floordxs col)
+                                        fdy   (buf-get floordys col)
+                                        s-top (php/* 2 row)
+                                        s-bot (php/+ s-top 1)
+                                        dpt   (php/aget floor-dperp-sub s-top)
+                                        dpb   (php/aget floor-dperp-sub s-bot)
+                                        fxt   (php/+ pfx (php/* dpt fdx))
+                                        fyt   (php/+ pfy (php/* dpt fdy))
+                                        fxb   (php/+ pfx (php/* dpb fdx))
+                                        fyb   (php/+ pfy (php/* dpb fdy))
+                                        txt   (php/intval (php/* (php/- fxt (php/floor fxt)) 64))
+                                        tyt   (php/intval (php/* (php/- fyt (php/floor fyt)) 64))
+                                        txb   (php/intval (php/* (php/- fxb (php/floor fxb)) 64))
+                                        tyb   (php/intval (php/* (php/- fyb (php/floor fyb)) 64))
+                                        tct   (php/aget floor-tex-px (php/+ (php/* tyt 64) txt))
+                                        tcb   (php/aget floor-tex-px (php/+ (php/* tyb 64) txb))]
+                                    (halfblock (php/aget (php/aget tex-fade-table (php/aget floor-level-sub s-top)) tct)
+                                               (php/aget (php/aget tex-fade-table (php/aget floor-level-sub s-bot)) tcb)))
+                                  :else
+                                  (let [dp (buf-get floor-dperp row)
+                                        fx (php/+ pfx (php/* dp (buf-get floordxs col)))
+                                        fy (php/+ pfy (php/* dp (buf-get floordys col)))
+                                        tx (php/intval (php/* (php/- fx (php/floor fx)) 64))
+                                        ty (php/intval (php/* (php/- fy (php/floor fy)) 64))
+                                        tc (php/aget floor-tex-px (php/+ (php/* ty 64) tx))]
+                                    (php/aget bg-cell-cache
+                                              (php/aget (php/aget tex-fade-table (buf-get floor-level row)) tc))))
+                                (and (not sprites-on) (buf-get emask col))
+                                (cond
+                                  (php/< row (buf-get mids col))   (buf-get eheads col)
+                                  (php/< row (buf-get lowers col)) (buf-get ebodys col)
+                                  :else                            (buf-get elegss col))
+                                (php/=== row (buf-get tops col))
+                                (buf-get shades-top-edge col)
+                                (php/=== row (php/+ (buf-get tops col) 1))
+                                (buf-get shades-top-shadow col)
+                                (php/=== row (php/- (buf-get bots col) 1))
+                                (buf-get shades-bot-edge col)
+                                (php/=== row (php/- (buf-get bots col) 2))
+                                (buf-get shades-bot-shadow col)
                                 :else
-                                (let [dp (buf-get floor-dperp row)
-                                      fx (php/+ pfx (php/* dp (buf-get floordxs col)))
-                                      fy (php/+ pfy (php/* dp (buf-get floordys col)))
-                                      tx (php/intval (php/* (php/- fx (php/floor fx)) 64))
-                                      ty (php/intval (php/* (php/- fy (php/floor fy)) 64))
-                                      tc (php/aget floor-tex-px (php/+ (php/* ty 64) tx))]
-                                  (php/aget bg-cell-cache
-                                            (php/aget (php/aget tex-fade-table (buf-get floor-level row)) tc))))
-                              (and (not sprites-on) (buf-get emask col))
-                              (cond
-                                (php/< row (buf-get mids col))   (buf-get eheads col)
-                                (php/< row (buf-get lowers col)) (buf-get ebodys col)
-                                :else                            (buf-get elegss col))
-                              (php/=== row (buf-get tops col))
-                              (buf-get shades-top-edge col)
-                              (php/=== row (php/+ (buf-get tops col) 1))
-                              (buf-get shades-top-shadow col)
-                              (php/=== row (php/- (buf-get bots col) 1))
-                              (buf-get shades-bot-edge col)
-                              (php/=== row (php/- (buf-get bots col) 2))
-                              (buf-get shades-bot-shadow col)
-                              :else
                               ;; Wall body: baked stone texture sampled by
                               ;; (u = per-col wall-hit fraction, v = row
                               ;; within the wall), fogged by the column's
@@ -1019,60 +1326,60 @@
                               ;; < 0 (door / boss / blood column, or
                               ;; textures disabled) falls back to the flat
                               ;; shade.
-                              (let [lvl (buf-get shades-tex-level col)]
-                                (if (and tex-on? (php/>= lvl 0))
-                                  (if subpixel?
+                                (let [lvl (buf-get shades-tex-level col)]
+                                  (if (and tex-on? (php/>= lvl 0))
+                                    (if subpixel?
                                     ;; Half-block wall: two V samples down
                                     ;; the column (same U, same fog level)
                                     ;; stacked into one ▀ cell - 2× vertical
                                     ;; texture resolution on the stonework.
-                                    (let [wtop (buf-get tops col)
-                                          wh   (php/max 1 (php/- (buf-get bots col) wtop))
-                                          u    (buf-get shades-tex-u col)
-                                          rel2 (php/* 2 (php/- row wtop))
-                                          tvt  (php/min 63 (php/intdiv (php/* rel2 32) wh))
-                                          tvb  (php/min 63 (php/intdiv (php/* (php/+ rel2 1) 32) wh))
-                                          fade (php/aget tex-fade-table lvl)]
-                                      (halfblock (php/aget fade (php/aget wall-tex-px (php/+ (php/* tvt 64) u)))
-                                                 (php/aget fade (php/aget wall-tex-px (php/+ (php/* tvb 64) u)))))
-                                    (let [wtop (buf-get tops col)
-                                          wh   (php/max 1 (php/- (buf-get bots col) wtop))
-                                          tv   (php/min 63 (php/intdiv (php/* (php/- row wtop) 64) wh))
-                                          tc   (php/aget wall-tex-px
-                                                         (php/+ (php/* tv 64) (buf-get shades-tex-u col)))]
-                                      (php/aget bg-cell-cache
-                                                (php/aget (php/aget tex-fade-table lvl) tc))))
-                                  (buf-get shades-normal col))))
-                  c         (if (and (php/< row visible-mh) (php/>= col mini-col0))
-                              sky-row
-                              (or (buf-get bp-trc (php/+ (php/* row vw) col))
+                                      (let [wtop (buf-get tops col)
+                                            wh   (php/max 1 (php/- (buf-get bots col) wtop))
+                                            u    (buf-get shades-tex-u col)
+                                            rel2 (php/* 2 (php/- row wtop))
+                                            tvt  (php/min 63 (php/intdiv (php/* rel2 32) wh))
+                                            tvb  (php/min 63 (php/intdiv (php/* (php/+ rel2 1) 32) wh))
+                                            fade (php/aget tex-fade-table lvl)]
+                                        (halfblock (php/aget fade (php/aget wall-tex-px (php/+ (php/* tvt 64) u)))
+                                                   (php/aget fade (php/aget wall-tex-px (php/+ (php/* tvb 64) u)))))
+                                      (let [wtop (buf-get tops col)
+                                            wh   (php/max 1 (php/- (buf-get bots col) wtop))
+                                            tv   (php/min 63 (php/intdiv (php/* (php/- row wtop) 64) wh))
+                                            tc   (php/aget wall-tex-px
+                                                           (php/+ (php/* tv 64) (buf-get shades-tex-u col)))]
+                                        (php/aget bg-cell-cache
+                                                  (php/aget (php/aget tex-fade-table lvl) tc))))
+                                    (buf-get shades-normal col))))
+                    c         (if (and (php/< row visible-mh) (php/>= col mini-col0))
+                                sky-row
+                                (or (buf-get bp-trc (php/+ (php/* row vw) col))
                                          ;; Sprite mode: overlay the sampled
                                          ;; Freedoom pixel on the base cell;
                                          ;; transparent pixels keep the base
                                          ;; (wall/floor shows through).
-                                  (and sprites-on
-                                       (buf-get emask col)
-                                       (php/>= row (buf-get e-stop col))
-                                       (php/< row (buf-get e-sbot col))
-                                       (enemy-sprite-cell
-                                        (buf-get e-spx col) (buf-get e-sw col) (buf-get e-sh col)
-                                        (buf-get e-sx col) (buf-get e-sxr col)
-                                        (buf-get e-stop col) (buf-get e-sbot col) row))
-                                  base))]
+                                    (and sprites-on
+                                         (buf-get emask col)
+                                         (php/>= row (buf-get e-stop col))
+                                         (php/< row (buf-get e-sbot col))
+                                         (enemy-sprite-cell
+                                          (buf-get e-spx col) (buf-get e-sw col) (buf-get e-sh col)
+                                          (buf-get e-sx col) (buf-get e-sxr col)
+                                          (buf-get e-stop col) (buf-get e-sbot col) row))
+                                    base))]
               ;; Stash the real rendered cell under the crosshair so the
               ;; reticle BG matches it exactly (one cell/frame; the outer
               ;; `(=== row cap-row)` short-circuits on every other row).
-              (when (php/=== row cap-row)
-                (when (php/=== col cap-col)
-                  (php/aset center-cap 0 c)))
-              (cond
-                (php/=== run 0)  (recur (php/+ col 1) c 1)
-                (php/=== c prev) (recur (php/+ col 1) prev (php/+ run 1))
-                :else            (do
-                                   (buf-push parts prev)
-                                   (buf-push parts (php/str_repeat " " (php/- run 1)))
-                                   (recur (php/+ col 1) c 1))))))
-        (buf-push parts "\e[0m\n"))
+                (when (php/=== row cap-row)
+                  (when (php/=== col cap-col)
+                    (php/aset center-cap 0 c)))
+                (cond
+                  (php/=== run 0)  (recur (php/+ col 1) c 1)
+                  (php/=== c prev) (recur (php/+ col 1) prev (php/+ run 1))
+                  :else            (do
+                                     (buf-push parts prev)
+                                     (buf-push parts (php/str_repeat " " (php/- run 1)))
+                                     (recur (php/+ col 1) c 1))))))
+          (buf-push parts "\e[0m\n")))
       (when (get stats :debug?)
         (buf-push parts (hud-debug-line world stats))
         (buf-push parts "\n"))
@@ -1092,7 +1399,7 @@
       ;; shade, which mismatched the textured wall and read as a fake light
       ;; box). Fallback to the column's flat wall shade only if the centre
       ;; was never captured (degenerate viewport).
-      (let [c-col       (php/intdiv vw 2)
+      (let [c-col       (php/intdiv svw 2)
             center-cell (or (php/aget center-cap 0)
                             (buf-get shades-normal c-col))
             center-bg   (php/mb_substr center-cell 0
@@ -1105,8 +1412,8 @@
             ;; Face glyph (blinking eyes) is a glyph-era tell; the
             ;; Freedoom sprites already show a face, so skip it in sprite mode.
             p1          (if sprites-on parts
-                            (paint-face-overlay parts world stats vw vh dists edists face-phase))
-            p3          (paint-door-face          p1 stats vw vh hits tops bots)
+                            (paint-face-overlay parts world stats svw svh dists edists face-phase px-sc))
+            p3          (paint-door-face          p1 stats svw svh hits tops bots px-sc)
             p4          (paint-crosshair          p3 stats vw vh center-bg)
             p5          (paint-intro-splash       p4 stats vw vh)
             p6          (paint-blood-drops        p5 stats vw vh)
@@ -1126,7 +1433,7 @@
             ;; `:hide-weapon?` skips the gun sprite (nothing in hand).
             p17         (if (:hide-weapon? world)
                           p16
-                          (paint-weapon-hud p16 stats vw vh floor-gradient))
+                          (paint-weapon-hud p16 stats vw vh floor-gradient-full))
             p18         (paint-empty-click        p17 stats vw vh)
             p19         (paint-reload-reminder    p18 stats vw vh)
             p19b        (paint-locked-bump        p19 stats vw vh)

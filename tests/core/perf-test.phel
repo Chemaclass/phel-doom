@@ -3,24 +3,19 @@
   (:require phel-doom.core.perf :refer [target-frame-us render-scale
                                         standard-frame-us standard-scale
                                         cap-dims min-render-cols min-render-rows
-                                        auto-cap-dims auto-target-frame-ms]))
+                                        auto-pixel-scale auto-target-frame-ms]))
 
-(deftest test-auto-cap-keeps-full-when-fast-enough
-  ;; A render that already fits the budget is never shrunk.
-  (is (= [30 120] (auto-cap-dims 30 120 (php/- auto-target-frame-ms 1.0))))
-  (is (= [50 200] (auto-cap-dims 50 200 0.5))))
+(deftest test-auto-pixel-scale-full-detail-when-fast-enough
+  ;; A render that already fits the budget keeps full detail.
+  (is (= 1 (auto-pixel-scale (php/- auto-target-frame-ms 1.0))))
+  (is (= 1 (auto-pixel-scale 0.5)))
+  (is (= 1 (auto-pixel-scale auto-target-frame-ms))))
 
-(deftest test-auto-cap-scales-each-axis-by-sqrt
-  ;; 4x over budget -> each axis scales by sqrt(1/4) = 0.5 (cells quartered,
-  ;; aspect preserved). full-ms = 4 * target.
-  (let [over (php/* 4.0 auto-target-frame-ms)]
-    (is (= [25 100] (auto-cap-dims 50 200 over)))))
-
-(deftest test-auto-cap-never-below-floors
-  ;; A hugely-over-budget render clamps to the playable floors, never below.
-  (let [[r c] (auto-cap-dims 50 200 100000.0)]
-    (is (= min-render-rows r))
-    (is (= min-render-cols c))))
+(deftest test-auto-pixel-scale-doubles-when-over-budget
+  ;; Over budget -> pixel-doubled (scene at half res, 2x2 blocks,
+  ;; still filling the whole terminal).
+  (is (= 2 (auto-pixel-scale (php/+ auto-target-frame-ms 0.1))))
+  (is (= 2 (auto-pixel-scale 100000.0))))
 
 (deftest test-target-frame-us-uniform-60fps
   ;; Cadence is a uniform ~60fps (16.67ms budget) at EVERY size. The

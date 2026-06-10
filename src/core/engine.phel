@@ -35,6 +35,17 @@
    'never crosses this axis'."
   1.0e9)
 
+(defn fov-proj-dist
+  "Projection distance used for the per-column RAY SPREAD (FOV), as
+   distinct from `proj-dist` which scales wall HEIGHT. Horizontal FOV
+   is `2 * atan(width / 2 / (fov-proj-dist width))`, so a larger return
+   value narrows the spread. Today it returns the flat `proj-dist` for
+   every width (FOV widens freely with the terminal); it exists as the
+   single seam where a width-aware FOV clamp can live without touching
+   wall-height projection."
+  [^int width]
+  proj-dist)
+
 ;; Per-column FOV offset (atan) and its cos are pure functions of the
 ;; ray's column index and the viewport width. They never change at
 ;; runtime for a given width, so we memoize one PHP-array per width.
@@ -45,11 +56,12 @@
 
 (defn- build-offset-tables [^int width]
   (let [center  (php/* 0.5 width)
+        pd      (fov-proj-dist width)
         offs    (php/array)
         cosoffs (php/array)]
     (loop [col 0]
       (when (php/< col width)
-        (let [o (php/atan (php// (php/- col center) proj-dist))]
+        (let [o (php/atan (php// (php/- col center) pd))]
           (php/aset offs col o)
           (php/aset cosoffs col (php/cos o))
           (recur (php/+ col 1)))))

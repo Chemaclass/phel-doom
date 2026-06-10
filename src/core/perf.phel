@@ -46,3 +46,36 @@
    factor no longer varies by size."
   [^int cols ^int rows]
   standard-scale)
+
+(def min-render-cols
+  "Hard floor for a capped render width: a `--max-cols` smaller than
+   this is raised to it so the viewport never collapses below a
+   playable width (HUD + 3D view still read)."
+  40)
+
+(def min-render-rows
+  "Hard floor for a capped render height (see `min-render-cols`)."
+  15)
+
+(defn- cap-axis
+  "Clamp one axis. `cap <= 0` means no cap → return the terminal value
+   untouched. A positive cap renders at most `cap`, but never below
+   `floor` and never above the terminal value itself (you cannot draw
+   wider than the terminal). So the result is the cap clamped into
+   [floor, val]; when the terminal is smaller than the floor the
+   terminal value wins."
+  [^int val ^int cap ^int floor]
+  (if (php/<= cap 0)
+    val
+    (php/min val (php/max floor (php/min cap val)))))
+
+(defn cap-dims
+  "Clamp a terminal `[rows cols]` to the configured render caps,
+   returning the `[rows cols]` the renderer should actually draw. A cap
+   of 0 (or less) on an axis means 'fill the terminal' on that axis.
+   Caps only ever SHRINK the render area (the surplus terminal becomes a
+   blank inset border); they never grow it past the real terminal size.
+   Pure — safe to call per frame on the live `term-size`."
+  [^int rows ^int cols ^int max-rows ^int max-cols]
+  [(cap-axis rows max-rows min-render-rows)
+   (cap-axis cols max-cols min-render-cols)])

@@ -84,6 +84,7 @@ The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself; the g
 
 - **60 fps target** (16.667 ms) at every terminal size, via `core/perf.phel`. The old big-screen 30fps cap was removed - it was an artificial ceiling (see `docs/performance.md`).
 - `target-frame-us` returns a uniform 16667 µs. Render time is the real bottleneck on big screens; `adaptive-sleep!` fills the remainder of the budget and floors at `min-yield-us`, so framerate degrades smoothly toward render-native instead of snapping to 30fps.
+- The live `term-size` is clamped through `cap-dims` (`core/perf.phel`) before render, applying the `--max-cols` / `--max-rows` caps. A cap shrinks the render area and leaves the surplus terminal as a blank inset border (the full-screen clear on resize keeps it clean). Caps only shrink, never grow past the real terminal.
 - `ms-since` computes wall-clock delta. Args tagged `^float` so Phel doesn't infer `int` from `* 1000` and trigger PHP 8.4+ implicit-conversion deprecation on microtime values.
 - `dt` is elapsed-seconds float used by physics, AI, decay. Same dt across sub-steps keeps simulation consistent inside a frame.
 

@@ -34,27 +34,55 @@
   (or (php/>= cols perf-width-threshold)
       (php/> (php/* cols rows) perf-area-threshold)))
 
-(defn target-frame-us
-  "Microsecond cadence target for one game-loop iteration. 16667
-   (~60fps) by default; perf-mode terminals drop to 33333 (~30fps)
-   so render doesn't thrash trying to push 60fps when each frame is
-   genuinely heavier. Physics / input still tick once per loop, just
-   half as often per wall-clock second — gameplay stays responsive,
-   the loop doesn't peg a core trying to outrun its render budget."
+(def standard-frame-us
+  "Cadence target (µs) for standard terminals — ~60fps."
+  16667)
+
+(def perf-frame-us
+  "Cadence target (µs) for perf-mode terminals — ~30fps. Doubling the
+   budget lets a genuinely heavier frame finish in time instead of the
+   loop pegging a core chasing an unreachable 60."
+  33333)
+
+(def standard-scale
+  "Horizontal render-scale on standard terminals: exact 1:1 path."
+  1)
+
+(def perf-scale
+  "Horizontal render-scale on perf-mode terminals: one ray per 2 output
+   columns, replicated across the pair (chunky-but-readable walls)."
+  2)
+
+(defn perf-profile
+  "Single source of truth for big-screen perf policy: maps terminal
+   dimensions to {:frame-us … :scale …}. `target-frame-us` and
+   `render-scale` are thin reads off this so the cadence + scale policy
+   lives in one place (and stays mutually consistent under future
+   tuning). Pure function of dimensions — safe to read per frame."
   [^int cols ^int rows]
-  (if (perf-mode? cols rows) 33333 16667))
+  (if (perf-mode? cols rows)
+    {:frame-us perf-frame-us :scale perf-scale}
+    {:frame-us standard-frame-us :scale standard-scale}))
+
+(defn target-frame-us
+  "Microsecond cadence target for one game-loop iteration: ~60fps on
+   standard terminals, ~30fps on perf-mode ones (see `perf-profile`).
+   Physics / input still tick once per loop, just less often per
+   wall-clock second on big screens — gameplay stays responsive, the
+   loop doesn't peg a core trying to outrun its render budget."
+  [^int cols ^int rows]
+  (:frame-us (perf-profile cols rows)))
 
 (defn render-scale
   "Horizontal render-scale factor consumed by `cast-frame`: it casts
    one ray per N output columns and replicates the sample across the
    next N entries of the dists/hits/sides/hxs/hys arrays. Downstream
-   row-loop code is unchanged — it still reads vw-sized buffers
-   column by column, just with N-wide runs of identical values that
-   read as chunky-but-readable wall blocks.
+   row-loop code is unchanged — it still reads vw-sized buffers column
+   by column, just with N-wide runs of identical values.
 
-   Returns 2 on perf-mode terminals (cuts cast + per-col wall-shade
-   work roughly in half), 1 on standard terminals (exact 1:1 path).
-   Sprites + HUD operate at full vw so the chunky look is contained
-   to the wall band."
+   2 on perf-mode terminals (cuts cast + per-col wall-shade work
+   roughly in half), 1 on standard terminals (exact 1:1 path). See
+   `perf-profile`. Sprites + HUD operate at full vw so the chunky look
+   is contained to the wall band."
   [^int cols ^int rows]
-  (if (perf-mode? cols rows) 2 1))
+  (:scale (perf-profile cols rows)))

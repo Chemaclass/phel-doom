@@ -6,12 +6,18 @@
 
 Terminals >= 200 cols or > 12,000 cells (cols x rows) automatically engage perf-mode: 30 fps cadence + 2x render-scale. Each ray casts once and replicates to 2 columns; minimap caps at 40 cols. Physics and input still tick per frame.
 
+`perf-profile` is the single source of truth: it maps dimensions to `{:frame-us :scale}`, and `target-frame-us` / `render-scale` are thin reads off it so cadence and scale stay mutually consistent.
+
 ```phel
-(def perf-width-threshold  200)
-(def perf-area-threshold   12000)
+(def perf-width-threshold 200)
+(def perf-area-threshold  12000)
 (defn perf-mode? [cols rows] (or (>= cols 200) (> (* cols rows) 12000)))
-(defn target-frame-us [cols rows] (if (perf-mode? cols rows) 33333 16667))  ; µs
-(defn render-scale [cols rows] (if (perf-mode? cols rows) 2 1))
+(defn perf-profile [cols rows]
+  (if (perf-mode? cols rows)
+    {:frame-us perf-frame-us     :scale perf-scale}      ; 33333 µs, 2
+    {:frame-us standard-frame-us :scale standard-scale})) ; 16667 µs, 1
+(defn target-frame-us [cols rows] (:frame-us (perf-profile cols rows)))
+(defn render-scale    [cols rows] (:scale    (perf-profile cols rows)))
 ```
 
 ## PHP runtime: OPcache + JIT

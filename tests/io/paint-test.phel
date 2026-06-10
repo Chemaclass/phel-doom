@@ -1,0 +1,23 @@
+(ns phel-doom-tests.io.paint-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.io.render.buffer :refer [buf-mk])
+  (:require phel-doom.io.render.paint :refer [paint-crosshair]))
+
+;; ---------------------------------------------------------------------
+;; Crosshair legibility. The reticle must be a SOLID glyph, never the old
+;; faint `\e[..;2m` (dim) attribute that read as a translucent smudge over
+;; the busy half-block floor. Idle = bold bright-white, firing = bold
+;; bright-yellow (muzzle-kick flash).
+;; ---------------------------------------------------------------------
+
+(defn- crosshair-str [stats]
+  (php/implode "" (paint-crosshair (buf-mk) stats 80 24 "\e[48;5;236m")))
+
+(deftest test-crosshair-idle-is-solid-white
+  (let [s (crosshair-str {:fire-anim 0.0})]
+    (is (php/str_contains s "\e[97;1m+") "idle reticle is bold bright-white")
+    (is (not (php/str_contains s ";2m")) "no faint/dim attribute")))
+
+(deftest test-crosshair-firing-flashes-yellow
+  (let [s (crosshair-str {:fire-anim 0.2})]
+    (is (php/str_contains s "\e[93;1m+") "firing reticle is bold bright-yellow")))

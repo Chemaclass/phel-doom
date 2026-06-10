@@ -46,21 +46,40 @@
   (is (= 1 (sprite-col-x 2 5 2 99)) "far right clamps to sw-1"))
 
 (deftest test-both-subpixels-opaque-is-halfblock
-  ;; cell 0: top=row0=10, bot=row1=20 -> ▀ fg=top bg=bot.
-  (is (= "\e[38;5;10m\e[48;5;20m▀" (enemy-sprite-cell grid 1 4 0 0 2 0))))
+  ;; cell 0: top=row0=10, bot=row1=20. sw=1 so left=right sample (no
+  ;; horizontal variation) -> quadrant mask 12 -> ▀ fg=top bg=bot,
+  ;; byte-identical to the pre-quadrant half-block.
+  (is (= "\e[38;5;10m\e[48;5;20m▀" (enemy-sprite-cell grid 1 4 0 0 0 2 0))))
 
 (deftest test-one-subpixel-opaque-is-solid-block
   ;; cell 1: top=row2=-1, bot=row3=30 -> solid block of the opaque half.
-  (is (= "\e[38;5;30m█" (enemy-sprite-cell grid 1 4 0 0 2 1))))
+  (is (= "\e[38;5;30m█" (enemy-sprite-cell grid 1 4 0 0 0 2 1))))
 
 (deftest test-both-subpixels-transparent-is-nil
   ;; A fully transparent column -> nil (caller keeps the wall/floor cell).
   (let [g (php/array -1 -1 -1 -1)]
-    (is (nil? (enemy-sprite-cell g 1 4 0 0 2 0)))))
+    (is (nil? (enemy-sprite-cell g 1 4 0 0 0 2 0)))))
 
 (deftest test-sy-clamps-into-range
   ;; A row well past the box clamps to the last sub-rows (still in-range).
-  (is (some? (enemy-sprite-cell grid 1 4 0 0 2 99))))
+  (is (some? (enemy-sprite-cell grid 1 4 0 0 0 2 99))))
+
+;; ---------------------------------------------------------------------
+;; Quadrant horizontal detail: a 2-wide grid with left != right colours
+;; on a fully-opaque cell picks a quadrant glyph (here ▌: left column =
+;; fg, right column = bg). Grid 2x2 row-major: row0=[10 20] row1=[10 20].
+;;   tl=10 tr=20 bl=10 br=20 -> fg=10, c2=20, mask=8|2=10 -> ▌
+;; ---------------------------------------------------------------------
+
+(deftest test-quadrant-horizontal-split-picks-left-half-block
+  (let [g (php/array 10 20 10 20)]
+    ;; sw=2, sx=0 (left col), sxr=1 (right col), box rows [0,1) -> row 0.
+    (is (= "\e[38;5;10m\e[48;5;20m▌" (enemy-sprite-cell g 2 2 0 1 0 1 0)))))
+
+(deftest test-quadrant-uniform-opaque-is-solid-block
+  ;; All four sub-pixels the same colour -> solid block, no ▀ pair.
+  (let [g (php/array 7 7 7 7)]
+    (is (= "\e[38;5;7m█" (enemy-sprite-cell g 2 2 0 1 0 1 0)))))
 
 ;; ---------------------------------------------------------------------
 ;; Projectile + death sprite data (baked from Freedoom).

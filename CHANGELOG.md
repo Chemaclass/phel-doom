@@ -11,6 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+- Sharper enemy/pickup sprites via 2x2 quadrant sub-cells. Fully-opaque interior sprite cells now reduce their 2x2 sub-pixel sample to two colours and pick a quadrant glyph (`▘▀▌▚▛▜▙█`) for horizontal detail; transparent/edge cells keep the prior half-block so silhouettes stay clean (no halo). Subtle in practice (sprites are usually higher-res than the terminal) but free where it applies. `cast-frame` is unaffected.
 - Textured floor. The ground plane is now floor-cast and sampled from the same stone texture as the walls (distance-fogged, pulled a few shades darker so it reads as shadowed ground) instead of a flat grey gradient. The raycaster emits a per-column floor basis so the per-cell sample is two mul-adds + a texture fetch (no trig). Blood columns keep the red gradient; `PHEL_DOOM_FLAT_FLOOR=1` restores the flat floor. ~+12% render cost.
 - Textured stone walls. Plain walls now sample the baked Freedoom flat (WALL70_2) instead of rendering flat grayscale: the raycaster emits a per-column wall-hit fraction (texture U), and each wall cell looks up the stone texture fogged by distance + side-shading via a prebaked fade LUT (~2% render cost). Doors / boss door / blood-wash columns stay flat as nav cues. `PHEL_DOOM_FLAT_WALLS=1` restores the flat look.
 

@@ -2,24 +2,20 @@
 
 `frame->string` at 180×40 runs in ~5ms. Inner loop is ~7200 iterations per frame (180 cols × 40 rows). Tricks that got it from "tens of ms" to "single-digit ms".
 
-## Big-screen perf mode
+## Big screens: uniform cadence + crisp walls
 
-Terminals >= 200 cols or > 12,000 cells (cols x rows) engage perf-mode: 2x render-scale (each ray casts once and replicates to 2 columns; minimap caps at 40 cols). Physics and input tick per frame.
+Cadence and render-scale are **uniform at every terminal size**. The old "big-screen perf mode" (a width/area threshold that dropped wide terminals to 30fps and a chunky 2x render-scale) has been removed:
 
-Cadence is a **uniform ~60fps at every size**. Big screens used to drop to 30fps, but that was an artificial ceiling: on hardware fast enough to render a perf-mode frame inside the 16.67ms budget the player was pinned to 30fps for no reason, and on hardware too slow to make it the per-iteration sleep already floors at `min-yield-us`. Framerate now tracks render capability up to the 60fps ceiling and degrades smoothly toward render-native below it.
+- **Cadence**: a uniform ~60fps target. The 30fps cap was artificial - on hardware fast enough to render a wide-terminal frame inside the 16.67ms budget the player was pinned to 30fps for no reason, and on hardware too slow to make it the per-iteration sleep already floors at `min-yield-us`. Framerate now tracks render capability up to the 60fps ceiling and degrades smoothly toward render-native below it.
+- **Scale**: a uniform 1 (exact 1:1 cast). Wide terminals render crisp walls instead of 2x replicated pairs. `cast-frame` still accepts a `scale` argument, so the replication path stays available, it is just always called with 1.
 
-`perf-profile` is the single source of truth: it maps dimensions to `{:frame-us :scale}`, and `target-frame-us` / `render-scale` are thin reads off it.
+Wide terminals are render-bound, not cadence-bound: the cost is the per-column cast + wall-shade work, which scales with column count. The minimap still caps at 40 cols (see `layout`). Physics and input tick once per frame.
 
 ```phel
-(def perf-width-threshold 200)
-(def perf-area-threshold  12000)
-(defn perf-mode? [cols rows] (or (>= cols 200) (> (* cols rows) 12000)))
-(defn perf-profile [cols rows]
-  (if (perf-mode? cols rows)
-    {:frame-us standard-frame-us :scale perf-scale}      ; 16667 µs, 2
-    {:frame-us standard-frame-us :scale standard-scale})) ; 16667 µs, 1
-(defn target-frame-us [cols rows] (:frame-us (perf-profile cols rows)))  ; uniform 60fps
-(defn render-scale    [cols rows] (:scale    (perf-profile cols rows)))
+(def standard-frame-us 16667)   ; ~60fps, every size
+(def standard-scale     1)      ; crisp 1:1, every size
+(defn target-frame-us [cols rows] standard-frame-us)
+(defn render-scale    [cols rows] standard-scale)
 ```
 
 ## PHP runtime: OPcache + JIT

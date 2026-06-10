@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Changed
+
+- Wide terminals now render crisp 1:1 walls. The big-screen "perf mode" that cast one ray per 2 columns and replicated it (chunky-looking walls past 200 cols / 12,000 cells) has been removed; every terminal size now uses the exact 1:1 cast. Combined with the uniform 60fps cadence, big screens render at full quality and let framerate track the machine instead of snapping to a degraded mode.
+
 ### Performance
 
 - Big screens are no longer capped at 30fps. The perf-mode cadence ceiling was artificial: on hardware fast enough to render a wide-terminal frame inside the 60fps budget the player was pinned to 30fps for no reason, and on slower hardware the per-frame sleep already floored at the minimum yield. Cadence is now a uniform 60fps target at every terminal size; framerate tracks render capability and degrades smoothly toward render-native below it.

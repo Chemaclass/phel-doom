@@ -228,6 +228,23 @@
         (reset! gradient-cache bundle)
         bundle))))
 
+(def brick-course-h
+  "Rows per brick course in the procedural wall texture. A darker mortar
+   line is drawn at each course boundary; adjacent brick columns stagger
+   by half a course (running bond) so courses read as offset bricks
+   rather than continuous horizontal stripes."
+  4)
+
+(defn- wall-mortar?
+  "True when screen `row` lands on a brick-course mortar line for a wall
+   column whose hit cell is (hx, hy). The per-column half-course stagger
+   keyed off hit-cell parity offsets alternate brick columns so the
+   courses read as running-bond brick. Pure + cheap (two mods); called
+   once per wall-body cell."
+  [^int row ^int top ^int hx ^int hy]
+  (let [phase (if (php/=== 0 (mod (php/+ hx hy) 2)) 0 (php/intdiv brick-course-h 2))]
+    (php/=== 0 (mod (php/+ (php/- row top) phase) brick-course-h))))
+
 (defn frame->string
   "Render the world sized to cols x rows. Walls project at a constant
    scale (proj-dist from engine) with a 2:1 character-aspect correction,
@@ -299,7 +316,7 @@
         ;; crisp walls. cast-frame still takes the factor so the
         ;; replication path stays available if ever needed.
         scale                              (render-scale vw vh)
-        {:keys [dists hits sides]}
+        {:keys [dists hits sides hxs hys]}
         (cast-frame world vw scale)
         _                                  (when debug?
                                              (record-cast-ms!
@@ -755,6 +772,14 @@
                               (php/=== row (php/- (buf-get bots col) 1))
                               (buf-get shades-bot-edge col)
                               (php/=== row (php/- (buf-get bots col) 2))
+                              (buf-get shades-bot-shadow col)
+                              ;; Wall body: procedural running-bond brick.
+                              ;; Mortar rows take the darker shadow shade;
+                              ;; the rest take the flat wall shade. Adds
+                              ;; vertical structure to the otherwise flat
+                              ;; strip without a texture map or cast change.
+                              (wall-mortar? row (buf-get tops col)
+                                            (buf-get hxs col) (buf-get hys col))
                               (buf-get shades-bot-shadow col)
                               :else
                               (buf-get shades-normal col))

@@ -2,7 +2,25 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.perf :refer [target-frame-us render-scale
                                         standard-frame-us standard-scale
-                                        cap-dims min-render-cols min-render-rows]))
+                                        cap-dims min-render-cols min-render-rows
+                                        auto-cap-dims auto-target-frame-ms]))
+
+(deftest test-auto-cap-keeps-full-when-fast-enough
+  ;; A render that already fits the budget is never shrunk.
+  (is (= [30 120] (auto-cap-dims 30 120 (php/- auto-target-frame-ms 1.0))))
+  (is (= [50 200] (auto-cap-dims 50 200 0.5))))
+
+(deftest test-auto-cap-scales-each-axis-by-sqrt
+  ;; 4x over budget -> each axis scales by sqrt(1/4) = 0.5 (cells quartered,
+  ;; aspect preserved). full-ms = 4 * target.
+  (let [over (php/* 4.0 auto-target-frame-ms)]
+    (is (= [25 100] (auto-cap-dims 50 200 over)))))
+
+(deftest test-auto-cap-never-below-floors
+  ;; A hugely-over-budget render clamps to the playable floors, never below.
+  (let [[r c] (auto-cap-dims 50 200 100000.0)]
+    (is (= min-render-rows r))
+    (is (= min-render-cols c))))
 
 (deftest test-target-frame-us-uniform-60fps
   ;; Cadence is a uniform ~60fps (16.67ms budget) at EVERY size. The

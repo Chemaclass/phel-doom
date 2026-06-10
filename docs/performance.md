@@ -165,4 +165,14 @@ Effect on `cast-frame` (2000-iter bench, `default-grid`):
 
 Cast scales linearly with column count. Whole-frame timing (cast + render + emit) lands well under 5 ms target. Live perf is available in-game via **F3** (cast/render split, bytes emitted, PHP memory, RLE compression).
 
+Half-block sub-pixel rendering (`frame->string`, 200-iter mean, no-JIT local so absolutes are ~10x inflated - trust the ratios):
+
+| Viewport | half-block | flat (`NO_SUBPIXEL`) | Δ CPU | bytes Δ |
+|---|---|---|---|---|
+| 120x30 | 62.2 ms | 60.9 ms | +2.2% | +47% |
+| 180x45 | 140.3 ms | 137.6 ms | +1.9% | +61% |
+| 240x60 | 245.7 ms | 241.1 ms | +1.9% | +71% |
+
+The 2-colour `halfblock` cell cache is what makes the +2% possible: the earlier full-frame half-block attempt was rejected at +50% because it built the `\e[..m▀` string per cell. The remaining cost is bytes/frame (denser SGR, less RLE coalescing), an I/O cost not a CPU one - cap it with `--max-cols` on ultra-wide terminals.
+
 The overlay is off by default and costs zero per-frame when off (instrumentation gated behind `:debug?` flag).

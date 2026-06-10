@@ -70,6 +70,60 @@
         (recur (php/+ c 1))))
     a))
 
+;; Lazy memo of two-colour ▀ half-block paint cells, keyed `top*256+bot`.
+;; Each entry is `\e[38;5;<top>;48;5;<bot>m▀` so the cell shows two stacked
+;; full-colour sub-pixels (top fg / bottom bg) - the sub-pixel renderer's
+;; per-cell output. `top == bot` collapses to a single-colour BG cell
+;; (renders identically, fewer bytes, RLE-coalesces with flat neighbours).
+;; Populated on first sight of each colour pair; the floor / wall fades land
+;; in a small grayscale band so the live set stays in the low thousands.
+;; Raw php-array def-mutation persists across calls in Phel, so no atom
+;; indirection in the hot path. NOTE: `def-` does NOT take a string
+;; docstring (it would be stored AS the value) - keep this a `;;` comment.
+(def- half-cell-cache (php/array))
+
+(defn halfblock
+  "Resolve (memoised) the ▀ half-block paint cell for top fg-code /
+   bottom bg-code. One array fetch on the hot path after warmup; builds
+   + stores the string only on a cache miss. See `half-cell-cache`."
+  [^int top ^int bot]
+  (let [k   (php/+ (php/* top 256) bot)
+        hit (php/aget half-cell-cache k)]
+    (if hit
+      hit
+      (let [s (if (php/=== top bot)
+                (str "\e[48;5;" top "m ")
+                (str "\e[38;5;" top ";48;5;" bot "m▀"))]
+        (php/aset half-cell-cache k s)
+        s))))
+
+(defn build-sky-halfblock
+  "Per-row ▀ half-block sky cells at 2× vertical resolution. Each screen
+   cell row stacks two sub-rows of the horizon gradient (top fg, bottom
+   bg) so the sky band steps twice as smoothly toward the horizon. The
+   pair is row-constant (gradient depends only on the row), so the inner
+   loop still RLE-coalesces each sky row into a single run. `ctbl` is the
+   shade-code-table (bare numeric code strings); the sub-row index runs
+   over 2·vh with the horizon at vh."
+  [^int vh ctbl]
+  (let [arr     (buf-mk)
+        horizon vh
+        max-d   (php/max 1 vh)
+        code-at (fn [^int s]
+                  (let [idx (php/max 0
+                                     (php/min 23
+                                              (php/intval (php/* (php/- 1.0
+                                                                        (php// (php/abs (php/- s horizon))
+                                                                               max-d))
+                                                                 23))))]
+                    (php/intval (buf-get ctbl idx))))]
+    (loop [r 0]
+      (when (php/< r vh)
+        (buf-set arr r (halfblock (code-at (php/* 2 r))
+                                  (code-at (php/+ (php/* 2 r) 1))))
+        (recur (php/+ r 1))))
+    arr))
+
 (defn enemy-shade-string
   "Compose the ANSI BG-only paint cell for one enemy zone at the
    given fade factor."

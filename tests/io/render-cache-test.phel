@@ -2,6 +2,8 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.level :refer [build-world])
   (:require phel-doom.core.engine :refer [mark-visible-cells])
+  (:require phel-doom.io.render.frame-math :refer [halfblock build-sky-halfblock])
+  (:require phel-doom.io.render.palette :refer [shade-code-table])
   (:require phel-doom.io.render.main :refer [frame->string]))
 
 ;; ---------------------------------------------------------------------
@@ -39,3 +41,34 @@
   ;; the cache isn't pinning one frame for all sizes).
   (is (not= (frame->string world stats 80 24)
             (frame->string world stats 160 44))))
+
+;; ---------------------------------------------------------------------
+;; Half-block sub-pixel cell cache (halfblock). Two distinct codes pack
+;; into a ▀ with top fg / bottom bg; equal codes collapse to a single-
+;; colour BG cell (fewer bytes, RLE-friendly). The memo must return a
+;; byte-identical cell on the second call (regression guard for the
+;; `def-`-ate-the-docstring bug that stored the cache as an empty string
+;; and corrupted entries via string-offset assignment).
+;; ---------------------------------------------------------------------
+
+(deftest test-halfblock-distinct-codes
+  (is (= "\e[38;5;240;48;5;232m▀" (halfblock 240 232))))
+
+(deftest test-halfblock-equal-codes-collapse
+  (is (= "\e[48;5;200m " (halfblock 200 200))))
+
+(deftest test-halfblock-memo-stable
+  ;; Same pair, twice: the cached entry must be the full, uncorrupted
+  ;; string (not a one-byte string-offset write).
+  (let [a (halfblock 81 16)
+        b (halfblock 81 16)]
+    (is (= a b))
+    (is (= "\e[38;5;81;48;5;16m▀" a))))
+
+(deftest test-build-sky-halfblock-shape
+  ;; One cell per row, each a non-empty paint string.
+  (let [vh  20
+        sky (build-sky-halfblock vh shade-code-table)]
+    (is (= vh (count sky)))
+    (is (php/> (php/strlen (php/aget sky 0)) 0))
+    (is (php/> (php/strlen (php/aget sky (php/- vh 1))) 0))))

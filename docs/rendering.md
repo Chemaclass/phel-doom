@@ -129,6 +129,18 @@ Doors, the boss door, and blood-band columns are NOT textured (`tex-level = -1`)
 
 The ground plane is cast per cell instead of drawn as a flat gradient. A floor cell `p` pixels below the horizon (`vh/2`) sits at perpendicular distance `floor-cast-k / p` (`build-floor-dperp`, per-row); the world floor point is `player + dperp * (floordxs[col], floordys[col])` - the `floordxs/floordys` basis (ray direction / cos(offset)) comes from the cast, so there is no per-cell trig. `frac` of the world point → texture (u, v); the same stone texture as the walls is sampled, fogged by the row's `floor-level` (pulled `floor-darken` = 4 steps darker than a wall at the same distance, so the ground reads as shadowed and the grazing-angle texel aliasing calms down). Blood columns keep the red gradient; `PHEL_DOOM_FLAT_FLOOR=1` restores the flat floor. Cost ~+12% (no-JIT local; the angular ray model rules out the linear per-row floor-step shortcut, so it stays a per-cell mul-add).
 
+## Half-block sub-pixel rendering (floor / walls / sky)
+
+A terminal cell carries only two colours (one fg, one bg), so the realism ceiling is set by how finely we subdivide each cell, not by adding colours. The floor, wall body, and sky each emit a `▀` upper-half-block whose **top colour is the fg and bottom colour is the bg** - two full-colour sub-pixels stacked per cell, 2x vertical resolution with no quantization (since cells are ~2:1 tall, the sub-pixels read as square). This is the standard high-fidelity terminal-image technique (chafa/timg/viu).
+
+- **Floor:** `build-floor-dperp-sub` / `build-floor-level-sub` are the per-SUB-ROW (2·vh) twins of the cell-res arrays, with the horizon at sub-row `vh` and `floor-cast-k-sub = 2·floor-cast-k`. Each cell samples two ground points (top sub-row = farther, bottom = nearer) and packs both faded texels into one `▀`.
+- **Wall body:** two texture-V samples down the column (same U, same fog level), stacked.
+- **Sky:** `build-sky-halfblock` pre-bakes one `▀` per row stacking two horizon-gradient sub-rows. The pair is row-constant so sky rows still RLE-coalesce into a single run.
+
+The cost that killed the earlier full-frame attempt was the per-cell string build. `halfblock` (in `frame_math`) memoizes each `top*256+bot` pair into a ready paint string in a raw php-array def (`half-cell-cache`): the hot path is one `aget` after warmup, no concat. `top == bot` collapses to a single-colour BG cell (`\e[48;5;Cm `) - identical render, fewer bytes, and it RLE-coalesces with flat neighbours. Net **~+2% CPU** over the one-colour-per-cell path. Bytes rise ~50-70% on big screens (more SGR-dense cells, less coalescing) - cap with `--max-cols`. `PHEL_DOOM_NO_SUBPIXEL=1` forces the legacy one-colour-per-cell floor/wall/sky (A/B perf, or a font without the `▀` glyph).
+
+(Caveat for `def-`: it does NOT accept a string docstring - the string is stored AS the value. `half-cell-cache` keeps its doc in a `;;` comment for this reason.)
+
 ## Responsive help panel
 
 H/ESC info menu width-adaptive: max 44 chars, min 36. Drops CONTROLS section first, then COMPASS HINT on squeeze.

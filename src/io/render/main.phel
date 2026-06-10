@@ -3,7 +3,7 @@
 (ns phel-doom.io.render.main
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
   (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade sky-code floor-code door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright char-aspect shade-table shade-code-table shade-table-blood shade-code-table-blood])
-  (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table bg-cell-cache collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
+  (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table bg-cell-cache halfblock build-sky-halfblock collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.wall-texture-data :refer [wall-tex])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type sprite-col-x sprite-subcol-x enemy-sprite-cell])
   (:require phel-doom.io.render.hud :refer [minimap-door minimap-door-pulse minimap-rows hud-debug-line hud-line-str help-menu-string settings-menu-string])
@@ -88,6 +88,15 @@
   []
   (not (php/=== "1" (php/getenv "PHEL_DOOM_FLAT_FLOOR"))))
 
+(defn- subpixel-enabled?
+  "Half-block sub-pixel rendering (▀ with independent top/bottom colours,
+   2× vertical resolution on floor / walls / sky) is ON by default.
+   PHEL_DOOM_NO_SUBPIXEL=1 forces the old one-colour-per-cell paths for an
+   A/B perf baseline or terminals whose font lacks the ▀ block glyph.
+   Resolved once per frame."
+  []
+  (not (php/=== "1" (php/getenv "PHEL_DOOM_NO_SUBPIXEL"))))
+
 (def floor-cast-k
   "Numerator of the floor-cast perpendicular distance: a floor cell `p`
    pixels below the horizon sits at perp-distance `floor-cast-k / p`.
@@ -133,6 +142,47 @@
                                             (php/- (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// d max-depth))) 0.6) 23))
                                                    floor-darken)))))
         (recur (php/+ r 1))))
+    arr))
+
+(def floor-cast-k-sub
+  "Floor-cast numerator at sub-pixel (2×) vertical resolution. Doubling
+   the vertical pixel density halves the per-pixel drop below the horizon,
+   so the perp-distance numerator doubles to keep the same world point."
+  (php/* 2.0 floor-cast-k))
+
+(defn- build-floor-dperp-sub
+  "Per-SUB-ROW perpendicular ground distance for the half-block floor.
+   Indexes 0..2vh-1; the horizon sits at sub-row `vh`. Sub-rows below it
+   map to `floor-cast-k-sub / (s+0.5 - vh)`, clamped to `max-depth`;
+   sub-rows at/above the horizon get `max-depth` (never sampled as floor)."
+  [^int vh]
+  (let [arr    (php/array)
+        sub    (php/* 2 vh)
+        center (php/* 1.0 vh)]
+    (loop [s 0]
+      (when (php/< s sub)
+        (let [p (php/- (php/+ s 0.5) center)]
+          (php/aset arr s (if (php/<= p 0.0)
+                            max-depth
+                            (php/min max-depth (php// floor-cast-k-sub p)))))
+        (recur (php/+ s 1))))
+    arr))
+
+(defn- build-floor-level-sub
+  "Per-SUB-ROW fog level (0..23) for the half-block floor, from
+   `build-floor-dperp-sub`. Same gamma + `floor-darken` as the cell-res
+   `build-floor-level`, just sampled at 2× vertical resolution."
+  [floor-dperp-sub ^int vh]
+  (let [arr (php/array)
+        sub (php/* 2 vh)]
+    (loop [s 0]
+      (when (php/< s sub)
+        (let [d (php/aget floor-dperp-sub s)]
+          (php/aset arr s (php/max 0
+                                   (php/min 23
+                                            (php/- (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// d max-depth))) 0.6) 23))
+                                                   floor-darken)))))
+        (recur (php/+ s 1))))
     arr))
 
 ;; =====================================================================
@@ -313,6 +363,7 @@
       c
       (let [bundle {:vh             vh
                     :sky            (build-horizon-gradient vh shade-table)
+                    :sky-hb         (build-sky-halfblock vh shade-code-table)
                     :floor          (build-themed-gradient vh 239 true)
                     :sky-code       (build-horizon-gradient-codes vh shade-code-table)
                     :floor-code     (build-themed-gradient-codes vh 239 true)
@@ -340,6 +391,11 @@
         ;; (see frame-gradients); the per-frame rebuild is gone.
         grads                              (frame-gradients vh)
         sky-gradient                       (:sky grads)
+        ;; Half-block sky: per-row ▀ cell stacking two sub-rows of the
+        ;; horizon gradient (2× vertical smoothness). Row-constant, so it
+        ;; still RLE-coalesces. Used when subpixel? is on (blood keeps the
+        ;; flat red gradient).
+        sky-hb                             (:sky-hb grads)
         ;; Floor: same grey gradient with subtle tile banding (odd
         ;; rows one fade step darker).
         floor-gradient                     (:floor grads)
@@ -396,11 +452,20 @@
         (cast-frame world vw scale)
         tex-on?                            (wall-textures-enabled?)
         floor-tex-on?                      (and tex-on? (floor-textures-enabled?))
+        ;; Half-block sub-pixel rendering: ▀ cells with independent
+        ;; top/bottom colours give 2× vertical resolution on floor /
+        ;; walls / sky. Resolved once; PHEL_DOOM_NO_SUBPIXEL=1 forces the
+        ;; old one-colour-per-cell paths.
+        subpixel?                          (subpixel-enabled?)
         ;; Floor-cast inputs: player position + per-row perpendicular
-        ;; distance / fog level for the textured ground plane.
+        ;; distance / fog level for the textured ground plane. The cell-
+        ;; res arrays drive the legacy single-texel floor; the sub arrays
+        ;; (2× vertical) drive the half-block floor.
         {:x pfx :y pfy}                    (:player world)
         floor-dperp                        (build-floor-dperp vh)
         floor-level                        (build-floor-level floor-dperp vh)
+        floor-dperp-sub                    (build-floor-dperp-sub vh)
+        floor-level-sub                    (build-floor-level-sub floor-dperp-sub vh)
         _                                  (when debug?
                                              (record-cast-ms!
                                               (php/* (php/- (php/microtime true) t-cast-start) 1000.0)))
@@ -845,7 +910,13 @@
                          ;; branch is skipped so this resolves the real
                          ;; wall behind the billboard.
                   base      (cond
-                              (php/< row (buf-get tops col))             sky-row
+                              (php/< row (buf-get tops col))
+                              ;; Half-block sky stacks two gradient sub-rows
+                              ;; per cell (2× vertical). Blood columns keep
+                              ;; the flat red wash.
+                              (if (and subpixel? (not in-blood?))
+                                (buf-get sky-hb row)
+                                sky-row)
                               (php/>= row (buf-get bots col))
                               ;; Floor: cast the ground plane and sample the
                               ;; stone texture. Player + per-row perp-distance
@@ -853,7 +924,34 @@
                               ;; floor point; frac → texture (u, v); fog by
                               ;; the row's floor level. Blood-band columns +
                               ;; the flat-floor flag keep the grey gradient.
-                              (if (and floor-tex-on? (not in-blood?))
+                              (cond
+                                (or in-blood? (not floor-tex-on?))
+                                flr-row
+                                ;; Half-block floor: sample two stacked
+                                ;; ground points per cell (top sub-row =
+                                ;; farther, bottom = nearer) for 2× vertical
+                                ;; resolution, then pack both faded texels
+                                ;; into one ▀ cell.
+                                subpixel?
+                                (let [fdx   (buf-get floordxs col)
+                                      fdy   (buf-get floordys col)
+                                      s-top (php/* 2 row)
+                                      s-bot (php/+ s-top 1)
+                                      dpt   (php/aget floor-dperp-sub s-top)
+                                      dpb   (php/aget floor-dperp-sub s-bot)
+                                      fxt   (php/+ pfx (php/* dpt fdx))
+                                      fyt   (php/+ pfy (php/* dpt fdy))
+                                      fxb   (php/+ pfx (php/* dpb fdx))
+                                      fyb   (php/+ pfy (php/* dpb fdy))
+                                      txt   (php/intval (php/* (php/- fxt (php/floor fxt)) 64))
+                                      tyt   (php/intval (php/* (php/- fyt (php/floor fyt)) 64))
+                                      txb   (php/intval (php/* (php/- fxb (php/floor fxb)) 64))
+                                      tyb   (php/intval (php/* (php/- fyb (php/floor fyb)) 64))
+                                      tct   (php/aget wall-tex-px (php/+ (php/* tyt 64) txt))
+                                      tcb   (php/aget wall-tex-px (php/+ (php/* tyb 64) txb))]
+                                  (halfblock (php/aget (php/aget tex-fade-table (php/aget floor-level-sub s-top)) tct)
+                                             (php/aget (php/aget tex-fade-table (php/aget floor-level-sub s-bot)) tcb)))
+                                :else
                                 (let [dp (buf-get floor-dperp row)
                                       fx (php/+ pfx (php/* dp (buf-get floordxs col)))
                                       fy (php/+ pfy (php/* dp (buf-get floordys col)))
@@ -861,8 +959,7 @@
                                       ty (php/intval (php/* (php/- fy (php/floor fy)) 64))
                                       tc (php/aget wall-tex-px (php/+ (php/* ty 64) tx))]
                                   (php/aget bg-cell-cache
-                                            (php/aget (php/aget tex-fade-table (buf-get floor-level row)) tc)))
-                                flr-row)
+                                            (php/aget (php/aget tex-fade-table (buf-get floor-level row)) tc))))
                               (and (not sprites-on) (buf-get emask col))
                               (cond
                                 (php/< row (buf-get mids col))   (buf-get eheads col)
@@ -886,13 +983,27 @@
                               ;; shade.
                               (let [lvl (buf-get shades-tex-level col)]
                                 (if (and tex-on? (php/>= lvl 0))
-                                  (let [wtop (buf-get tops col)
-                                        wh   (php/max 1 (php/- (buf-get bots col) wtop))
-                                        tv   (php/min 63 (php/intdiv (php/* (php/- row wtop) 64) wh))
-                                        tc   (php/aget wall-tex-px
-                                                       (php/+ (php/* tv 64) (buf-get shades-tex-u col)))]
-                                    (php/aget bg-cell-cache
-                                              (php/aget (php/aget tex-fade-table lvl) tc)))
+                                  (if subpixel?
+                                    ;; Half-block wall: two V samples down
+                                    ;; the column (same U, same fog level)
+                                    ;; stacked into one ▀ cell - 2× vertical
+                                    ;; texture resolution on the stonework.
+                                    (let [wtop (buf-get tops col)
+                                          wh   (php/max 1 (php/- (buf-get bots col) wtop))
+                                          u    (buf-get shades-tex-u col)
+                                          rel2 (php/* 2 (php/- row wtop))
+                                          tvt  (php/min 63 (php/intdiv (php/* rel2 32) wh))
+                                          tvb  (php/min 63 (php/intdiv (php/* (php/+ rel2 1) 32) wh))
+                                          fade (php/aget tex-fade-table lvl)]
+                                      (halfblock (php/aget fade (php/aget wall-tex-px (php/+ (php/* tvt 64) u)))
+                                                 (php/aget fade (php/aget wall-tex-px (php/+ (php/* tvb 64) u)))))
+                                    (let [wtop (buf-get tops col)
+                                          wh   (php/max 1 (php/- (buf-get bots col) wtop))
+                                          tv   (php/min 63 (php/intdiv (php/* (php/- row wtop) 64) wh))
+                                          tc   (php/aget wall-tex-px
+                                                         (php/+ (php/* tv 64) (buf-get shades-tex-u col)))]
+                                      (php/aget bg-cell-cache
+                                                (php/aget (php/aget tex-fade-table lvl) tc))))
                                   (buf-get shades-normal col))))
                   c         (if (and (php/< row visible-mh) (php/>= col mini-col0))
                               sky-row

@@ -1,7 +1,7 @@
 (ns phel-doom-tests.core.perf-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.perf :refer [perf-mode? target-frame-us
-                                        render-scale
+                                        render-scale perf-profile
                                         perf-width-threshold
                                         perf-area-threshold]))
 
@@ -63,3 +63,14 @@
   (is (= 2 (render-scale 400 60)))
   (is (= 2 (render-scale 200 30)))
   (is (= 2 (render-scale 180 70))))
+
+(deftest test-perf-profile-is-single-source-of-truth
+  ;; target-frame-us + render-scale are thin reads off perf-profile;
+  ;; pin that they stay mutually consistent so a future policy tweak
+  ;; can't drift the cadence and the scale apart.
+  (let [small (perf-profile 80 24)
+        big   (perf-profile 400 60)]
+    (is (= (:frame-us small) (target-frame-us 80 24)))
+    (is (= (:scale small)    (render-scale 80 24)))
+    (is (= (:frame-us big)   (target-frame-us 400 60)))
+    (is (= (:scale big)      (render-scale 400 60)))))

@@ -4,7 +4,7 @@
   (:require phel-doom.core.engine :refer [mark-visible-cells])
   (:require phel-doom.io.render.frame-math :refer [halfblock build-sky-halfblock])
   (:require phel-doom.io.render.palette :refer [shade-code-table])
-  (:require phel-doom.io.render.main :refer [frame->string]))
+  (:require phel-doom.io.render.main :refer [frame->string floor-tex-px]))
 
 ;; ---------------------------------------------------------------------
 ;; Gradient memo (frame-gradients) transparency. The sky/floor gradient
@@ -77,6 +77,24 @@
     (is (or (php/str_contains frame "m\e[97;1m+")
             (php/str_contains frame "m\e[93;1m+"))
         "crosshair + follows a real cell's BG SGR, not the bare cursor move")))
+
+(defn- arr-mm [a]
+  (let [n (php/count a)]
+    (loop [i 1 lo (php/aget a 0) hi (php/aget a 0)]
+      (if (php/< i n)
+        (let [v (php/aget a i)]
+          (recur (php/+ i 1) (php/min lo v) (php/max hi v)))
+        [lo hi]))))
+
+(deftest test-floor-texture-softer-than-wall
+  ;; The floor samples a contrast-softened copy of the stone texture so
+  ;; the hard dark cracks don't read as harsh black speckle at the grazing
+  ;; floor angle. The stone flat spans 232..249; the floor copy is
+  ;; compressed toward mid-grey, so its darks lift above 232 and its
+  ;; brights pull below 249 (robust to retuning the factor).
+  (let [[flo fhi] (arr-mm floor-tex-px)]
+    (is (php/> flo 232) "floor darks lifted above the wall's darkest (232)")
+    (is (php/< fhi 249) "floor brights pulled below the wall's brightest (249)")))
 
 (deftest test-build-sky-halfblock-shape
   ;; One cell per row, each a non-empty paint string.

@@ -75,6 +75,35 @@
    into [0, wall-tex-w)."
   (:w wall-tex))
 
+(def floor-tex-mid
+  "Mid-grey the floor texture is contrast-compressed toward (~texture mean)."
+  242)
+
+(def floor-tex-soften
+  "Contrast factor (0..1) for the floor copy of the stone texture. The
+   flat's hard dark cracks (codes ~232-236), sampled at the floor plane's
+   2× vertical grazing angle, read as harsh black speckle down long
+   corridors. The floor (only) samples a softened copy that lerps each
+   texel toward `floor-tex-mid`, so cracks calm to a gentle mottle while
+   the walls keep full contrast. 1.0 = identical to walls, 0.0 = flat grey."
+  0.5)
+
+(def floor-tex-px
+  "Contrast-softened copy of `wall-tex-px` sampled by the floor plane only
+   (see `floor-tex-soften`). Each texel is lerped toward `floor-tex-mid`
+   and clamped into the grayscale ramp. Built once at load; the floor path
+   then pays nothing extra (same single `aget` as before, different array)."
+  (let [n (php/count wall-tex-px)
+        a (php/array)]
+    (loop [i 0]
+      (when (php/< i n)
+        (let [c  (php/aget wall-tex-px i)
+              c' (php/intval (php/round (php/+ floor-tex-mid
+                                               (php/* (php/- c floor-tex-mid) floor-tex-soften))))]
+          (php/aset a i (php/max 232 (php/min 255 c'))))
+        (recur (php/+ i 1))))
+    a))
+
 (defn- wall-textures-enabled?
   "Textured walls are ON by default; PHEL_DOOM_FLAT_WALLS=1 forces the
    old flat-shaded stone (A/B compare, or taste). Resolved per frame."
@@ -956,8 +985,8 @@
                                       tyt   (php/intval (php/* (php/- fyt (php/floor fyt)) 64))
                                       txb   (php/intval (php/* (php/- fxb (php/floor fxb)) 64))
                                       tyb   (php/intval (php/* (php/- fyb (php/floor fyb)) 64))
-                                      tct   (php/aget wall-tex-px (php/+ (php/* tyt 64) txt))
-                                      tcb   (php/aget wall-tex-px (php/+ (php/* tyb 64) txb))]
+                                      tct   (php/aget floor-tex-px (php/+ (php/* tyt 64) txt))
+                                      tcb   (php/aget floor-tex-px (php/+ (php/* tyb 64) txb))]
                                   (halfblock (php/aget (php/aget tex-fade-table (php/aget floor-level-sub s-top)) tct)
                                              (php/aget (php/aget tex-fade-table (php/aget floor-level-sub s-bot)) tcb)))
                                 :else
@@ -966,7 +995,7 @@
                                       fy (php/+ pfy (php/* dp (buf-get floordys col)))
                                       tx (php/intval (php/* (php/- fx (php/floor fx)) 64))
                                       ty (php/intval (php/* (php/- fy (php/floor fy)) 64))
-                                      tc (php/aget wall-tex-px (php/+ (php/* ty 64) tx))]
+                                      tc (php/aget floor-tex-px (php/+ (php/* ty 64) tx))]
                                   (php/aget bg-cell-cache
                                             (php/aget (php/aget tex-fade-table (buf-get floor-level row)) tc))))
                               (and (not sprites-on) (buf-get emask col))

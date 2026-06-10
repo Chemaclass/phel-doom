@@ -1,0 +1,41 @@
+(ns phel-doom-tests.io.render-cache-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.level :refer [build-world])
+  (:require phel-doom.core.engine :refer [mark-visible-cells])
+  (:require phel-doom.io.render.main :refer [frame->string]))
+
+;; ---------------------------------------------------------------------
+;; Gradient memo (frame-gradients) transparency. The sky/floor gradient
+;; bundle is cached by vh in a module atom; these tests pin that the
+;; cache stays transparent: same size renders identically (cache hit),
+;; and a size that changes vh and changes back renders identically again
+;; (the rebuild path can't leave a stale/corrupt bundle).
+;; ---------------------------------------------------------------------
+
+(def world (mark-visible-cells (build-world 1 5 0 :normal #{:pistol})))
+
+(def stats
+  {:game-time 1.0 :debug? false :iframes 0.0 :lives 5 :max-lives 5
+   :armor 0 :kills 0 :level 1 :weapon :pistol :weapon-name "pistol"
+   :mag 10 :mag-size 10 :ammo-reserve 50 :stamina 100 :max-stamina 100
+   :owned-weapons #{:pistol} :difficulty :normal :held-keys #{}
+   :fire-anim-duration 0.1 :reload-duration 1.0 :game-time-s 1.0
+   :secrets-total 0 :secrets-found 0 :backpack-level 0})
+
+(deftest test-same-size-renders-identically
+  ;; Deterministic at a fixed vh — the cache hit returns the same arrays.
+  (is (= (frame->string world stats 120 30)
+         (frame->string world stats 120 30))))
+
+(deftest test-vh-change-and-back-is-stable
+  ;; vh changes (30 -> 40) force a rebuild; coming back to 30 must
+  ;; render exactly as the first 30 did (no stale bundle bleed-through).
+  (let [a (frame->string world stats 120 30)]
+    (frame->string world stats 120 40)   ; rebuild at vh' = 40 - hud rows
+    (is (= a (frame->string world stats 120 30)))))
+
+(deftest test-different-size-differs
+  ;; A genuinely different viewport produces different output (sanity:
+  ;; the cache isn't pinning one frame for all sizes).
+  (is (not= (frame->string world stats 80 24)
+            (frame->string world stats 160 44))))

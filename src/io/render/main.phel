@@ -536,11 +536,11 @@
         ;; grey ceiling. nil unless bloody? so the inner row loop
         ;; short-circuits the blood swap (the cache always holds them;
         ;; the bloody? gate keeps the nil-when-inactive contract).
+        ;; The blood floor intentionally reuses this same gradient (one
+        ;; uniform red wash top-to-bottom): the row loops below read
+        ;; their per-row blood value from blood-sky-gradient for both
+        ;; sky AND floor cells.
         blood-sky-gradient                 (when bloody? (:blood-sky grads))
-        ;; Intentional alias: floor reuses the sky red gradient so the
-        ;; blood band is one uniform red wash top-to-bottom (not a copy
-        ;; -paste slip). A separate floor curve would split the corner.
-        blood-floor-gradient               blood-sky-gradient
         ;; Code-only gradient twins for ▀ half-block edge composition.
         ;; The top-edge cell blends wall BG with the sky shade AT THAT ROW
         ;; in FG; using a flat sky-code produced a dark notch at the seam
@@ -1042,6 +1042,16 @@
           cap-row             (php/+ (php/intdiv vh 2)
                                      (if (php/> (or (get stats :fire-anim) 0.0) 0.0) -1 0))
           center-cap          (php/array)
+          ;; One-slot per-cell registers for the row loops below. The
+          ;; per-cell code resolves its value with conds in STATEMENT
+          ;; position writing here (then reads it back with one aget)
+          ;; instead of binding a cond/and/let result directly: a
+          ;; statement-form in a binding VALUE compiles to a per-cell
+          ;; PHP closure that copies every in-scope local (~500 vars,
+          ;; ~10µs per cell) — that closure overhead WAS ~85% of the
+          ;; whole render cost. See docs/performance.md.
+          cell-reg            (php/array)
+          pack-reg            (php/array)
           ;; Scene-space capture coords: in pixel-doubled mode the centre
           ;; terminal cell maps to internal cell (cap-row/2, cap-col/2);
           ;; the row/col parity picks which quadrant of the 2×2 block.
@@ -1099,9 +1109,46 @@
         ;; glyphs survive the doubling. Upper row streams straight into
         ;; `parts`; the lower row accumulates in `rowb` and is appended
         ;; after the upper row's newline.
+        ;; PERF-CRITICAL SHAPE: same statement-position register
+        ;; discipline as the px1 loop below — a cond/and/let in a
+        ;; per-cell binding VALUE compiles to a closure copying the
+        ;; whole ~500-local scope (~10µs/cell). The cell's pack
+        ;; resolves through pack-reg, composite base cells through
+        ;; cell-reg; every remaining binding value is a pure
+        ;; expression. Buf-pushes stay in statement position (a push
+        ;; inside a binding value would also land on an IIFE's array
+        ;; COPY and be silently lost). See docs/performance.md.
         (dotimes [r2 svh]
-          (let [row-bot? (php/< (php/+ (php/* 2 r2) 1) vh)
-                rowb     (buf-mk)]
+          (let [row-bot?       (php/< (php/+ (php/* 2 r2) 1) vh)
+                rowb           (buf-mk)
+                ;; Row-constant hoists: sub-row indices, floor-cast row
+                ;; terms, gradient rows, the packed sky sample (column-
+                ;; independent!) and the minimap column limit.
+                s4             (php/* 4 r2)
+                s4b            (php/+ s4 1)
+                s4c            (php/+ s4 2)
+                s4d            (php/+ s4 3)
+                sky-pack-row   (php/+ (php/* (php/+ (php/* (php/+ (php/* (php/aget sky-sub-codes s4) 256)
+                                                                  (php/aget sky-sub-codes s4b))
+                                                           256)
+                                                    (php/aget sky-sub-codes s4c))
+                                             256)
+                                      (php/aget sky-sub-codes s4d))
+                dp0            (php/aget floor-dperp-sub s4)
+                dp1            (php/aget floor-dperp-sub s4b)
+                dp2            (php/aget floor-dperp-sub s4c)
+                dp3            (php/aget floor-dperp-sub s4d)
+                ffade0         (php/aget tex-fade-table (php/aget floor-level-sub s4))
+                ffade1         (php/aget tex-fade-table (php/aget floor-level-sub s4b))
+                ffade2         (php/aget tex-fade-table (php/aget floor-level-sub s4c))
+                ffade3         (php/aget tex-fade-table (php/aget floor-level-sub s4d))
+                sky-r2         (buf-get sky-gradient r2)
+                blood-sky-r2   (if blood-sky-gradient (buf-get blood-sky-gradient r2) nil)
+                flr-r2         (buf-get floor-gradient r2)
+                floor-flat?    (if floor-tex-on? false true)
+                mini-slim      (if (php/< r2 mini-srow-lim) mini-scol0 svw)
+                cap-this-srow? (php/=== r2 cap-sr)
+                rowbase2       (php/* r2 svw)]
             (loop [col 0 pa nil ra 0 pb nil rb 0]
               (if (php/>= col svw)
                 (do (when (php/> ra 0)
@@ -1112,17 +1159,10 @@
                       (buf-push rowb pb)
                       (buf-push rowb (php/str_repeat (if (php/str_ends_with pb "▀") "▀" " ")
                                                      (php/- rb 1)))))
-                ;; NOTE: every buf-push in this loop lives in STATEMENT
-                ;; position (the body below, before recur). A push inside
-                ;; a let-binding VALUE compiles into an IIFE closure;
-                ;; PHP `use` copies arrays into closures, so the write
-                ;; lands on a copy and is silently lost. The bindings
-                ;; here are all pure reads for the same reason.
-                (let [dbl?       (php/< (php/+ (php/* 2 col) 1) vw)
-                      n-out      (if dbl? 2 1)
-                      mini?      (and (php/< r2 mini-srow-lim) (php/>= col mini-scol0))
-                      in-blood?  (and blood-sky-gradient
-                                      (php/> (buf-get blood-cols col) 0.4))
+                (let [mini?      (php/>= col mini-slim)
+                      in-blood?  (if blood-sky-gradient
+                                   (php/> (buf-get blood-cols col) 0.4)
+                                   false)
                       tops-c     (buf-get tops col)
                       bots-c     (buf-get bots col)
                       ;; Plain wall hit (1) / no hit: shade cells are solid
@@ -1137,428 +1177,507 @@
                       ;; of in whole 2-row scene cells.
                       mixw?      (php/=== 1 (php/aget wsub-mix col))
                       sky-lim    (php/aget wsub-skylim col)
-                      floor-from (php/aget wsub-floorfrom col)
-                      ;; Base (under-overlay) pair, resolved by ONE cond:
-                      ;; the split kinds (sky / floor texture / wall
-                      ;; texture) sample BOTH vertical sub-texels here and
-                      ;; pack them as `top*256 + bot` (one branch dispatch
-                      ;; per cell, two codes out — the same key shape as
-                      ;; the halfblock cache). Negative values mark the
-                      ;; composite kinds resolved below:
-                      ;;   -1 minimap placeholder  -3 sky flat (blood)
-                      ;;   -4 floor flat           -5 enemy glyph zone
-                      ;;   -6 top edge   -7 top shadow
-                      ;;   -8 bot edge   -9 bot shadow   -10 wall flat
-                      pack       (cond
-                                   mini?                                           -1
-                                   (php/< r2 sky-lim)
-                                   (if in-blood?
-                                     -3
-                                     (let [s4 (php/* 4 r2)]
-                                       (php/+ (php/* (php/+ (php/* (php/+ (php/* (php/aget sky-sub-codes s4) 256)
-                                                                          (php/aget sky-sub-codes (php/+ s4 1)))
-                                                                   256)
-                                                            (php/aget sky-sub-codes (php/+ s4 2)))
-                                                     256)
-                                              (php/aget sky-sub-codes (php/+ s4 3)))))
-                                   (php/>= r2 floor-from)
-                                   (if (or in-blood? (not floor-tex-on?))
-                                     -4
-                                     (let [s4  (php/* 4 r2)
-                                           s4b (php/+ s4 1)
-                                           s4c (php/+ s4 2)
-                                           s4d (php/+ s4 3)
-                                           fdx (buf-get floordxs col)
-                                           fdy (buf-get floordys col)
-                                           dp0 (php/aget floor-dperp-sub s4)
-                                           dp1 (php/aget floor-dperp-sub s4b)
-                                           dp2 (php/aget floor-dperp-sub s4c)
-                                           dp3 (php/aget floor-dperp-sub s4d)
-                                           fx0 (php/+ pfx (php/* dp0 fdx))
-                                           fy0 (php/+ pfy (php/* dp0 fdy))
-                                           fx1 (php/+ pfx (php/* dp1 fdx))
-                                           fy1 (php/+ pfy (php/* dp1 fdy))
-                                           fx2 (php/+ pfx (php/* dp2 fdx))
-                                           fy2 (php/+ pfy (php/* dp2 fdy))
-                                           fx3 (php/+ pfx (php/* dp3 fdx))
-                                           fy3 (php/+ pfy (php/* dp3 fdy))
-                                           tc0 (php/aget floor-tex-px
-                                                         (php/+ (php/* (php/intval (php/* (php/- fy0 (php/floor fy0)) 64)) 64)
-                                                                (php/intval (php/* (php/- fx0 (php/floor fx0)) 64))))
-                                           tc1 (php/aget floor-tex-px
-                                                         (php/+ (php/* (php/intval (php/* (php/- fy1 (php/floor fy1)) 64)) 64)
-                                                                (php/intval (php/* (php/- fx1 (php/floor fx1)) 64))))
-                                           tc2 (php/aget floor-tex-px
-                                                         (php/+ (php/* (php/intval (php/* (php/- fy2 (php/floor fy2)) 64)) 64)
-                                                                (php/intval (php/* (php/- fx2 (php/floor fx2)) 64))))
-                                           tc3 (php/aget floor-tex-px
-                                                         (php/+ (php/* (php/intval (php/* (php/- fy3 (php/floor fy3)) 64)) 64)
-                                                                (php/intval (php/* (php/- fx3 (php/floor fx3)) 64))))]
-                                       (php/+ (php/* (php/+ (php/* (php/+ (php/* (php/aget (php/aget tex-fade-table (php/aget floor-level-sub s4)) tc0) 256)
-                                                                          (php/aget (php/aget tex-fade-table (php/aget floor-level-sub s4b)) tc1))
-                                                                   256)
-                                                            (php/aget (php/aget tex-fade-table (php/aget floor-level-sub s4c)) tc2))
-                                                     256)
-                                              (php/aget (php/aget tex-fade-table (php/aget floor-level-sub s4d)) tc3))))
-                                   (and (not sprites-on) (buf-get emask col))      -5
-                                   (and (not mixw?) (php/=== r2 tops-c))           -6
-                                   (and (not mixw?) (php/=== r2 (php/+ tops-c 1))) -7
-                                   (and (not mixw?) (php/=== r2 (php/- bots-c 1))) -8
-                                   (and (not mixw?) (php/=== r2 (php/- bots-c 2))) -9
-                                   mixw?
-                                  ;; Wall body / seam cell at sub-row precision.
-                                  ;; Interior cells (fully inside the wall) take
-                                  ;; the straight 4-sample path; only the one or
-                                  ;; two boundary cells per column pay the
-                                  ;; per-sub-row sky / wall / floor cond.
-                                   (let [ts-sub (php/aget wsub-top col)
-                                         bs-sub (php/aget wsub-bot col)
-                                         whs    (php/max 1 (php/- bs-sub ts-sub))
-                                         u      (buf-get shades-tex-u col)
-                                         fade   (php/aget tex-fade-table (buf-get shades-tex-level col))
-                                         s4     (php/* 4 r2)
-                                         rel    (php/- s4 ts-sub)]
-                                     (if (and (php/> rel 0) (php/< (php/+ s4 3) (php/- bs-sub 2)))
-                                       (php/+ (php/* (php/+ (php/* (php/+ (php/* (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u))) 256)
-                                                                          (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u))))
-                                                                   256)
-                                                            (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 2) 64) whs)) 64) u))))
-                                                     256)
-                                              (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 3) 64) whs)) 64) u))))
-                                       (let [s4b (php/+ s4 1)
-                                             s4c (php/+ s4 2)
-                                             s4d (php/+ s4 3)
-                                             ;; Seam accents: graduated dark border tracing
-                                             ;; the exact wall/floor + wall/sky diagonals -
-                                             ;; near-black wall base sub-row, dark sub-row
-                                             ;; above it, dark first floor sub-row, and a
-                                             ;; lighter lip at the sky seam.
-                                             m0  (cond
-                                                   (php/< s4 ts-sub)  (php/aget sky-sub-codes s4)
-                                                   (php/>= s4 bs-sub) (if (php/=== s4 bs-sub)
-                                                                        (php/max 232 (php/- (floor-code-at s4 col) seam-floor-dark))
-                                                                        (floor-code-at s4 col))
-                                                   :else              (let [wc (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u)))]
-                                                                        (cond
-                                                                          (php/>= s4 (php/- bs-sub 1)) (php/max 232 (php/- wc seam-base-dark))
-                                                                          (php/>= s4 (php/- bs-sub 2)) (php/max 232 (php/- wc seam-wall-dark))
-                                                                          (php/=== s4 ts-sub)          (php/max 232 (php/- wc seam-top-dark))
-                                                                          :else                        wc)))
-                                             m1  (cond
-                                                   (php/< s4b ts-sub)  (php/aget sky-sub-codes s4b)
-                                                   (php/>= s4b bs-sub) (if (php/=== s4b bs-sub)
-                                                                         (php/max 232 (php/- (floor-code-at s4b col) seam-floor-dark))
-                                                                         (floor-code-at s4b col))
-                                                   :else               (let [wc (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u)))]
-                                                                         (cond
-                                                                           (php/>= s4b (php/- bs-sub 1)) (php/max 232 (php/- wc seam-base-dark))
-                                                                           (php/>= s4b (php/- bs-sub 2)) (php/max 232 (php/- wc seam-wall-dark))
-                                                                           (php/=== s4b ts-sub)          (php/max 232 (php/- wc seam-top-dark))
-                                                                           :else                         wc)))
-                                             m2  (cond
-                                                   (php/< s4c ts-sub)  (php/aget sky-sub-codes s4c)
-                                                   (php/>= s4c bs-sub) (if (php/=== s4c bs-sub)
-                                                                         (php/max 232 (php/- (floor-code-at s4c col) seam-floor-dark))
-                                                                         (floor-code-at s4c col))
-                                                   :else               (let [wc (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 2) 64) whs)) 64) u)))]
-                                                                         (cond
-                                                                           (php/>= s4c (php/- bs-sub 1)) (php/max 232 (php/- wc seam-base-dark))
-                                                                           (php/>= s4c (php/- bs-sub 2)) (php/max 232 (php/- wc seam-wall-dark))
-                                                                           (php/=== s4c ts-sub)          (php/max 232 (php/- wc seam-top-dark))
-                                                                           :else                         wc)))
-                                             m3  (cond
-                                                   (php/< s4d ts-sub)  (php/aget sky-sub-codes s4d)
-                                                   (php/>= s4d bs-sub) (if (php/=== s4d bs-sub)
-                                                                         (php/max 232 (php/- (floor-code-at s4d col) seam-floor-dark))
-                                                                         (floor-code-at s4d col))
-                                                   :else               (let [wc (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 3) 64) whs)) 64) u)))]
-                                                                         (cond
-                                                                           (php/>= s4d (php/- bs-sub 1)) (php/max 232 (php/- wc seam-base-dark))
-                                                                           (php/>= s4d (php/- bs-sub 2)) (php/max 232 (php/- wc seam-wall-dark))
-                                                                           (php/=== s4d ts-sub)          (php/max 232 (php/- wc seam-top-dark))
-                                                                           :else                         wc)))]
-                                         (php/+ (php/* (php/+ (php/* (php/+ (php/* m0 256) m1) 256) m2) 256) m3))))
-                                   :else                                           -10)
-                      split?     (php/>= pack 0)
-                      ;; Unpack the 4 vertical sub-samples and compose the
-                      ;; row pair as half-block cells: full vertical colour
-                      ;; fidelity (2 sub-pixels per output row, same as the
-                      ;; full-detail ▀ path), only horizontal is doubled.
-                      sp3        (php/% pack 256)
-                      spq1       (php/intdiv pack 256)
-                      sp2        (php/% spq1 256)
-                      spq2       (php/intdiv spq1 256)
-                      sp1        (php/% spq2 256)
-                      sp0        (php/intdiv spq2 256)
-                      base-a     (if split?
-                                   (halfblock sp0 sp1)
-                                   (cond
-                                     (php/=== pack -1) (buf-get sky-gradient r2)
-                                     (php/=== pack -3) (buf-get blood-sky-gradient r2)
-                                     (php/=== pack -4) (buf-get (if in-blood?
-                                                                  blood-floor-gradient
-                                                                  floor-gradient)
-                                                                r2)
-                                     (php/=== pack -5) (cond
-                                                         (php/< r2 (buf-get mids col))   (buf-get eheads col)
-                                                         (php/< r2 (buf-get lowers col)) (buf-get ebodys col)
-                                                         :else                           (buf-get elegss col))
-                                     (php/=== pack -6) (buf-get shades-top-edge col)
-                                     (php/=== pack -7) (buf-get shades-top-shadow col)
-                                     (php/=== pack -8) (buf-get shades-bot-edge col)
-                                     (php/=== pack -9) (buf-get shades-bot-shadow col)
-                                     :else             (buf-get shades-normal col)))
-                      base-b     (if split?
-                                   (halfblock sp2 sp3)
-                                   base-a)
-                      ;; Solid = safe to run-length-coalesce with space
-                      ;; continuation (pure BG paint, no glyph). Shadows +
-                      ;; flat wall shades are solid only on plain wall hits
-                      ;; (door columns carry the ▌ glyph cell there).
-                      base-sl?   (if split?
-                                   true
-                                   (cond
-                                     (php/=== pack -1)  true
-                                     (php/=== pack -3)  true
-                                     (php/=== pack -4)  true
-                                     (php/=== pack -7)  plain?
-                                     (php/=== pack -9)  plain?
-                                     (php/=== pack -10) plain?
-                                     :else              false))
-                      ;; Overlay merge: tracer/pickup buffer wins the whole
-                      ;; block; a sprite quad overrides per quadrant with
-                      ;; transparent texels keeping the base pair.
-                      bp-cell    (if mini? nil (buf-get bp-trc (php/+ (php/* r2 svw) col)))
-                      quad       (when (and (not mini?) (nil? bp-cell) sprites-on
-                                            (buf-get emask col)
-                                            (php/>= r2 (buf-get e-stop col))
-                                            (php/< r2 (buf-get e-sbot col)))
-                                   (enemy-sprite-quad
-                                    (buf-get e-spx col) (buf-get e-sw col) (buf-get e-sh col)
-                                    (buf-get e-sx col) (buf-get e-sxr col)
-                                    (buf-get e-stop col) (buf-get e-sbot col) r2))
-                      qa1        (when quad (php/aget quad 0))
-                      qa2        (when quad (php/aget quad 1))
-                      qb1        (when quad (php/aget quad 2))
-                      qb2        (when quad (php/aget quad 3))
-                      a1         (if bp-cell
-                                   bp-cell
-                                   (if quad
-                                     (if (php/=== qa1 -1) base-a (php/aget bg-cell-cache qa1))
-                                     base-a))
-                      a2         (if bp-cell
-                                   bp-cell
-                                   (if quad
-                                     (if (php/=== qa2 -1) base-a (php/aget bg-cell-cache qa2))
-                                     base-a))
-                      b1         (if bp-cell
-                                   bp-cell
-                                   (if quad
-                                     (if (php/=== qb1 -1) base-b (php/aget bg-cell-cache qb1))
-                                     base-b))
-                      b2         (if bp-cell
-                                   bp-cell
-                                   (if quad
-                                     (if (php/=== qb2 -1) base-b (php/aget bg-cell-cache qb2))
-                                     base-b))
-                      sa?        (if bp-cell
-                                   false
-                                   (if quad
-                                     (cond
-                                       (and (php/=== qa1 -1) (php/=== qa2 -1)) base-sl?
-                                       (and (php/!== qa1 -1) (php/!== qa2 -1)) true
-                                       :else                                   false)
-                                     base-sl?))
-                      sb?        (if bp-cell
-                                   false
-                                   (if quad
-                                     (cond
-                                       (and (php/=== qb1 -1) (php/=== qb2 -1)) base-sl?
-                                       (and (php/!== qb1 -1) (php/!== qb2 -1)) true
-                                       :else                                   false)
-                                     base-sl?))]
-                  ;; Stash the real rendered quadrant under the crosshair
-                  ;; (same contract as the px1 capture).
-                  (when (php/=== r2 cap-sr)
-                    (when (php/=== col cap-scl)
-                      (php/aset center-cap 0
-                                (if cap-bot?
-                                  (if cap-right? b2 b1)
-                                  (if cap-right? a2 a1)))))
-                  ;; RLE step, pushes in statement position (see NOTE).
-                  (let [match-a? (and sa? (php/=== a1 a2) (php/=== a1 pa))
-                        run-a?   (and sa? (php/=== a1 a2))
-                        match-b? (and row-bot? sb? (php/=== b1 b2) (php/=== b1 pb))
-                        run-b?   (and row-bot? sb? (php/=== b1 b2))]
-                    (when (and (not match-a?) (php/> ra 0))
-                      (buf-push parts pa)
-                      (buf-push parts (php/str_repeat (if (php/str_ends_with pa "▀") "▀" " ")
-                                                      (php/- ra 1))))
-                    (when (and (not match-a?) (not run-a?))
-                      (buf-push parts a1)
-                      (when dbl? (buf-push parts a2)))
-                    (when row-bot?
-                      (when (and (not match-b?) (php/> rb 0))
-                        (buf-push rowb pb)
-                        (buf-push rowb (php/str_repeat (if (php/str_ends_with pb "▀") "▀" " ")
-                                                       (php/- rb 1))))
-                      (when (and (not match-b?) (not run-b?))
-                        (buf-push rowb b1)
-                        (when dbl? (buf-push rowb b2))))
-                    (recur (php/+ col 1)
-                           (if match-a? pa (if run-a? a1 nil))
-                           (if match-a? (php/+ ra n-out) (if run-a? n-out 0))
-                           (if match-b? pb (if run-b? b1 nil))
-                           (if match-b? (php/+ rb n-out) (if run-b? n-out 0)))))))
+                      floor-from (php/aget wsub-floorfrom col)]
+                  ;; Cell pack -> pack-reg[0], resolved by ONE statement
+                  ;; cond: the split kinds (sky / floor texture / wall
+                  ;; texture) sample all four vertical sub-texels and
+                  ;; pack them base-256 (the same key shape as the
+                  ;; halfblock cache). Negative values mark the
+                  ;; composite kinds resolved below:
+                  ;;   -1 minimap placeholder  -3 sky flat (blood)
+                  ;;   -4 floor flat           -5 enemy glyph zone
+                  ;;   -6 top edge   -7 top shadow
+                  ;;   -8 bot edge   -9 bot shadow   -10 wall flat
+                  (cond
+                    mini?
+                    (php/aset pack-reg 0 -1)
+                    (php/< r2 sky-lim)
+                    (if in-blood?
+                      (php/aset pack-reg 0 -3)
+                      (php/aset pack-reg 0 sky-pack-row))
+                    (php/>= r2 floor-from)
+                    (if (if in-blood? true floor-flat?)
+                      (php/aset pack-reg 0 -4)
+                      (let [fdx (buf-get floordxs col)
+                            fdy (buf-get floordys col)
+                            fx0 (php/+ pfx (php/* dp0 fdx))
+                            fy0 (php/+ pfy (php/* dp0 fdy))
+                            fx1 (php/+ pfx (php/* dp1 fdx))
+                            fy1 (php/+ pfy (php/* dp1 fdy))
+                            fx2 (php/+ pfx (php/* dp2 fdx))
+                            fy2 (php/+ pfy (php/* dp2 fdy))
+                            fx3 (php/+ pfx (php/* dp3 fdx))
+                            fy3 (php/+ pfy (php/* dp3 fdy))
+                            tc0 (php/aget floor-tex-px
+                                          (php/+ (php/* (php/intval (php/* (php/- fy0 (php/floor fy0)) 64)) 64)
+                                                 (php/intval (php/* (php/- fx0 (php/floor fx0)) 64))))
+                            tc1 (php/aget floor-tex-px
+                                          (php/+ (php/* (php/intval (php/* (php/- fy1 (php/floor fy1)) 64)) 64)
+                                                 (php/intval (php/* (php/- fx1 (php/floor fx1)) 64))))
+                            tc2 (php/aget floor-tex-px
+                                          (php/+ (php/* (php/intval (php/* (php/- fy2 (php/floor fy2)) 64)) 64)
+                                                 (php/intval (php/* (php/- fx2 (php/floor fx2)) 64))))
+                            tc3 (php/aget floor-tex-px
+                                          (php/+ (php/* (php/intval (php/* (php/- fy3 (php/floor fy3)) 64)) 64)
+                                                 (php/intval (php/* (php/- fx3 (php/floor fx3)) 64))))]
+                        (php/aset pack-reg 0
+                                  (php/+ (php/* (php/+ (php/* (php/+ (php/* (php/aget ffade0 tc0) 256)
+                                                                     (php/aget ffade1 tc1))
+                                                              256)
+                                                       (php/aget ffade2 tc2))
+                                                256)
+                                         (php/aget ffade3 tc3)))))
+                    (if sprites-on false (buf-get emask col))
+                    (php/aset pack-reg 0 -5)
+                    (if mixw? false (php/=== r2 tops-c))
+                    (php/aset pack-reg 0 -6)
+                    (if mixw? false (php/=== r2 (php/+ tops-c 1)))
+                    (php/aset pack-reg 0 -7)
+                    (if mixw? false (php/=== r2 (php/- bots-c 1)))
+                    (php/aset pack-reg 0 -8)
+                    (if mixw? false (php/=== r2 (php/- bots-c 2)))
+                    (php/aset pack-reg 0 -9)
+                    ;; Wall body / seam cell at sub-row precision.
+                    ;; Interior cells (fully inside the wall) take
+                    ;; the straight 4-sample path; only the one or
+                    ;; two boundary cells per column pay the
+                    ;; per-sub-row sky / wall / floor resolution
+                    ;; (m0..m3 via pack-reg slots 1-4).
+                    mixw?
+                    (let [ts-sub (php/aget wsub-top col)
+                          bs-sub (php/aget wsub-bot col)
+                          whs    (php/max 1 (php/- bs-sub ts-sub))
+                          u      (buf-get shades-tex-u col)
+                          fade   (php/aget tex-fade-table (buf-get shades-tex-level col))
+                          rel    (php/- s4 ts-sub)]
+                      (if (if (php/> rel 0) (php/< (php/+ s4 3) (php/- bs-sub 2)) false)
+                        (php/aset pack-reg 0
+                                  (php/+ (php/* (php/+ (php/* (php/+ (php/* (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u))) 256)
+                                                                     (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u))))
+                                                              256)
+                                                       (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 2) 64) whs)) 64) u))))
+                                                256)
+                                         (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 3) 64) whs)) 64) u)))))
+                        ;; Seam accents: graduated dark border tracing
+                        ;; the exact wall/floor + wall/sky diagonals -
+                        ;; near-black wall base sub-row, dark sub-row
+                        ;; above it, dark first floor sub-row, and a
+                        ;; lighter lip at the sky seam. The four sub-row
+                        ;; codes resolve into pack-reg slots 1-4 first.
+                        (do
+                          (cond
+                            (php/< s4 ts-sub)
+                            (php/aset pack-reg 1 (php/aget sky-sub-codes s4))
+                            (php/>= s4 bs-sub)
+                            (php/aset pack-reg 1 (if (php/=== s4 bs-sub)
+                                                   (php/max 232 (php/- (floor-code-at s4 col) seam-floor-dark))
+                                                   (floor-code-at s4 col)))
+                            :else
+                            (let [wc (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u)))]
+                              (php/aset pack-reg 1
+                                        (if (php/>= s4 (php/- bs-sub 1))
+                                          (php/max 232 (php/- wc seam-base-dark))
+                                          (if (php/>= s4 (php/- bs-sub 2))
+                                            (php/max 232 (php/- wc seam-wall-dark))
+                                            (if (php/=== s4 ts-sub)
+                                              (php/max 232 (php/- wc seam-top-dark))
+                                              wc))))))
+                          (cond
+                            (php/< s4b ts-sub)
+                            (php/aset pack-reg 2 (php/aget sky-sub-codes s4b))
+                            (php/>= s4b bs-sub)
+                            (php/aset pack-reg 2 (if (php/=== s4b bs-sub)
+                                                   (php/max 232 (php/- (floor-code-at s4b col) seam-floor-dark))
+                                                   (floor-code-at s4b col)))
+                            :else
+                            (let [wc (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u)))]
+                              (php/aset pack-reg 2
+                                        (if (php/>= s4b (php/- bs-sub 1))
+                                          (php/max 232 (php/- wc seam-base-dark))
+                                          (if (php/>= s4b (php/- bs-sub 2))
+                                            (php/max 232 (php/- wc seam-wall-dark))
+                                            (if (php/=== s4b ts-sub)
+                                              (php/max 232 (php/- wc seam-top-dark))
+                                              wc))))))
+                          (cond
+                            (php/< s4c ts-sub)
+                            (php/aset pack-reg 3 (php/aget sky-sub-codes s4c))
+                            (php/>= s4c bs-sub)
+                            (php/aset pack-reg 3 (if (php/=== s4c bs-sub)
+                                                   (php/max 232 (php/- (floor-code-at s4c col) seam-floor-dark))
+                                                   (floor-code-at s4c col)))
+                            :else
+                            (let [wc (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 2) 64) whs)) 64) u)))]
+                              (php/aset pack-reg 3
+                                        (if (php/>= s4c (php/- bs-sub 1))
+                                          (php/max 232 (php/- wc seam-base-dark))
+                                          (if (php/>= s4c (php/- bs-sub 2))
+                                            (php/max 232 (php/- wc seam-wall-dark))
+                                            (if (php/=== s4c ts-sub)
+                                              (php/max 232 (php/- wc seam-top-dark))
+                                              wc))))))
+                          (cond
+                            (php/< s4d ts-sub)
+                            (php/aset pack-reg 4 (php/aget sky-sub-codes s4d))
+                            (php/>= s4d bs-sub)
+                            (php/aset pack-reg 4 (if (php/=== s4d bs-sub)
+                                                   (php/max 232 (php/- (floor-code-at s4d col) seam-floor-dark))
+                                                   (floor-code-at s4d col)))
+                            :else
+                            (let [wc (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 3) 64) whs)) 64) u)))]
+                              (php/aset pack-reg 4
+                                        (if (php/>= s4d (php/- bs-sub 1))
+                                          (php/max 232 (php/- wc seam-base-dark))
+                                          (if (php/>= s4d (php/- bs-sub 2))
+                                            (php/max 232 (php/- wc seam-wall-dark))
+                                            (if (php/=== s4d ts-sub)
+                                              (php/max 232 (php/- wc seam-top-dark))
+                                              wc))))))
+                          (php/aset pack-reg 0
+                                    (php/+ (php/* (php/+ (php/* (php/+ (php/* (php/aget pack-reg 1) 256)
+                                                                       (php/aget pack-reg 2))
+                                                                256)
+                                                         (php/aget pack-reg 3))
+                                                  256)
+                                           (php/aget pack-reg 4))))))
+                    :else
+                    (php/aset pack-reg 0 -10))
+                  ;; Composite kinds resolve their single base cell into
+                  ;; cell-reg[0]; split kinds build their pair from the
+                  ;; unpacked codes in the pure bindings below.
+                  (let [pack   (php/aget pack-reg 0)
+                        split? (php/>= pack 0)]
+                    (when (php/< pack 0)
+                      (cond
+                        (php/=== pack -1) (php/aset cell-reg 0 sky-r2)
+                        (php/=== pack -3) (php/aset cell-reg 0 blood-sky-r2)
+                        ;; Intentional alias: the blood floor reuses the
+                        ;; blood sky row — one uniform red wash.
+                        (php/=== pack -4) (php/aset cell-reg 0 (if in-blood? blood-sky-r2 flr-r2))
+                        (php/=== pack -5) (cond
+                                            (php/< r2 (buf-get mids col))
+                                            (php/aset cell-reg 0 (buf-get eheads col))
+                                            (php/< r2 (buf-get lowers col))
+                                            (php/aset cell-reg 0 (buf-get ebodys col))
+                                            :else
+                                            (php/aset cell-reg 0 (buf-get elegss col)))
+                        (php/=== pack -6) (php/aset cell-reg 0 (buf-get shades-top-edge col))
+                        (php/=== pack -7) (php/aset cell-reg 0 (buf-get shades-top-shadow col))
+                        (php/=== pack -8) (php/aset cell-reg 0 (buf-get shades-bot-edge col))
+                        (php/=== pack -9) (php/aset cell-reg 0 (buf-get shades-bot-shadow col))
+                        :else             (php/aset cell-reg 0 (buf-get shades-normal col))))
+                    (let [;; Unpack the 4 vertical sub-samples and compose
+                          ;; the row pair as half-block cells: full vertical
+                          ;; colour fidelity (2 sub-pixels per output row,
+                          ;; same as the full-detail ▀ path), only
+                          ;; horizontal is doubled.
+                          sp3      (php/% pack 256)
+                          spq1     (php/intdiv pack 256)
+                          sp2      (php/% spq1 256)
+                          spq2     (php/intdiv spq1 256)
+                          sp1      (php/% spq2 256)
+                          sp0      (php/intdiv spq2 256)
+                          base-a   (if split? (halfblock sp0 sp1) (php/aget cell-reg 0))
+                          base-b   (if split? (halfblock sp2 sp3) (php/aget cell-reg 0))
+                          ;; Solid = safe to run-length-coalesce with space
+                          ;; continuation (pure BG paint, no glyph). Shadows +
+                          ;; flat wall shades are solid only on plain wall hits
+                          ;; (door columns carry the ▌ glyph cell there).
+                          base-sl? (if split?
+                                     true
+                                     (if (php/=== pack -1)
+                                       true
+                                       (if (php/=== pack -3)
+                                         true
+                                         (if (php/=== pack -4)
+                                           true
+                                           (if (php/=== pack -7)
+                                             plain?
+                                             (if (php/=== pack -9)
+                                               plain?
+                                               (if (php/=== pack -10) plain? false)))))))
+                          ;; Overlay merge: tracer/pickup buffer wins the whole
+                          ;; block; a sprite quad overrides per quadrant with
+                          ;; transparent texels keeping the base pair.
+                          bp-cell  (if mini? nil (buf-get bp-trc (php/+ rowbase2 col)))
+                          quad     (if mini?
+                                     nil
+                                     (if bp-cell
+                                       nil
+                                       (if sprites-on
+                                         (if (buf-get emask col)
+                                           (if (php/>= r2 (buf-get e-stop col))
+                                             (if (php/< r2 (buf-get e-sbot col))
+                                               (enemy-sprite-quad
+                                                (buf-get e-spx col) (buf-get e-sw col) (buf-get e-sh col)
+                                                (buf-get e-sx col) (buf-get e-sxr col)
+                                                (buf-get e-stop col) (buf-get e-sbot col) r2)
+                                               nil)
+                                             nil)
+                                           nil)
+                                         nil)))
+                          qa1      (if quad (php/aget quad 0) nil)
+                          qa2      (if quad (php/aget quad 1) nil)
+                          qb1      (if quad (php/aget quad 2) nil)
+                          qb2      (if quad (php/aget quad 3) nil)
+                          a1       (if bp-cell
+                                     bp-cell
+                                     (if quad
+                                       (if (php/=== qa1 -1) base-a (php/aget bg-cell-cache qa1))
+                                       base-a))
+                          a2       (if bp-cell
+                                     bp-cell
+                                     (if quad
+                                       (if (php/=== qa2 -1) base-a (php/aget bg-cell-cache qa2))
+                                       base-a))
+                          b1       (if bp-cell
+                                     bp-cell
+                                     (if quad
+                                       (if (php/=== qb1 -1) base-b (php/aget bg-cell-cache qb1))
+                                       base-b))
+                          b2       (if bp-cell
+                                     bp-cell
+                                     (if quad
+                                       (if (php/=== qb2 -1) base-b (php/aget bg-cell-cache qb2))
+                                       base-b))
+                          sa?      (if bp-cell
+                                     false
+                                     (if quad
+                                       (if (php/=== qa1 -1)
+                                         (if (php/=== qa2 -1) base-sl? false)
+                                         (if (php/!== qa2 -1) true false))
+                                       base-sl?))
+                          sb?      (if bp-cell
+                                     false
+                                     (if quad
+                                       (if (php/=== qb1 -1)
+                                         (if (php/=== qb2 -1) base-sl? false)
+                                         (if (php/!== qb2 -1) true false))
+                                       base-sl?))
+                          dbl?     (php/< (php/+ (php/* 2 col) 1) vw)
+                          n-out    (if dbl? 2 1)
+                          match-a? (if sa? (if (php/=== a1 a2) (php/=== a1 pa) false) false)
+                          run-a?   (if sa? (php/=== a1 a2) false)
+                          match-b? (if row-bot?
+                                     (if sb? (if (php/=== b1 b2) (php/=== b1 pb) false) false)
+                                     false)
+                          run-b?   (if row-bot? (if sb? (php/=== b1 b2) false) false)]
+                      ;; Stash the real rendered quadrant under the
+                      ;; crosshair (same contract as the px1 capture).
+                      (when cap-this-srow?
+                        (when (php/=== col cap-scl)
+                          (php/aset center-cap 0
+                                    (if cap-bot?
+                                      (if cap-right? b2 b1)
+                                      (if cap-right? a2 a1)))))
+                      ;; RLE step (pushes in statement position; the
+                      ;; not-match guards nest as statement ifs so no
+                      ;; and-form lands in expression position).
+                      (if match-a?
+                        nil
+                        (do
+                          (when (php/> ra 0)
+                            (buf-push parts pa)
+                            (buf-push parts (php/str_repeat (if (php/str_ends_with pa "▀") "▀" " ")
+                                                            (php/- ra 1))))
+                          (if run-a?
+                            nil
+                            (do
+                              (buf-push parts a1)
+                              (when dbl? (buf-push parts a2))))))
+                      (when row-bot?
+                        (if match-b?
+                          nil
+                          (do
+                            (when (php/> rb 0)
+                              (buf-push rowb pb)
+                              (buf-push rowb (php/str_repeat (if (php/str_ends_with pb "▀") "▀" " ")
+                                                             (php/- rb 1))))
+                            (if run-b?
+                              nil
+                              (do
+                                (buf-push rowb b1)
+                                (when dbl? (buf-push rowb b2)))))))
+                      (recur (php/+ col 1)
+                             (if match-a? pa (if run-a? a1 nil))
+                             (if match-a? (php/+ ra n-out) (if run-a? n-out 0))
+                             (if match-b? pb (if run-b? b1 nil))
+                             (if match-b? (php/+ rb n-out) (if run-b? n-out 0))))))))
             (buf-push parts "\e[0m\n")
             (when row-bot?
               (buf-push parts (php/implode "" rowb))
               (buf-push parts "\e[0m\n"))))
         ;; ----- Full-detail (px1) row loop ---------------------------
+        ;; PERF-CRITICAL SHAPE: inside the per-cell loop every binding
+        ;; value is a PURE expression and the cell resolves through
+        ;; conds in STATEMENT position writing into `cell-reg` (read
+        ;; back with one aget for the RLE step). A statement-form
+        ;; (cond / and / let) in a binding VALUE compiles to a per-cell
+        ;; PHP closure copying ~500 in-scope locals — that closure
+        ;; overhead WAS ~85% of the render cost. Keep any new per-cell
+        ;; logic in statement position. See docs/performance.md.
         (dotimes [row vh]
-          (loop [col 0 prev nil run 0]
-            (if (php/>= col vw)
-              (when (php/> run 0)
-                (buf-push parts prev)
-                (buf-push parts (php/str_repeat " " (php/- run 1))))
-              (let [;; Blood-band sky/floor swap: cols in the
-                         ;; directional blood band use the pre-baked red
-                         ;; gradients so sky + floor + walls all flush
-                         ;; red on the affected side. Short-circuits to
-                         ;; the normal gradients when no blood is active.
-                    in-blood? (and blood-sky-gradient
-                                   (php/> (buf-get blood-cols col) 0.4))
-                    sky-row   (buf-get (if in-blood? blood-sky-gradient sky-gradient) row)
-                    flr-row   (buf-get (if in-blood? blood-floor-gradient floor-gradient) row)
-                         ;; Base cell: wall/sky/floor + (glyph mode only)
-                         ;; the enemy zones. In sprite mode the glyph
-                         ;; branch is skipped so this resolves the real
-                         ;; wall behind the billboard.
-                    base      (cond
-                                (php/< row (buf-get tops col))
-                              ;; Half-block sky stacks two gradient sub-rows
-                              ;; per cell (2× vertical). Blood columns keep
-                              ;; the flat red wash.
-                                (if (and subpixel? (not in-blood?))
-                                  (buf-get sky-hb row)
-                                  sky-row)
-                                (php/>= row (buf-get bots col))
-                              ;; Floor: cast the ground plane and sample the
-                              ;; stone texture. Player + per-row perp-distance
-                              ;; × the column's floor basis gives the world
-                              ;; floor point; frac → texture (u, v); fog by
-                              ;; the row's floor level. Blood-band columns +
-                              ;; the flat-floor flag keep the grey gradient.
-                                (cond
-                                  (or in-blood? (not floor-tex-on?))
-                                  flr-row
-                                ;; Half-block floor: sample two stacked
-                                ;; ground points per cell (top sub-row =
-                                ;; farther, bottom = nearer) for 2× vertical
-                                ;; resolution, then pack both faded texels
-                                ;; into one ▀ cell.
-                                  subpixel?
-                                  (let [fdx   (buf-get floordxs col)
-                                        fdy   (buf-get floordys col)
-                                        s-top (php/* 2 row)
-                                        s-bot (php/+ s-top 1)
-                                        dpt   (php/aget floor-dperp-sub s-top)
-                                        dpb   (php/aget floor-dperp-sub s-bot)
-                                        fxt   (php/+ pfx (php/* dpt fdx))
-                                        fyt   (php/+ pfy (php/* dpt fdy))
-                                        fxb   (php/+ pfx (php/* dpb fdx))
-                                        fyb   (php/+ pfy (php/* dpb fdy))
-                                        txt   (php/intval (php/* (php/- fxt (php/floor fxt)) 64))
-                                        tyt   (php/intval (php/* (php/- fyt (php/floor fyt)) 64))
-                                        txb   (php/intval (php/* (php/- fxb (php/floor fxb)) 64))
-                                        tyb   (php/intval (php/* (php/- fyb (php/floor fyb)) 64))
-                                        tct   (php/aget floor-tex-px (php/+ (php/* tyt 64) txt))
-                                        tcb   (php/aget floor-tex-px (php/+ (php/* tyb 64) txb))]
-                                    (halfblock (php/aget (php/aget tex-fade-table (php/aget floor-level-sub s-top)) tct)
-                                               (php/aget (php/aget tex-fade-table (php/aget floor-level-sub s-bot)) tcb)))
-                                  :else
-                                  (let [dp (buf-get floor-dperp row)
-                                        fx (php/+ pfx (php/* dp (buf-get floordxs col)))
-                                        fy (php/+ pfy (php/* dp (buf-get floordys col)))
-                                        tx (php/intval (php/* (php/- fx (php/floor fx)) 64))
-                                        ty (php/intval (php/* (php/- fy (php/floor fy)) 64))
-                                        tc (php/aget floor-tex-px (php/+ (php/* ty 64) tx))]
-                                    (php/aget bg-cell-cache
-                                              (php/aget (php/aget tex-fade-table (buf-get floor-level row)) tc))))
-                                (and (not sprites-on) (buf-get emask col))
-                                (cond
-                                  (php/< row (buf-get mids col))   (buf-get eheads col)
-                                  (php/< row (buf-get lowers col)) (buf-get ebodys col)
-                                  :else                            (buf-get elegss col))
-                                (php/=== row (buf-get tops col))
-                                (buf-get shades-top-edge col)
-                                (php/=== row (php/+ (buf-get tops col) 1))
-                                (buf-get shades-top-shadow col)
-                                (php/=== row (php/- (buf-get bots col) 1))
-                                (buf-get shades-bot-edge col)
-                                (php/=== row (php/- (buf-get bots col) 2))
-                                (buf-get shades-bot-shadow col)
-                                :else
-                              ;; Wall body: baked stone texture sampled by
-                              ;; (u = per-col wall-hit fraction, v = row
-                              ;; within the wall), fogged by the column's
-                              ;; shade level via tex-fade-table. tex-level
-                              ;; < 0 (door / boss / blood column, or
-                              ;; textures disabled) falls back to the flat
-                              ;; shade.
-                                (let [lvl (buf-get shades-tex-level col)]
-                                  (if (and tex-on? (php/>= lvl 0))
-                                    (if subpixel?
-                                    ;; Half-block wall: two V samples down
-                                    ;; the column (same U, same fog level)
-                                    ;; stacked into one ▀ cell - 2× vertical
-                                    ;; texture resolution on the stonework.
-                                      (let [wtop (buf-get tops col)
-                                            wh   (php/max 1 (php/- (buf-get bots col) wtop))
-                                            u    (buf-get shades-tex-u col)
-                                            rel2 (php/* 2 (php/- row wtop))
-                                            tvt  (php/min 63 (php/intdiv (php/* rel2 32) wh))
-                                            tvb  (php/min 63 (php/intdiv (php/* (php/+ rel2 1) 32) wh))
-                                            fade (php/aget tex-fade-table lvl)]
-                                        (halfblock (php/aget fade (php/aget wall-tex-px (php/+ (php/* tvt 64) u)))
-                                                   (php/aget fade (php/aget wall-tex-px (php/+ (php/* tvb 64) u)))))
-                                      (let [wtop (buf-get tops col)
-                                            wh   (php/max 1 (php/- (buf-get bots col) wtop))
-                                            tv   (php/min 63 (php/intdiv (php/* (php/- row wtop) 64) wh))
-                                            tc   (php/aget wall-tex-px
-                                                           (php/+ (php/* tv 64) (buf-get shades-tex-u col)))]
-                                        (php/aget bg-cell-cache
-                                                  (php/aget (php/aget tex-fade-table lvl) tc))))
-                                    (buf-get shades-normal col))))
-                    c         (if (and (php/< row visible-mh) (php/>= col mini-col0))
-                                sky-row
-                                (or (buf-get bp-trc (php/+ (php/* row vw) col))
-                                         ;; Sprite mode: overlay the sampled
-                                         ;; Freedoom pixel on the base cell;
-                                         ;; transparent pixels keep the base
-                                         ;; (wall/floor shows through).
-                                    (and sprites-on
-                                         (buf-get emask col)
-                                         (php/>= row (buf-get e-stop col))
-                                         (php/< row (buf-get e-sbot col))
-                                         (enemy-sprite-cell
+          (let [;; Row-constant hoists: gradient rows, floor-cast row
+                ;; terms and the minimap column limit don't vary by
+                ;; column — resolve once per row, not per cell.
+                sky-plain     (buf-get sky-gradient row)
+                flr-plain     (buf-get floor-gradient row)
+                sky-hb-row    (buf-get sky-hb row)
+                blood-sky-row (if blood-sky-gradient (buf-get blood-sky-gradient row) nil)
+                ;; Intentional alias (same as the gradient pair): blood
+                ;; floor = blood sky, one uniform red wash.
+                blood-flr-row blood-sky-row
+                floor-flat?   (if floor-tex-on? false true)
+                rowbase       (php/* row vw)
+                mini-lim      (if (php/< row visible-mh) mini-col0 vw)
+                cap-this-row? (php/=== row cap-row)
+                s-top         (php/* 2 row)
+                s-bot         (php/+ s-top 1)
+                dpt           (php/aget floor-dperp-sub s-top)
+                dpb           (php/aget floor-dperp-sub s-bot)
+                flr-fade-top  (php/aget tex-fade-table (php/aget floor-level-sub s-top))
+                flr-fade-bot  (php/aget tex-fade-table (php/aget floor-level-sub s-bot))
+                dp-cell       (buf-get floor-dperp row)
+                flr-fade-cell (php/aget tex-fade-table (buf-get floor-level row))]
+            (loop [col 0 prev nil run 0]
+              (if (php/>= col vw)
+                (when (php/> run 0)
+                  (buf-push parts prev)
+                  (buf-push parts (php/str_repeat " " (php/- run 1))))
+                (do
+                  ;; Resolve this cell into cell-reg[0]: base kind first
+                  ;; (sky / floor / glyph zones / edges / wall body),
+                  ;; then the sprite + blood-paint overlays overwrite in
+                  ;; priority order (blood-paint > sprite > base).
+                  ;; Minimap-covered cells skip it all — the blit
+                  ;; overdraws them, so they emit the sky row.
+                  (let [in-blood? (if blood-sky-gradient
+                                    (php/> (buf-get blood-cols col) 0.4)
+                                    false)]
+                    (if (php/>= col mini-lim)
+                      (php/aset cell-reg 0 (if in-blood? blood-sky-row sky-plain))
+                      (let [top (buf-get tops col)
+                            bot (buf-get bots col)]
+                        (cond
+                          ;; Half-block sky stacks two gradient sub-rows
+                          ;; per cell (2× vertical). Blood columns keep
+                          ;; the flat red wash.
+                          (php/< row top)
+                          (php/aset cell-reg 0 (if in-blood?
+                                                 blood-sky-row
+                                                 (if subpixel? sky-hb-row sky-plain)))
+                          ;; Floor: cast the ground plane and sample the
+                          ;; stone texture. Player + per-row perp-distance
+                          ;; × the column's floor basis gives the world
+                          ;; floor point; frac → texture (u, v); fog by
+                          ;; the row's floor level. Blood-band columns +
+                          ;; the flat-floor flag keep the grey gradient.
+                          (php/>= row bot)
+                          (if (if in-blood? true floor-flat?)
+                            (php/aset cell-reg 0 (if in-blood? blood-flr-row flr-plain))
+                            (if subpixel?
+                              ;; Half-block floor: two stacked ground
+                              ;; samples (top sub-row = farther) packed
+                              ;; into one ▀ cell.
+                              (let [fdx (buf-get floordxs col)
+                                    fdy (buf-get floordys col)
+                                    fxt (php/+ pfx (php/* dpt fdx))
+                                    fyt (php/+ pfy (php/* dpt fdy))
+                                    fxb (php/+ pfx (php/* dpb fdx))
+                                    fyb (php/+ pfy (php/* dpb fdy))
+                                    txt (php/intval (php/* (php/- fxt (php/floor fxt)) 64))
+                                    tyt (php/intval (php/* (php/- fyt (php/floor fyt)) 64))
+                                    txb (php/intval (php/* (php/- fxb (php/floor fxb)) 64))
+                                    tyb (php/intval (php/* (php/- fyb (php/floor fyb)) 64))
+                                    tct (php/aget floor-tex-px (php/+ (php/* tyt 64) txt))
+                                    tcb (php/aget floor-tex-px (php/+ (php/* tyb 64) txb))]
+                                (php/aset cell-reg 0
+                                          (halfblock (php/aget flr-fade-top tct)
+                                                     (php/aget flr-fade-bot tcb))))
+                              (let [fx (php/+ pfx (php/* dp-cell (buf-get floordxs col)))
+                                    fy (php/+ pfy (php/* dp-cell (buf-get floordys col)))
+                                    tx (php/intval (php/* (php/- fx (php/floor fx)) 64))
+                                    ty (php/intval (php/* (php/- fy (php/floor fy)) 64))
+                                    tc (php/aget floor-tex-px (php/+ (php/* ty 64) tx))]
+                                (php/aset cell-reg 0
+                                          (php/aget bg-cell-cache (php/aget flr-fade-cell tc))))))
+                          ;; Glyph-mode enemy zones (sprite mode skips so
+                          ;; the real wall resolves behind the billboard).
+                          (if sprites-on false (buf-get emask col))
+                          (cond
+                            (php/< row (buf-get mids col))
+                            (php/aset cell-reg 0 (buf-get eheads col))
+                            (php/< row (buf-get lowers col))
+                            (php/aset cell-reg 0 (buf-get ebodys col))
+                            :else
+                            (php/aset cell-reg 0 (buf-get elegss col)))
+                          (php/=== row top)
+                          (php/aset cell-reg 0 (buf-get shades-top-edge col))
+                          (php/=== row (php/+ top 1))
+                          (php/aset cell-reg 0 (buf-get shades-top-shadow col))
+                          (php/=== row (php/- bot 1))
+                          (php/aset cell-reg 0 (buf-get shades-bot-edge col))
+                          (php/=== row (php/- bot 2))
+                          (php/aset cell-reg 0 (buf-get shades-bot-shadow col))
+                          ;; Wall body: baked stone texture sampled by
+                          ;; (u = per-col wall-hit fraction, v = row
+                          ;; within the wall), fogged by the column's
+                          ;; shade level via tex-fade-table. tex-level
+                          ;; < 0 (door / boss / blood column, or
+                          ;; textures disabled) falls back to the flat
+                          ;; shade.
+                          :else
+                          (let [lvl (buf-get shades-tex-level col)]
+                            (if (if tex-on? (php/>= lvl 0) false)
+                              (if subpixel?
+                                ;; Half-block wall: two V samples down
+                                ;; the column (same U, same fog level)
+                                ;; stacked into one ▀ cell.
+                                (let [wh   (php/max 1 (php/- bot top))
+                                      u    (buf-get shades-tex-u col)
+                                      rel2 (php/* 2 (php/- row top))
+                                      tvt  (php/min 63 (php/intdiv (php/* rel2 32) wh))
+                                      tvb  (php/min 63 (php/intdiv (php/* (php/+ rel2 1) 32) wh))
+                                      fade (php/aget tex-fade-table lvl)]
+                                  (php/aset cell-reg 0
+                                            (halfblock (php/aget fade (php/aget wall-tex-px (php/+ (php/* tvt 64) u)))
+                                                       (php/aget fade (php/aget wall-tex-px (php/+ (php/* tvb 64) u))))))
+                                (let [wh   (php/max 1 (php/- bot top))
+                                      tv   (php/min 63 (php/intdiv (php/* (php/- row top) 64) wh))
+                                      tc   (php/aget wall-tex-px
+                                                     (php/+ (php/* tv 64) (buf-get shades-tex-u col)))
+                                      fade (php/aget tex-fade-table lvl)]
+                                  (php/aset cell-reg 0
+                                            (php/aget bg-cell-cache (php/aget fade tc)))))
+                              (php/aset cell-reg 0 (buf-get shades-normal col)))))
+                        ;; Sprite overlay: the sampled Freedoom pixel
+                        ;; replaces the base cell; transparent pixels
+                        ;; keep it (wall/floor shows through).
+                        (when sprites-on
+                          (when (buf-get emask col)
+                            (when (php/>= row (buf-get e-stop col))
+                              (when (php/< row (buf-get e-sbot col))
+                                (let [sc (enemy-sprite-cell
                                           (buf-get e-spx col) (buf-get e-sw col) (buf-get e-sh col)
                                           (buf-get e-sx col) (buf-get e-sxr col)
-                                          (buf-get e-stop col) (buf-get e-sbot col) row))
-                                    base))]
-              ;; Stash the real rendered cell under the crosshair so the
-              ;; reticle BG matches it exactly (one cell/frame; the outer
-              ;; `(=== row cap-row)` short-circuits on every other row).
-                (when (php/=== row cap-row)
-                  (when (php/=== col cap-col)
-                    (php/aset center-cap 0 c)))
-                (cond
-                  (php/=== run 0)  (recur (php/+ col 1) c 1)
-                  (php/=== c prev) (recur (php/+ col 1) prev (php/+ run 1))
-                  :else            (do
-                                     (buf-push parts prev)
-                                     (buf-push parts (php/str_repeat " " (php/- run 1)))
-                                     (recur (php/+ col 1) c 1))))))
+                                          (buf-get e-stop col) (buf-get e-sbot col) row)]
+                                  (when sc (php/aset cell-reg 0 sc)))))))
+                        ;; Blood-paint decal wins over sprite + base.
+                        (let [bp (buf-get bp-trc (php/+ rowbase col))]
+                          (when bp (php/aset cell-reg 0 bp))))))
+                  ;; Stash the real rendered cell under the crosshair so
+                  ;; the reticle BG matches it exactly (one cell/frame).
+                  (when cap-this-row?
+                    (when (php/=== col cap-col)
+                      (php/aset center-cap 0 (php/aget cell-reg 0))))
+                  (let [c (php/aget cell-reg 0)]
+                    (cond
+                      (php/=== run 0)  (recur (php/+ col 1) c 1)
+                      (php/=== c prev) (recur (php/+ col 1) prev (php/+ run 1))
+                      :else            (do
+                                         (buf-push parts prev)
+                                         (buf-push parts (php/str_repeat " " (php/- run 1)))
+                                         (recur (php/+ col 1) c 1))))))))
           (buf-push parts "\e[0m\n")))
       (when (get stats :debug?)
         (buf-push parts (hud-debug-line world stats))

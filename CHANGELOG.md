@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Performance
+
+- 4-10x faster rendering at every screen size, identical output. Phel compiles a `let` binding whose value is a `cond`/`and`/`let` into a PHP closure that copies all ~500 in-scope locals per invocation; the per-cell render loops paid that closure tax up to 7 times per cell. Both emitters (full detail and pixel-doubled) now resolve each cell through statement-position conds writing into a tiny register array, with row-constant work hoisted out of the column loop. Measured (3-enemy corridor, interpreted PHP): 80x24 26.7 -> 7.1 ms, 120x30 44.7 -> 8.9 ms, 200x45 114.0 -> 13.6 ms (8.8 -> 74 fps), 240x60 pixel-doubled 56.7 -> 12.9 ms, 300x80 pixel-doubled 87.6 -> 17.3 ms. Every size now sustains 55+ fps on the reference machine; frame bytes are byte-identical before/after (md5-verified over a 24-config matrix). Pixel-doubling keeps its role as the big-screen/slow-hardware reserve: with full detail this fast it simply engages far less often.
+
 ### Added
 
 - Half-block sub-pixel floor, walls, and sky. Each cell now emits a `▀` upper-half-block with independent top/bottom colours (two full-colour sub-pixels stacked), doubling vertical resolution so stonework and the ground plane read with smaller, squarer pixels and more depth. Terminal cells carry only two colours, so this is the realism ceiling that does not throw colour away (unlike packing 4/8 sub-cells into 2 colours). The cost that killed the earlier attempt - per-cell string building - is gone: `halfblock` memoizes each colour pair into a ready paint cell, so CPU is only ~+2% over the one-colour-per-cell path. Bytes/frame rise ~50-70% on big screens (denser SGR, less RLE coalescing) - cap with `--max-cols`. `PHEL_DOOM_NO_SUBPIXEL=1` restores the flat one-colour-per-cell floor/walls/sky (A/B perf, or terminals whose font lacks `▀`).

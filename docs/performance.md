@@ -1,6 +1,32 @@
 # Performance
 
-`frame->string` at 180×40 runs in ~5ms. Inner loop is ~7200 iterations per frame (180 cols × 40 rows). Tricks that got it from "tens of ms" to "single-digit ms".
+`frame->string` runs ~7ms at 80x24 up to ~17ms at 300x80 (interpreted PHP, no JIT, M-series laptop). The inner loop visits every cell per frame (cols x rows). Tricks that got it from "hundreds of ms" to here, roughly in order of impact.
+
+## No statement-forms in hot-loop binding values (the closure tax)
+
+The single biggest win (4-10x whole-frame). Phel compiles a `let` binding whose VALUE is a statement-form (`cond`, `and`, a `let`, a `when`) into an immediately-invoked PHP closure. The closure's `use(...)` list captures EVERY local in the enclosing scope - inside `frame->string` that is ~500 variables - and PHP copies each one into the closure on every invocation. Measured in isolation: 7 such closures per cell at 200x45 cost ~168ms/frame; the same work through a plain array register costs ~0.4ms.
+
+The per-cell loops therefore follow a strict shape:
+
+- Every per-cell binding value is a PURE expression (arithmetic, `aget`, fn call, `if` with expression branches - these all compile inline).
+- Anything that needs branching writes its result into a tiny pre-allocated php-array register (`cell-reg` / `pack-reg`) from conds in STATEMENT position, then reads it back with one `aget`.
+- `and` / `or` in a binding value also closure-compile; rewrite as nested `if` ternaries.
+- Row-constant work (gradient rows, floor-cast row terms, `row * vw`) hoists into a per-row `let` outside the column loop.
+
+Result on the 3-enemy corridor bench (ms/frame, same machine):
+
+| Viewport | before | after | speedup |
+|---|---|---|---|
+| 80x24 full detail | 26.7 | 7.1 | 3.8x |
+| 120x30 full detail | 44.7 | 8.9 | 5.0x |
+| 200x45 full detail | 114.0 | 13.6 | 8.4x |
+| 240x60 full detail | 180.4 | 17.4 | 10.4x |
+| 240x60 pixel-doubled | 56.7 | 12.9 | 4.4x |
+| 300x80 pixel-doubled | 87.6 | 17.3 | 5.1x |
+
+Frame output is byte-identical before/after (verified by md5 over a 24-config matrix: angles, sizes, blood, minimap, px2, flat/no-subpixel/no-sprite toggles).
+
+To check for regressions: build and grep the artifact - `grep -c 'function() use(' out/phel_doom/io/render/main.php` should stay at ~21, all of them once-per-frame sites (pickup-painter chain arguments, centre-cell capture, debug snapshot), none inside the per-cell `while` loops.
 
 ## Big screens: uniform cadence + crisp walls
 
@@ -163,9 +189,9 @@ Effect on `cast-frame` (2000-iter bench, `default-grid`):
 | 120x30 | 1.26 ms | 0.82 ms | 0.32 ms | -75% |
 | 180x40 | 2.04 ms | 1.28 ms | 0.51 ms | -75% |
 
-Cast scales linearly with column count. Whole-frame timing (cast + render + emit) lands well under 5 ms target. Live perf is available in-game via **F3** (cast/render split, bytes emitted, PHP memory, RLE compression).
+Cast scales linearly with column count. Live perf is available in-game via **F3** (cast/render split, bytes emitted, PHP memory, RLE compression).
 
-Half-block sub-pixel rendering (`frame->string`, 200-iter mean, no-JIT local so absolutes are ~10x inflated - trust the ratios):
+Half-block sub-pixel rendering (`frame->string`, 200-iter mean, measured BEFORE the closure-tax fix - the ratios still hold, the absolutes are ~5-10x today's):
 
 | Viewport | half-block | flat (`NO_SUBPIXEL`) | Δ CPU | bytes Δ |
 |---|---|---|---|---|
@@ -177,9 +203,11 @@ The 2-colour `halfblock` cell cache is what makes the +2% possible: the earlier 
 
 ## Render is per-cell bound; the auto pixel-scale
 
-The 3D render (`frame->string`) is the loop's bottleneck: cast is ~1 ms, render is the rest and scales ~linearly with the cell count (cols×rows). On one measured machine the corridor scene ran ~51 ms at 100×28 up to ~210 ms at 200×50 (interpreted). Crucially, **opcache + tracing JIT measured ~0% improvement, and the compiled/built artifact was not faster than `phel run`** - PHP's JIT does not accelerate this call/array/string-heavy loop. (This corrects the older "build is ~10x faster / phel run absolutes are inflated" assumption: the per-frame generated PHP is the same either way.) So sub-16.7 ms (60 fps) at a big terminal is not reachable on interpreted PHP; the doc's optimistic "sub-5 ms" figures hold only on hardware/PHP where the JIT does fire on this code.
+The 3D render (`frame->string`) is the loop's bottleneck: cast is ~1 ms, render is the rest and scales ~linearly with the cell count (cols x rows). Before the closure-tax fix the corridor scene ran ~51 ms at 100x28 up to ~210 ms at 200x50 on the reference machine; the same scenes now run ~7-14 ms (see the statement-position section above). Crucially, **opcache + tracing JIT measured ~0% improvement, and the compiled/built artifact was not faster than `phel run`** - PHP's JIT does not accelerate this call/array/string-heavy loop. (This corrects the older "build is ~10x faster / phel run absolutes are inflated" assumption: the per-frame generated PHP is the same either way.)
 
-The only lever that cuts render cost is fewer cells. The game therefore **auto-calibrates a render pixel scale** (see `docs/game-loop.md` + `auto-pixel-scale`): measure a few full-detail frames; when the min render-ms exceeds `auto-target-frame-ms` (24 ms) AND the terminal is a big screen (cell area beyond 200x45, `big-screen?`), lock pixel scale 2 - the scene renders at half resolution and each scene cell paints a 2x2 terminal block, so the game **always fills the whole terminal** (an earlier inset-cap approach that shrank the render into a corner was replaced by this). A terminal at or below 200x45 never pixel-doubles: at that size pixel detail wins over framerate, and the cell count is small enough that the natural framerate stays acceptable. Measured at 200x50: ~215 ms full detail vs ~59 ms pixel-doubled (~x3.7). A fast machine that fits the budget never downscales. Override with `--max-cols=0` (full terminal at full detail) or `--max-cols=N` (manual inset cap).
+The strongest remaining lever on render cost is fewer cells. The game therefore **auto-calibrates a render pixel scale** (see `docs/game-loop.md` + `auto-pixel-scale`): measure a few full-detail frames; when the min render-ms exceeds `auto-target-frame-ms` (24 ms) AND the terminal is a big screen (cell area beyond 200x45, `big-screen?`), lock pixel scale 2 - the scene renders at half resolution and each scene cell paints a 2x2 terminal block, so the game **always fills the whole terminal** (an earlier inset-cap approach that shrank the render into a corner was replaced by this). A terminal at or below 200x45 never pixel-doubles: at that size pixel detail wins over framerate, and the cell count is small enough that the natural framerate stays acceptable. A fast machine that fits the budget never downscales. Override with `--max-cols=0` (full terminal at full detail) or `--max-cols=N` (manual inset cap).
+
+Since the closure-tax fix (see the statement-position section above) full detail holds the 24 ms budget up to roughly 240x60 on the reference machine, so pixel-doubling now engages only on genuinely huge terminals or genuinely slow hardware - exactly its intended role. The calibration measures the real machine either way; none of the thresholds assume these numbers.
 
 Pixel-doubling preserves the full-detail look everywhere it matters:
 
@@ -191,4 +219,4 @@ The overlay is off by default and costs zero per-frame when off (instrumentation
 
 ### Phel/PHP closure gotcha in the emitter
 
-Every `buf-push` in the pixel-doubled emitter lives in STATEMENT position. A push (or any `php/aset`) inside a let-binding VALUE compiles into an IIFE closure; PHP `use` copies arrays into closures, so the write lands on a copy and is silently lost. Binding values must stay pure reads; mutation goes in the loop body before `recur`.
+Every `buf-push` in the emitters lives in STATEMENT position. A push (or any `php/aset`) inside a let-binding VALUE compiles into an IIFE closure; PHP `use` copies arrays into closures, so the write lands on a copy and is silently lost. Binding values must stay pure reads; mutation goes in the loop body before `recur`. The same compilation rule is also why those closures are a performance cliff - see the statement-position section at the top of this doc.

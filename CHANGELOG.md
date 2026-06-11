@@ -9,6 +9,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-06-11
+
 ### Added
 
 - Half-block sub-pixel floor, walls, and sky: each cell emits a `▀` upper-half-block with independent top/bottom colours, doubling vertical resolution so stonework and the ground read with smaller, squarer pixels. Two colours is all a terminal cell carries, so this is the fidelity ceiling that does not throw colour away. `halfblock` memoizes each colour pair into a ready paint cell (~+2% CPU); bytes/frame rise ~50-70% on big screens - cap with `--max-cols`. `PHEL_DOOM_NO_SUBPIXEL=1` restores flat one-colour cells.
@@ -322,7 +324,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `cast + render` under 5 ms per frame at 120×30.
 - Flat PHP arrays on hot paths; `:tag` types for OPcache JIT tracing.
 
-[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/Chemaclass/phel-doom/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/Chemaclass/phel-doom/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/Chemaclass/phel-doom/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Chemaclass/phel-doom/compare/v0.9.0...v0.10.0

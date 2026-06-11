@@ -58,6 +58,38 @@
         (recur (php/+ lvl 1))))
     outer))
 
+(defn- build-seam-darken
+  ;; 256-entry LUT darkening a colour code by `steps` grayscale-equivalent
+  ;; shade steps: grayscale-ramp codes subtract `steps` clamped at 232
+  ;; (exactly the old seam arithmetic), colour-cube codes fade toward
+  ;; black by steps/24 (hue-preserving — plain subtraction on a cube code
+  ;; jumps to a different hue, e.g. amber 166 - 16 = green 150).
+  [^int steps]
+  (let [a (php/array)]
+    (loop [c 0]
+      (when (php/< c 256)
+        (php/aset a c
+                  (if (php/>= c 232)
+                    (php/max 232 (php/- c steps))
+                    (fade-256 c (php// steps 24.0))))
+        (recur (php/+ c 1))))
+    a))
+
+(def seam-darken-16
+  "Seam-accent darken LUT, 16 shade steps: the wall's bottom-most sub-row
+   (near-black base line). See `build-seam-darken`."
+  (build-seam-darken 16))
+
+(def seam-darken-8
+  "Seam-accent darken LUT, 8 shade steps: second-to-bottom wall sub-row
+   and the floor's first sub-row past the seam."
+  (build-seam-darken 8))
+
+(def seam-darken-5
+  "Seam-accent darken LUT, 5 shade steps: the wall's top sub-row lip
+   against the sky."
+  (build-seam-darken 5))
+
 (def bg-cell-cache
   "256 pre-baked BG paint cells `\\e[48;5;<code>m ` (escape + one space),
    indexed by 256-colour code. The textured-wall path resolves a faded

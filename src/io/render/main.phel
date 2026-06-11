@@ -150,6 +150,13 @@
         (recur (php/+ r 1))))
     arr))
 
+;; Pixel-doubled seam accent depths (grayscale steps; see the seam
+;; mixer in frame->string). NOTE: def- takes no docstring.
+(def- seam-base-dark 16)  ; wall's bottom-most sub-row: near-black base line
+(def- seam-wall-dark 8)   ; second-to-bottom wall sub-row
+(def- seam-floor-dark 8)  ; floor's first sub-row past the seam
+(def- seam-top-dark 5)    ; wall's top sub-row against the sky
+
 (def floor-darken
   "Shade steps the textured floor sits below a wall at the same distance.
    The floor is lit at a grazing angle and reads as in-shadow stone; a
@@ -1221,47 +1228,55 @@
                                        (let [s4b (php/+ s4 1)
                                              s4c (php/+ s4 2)
                                              s4d (php/+ s4 3)
-                                             ;; Seam accents: the wall's top sub-row and
-                                             ;; bottom two sub-rows, plus the floor's first
-                                             ;; sub-row, pull a few grayscale steps darker -
-                                             ;; a thin border line that traces the wall/floor
-                                             ;; and wall/sky limits along the exact diagonal.
+                                             ;; Seam accents: graduated dark border tracing
+                                             ;; the exact wall/floor + wall/sky diagonals -
+                                             ;; near-black wall base sub-row, dark sub-row
+                                             ;; above it, dark first floor sub-row, and a
+                                             ;; lighter lip at the sky seam.
                                              m0  (cond
                                                    (php/< s4 ts-sub)  (php/aget sky-sub-codes s4)
                                                    (php/>= s4 bs-sub) (if (php/=== s4 bs-sub)
-                                                                        (php/max 232 (php/- (floor-code-at s4 col) 4))
+                                                                        (php/max 232 (php/- (floor-code-at s4 col) seam-floor-dark))
                                                                         (floor-code-at s4 col))
                                                    :else              (let [wc (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u)))]
-                                                                        (if (or (php/=== s4 ts-sub) (php/>= s4 (php/- bs-sub 2)))
-                                                                          (php/max 232 (php/- wc 5))
-                                                                          wc)))
+                                                                        (cond
+                                                                          (php/>= s4 (php/- bs-sub 1)) (php/max 232 (php/- wc seam-base-dark))
+                                                                          (php/>= s4 (php/- bs-sub 2)) (php/max 232 (php/- wc seam-wall-dark))
+                                                                          (php/=== s4 ts-sub)          (php/max 232 (php/- wc seam-top-dark))
+                                                                          :else                        wc)))
                                              m1  (cond
                                                    (php/< s4b ts-sub)  (php/aget sky-sub-codes s4b)
                                                    (php/>= s4b bs-sub) (if (php/=== s4b bs-sub)
-                                                                         (php/max 232 (php/- (floor-code-at s4b col) 4))
+                                                                         (php/max 232 (php/- (floor-code-at s4b col) seam-floor-dark))
                                                                          (floor-code-at s4b col))
                                                    :else               (let [wc (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u)))]
-                                                                         (if (or (php/=== s4b ts-sub) (php/>= s4b (php/- bs-sub 2)))
-                                                                           (php/max 232 (php/- wc 5))
-                                                                           wc)))
+                                                                         (cond
+                                                                           (php/>= s4b (php/- bs-sub 1)) (php/max 232 (php/- wc seam-base-dark))
+                                                                           (php/>= s4b (php/- bs-sub 2)) (php/max 232 (php/- wc seam-wall-dark))
+                                                                           (php/=== s4b ts-sub)          (php/max 232 (php/- wc seam-top-dark))
+                                                                           :else                         wc)))
                                              m2  (cond
                                                    (php/< s4c ts-sub)  (php/aget sky-sub-codes s4c)
                                                    (php/>= s4c bs-sub) (if (php/=== s4c bs-sub)
-                                                                         (php/max 232 (php/- (floor-code-at s4c col) 4))
+                                                                         (php/max 232 (php/- (floor-code-at s4c col) seam-floor-dark))
                                                                          (floor-code-at s4c col))
                                                    :else               (let [wc (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 2) 64) whs)) 64) u)))]
-                                                                         (if (or (php/=== s4c ts-sub) (php/>= s4c (php/- bs-sub 2)))
-                                                                           (php/max 232 (php/- wc 5))
-                                                                           wc)))
+                                                                         (cond
+                                                                           (php/>= s4c (php/- bs-sub 1)) (php/max 232 (php/- wc seam-base-dark))
+                                                                           (php/>= s4c (php/- bs-sub 2)) (php/max 232 (php/- wc seam-wall-dark))
+                                                                           (php/=== s4c ts-sub)          (php/max 232 (php/- wc seam-top-dark))
+                                                                           :else                         wc)))
                                              m3  (cond
                                                    (php/< s4d ts-sub)  (php/aget sky-sub-codes s4d)
                                                    (php/>= s4d bs-sub) (if (php/=== s4d bs-sub)
-                                                                         (php/max 232 (php/- (floor-code-at s4d col) 4))
+                                                                         (php/max 232 (php/- (floor-code-at s4d col) seam-floor-dark))
                                                                          (floor-code-at s4d col))
                                                    :else               (let [wc (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 3) 64) whs)) 64) u)))]
-                                                                         (if (or (php/=== s4d ts-sub) (php/>= s4d (php/- bs-sub 2)))
-                                                                           (php/max 232 (php/- wc 5))
-                                                                           wc)))]
+                                                                         (cond
+                                                                           (php/>= s4d (php/- bs-sub 1)) (php/max 232 (php/- wc seam-base-dark))
+                                                                           (php/>= s4d (php/- bs-sub 2)) (php/max 232 (php/- wc seam-wall-dark))
+                                                                           (php/=== s4d ts-sub)          (php/max 232 (php/- wc seam-top-dark))
+                                                                           :else                         wc)))]
                                          (php/+ (php/* (php/+ (php/* (php/+ (php/* m0 256) m1) 256) m2) 256) m3))))
                                    :else                                           -10)
                       split?     (php/>= pack 0)

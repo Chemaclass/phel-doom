@@ -21,6 +21,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Fixed
 
+- Clearer wall/floor border in pixel-doubled mode. The junction between the stone wall and the stone floor (same texture family) read mushy; the seam now paints a graduated dark border that follows the exact diagonal - near-black wall base sub-row, dark sub-row above it, dark first floor sub-row - plus a lighter lip at the wall/sky limit. Boundary-cell-only work, no measurable render cost.
 - Big-terminal rendering no longer shrinks into a small top-left inset window. The first auto-smoothing pass capped the render AREA, leaving the rest of the terminal stale - on a maximized terminal the game looked broken and tiny. Replaced by the full-screen pixel-doubled mode above.
 
 ### Changed

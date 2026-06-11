@@ -66,7 +66,7 @@ shade-idx = clamp(0, 23,
 
 The gamma 0.6 curve brightens mid-range; the `+3` bonus for vertical faces reads as directional lighting. Walls, sky, and floor all index the same 24-step grayscale `shade-table` (no colour, no per-room tinting) so the place reads dark and neutral. One lookup per column; consecutive same-shade cells RLE-coalesce.
 
-Doors: `door-shade` (orange for unlocked, blue/red for keycards, bright red for boss-lock). Half-block edges mix door with sky/floor. Locked messages ("NEED BLUE KEY", "KILL THE BOSS") painted separately.
+Doors render as a baked procedural amber door texture (see "Textured doors" below); the boss door keeps its flat pulsing red `boss-door-shade` slab. Locked messages ("NEED BLUE KEY", "KILL THE BOSS") painted separately.
 
 ## Half-block edge anti-aliasing
 
@@ -79,11 +79,11 @@ Bottom: \e[48;5;<floor-at-row>;38;5;<wall>m▀    (floor BG, wall FG)
 
 Sky and floor codes are sampled from gradients at the seam row, not flat constants. Flat codes produced dark dots. `build-horizon-gradient-codes` and `build-themed-gradient-codes` pre-bake code-only twins of the string gradients per frame.
 
-These whole-cell edge bands now apply only to NON-textured columns (doors, boss door, blood-band, glyph-mode enemy columns, or with textures/subpixel off). Textured stone columns trace their wall top/bottom at sub-row precision instead - see the next section.
+These whole-cell edge bands now apply only to NON-textured columns (boss door, blood-band, glyph-mode enemy columns, or with textures/subpixel off). Textured columns - stone walls and doors alike - trace their wall top/bottom at sub-row precision instead - see the next section.
 
 ## Sub-row wall seams (diagonal wall edges)
 
-Textured, non-glyph-enemy columns place the wall top/bottom in SUB-rows (half a terminal row, the ▀ sub-pixel unit) via `build-wall-sub-bounds` and mix sky / wall / floor codes inside the boundary cells, so a receding wall's silhouette steps in half-row diagonals instead of whole-cell stairs - the wall/floor junction reads like the floor texture's own perspective diagonals instead of a bright staircase of edge cells. The seam carries a graduated dark border tracing the exact diagonal: the wall's bottom-most sub-row drops near-black (`seam-base-dark`), the sub-row above and the floor's first sub-row pull several steps darker (`seam-wall-dark`, `seam-floor-dark`), and a lighter lip marks the wall/sky limit (`seam-top-dark`). Interior wall cells keep a straight sample fast path; only the one or two boundary cells per column pay the per-sub-row resolution.
+Textured, non-glyph-enemy columns place the wall top/bottom in SUB-rows (half a terminal row, the ▀ sub-pixel unit) via `build-wall-sub-bounds` and mix sky / wall / floor codes inside the boundary cells, so a receding wall's silhouette steps in half-row diagonals instead of whole-cell stairs - the wall/floor junction reads like the floor texture's own perspective diagonals instead of a bright staircase of edge cells. The seam carries a graduated dark border tracing the exact diagonal: the wall's bottom-most sub-row drops near-black (`seam-darken-16`), the sub-row above and the floor's first sub-row pull several steps darker (`seam-darken-8`), and a lighter lip marks the wall/sky limit (`seam-darken-5`). The accents are hue-true darken LUTs, not plain code subtraction, so they work on the door texture's colour-cube texels too (see "Textured doors"). Interior wall cells keep a straight sample fast path; only the one or two boundary cells per column pay the per-sub-row resolution.
 
 The same mixer runs at both render scales: 2 sub-rows per cell at full detail, 4 per 2-terminal-row scene cell in pixel-doubled mode - the identical half-row absolute precision. At full detail it requires subpixel mode (`PHEL_DOOM_NO_SUBPIXEL=1` falls back to the whole-cell edge bands above). Costs ~15% render time at full detail (the per-cell mix-column checks), well inside the auto-calibration budget.
 
@@ -131,7 +131,18 @@ Consecutive same-color cells coalesce: one escape + N spaces (terminal repeats B
 
 Plain stone walls are sampled from the baked Freedoom flat `wall-tex` (WALL70_2, 64x64, in `wall_texture_data.phel`). Per wall-body cell: `u` = `wallxs[col] * 64` (the ray's wall-hit fraction from the cast), `v` = row-within-wall * 64 / wall-height. The texture code is fogged by the column's 0..23 shade level through `tex-fade-table` (a prebaked 24x256 fade LUT) and resolved to a ready cell via `bg-cell-cache` - one nested `aget`, no per-cell `fade-256` or string alloc, so texturing costs ~2% over flat shading.
 
-Doors, the boss door, and blood-band columns are NOT textured (`tex-level = -1`): they keep their flat shade so nav glyphs / the red hit-wash stay clean. Wall-top/bottom `▀` seams are unchanged. `PHEL_DOOM_FLAT_WALLS=1` forces the old flat-shaded stone.
+The boss door and blood-band columns are NOT textured (`tex-level = -1`): they keep their flat shade so the boss nav glyph / the red hit-wash stay clean. `PHEL_DOOM_FLAT_WALLS=1` forces the old flat-shaded stone (and the striped flat door).
+
+## Textured doors
+
+Door columns (unlocked + keycard-locked, map cells 2/3/4/9) run through the same texture path as the stone walls, sampling `door-tex-px` instead of `wall-tex-px` - `compute-wall-shades` stores the per-column texel array in a `tex-px` buffer, so the hot loops bind one extra aget and stay texture-agnostic. The texture is a procedural 64x64 amber metal door baked at load: dark rust border + red-rust frame ring, six vertical planks (alternating amber fills, highlight/shadow edges, dark grooves) split by a horizontal mid rail - the classic two-panel DOOM door silhouette, scaled by perspective like any texture.
+
+Door texels are xterm-256 colour-CUBE codes (not grayscale ramp), which two pieces of machinery must respect:
+
+- `tex-fade-table` fog already darkens cube codes hue-true via `fade-256`.
+- The sub-row seam accents darken through `seam-darken-16/-8/-5` LUTs (in `frame_math`) instead of plain `code - n` arithmetic: subtracting from a cube code jumps hue (amber 166 - 16 = green 150). For grayscale-ramp codes the LUTs reproduce the old subtraction exactly.
+
+Door fog is the wall formula with two nav-cue exceptions: the level floors at 8 (a door never fades to black) and ignores the near-death haze. The door pulse rides the fog level (`door-tex-boost`, +3 levels on the 4 rad/s beat) instead of swapping paint strings. Blood-band door columns keep the flat striped `door-shade` (the seam mixer's sky/floor codes are grayscale-only), as do glyph-enemy columns and all-flat fallback modes.
 
 ## Textured floor (floor-casting)
 

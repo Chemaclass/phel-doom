@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Changed
+
+- Doors render as real textured doors. The old door face - one yellow/orange `▌` stripe per screen column with whole-cell edge bands - read as a striped curtain with a floating frame; doors now sample a baked procedural 64x64 amber metal door texture (rust border + frame, six vertical planks, horizontal mid rail) through the same path as the stone walls, so panels scale with perspective, fog with distance (floored so a door never fades to black, still haze-immune), and the door edges trace the sub-row diagonal seams. The door pulse breathes the texture's brightness on the same 4 rad/s beat instead of swapping stripe colours. The boss door keeps its flat pulsing red slab; seam accents moved to hue-true darken LUTs so the amber texels darken without hue shift (grayscale walls stay byte-identical).
+
 ## [0.13.0] - 2026-06-11
 
 ### Added

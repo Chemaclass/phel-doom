@@ -3,7 +3,7 @@
 (ns phel-doom.io.render.main
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
   (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade sky-code floor-code door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright char-aspect shade-table shade-code-table shade-table-blood shade-code-table-blood])
-  (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table bg-cell-cache halfblock build-sky-halfblock build-sky-codes-sub collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
+  (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table bg-cell-cache halfblock build-sky-halfblock build-sky-codes-sub seam-darken-16 seam-darken-8 seam-darken-5 collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.wall-texture-data :refer [wall-tex])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type sprite-col-x sprite-subcol-x enemy-sprite-cell enemy-sprite-quad])
   (:require phel-doom.io.render.hud :refer [minimap-door minimap-door-pulse minimap-rows hud-debug-line hud-line-str help-menu-string settings-menu-string])
@@ -104,6 +104,48 @@
         (recur (php/+ i 1))))
     a))
 
+(def door-tex-px
+  "Procedural 64×64 amber metal door texture (flat row-major xterm-256
+   colour-cube codes), sampled by the same per-cell (u, v) path as the
+   stone walls. Layout: dark rust outer border (52) with a red-rust frame
+   ring (88) and four corner rivets (214); the body is six vertical planks
+   (alternating 166/172 fills, 214 left-edge highlight, 130 right-edge
+   shadow, 94 grooves) split by a horizontal mid rail — the classic
+   two-panel DOOM door silhouette. All codes live in the 16-231 colour
+   cube so `tex-fade-table` distance fog darkens them hue-true. Built
+   once at load; deterministic."
+  (let [a (php/array)]
+    (loop [v 0]
+      (when (php/< v 64)
+        (loop [u 0]
+          (when (php/< u 64)
+            (let [pu (php/% (php/- u 5) 9)
+                  pi (php/intdiv (php/- u 5) 9)
+                  c  (cond
+                       ;; outer border ring (52 = dark rust; 58 would be
+                       ;; olive and reads green against the amber body)
+                       (or (php/< u 2) (php/> u 61) (php/< v 2) (php/> v 61)) 52
+                       ;; corner rivets on the frame
+                       (and (or (php/=== u 3) (php/=== u 60))
+                            (or (php/=== v 3) (php/=== v 60)))                214
+                       ;; frame ring (red-rust, same family as the border:
+                       ;; 94 here reads olive next to the amber planks)
+                       (or (php/< u 5) (php/> u 58) (php/< v 5) (php/> v 58)) 88
+                       ;; horizontal mid rail + its lighter lips
+                       (and (php/>= v 30) (php/<= v 32))                      94
+                       (or (php/=== v 29) (php/=== v 33))                     130
+                       ;; vertical plank grooves + edge shading
+                       (php/>= pu 7)                                          94
+                       (php/=== pu 0)                                         214
+                       (php/=== pu 6)                                         130
+                       ;; plank fill, alternating warmth per plank
+                       (php/=== 0 (php/% pi 2))                               166
+                       :else                                                  172)]
+              (php/aset a (php/+ (php/* v 64) u) c))
+            (recur (php/+ u 1))))
+        (recur (php/+ v 1))))
+    a))
+
 (defn- wall-textures-enabled?
   "Textured walls are ON by default; PHEL_DOOM_FLAT_WALLS=1 forces the
    old flat-shaded stone (A/B compare, or taste). Resolved per frame."
@@ -150,12 +192,11 @@
         (recur (php/+ r 1))))
     arr))
 
-;; Pixel-doubled seam accent depths (grayscale steps; see the seam
-;; mixer in frame->string). NOTE: def- takes no docstring.
-(def- seam-base-dark 16)  ; wall's bottom-most sub-row: near-black base line
-(def- seam-wall-dark 8)   ; second-to-bottom wall sub-row
-(def- seam-floor-dark 8)  ; floor's first sub-row past the seam
-(def- seam-top-dark 5)    ; wall's top sub-row against the sky
+;; Seam accent depths live as hue-true darken LUTs in frame-math
+;; (seam-darken-16 / -8 / -5): base line 16 steps, wall shoulder +
+;; first floor sub-row 8, sky lip 5. LUTs (not plain subtraction)
+;; because door texels are colour-cube codes where `code - n` would
+;; jump hue instead of darkening.
 
 (def floor-darken
   "Shade steps the textured floor sits below a wall at the same distance.
@@ -241,8 +282,8 @@
 
    `cast`       ray-cast outputs {:dists :hits :sides}
    `palette`    {:stbl :ctbl :sky-c :floor-c :door-shade-now :door-code-now
-                 :sky-code-grad :floor-code-grad :blood-sky-code-grad
-                 :blood-floor-code-grad}
+                 :door-tex-boost :sky-code-grad :floor-code-grad
+                 :blood-sky-code-grad :blood-floor-code-grad}
    `blood-cols` per-col directional blood mask (from build-blood-cols)
    `haze-shift` int 0-23: how many shade-table steps to pull walls
                 toward black. Doors are kept bright as a nav cue.
@@ -253,6 +294,7 @@
   [vw vh haze-shift cast palette blood-cols ^float pd]
   (let [{:keys [dists hits sides wallxs]}                              cast
         {:keys [stbl ctbl sky-c floor-c door-shade-now door-code-now
+                door-tex-boost
                 boss-door-shade-now boss-door-code-now
                 sky-code-grad floor-code-grad
                 blood-sky-code-grad blood-floor-code-grad]}            palette
@@ -266,11 +308,14 @@
         ;; Per-column wall-texture sampling state. `tex-u` is the
         ;; texture column (0..63) from the ray's wall-hit fraction;
         ;; `tex-level` is the 0..23 distance/side brightness used to fog
-        ;; the texture, or -1 to mark a cell that is NOT textured (door,
-        ;; boss door, or a blood-band column — those keep the flat
-        ;; `normal` shade so the red wash / nav glyphs stay clean).
+        ;; the texture, or -1 to mark a cell that is NOT textured (boss
+        ;; door or a blood-band column — those keep the flat `normal`
+        ;; shade so the red wash / nav glyphs stay clean). `tex-px` is
+        ;; the texel array the column samples: the stone wall texture,
+        ;; or the amber door texture on door columns.
         tex-u                                                          (buf-mk)
-        tex-level                                                      (buf-mk)]
+        tex-level                                                      (buf-mk)
+        tex-px                                                         (buf-mk)]
     (loop [col 0]
       (when (php/< col vw)
         (let [dist         (buf-get dists col)
@@ -310,7 +355,23 @@
                 (buf-set top-edge    col (str "\e[48;5;" door-code-now ";38;5;" sky-edge-c "m▀"))
                 (buf-set bot-edge    col (str "\e[48;5;" flr-edge-c ";38;5;" door-code-now "m▀"))
                 (buf-set top-shadow  col door-shade-now)
-                (buf-set bot-shadow  col door-shade-now))
+                (buf-set bot-shadow  col door-shade-now)
+                ;; Textured door: same gamma distance fog + EW side
+                ;; shading as the stone walls, but floored at level 8
+                ;; (a door is the nav cue — it never fades to black)
+                ;; and immune to the near-death haze. The door pulse
+                ;; rides the fog level via `door-tex-boost` instead of
+                ;; swapping paint strings. Blood-band columns keep the
+                ;; flat striped door (the seam mixer's sky/floor codes
+                ;; are grayscale-only).
+                (when (not blood?)
+                  (let [didx (php/max 0
+                                      (php/min 23
+                                               (php/+ (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 0.6) 23))
+                                                      (if (php/=== (buf-get sides col) 0) 3 0))))]
+                    (buf-set tex-u     col (php/min 63 (php/intval (php/* (buf-get wallxs col) 64))))
+                    (buf-set tex-level col (php/min 23 (php/+ (php/max 8 (php/min 21 didx)) door-tex-boost)))
+                    (buf-set tex-px    col door-tex-px))))
             :else
             (let [idx-raw (php/max 0
                                    (php/min 23
@@ -339,12 +400,13 @@
                 ;; the flat path exactly.
                 (when (not blood?)
                   (buf-set tex-u     col (php/min 63 (php/intval (php/* (buf-get wallxs col) 64))))
-                  (buf-set tex-level col idx)))))
+                  (buf-set tex-level col idx)
+                  (buf-set tex-px    col wall-tex-px)))))
           (recur (php/+ col 1)))))
     {:tops tops :bots bots :normal normal
      :top-edge top-edge :bot-edge bot-edge
      :top-shadow top-shadow :bot-shadow bot-shadow
-     :tex-u tex-u :tex-level tex-level}))
+     :tex-u tex-u :tex-level tex-level :tex-px tex-px}))
 ;; =====================================================================
 ;; § Pulse cadences + near-death haze
 ;; =====================================================================
@@ -724,13 +786,15 @@
          :top-shadow        shades-top-shadow
          :bot-shadow        shades-bot-shadow
          :tex-u             shades-tex-u
-         :tex-level         shades-tex-level}
+         :tex-level         shades-tex-level
+         :tex-px            shades-tex-px}
         (compute-wall-shades svw svh haze-shift
                              {:dists dists :hits hits :sides sides :wallxs wallxs}
                              {:stbl stbl :ctbl ctbl
                               :sky-c sky-c :floor-c floor-c
                               :door-shade-now door-shade-now
                               :door-code-now  door-code-now
+                              :door-tex-boost (if door-bright? 3 0)
                               :boss-door-shade-now boss-door-shade-now
                               :boss-door-code-now  boss-door-code-now
                               :sky-code-grad         sky-code-gradient
@@ -1263,16 +1327,17 @@
                           bs-sub (php/aget wsub-bot col)
                           whs    (php/max 1 (php/- bs-sub ts-sub))
                           u      (buf-get shades-tex-u col)
+                          tpx    (buf-get shades-tex-px col)
                           fade   (php/aget tex-fade-table (buf-get shades-tex-level col))
                           rel    (php/- s4 ts-sub)]
                       (if (if (php/> rel 0) (php/< (php/+ s4 3) (php/- bs-sub 2)) false)
                         (php/aset pack-reg 0
-                                  (php/+ (php/* (php/+ (php/* (php/+ (php/* (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u))) 256)
-                                                                     (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u))))
+                                  (php/+ (php/* (php/+ (php/* (php/+ (php/* (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u))) 256)
+                                                                     (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u))))
                                                               256)
-                                                       (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 2) 64) whs)) 64) u))))
+                                                       (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 2) 64) whs)) 64) u))))
                                                 256)
-                                         (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 3) 64) whs)) 64) u)))))
+                                         (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 3) 64) whs)) 64) u)))))
                         ;; Seam accents: graduated dark border tracing
                         ;; the exact wall/floor + wall/sky diagonals -
                         ;; near-black wall base sub-row, dark sub-row
@@ -1285,68 +1350,68 @@
                             (php/aset pack-reg 1 (php/aget sky-sub-codes s4))
                             (php/>= s4 bs-sub)
                             (php/aset pack-reg 1 (if (php/=== s4 bs-sub)
-                                                   (php/max 232 (php/- (floor-code-at s4 col) seam-floor-dark))
+                                                   (php/aget seam-darken-8 (floor-code-at s4 col))
                                                    (floor-code-at s4 col)))
                             :else
-                            (let [wc (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u)))]
+                            (let [wc (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u)))]
                               (php/aset pack-reg 1
                                         (if (php/>= s4 (php/- bs-sub 1))
-                                          (php/max 232 (php/- wc seam-base-dark))
+                                          (php/aget seam-darken-16 wc)
                                           (if (php/>= s4 (php/- bs-sub 2))
-                                            (php/max 232 (php/- wc seam-wall-dark))
+                                            (php/aget seam-darken-8 wc)
                                             (if (php/=== s4 ts-sub)
-                                              (php/max 232 (php/- wc seam-top-dark))
+                                              (php/aget seam-darken-5 wc)
                                               wc))))))
                           (cond
                             (php/< s4b ts-sub)
                             (php/aset pack-reg 2 (php/aget sky-sub-codes s4b))
                             (php/>= s4b bs-sub)
                             (php/aset pack-reg 2 (if (php/=== s4b bs-sub)
-                                                   (php/max 232 (php/- (floor-code-at s4b col) seam-floor-dark))
+                                                   (php/aget seam-darken-8 (floor-code-at s4b col))
                                                    (floor-code-at s4b col)))
                             :else
-                            (let [wc (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u)))]
+                            (let [wc (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u)))]
                               (php/aset pack-reg 2
                                         (if (php/>= s4b (php/- bs-sub 1))
-                                          (php/max 232 (php/- wc seam-base-dark))
+                                          (php/aget seam-darken-16 wc)
                                           (if (php/>= s4b (php/- bs-sub 2))
-                                            (php/max 232 (php/- wc seam-wall-dark))
+                                            (php/aget seam-darken-8 wc)
                                             (if (php/=== s4b ts-sub)
-                                              (php/max 232 (php/- wc seam-top-dark))
+                                              (php/aget seam-darken-5 wc)
                                               wc))))))
                           (cond
                             (php/< s4c ts-sub)
                             (php/aset pack-reg 3 (php/aget sky-sub-codes s4c))
                             (php/>= s4c bs-sub)
                             (php/aset pack-reg 3 (if (php/=== s4c bs-sub)
-                                                   (php/max 232 (php/- (floor-code-at s4c col) seam-floor-dark))
+                                                   (php/aget seam-darken-8 (floor-code-at s4c col))
                                                    (floor-code-at s4c col)))
                             :else
-                            (let [wc (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 2) 64) whs)) 64) u)))]
+                            (let [wc (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 2) 64) whs)) 64) u)))]
                               (php/aset pack-reg 3
                                         (if (php/>= s4c (php/- bs-sub 1))
-                                          (php/max 232 (php/- wc seam-base-dark))
+                                          (php/aget seam-darken-16 wc)
                                           (if (php/>= s4c (php/- bs-sub 2))
-                                            (php/max 232 (php/- wc seam-wall-dark))
+                                            (php/aget seam-darken-8 wc)
                                             (if (php/=== s4c ts-sub)
-                                              (php/max 232 (php/- wc seam-top-dark))
+                                              (php/aget seam-darken-5 wc)
                                               wc))))))
                           (cond
                             (php/< s4d ts-sub)
                             (php/aset pack-reg 4 (php/aget sky-sub-codes s4d))
                             (php/>= s4d bs-sub)
                             (php/aset pack-reg 4 (if (php/=== s4d bs-sub)
-                                                   (php/max 232 (php/- (floor-code-at s4d col) seam-floor-dark))
+                                                   (php/aget seam-darken-8 (floor-code-at s4d col))
                                                    (floor-code-at s4d col)))
                             :else
-                            (let [wc (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 3) 64) whs)) 64) u)))]
+                            (let [wc (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 3) 64) whs)) 64) u)))]
                               (php/aset pack-reg 4
                                         (if (php/>= s4d (php/- bs-sub 1))
-                                          (php/max 232 (php/- wc seam-base-dark))
+                                          (php/aget seam-darken-16 wc)
                                           (if (php/>= s4d (php/- bs-sub 2))
-                                            (php/max 232 (php/- wc seam-wall-dark))
+                                            (php/aget seam-darken-8 wc)
                                             (if (php/=== s4d ts-sub)
-                                              (php/max 232 (php/- wc seam-top-dark))
+                                              (php/aget seam-darken-5 wc)
                                               wc))))))
                           (php/aset pack-reg 0
                                     (php/+ (php/* (php/+ (php/* (php/+ (php/* (php/aget pack-reg 1) 256)
@@ -1658,23 +1723,26 @@
                           ;; (same mixer as the pixel-doubled emitter,
                           ;; sub-row codes via pack-reg slots 1-2).
                           ;; Non-mix textured columns keep the cell-bound
-                          ;; sampling; tex-level < 0 (door / boss / blood
+                          ;; sampling; tex-level < 0 (boss door / blood
                           ;; column, or textures disabled) falls back to
-                          ;; the flat shade.
+                          ;; the flat shade. Door columns sample the
+                          ;; amber door texture via the same path
+                          ;; (per-column texel array in shades-tex-px).
                           :else
                           (if mixw?
                             (let [ts-sub (php/aget wsub-top col)
                                   bs-sub (php/aget wsub-bot col)
                                   whs    (php/max 1 (php/- bs-sub ts-sub))
                                   u      (buf-get shades-tex-u col)
+                                  tpx    (buf-get shades-tex-px col)
                                   fade   (php/aget tex-fade-table (buf-get shades-tex-level col))
                                   s2     (php/* 2 row)
                                   s2b    (php/+ s2 1)
                                   rel    (php/- s2 ts-sub)]
                               (if (if (php/> rel 0) (php/< s2b (php/- bs-sub 2)) false)
                                 (php/aset cell-reg 0
-                                          (halfblock (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u)))
-                                                     (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u)))))
+                                          (halfblock (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u)))
+                                                     (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u)))))
                                 ;; Seam accents: graduated dark border
                                 ;; tracing the exact wall/floor + wall/sky
                                 ;; diagonals - near-black wall base
@@ -1687,34 +1755,34 @@
                                     (php/aset pack-reg 1 (php/aget sky-sub-codes s2))
                                     (php/>= s2 bs-sub)
                                     (php/aset pack-reg 1 (if (php/=== s2 bs-sub)
-                                                           (php/max 232 (php/- (floor-code-at s2 col) seam-floor-dark))
+                                                           (php/aget seam-darken-8 (floor-code-at s2 col))
                                                            (floor-code-at s2 col)))
                                     :else
-                                    (let [wc (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u)))]
+                                    (let [wc (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u)))]
                                       (php/aset pack-reg 1
                                                 (if (php/>= s2 (php/- bs-sub 1))
-                                                  (php/max 232 (php/- wc seam-base-dark))
+                                                  (php/aget seam-darken-16 wc)
                                                   (if (php/>= s2 (php/- bs-sub 2))
-                                                    (php/max 232 (php/- wc seam-wall-dark))
+                                                    (php/aget seam-darken-8 wc)
                                                     (if (php/=== s2 ts-sub)
-                                                      (php/max 232 (php/- wc seam-top-dark))
+                                                      (php/aget seam-darken-5 wc)
                                                       wc))))))
                                   (cond
                                     (php/< s2b ts-sub)
                                     (php/aset pack-reg 2 (php/aget sky-sub-codes s2b))
                                     (php/>= s2b bs-sub)
                                     (php/aset pack-reg 2 (if (php/=== s2b bs-sub)
-                                                           (php/max 232 (php/- (floor-code-at s2b col) seam-floor-dark))
+                                                           (php/aget seam-darken-8 (floor-code-at s2b col))
                                                            (floor-code-at s2b col)))
                                     :else
-                                    (let [wc (php/aget fade (php/aget wall-tex-px (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u)))]
+                                    (let [wc (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u)))]
                                       (php/aset pack-reg 2
                                                 (if (php/>= s2b (php/- bs-sub 1))
-                                                  (php/max 232 (php/- wc seam-base-dark))
+                                                  (php/aget seam-darken-16 wc)
                                                   (if (php/>= s2b (php/- bs-sub 2))
-                                                    (php/max 232 (php/- wc seam-wall-dark))
+                                                    (php/aget seam-darken-8 wc)
                                                     (if (php/=== s2b ts-sub)
-                                                      (php/max 232 (php/- wc seam-top-dark))
+                                                      (php/aget seam-darken-5 wc)
                                                       wc))))))
                                   (php/aset cell-reg 0
                                             (halfblock (php/aget pack-reg 1) (php/aget pack-reg 2))))))
@@ -1726,16 +1794,17 @@
                                   ;; stacked into one ▀ cell.
                                   (let [wh   (php/max 1 (php/- bot top))
                                         u    (buf-get shades-tex-u col)
+                                        tpx  (buf-get shades-tex-px col)
                                         rel2 (php/* 2 (php/- row top))
                                         tvt  (php/min 63 (php/intdiv (php/* rel2 32) wh))
                                         tvb  (php/min 63 (php/intdiv (php/* (php/+ rel2 1) 32) wh))
                                         fade (php/aget tex-fade-table lvl)]
                                     (php/aset cell-reg 0
-                                              (halfblock (php/aget fade (php/aget wall-tex-px (php/+ (php/* tvt 64) u)))
-                                                         (php/aget fade (php/aget wall-tex-px (php/+ (php/* tvb 64) u))))))
+                                              (halfblock (php/aget fade (php/aget tpx (php/+ (php/* tvt 64) u)))
+                                                         (php/aget fade (php/aget tpx (php/+ (php/* tvb 64) u))))))
                                   (let [wh   (php/max 1 (php/- bot top))
                                         tv   (php/min 63 (php/intdiv (php/* (php/- row top) 64) wh))
-                                        tc   (php/aget wall-tex-px
+                                        tc   (php/aget (buf-get shades-tex-px col)
                                                        (php/+ (php/* tv 64) (buf-get shades-tex-u col)))
                                         fade (php/aget tex-fade-table lvl)]
                                     (php/aset cell-reg 0

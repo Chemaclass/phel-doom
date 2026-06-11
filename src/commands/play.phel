@@ -836,9 +836,11 @@
    min render-ms across them (warm, least-noisy) and locks the pixel
    scale once enough land (1 = full detail, 2 = pixel-doubled for a
    smooth framerate; the render always fills the whole terminal either
-   way). A terminal-size change restarts calibration so the choice
-   re-fits the new size. No-op when auto is off (the player set an
-   explicit --max-cols/--max-rows)."
+   way). Pixel scale 2 is only ever picked on a big screen (area beyond
+   200×45, see perf/big-screen?) — smaller terminals keep full detail
+   regardless of the measured cost. A terminal-size change restarts
+   calibration so the choice re-fits the new size. No-op when auto is
+   off (the player set an explicit --max-cols/--max-rows)."
   [cal auto? ^int trows ^int tcols ^float render-ms]
   (if (not auto?)
     cal
@@ -850,7 +852,7 @@
         (let [n'    (php/+ (:n cal) 1)
               best' (php/min (:best cal) render-ms)]
           (if (php/>= n' auto-cal-frames)
-            {:px (auto-pixel-scale best') :n n' :best best' :tdims tdims}
+            {:px (auto-pixel-scale best' tcols trows) :n n' :best best' :tdims tdims}
             {:px nil :n n' :best best' :tdims tdims}))))))
 
 (defn- game-loop [world0 max-rows max-cols]
@@ -859,8 +861,10 @@
         ;; -1). The loop renders at full detail for a few frames,
         ;; measures, then locks the pixel scale that holds a smooth frame
         ;; budget (see next-cal / auto-pixel-scale) — the render fills
-        ;; the whole terminal either way. An explicit cap (or 0 = fill)
-        ;; opts out: full detail at the player's size.
+        ;; the whole terminal either way, and only a big screen (beyond
+        ;; 200×45) may pixel-double; smaller terminals keep full detail.
+        ;; An explicit cap (or 0 = fill) opts out: full detail at the
+        ;; player's size.
         auto?   (and (php/< max-cols 0) (php/< max-rows 0))]
     (loop [world     world0
            t-last    t-start

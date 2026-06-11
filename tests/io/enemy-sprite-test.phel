@@ -1,6 +1,6 @@
 (ns phel-doom-tests.io.enemy-sprite-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type sprite-col-x enemy-sprite-cell])
+  (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type sprite-col-x enemy-sprite-cell enemy-sprite-quad])
   (:require phel-doom.io.render.enemy-sprites-data :refer [projectile-sprites death-sprites blood-sprites pickup-sprites]))
 
 ;; ---------------------------------------------------------------------
@@ -113,3 +113,39 @@
     (let [g (get pickup-sprites k)]
       (is (not (nil? g)) (str "pickup sprite for " k))
       (is (php/> (:w g) 0) (str (name k) " has size")))))
+
+;; ---------------------------------------------------------------------
+;; enemy-sprite-quad: the raw 2x2 texel sample behind enemy-sprite-cell,
+;; consumed by the pixel-doubled renderer (one texel per output cell of
+;; the 2x2 block). Must agree with the composed-cell sampling.
+;; ---------------------------------------------------------------------
+
+(defn- quad-of [px sw sh row etop ebot]
+  (enemy-sprite-quad px sw sh 0 1 etop ebot row))
+
+(deftest test-quad-uniform-sprite-is-uniform
+  ;; 2x2 sprite, all texels colour 196, billboard of 1 row.
+  (let [px (php/array 196 196 196 196)
+        q  (quad-of px 2 2 0 0 1)]
+    (is (= 196 (php/aget q 0)))
+    (is (= 196 (php/aget q 1)))
+    (is (= 196 (php/aget q 2)))
+    (is (= 196 (php/aget q 3)))))
+
+(deftest test-quad-passes-transparency-through
+  ;; Top row transparent, bottom row opaque: A-pair -1, B-pair colour.
+  (let [px (php/array -1 -1 40 41)
+        q  (quad-of px 2 2 0 0 1)]
+    (is (= -1 (php/aget q 0)))
+    (is (= -1 (php/aget q 1)))
+    (is (= 40 (php/aget q 2)))
+    (is (= 41 (php/aget q 3)))))
+
+(deftest test-quad-left-right-columns-differ
+  ;; sx=0 / sxr=1 sample the two sprite columns independently.
+  (let [px (php/array 10 20 30 40)
+        q  (quad-of px 2 2 0 0 1)]
+    (is (= 10 (php/aget q 0)))
+    (is (= 20 (php/aget q 1)))
+    (is (= 30 (php/aget q 2)))
+    (is (= 40 (php/aget q 3)))))

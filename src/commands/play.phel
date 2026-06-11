@@ -24,7 +24,7 @@
   (:require phel-doom.demo.phases :as showcase)
   (:require phel-doom.core.rng    :as rng)
   (:require phel-doom.core.level    :refer [build-world num-levels place-secret-reward])
-  (:require phel-doom.core.perf     :refer [target-frame-us cap-dims auto-cap-dims auto-cal-frames])
+  (:require phel-doom.core.perf     :refer [target-frame-us cap-dims auto-pixel-scale auto-cal-frames])
   (:require phel-doom.core.version  :refer [version])
   (:require phel-doom.io.scores   :refer [update-scores!])
   (:require phel-doom.io.render   :refer [render! clear-screen
@@ -780,8 +780,9 @@
 (defn- redraw-if-resized [dims rows cols]
   (when (not= [rows cols] dims) (clear-screen)))
 
-(defn- draw-frame [world fps frame-ms rows cols]
-  (render! world (frame-stats world fps frame-ms) cols rows))
+(defn- draw-frame [world fps frame-ms rows cols px2?]
+  (render! world (assoc (frame-stats world fps frame-ms) :px2? px2?)
+           cols rows))
 
 (defn- adaptive-sleep!
   "Yield the CPU for whatever's left of the per-iteration budget,
@@ -829,34 +830,37 @@
     :else         world))
 
 (defn- next-cal
-  "Advance the auto-cap calibration. `cal` is
-   {:cap [rows cols]|nil :n int :best ms :tdims [trows tcols]}. In auto
-   mode the first `auto-cal-frames` frames render full-size; this tracks
-   the min render-ms across them (warm, least-noisy) and locks the
-   scaled-down smooth cap once enough land. A terminal-size change
-   restarts calibration so the cap re-fits the new size. No-op when auto
-   is off (the player set an explicit --max-cols/--max-rows)."
+  "Advance the auto pixel-scale calibration. `cal` is
+   {:px 1|2|nil :n int :best ms :tdims [trows tcols]}. In auto mode the
+   first `auto-cal-frames` frames render at full detail; this tracks the
+   min render-ms across them (warm, least-noisy) and locks the pixel
+   scale once enough land (1 = full detail, 2 = pixel-doubled for a
+   smooth framerate; the render always fills the whole terminal either
+   way). A terminal-size change restarts calibration so the choice
+   re-fits the new size. No-op when auto is off (the player set an
+   explicit --max-cols/--max-rows)."
   [cal auto? ^int trows ^int tcols ^float render-ms]
   (if (not auto?)
     cal
     (let [tdims [trows tcols]]
       (cond
-        (not= tdims (:tdims cal)) {:cap nil :n 1 :best render-ms :tdims tdims}
-        (:cap cal)                cal
+        (not= tdims (:tdims cal)) {:px nil :n 1 :best render-ms :tdims tdims}
+        (:px cal)                 cal
         :else
         (let [n'    (php/+ (:n cal) 1)
               best' (php/min (:best cal) render-ms)]
           (if (php/>= n' auto-cal-frames)
-            {:cap (auto-cap-dims trows tcols best') :n n' :best best' :tdims tdims}
-            {:cap nil :n n' :best best' :tdims tdims}))))))
+            {:px (auto-pixel-scale best') :n n' :best best' :tdims tdims}
+            {:px nil :n n' :best best' :tdims tdims}))))))
 
 (defn- game-loop [world0 max-rows max-cols]
   (let [t-start (php/microtime true)
-        ;; Auto-cap mode: neither --max-cols nor --max-rows was passed
-        ;; (both -1). The loop renders full-size for a few frames, measures,
-        ;; then locks the render to the cell count that holds a smooth
-        ;; frame budget (see next-cal / auto-cap-dims). An explicit cap (or
-        ;; 0 = fill) opts out and uses the player's value directly.
+        ;; Auto mode: neither --max-cols nor --max-rows was passed (both
+        ;; -1). The loop renders at full detail for a few frames,
+        ;; measures, then locks the pixel scale that holds a smooth frame
+        ;; budget (see next-cal / auto-pixel-scale) — the render fills
+        ;; the whole terminal either way. An explicit cap (or 0 = fill)
+        ;; opts out: full detail at the player's size.
         auto?   (and (php/< max-cols 0) (php/< max-rows 0))]
     (loop [world     world0
            t-last    t-start
@@ -864,20 +868,16 @@
            fps       0
            prev-keys initial-key-snapshot
            dims      [0 0]
-           cal       {:cap nil :n 0 :best 1.0e9 :tdims [0 0]}]
-      ;; Cap the live terminal size: the auto-cap's locked dims while
-      ;; calibrating renders full ([0 0]); a positive cap shrinks the
-      ;; render area, leaving the surplus as a blank inset border
-      ;; (clear-screen on resize keeps it clean).
+           cal       {:px nil :n 0 :best 1.0e9 :tdims [0 0]}]
+      ;; Manual --max-cols/--max-rows still inset-cap the render area;
+      ;; auto mode always fills the terminal (cap-dims with -1 = no-op)
+      ;; and varies pixel detail instead.
       (let [[trows tcols] (term-size)
-            [cap-r cap-c] (cond
-                            (not auto?) [max-rows max-cols]
-                            (:cap cal)  (:cap cal)
-                            :else       [0 0])
-            [rows cols]   (cap-dims trows tcols cap-r cap-c)]
+            [rows cols]   (cap-dims trows tcols max-rows max-cols)
+            px2?          (and auto? (php/=== 2 (:px cal)))]
         (redraw-if-resized dims rows cols)
         (let [render-start (php/microtime true)
-              _draw        (draw-frame world fps frame-ms rows cols)
+              _draw        (draw-frame world fps frame-ms rows cols px2?)
               render-ms    (php/* (php/- (php/microtime true) render-start) 1000.0)
               _sleep       (adaptive-sleep! render-start cols rows)
               cal'         (next-cal cal auto? trows tcols render-ms)]
@@ -1031,11 +1031,11 @@
    the initial loop entry). `demo-phase` (nil for normal play, 1..4 for
    the tech-talk showcase) applies a per-phase world transform after
    build-world (see phel-doom.demo.phases/apply-phase). `max-rows` /
-   `max-cols` (from --max-rows / --max-cols; -1 = unset → auto-cap,
-   0 = fill, N = fixed cap) clamp the per-frame render size; the
-   game-loop applies them to the live terminal size so a big terminal
-   renders a smaller inset frame (auto-sized for a smooth framerate
-   unless overridden)."
+   `max-cols` (from --max-rows / --max-cols; -1 = unset → auto
+   pixel-scale, 0 = fill at full detail, N = fixed inset cap) clamp the
+   per-frame render size. In auto mode the render always fills the
+   terminal: the game-loop measures the machine and pixel-doubles the
+   scene when full detail can't hold a smooth framerate."
   [diff god? armory? full-map? demo-phase start-level init-seed init-settings
    max-rows max-cols]
   (loop [level       (php/max 1 (php/min num-levels (or start-level 1)))
@@ -1212,9 +1212,9 @@
 (defn- opt-int
   "Coerce a CLI render-size-cap option to an int. nil / empty (the flag
    was not passed) → -1, the 'auto' sentinel: when BOTH axes are -1 the
-   game-loop auto-calibrates a smooth render cap. An explicit value wins:
-   0 = fill the terminal (no cap, opts out of auto), a positive N caps
-   that axis to N."
+   game-loop auto-calibrates the render pixel scale (full terminal
+   always). An explicit value wins: 0 = fill the terminal at full
+   detail (opts out of auto), a positive N inset-caps that axis to N."
   [raw]
   (if (or (nil? raw) (= raw ""))
     -1
@@ -1233,9 +1233,10 @@
                       (= lv-raw "") nil
                       :else         (php/intval lv-raw))
         ;; Render-size caps (--max-cols / --max-rows). Unset → -1 on both
-        ;; → the game-loop auto-calibrates a smooth render size. An
-        ;; explicit 0 fills the terminal (opts out of auto); a positive
-        ;; value caps that axis, leaving a blank inset border.
+        ;; → the game-loop auto-calibrates the pixel scale (full screen,
+        ;; pixel-doubled when the machine needs it). An explicit 0 fills
+        ;; the terminal at full detail (opts out of auto); a positive
+        ;; value inset-caps that axis, leaving a blank border.
         max-cols    (opt-int (cli/opt ctx "max-cols"))
         max-rows    (opt-int (cli/opt ctx "max-rows"))
         ;; Demo (issue #64): --demo replays a recorded run (forces its
@@ -1349,10 +1350,10 @@
            :default ""}
           {:name    "max-cols"
            :mode    :optional
-           :doc     "Cap the render width to N columns (surplus becomes a blank inset border). Unset (default) auto-calibrates a smooth render size for your machine; 0 forces the full terminal (uncapped); N caps to N. Handy to override the auto-cap on ultrawide / fullscreen terminals."
+           :doc     "Cap the render width to N columns (surplus becomes a blank inset border). Unset (default) fills the terminal and auto-picks the pixel detail for a smooth framerate; 0 forces full terminal at full detail; N caps to N."
            :default ""}
           {:name    "max-rows"
            :mode    :optional
-           :doc     "Cap the render height to N rows (surplus becomes a blank inset border). Unset (default) auto-calibrates; 0 forces the full terminal; N caps to N."
+           :doc     "Cap the render height to N rows (surplus becomes a blank inset border). Unset (default) fills the terminal (auto pixel detail); 0 forces full terminal at full detail; N caps to N."
            :default ""}]
    :run  run-play})

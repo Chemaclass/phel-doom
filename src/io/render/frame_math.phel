@@ -124,6 +124,29 @@
         (recur (php/+ r 1))))
     arr))
 
+(defn build-sky-codes-sub
+  "Raw per-SUB-ROW sky gradient codes (ints), indexes 0..2·vh-1 with the
+   horizon at sub-row vh — the same curve `build-sky-halfblock` packs
+   into ▀ cells, left unpacked so the pixel-doubled renderer can paint
+   sub-row `2r` on the upper output row and `2r+1` on the lower as two
+   solid cells (full vertical sky smoothness at pixel scale 2)."
+  [^int vh ctbl]
+  (let [arr     (php/array)
+        horizon vh
+        max-d   (php/max 1 vh)
+        sub     (php/* 2 vh)]
+    (loop [s 0]
+      (when (php/< s sub)
+        (let [idx (php/max 0
+                           (php/min 23
+                                    (php/intval (php/* (php/- 1.0
+                                                              (php// (php/abs (php/- s horizon))
+                                                                     max-d))
+                                                       23))))]
+          (php/aset arr s (php/intval (buf-get ctbl idx))))
+        (recur (php/+ s 1))))
+    arr))
+
 (defn enemy-shade-string
   "Compose the ANSI BG-only paint cell for one enemy zone at the
    given fade factor."
@@ -140,6 +163,15 @@
        ";38;5;" (fade-256 fg-code t)
        "m" glyph))
 
+(defn sprite-h-pd
+  "Screen-space height (rows) of a sprite at depth `d` for an explicit
+   projection numerator `pd` — `proj-dist` at full detail, half of it in
+   the pixel-doubled scene (rows are two terminal rows tall there, so
+   heights halve to keep the same on-screen size). Multiplied by scale
+   factor `sc`; clamped to `vh`."
+  [^float pd ^int vh ^float d ^float sc]
+  (php/min vh (php/intval (php/* sc (php// pd (php/* (php/max 0.5 d) char-aspect))))))
+
 (defn sprite-h
   "Screen-space height (rows) of a sprite at depth `d`, multiplied by
    scale factor `sc` (1.0 for standard enemies, 2.0 for cyberdemons).
@@ -147,7 +179,7 @@
    all sprite painters that need the projected height — centralises
    the `proj-dist / (max(0.5, d) * char-aspect)` formula."
   [^int vh ^float d ^float sc]
-  (php/min vh (php/intval (php/* sc (php// proj-dist (php/* (php/max 0.5 d) char-aspect))))))
+  (sprite-h-pd proj-dist vh d sc))
 
 (defn boss-col-paint
   "Per-column body / legs / head string overrides that carve a
@@ -306,14 +338,13 @@
       (= q 6) "↑"
       :else   "↗")))
 
-(defn project-enemy
-  "Project one enemy into screen space relative to the player. Returns
-   {:col :half-width :dist :damage-ratio} or nil if the enemy is behind
-   the player or off-screen. `:damage-ratio` is 0.0 at full health and
-   approaches 1.0 as the enemy nears death; render uses it to tint the
-   body shade darker for wounded enemies. Distance is fish-eye corrected
-   so it can be compared directly to entries in the wall `dists` array."
-  [enemy player ^int vw]
+(defn project-enemy-pd
+  "Project one billboard-style entity into screen space for an explicit
+   projection numerator `pd` (`proj-dist` at full detail, half of it in
+   the pixel-doubled scene so columns/widths land in scene cells).
+   Returns {:col :half-width :dist :damage-ratio} or nil when behind /
+   off-screen — see `project-enemy` for the field contract."
+  [^float pd enemy player ^int vw]
   (let [dx (php/- (:x enemy) (:x player))
         dy (php/- (:y enemy) (:y player))]
     (let [rel-norm (php/- (php/fmod (php/+ (php/- (php/atan2 dy dx) (:angle player))
@@ -335,13 +366,23 @@
               ;; L10 fight reads as a real boss encounter. Other types
               ;; render at native size (1.0).
               scale     (if (php/=== (:type enemy) :cyber) 2.0 1.0)
-              hw-base   (php/max 1 (php/intval (php// proj-dist (php/* (php/max 0.5 dist) 3.0))))]
-          {:col          (php/intval (php/+ (php/* 0.5 vw) (php/* (php/tan rel-norm) proj-dist)))
+              hw-base   (php/max 1 (php/intval (php// pd (php/* (php/max 0.5 dist) 3.0))))]
+          {:col          (php/intval (php/+ (php/* 0.5 vw) (php/* (php/tan rel-norm) pd)))
            :half-width   (php/max 1 (php/intval (php/* hw-base scale)))
            :dist         dist
            :scale        scale
            :damage-ratio dmg
            :type         (:type enemy)})))))
+
+(defn project-enemy
+  "Project one enemy into screen space relative to the player. Returns
+   {:col :half-width :dist :damage-ratio} or nil if the enemy is behind
+   the player or off-screen. `:damage-ratio` is 0.0 at full health and
+   approaches 1.0 as the enemy nears death; render uses it to tint the
+   body shade darker for wounded enemies. Distance is fish-eye corrected
+   so it can be compared directly to entries in the wall `dists` array."
+  [enemy player ^int vw]
+  (project-enemy-pd proj-dist enemy player vw))
 
 (defn collect-enemy-projs
   "Project every alive enemy and return a vector sorted by distance

@@ -103,3 +103,39 @@
     (is (= vh (count sky)))
     (is (php/> (php/strlen (php/aget sky 0)) 0))
     (is (php/> (php/strlen (php/aget sky (php/- vh 1))) 0))))
+
+;; ---------------------------------------------------------------------
+;; Pixel-doubled mode (:px2? in stats). The scene renders at half
+;; resolution and each scene cell paints a 2x2 terminal block, so the
+;; frame still fills every terminal column on every scene row - the
+;; full-screen contract the auto pixel-scale relies on.
+;; ---------------------------------------------------------------------
+
+(defn- visible-width
+  "Printable width of one frame row (SGR escapes stripped)."
+  [row]
+  (php/mb_strlen (php/preg_replace "/\e\\[[0-9;]*[A-Za-z]/" "" row)))
+
+(deftest test-px2-rows-fill-the-terminal-width
+  (let [s    (frame->string world (assoc stats :px2? true) 120 30)
+        rows (php/explode "\n" s)]
+    ;; Every scene row paints exactly the full 120 columns.
+    (loop [i 0]
+      (when (php/< i 20)
+        (is (= 120 (visible-width (php/aget rows i))))
+        (recur (php/+ i 1))))))
+
+(deftest test-px2-odd-dims-still-fill
+  ;; Odd terminal sizes clip the last 2x2 block to one column / row.
+  (let [s    (frame->string world (assoc stats :px2? true) 119 29)
+        rows (php/explode "\n" s)]
+    (is (= 119 (visible-width (php/aget rows 0))))
+    (is (= 119 (visible-width (php/aget rows 13))))))
+
+(deftest test-px2-deterministic
+  (is (= (frame->string world (assoc stats :px2? true) 120 30)
+         (frame->string world (assoc stats :px2? true) 120 30))))
+
+(deftest test-px2-differs-from-full-detail
+  (is (not= (frame->string world (assoc stats :px2? true) 120 30)
+            (frame->string world stats 120 30))))

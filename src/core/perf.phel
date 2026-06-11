@@ -97,11 +97,38 @@
    so the brief full-detail stutter hides under the intro splash."
   5)
 
+(def big-screen-cols
+  "Width of the reference 'big screen'. A terminal qualifies as big —
+   and so becomes eligible for auto pixel-doubling — only when its cell
+   AREA exceeds big-screen-cols × big-screen-rows. Anything at or below
+   that stays at full pixel detail: on a normal-sized terminal detail
+   beats framerate, and the render cost is small enough there that the
+   natural framerate stays acceptable."
+  200)
+
+(def big-screen-rows
+  "Height of the reference 'big screen' (see `big-screen-cols`)."
+  45)
+
+(defn big-screen?
+  "True when a `cols` × `rows` terminal is bigger than the reference
+   big screen (by cell area, which is what the per-cell render cost
+   actually scales with). Only big screens may auto pixel-double;
+   everything else keeps full detail."
+  [^int cols ^int rows]
+  (php/> (php/* cols rows) (php/* big-screen-cols big-screen-rows)))
+
 (defn auto-pixel-scale
-  "Pick the render pixel scale from a measured full-detail frame cost:
-   1 (full detail) when `full-ms` already fits `auto-target-frame-ms`,
-   else 2 (pixel-doubled: the scene renders at half resolution and each
-   scene cell paints a 2×2 terminal block, quartering the render cost
-   while still filling the whole terminal)."
-  [^float full-ms]
-  (if (php/<= full-ms auto-target-frame-ms) 1 2))
+  "Pick the render pixel scale for a `cols` × `rows` terminal from a
+   measured full-detail frame cost: 2 (pixel-doubled: the scene renders
+   at half resolution and each scene cell paints a 2×2 terminal block,
+   quartering the render cost while still filling the whole terminal)
+   only when the terminal is a big screen (see `big-screen?`) AND
+   `full-ms` misses `auto-target-frame-ms`; otherwise 1 (full detail).
+   A screen at or below 200×45 never pixel-doubles — at that size pixel
+   detail wins over framerate."
+  [^float full-ms ^int cols ^int rows]
+  (if (and (big-screen? cols rows)
+           (php/> full-ms auto-target-frame-ms))
+    2
+    1))

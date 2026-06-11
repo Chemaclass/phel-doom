@@ -62,5 +62,5 @@ Hold `space` for auto-fire on pistol/chaingun/chainsaw/incinerator. Shotgun, BFG
 - `--god` (`-g`) - invincible
 - `--armory` (`-a`) - start with all weapons
 - `--full-map` (`-f`) - reveal map
-- `--max-cols=N` - cap render width to N columns on a wider terminal; the surplus becomes a blank inset border. Unset fills the terminal and auto-picks the pixel detail for a smooth framerate; 0 forces full terminal at full detail
+- `--max-cols=N` - cap render width to N columns on a wider terminal; the surplus becomes a blank inset border. Unset fills the terminal and auto-picks the pixel detail for a smooth framerate (pixel-doubling only ever engages on big screens beyond 200x45 cells); 0 forces full terminal at full detail
 - `--max-rows=N` - cap render height to N rows on a taller terminal (same unset/0 semantics)

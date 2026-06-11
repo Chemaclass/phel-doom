@@ -3,19 +3,38 @@
   (:require phel-doom.core.perf :refer [target-frame-us render-scale
                                         standard-frame-us standard-scale
                                         cap-dims min-render-cols min-render-rows
-                                        auto-pixel-scale auto-target-frame-ms]))
+                                        auto-pixel-scale auto-target-frame-ms
+                                        big-screen? big-screen-cols big-screen-rows]))
+
+(deftest test-big-screen-boundary
+  ;; Big = cell AREA beyond the 200x45 reference (render cost is
+  ;; per-cell). Exactly 200x45 is NOT big; one extra row/col is.
+  (is (not (big-screen? big-screen-cols big-screen-rows)))
+  (is (not (big-screen? 120 30)))
+  (is (not (big-screen? 200 45)))
+  (is (big-screen? 201 45))
+  (is (big-screen? 200 46))
+  (is (big-screen? 300 80)))
 
 (deftest test-auto-pixel-scale-full-detail-when-fast-enough
-  ;; A render that already fits the budget keeps full detail.
-  (is (= 1 (auto-pixel-scale (php/- auto-target-frame-ms 1.0))))
-  (is (= 1 (auto-pixel-scale 0.5)))
-  (is (= 1 (auto-pixel-scale auto-target-frame-ms))))
+  ;; A render that already fits the budget keeps full detail, at any size.
+  (is (= 1 (auto-pixel-scale (php/- auto-target-frame-ms 1.0) 300 80)))
+  (is (= 1 (auto-pixel-scale 0.5 300 80)))
+  (is (= 1 (auto-pixel-scale auto-target-frame-ms 300 80))))
 
-(deftest test-auto-pixel-scale-doubles-when-over-budget
-  ;; Over budget -> pixel-doubled (scene at half res, 2x2 blocks,
-  ;; still filling the whole terminal).
-  (is (= 2 (auto-pixel-scale (php/+ auto-target-frame-ms 0.1))))
-  (is (= 2 (auto-pixel-scale 100000.0))))
+(deftest test-auto-pixel-scale-doubles-only-on-big-screens
+  ;; Over budget AND bigger than 200x45 -> pixel-doubled (scene at
+  ;; half res, 2x2 blocks, still filling the whole terminal).
+  (is (= 2 (auto-pixel-scale (php/+ auto-target-frame-ms 0.1) 201 45)))
+  (is (= 2 (auto-pixel-scale 100000.0 300 80))))
+
+(deftest test-auto-pixel-scale-keeps-detail-at-200x45-and-below
+  ;; A screen at or below 200x45 NEVER pixel-doubles, even when the
+  ;; measured cost misses the budget: at that size pixel detail wins
+  ;; over framerate.
+  (is (= 1 (auto-pixel-scale 100000.0 200 45)))
+  (is (= 1 (auto-pixel-scale 100000.0 120 30)))
+  (is (= 1 (auto-pixel-scale (php/+ auto-target-frame-ms 0.1) 80 24))))
 
 (deftest test-target-frame-us-uniform-60fps
   ;; Cadence is a uniform ~60fps (16.67ms budget) at EVERY size. The

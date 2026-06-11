@@ -141,9 +141,9 @@ The cost that killed the earlier full-frame attempt was the per-cell string buil
 
 (Caveat for `def-`: it does NOT accept a string docstring - the string is stored AS the value. `half-cell-cache` keeps its doc in a `;;` comment for this reason.)
 
-## Pixel-doubled mode (auto, slow machines)
+## Pixel-doubled mode (auto, big screens on slow machines)
 
-When the game-loop's startup calibration finds full detail too slow for a smooth framerate (see `docs/game-loop.md`), `frame->string` gets `:px2? true` in stats: the scene renders at half resolution (svw x svh) and each scene cell paints a 2x2 terminal block - quarter the per-cell work, still the whole terminal. Key invariants:
+When the game-loop's startup calibration finds full detail too slow for a smooth framerate on a big screen (cell area beyond 200x45 - a terminal at or below that size always keeps full detail; see `docs/game-loop.md`), `frame->string` gets `:px2? true` in stats: the scene renders at half resolution (svw x svh) and each scene cell paints a 2x2 terminal block - quarter the per-cell work, still the whole terminal. Key invariants:
 
 - **Same framing, no zoom.** The cast runs at the FULL width with `scale 2` (full-width FOV tables, one ray per two columns) and is compacted to scene width by `compact-cast-2`; wall heights, enemy projection and the billboard painters all take an explicit `pd` (= `proj-dist / 2`) so on-screen sizes match full detail exactly.
 - **Sub-row wall seams.** Textured columns place the wall top/bottom at sub-row precision (`build-wall-sub-bounds`, half a terminal row - the full-detail seam precision) and the boundary cells mix sky / wall / floor codes inside their 4-sample pack, so receding wall silhouettes step in half-row increments instead of whole 2-row scene cells. The seam carries a graduated dark border tracing the exact diagonal: the wall's bottom-most sub-row drops near-black (`seam-base-dark`), the sub-row above and the floor's first sub-row pull several steps darker, and a lighter lip marks the wall/sky limit - so wall and floor read as clearly separated surfaces. Interior wall cells keep a straight 4-sample fast path; only the one or two boundary cells per column pay the per-sub-row cond.

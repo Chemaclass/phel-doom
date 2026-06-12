@@ -48,6 +48,40 @@
           (php/aset best-i  0 i))))
     (php/aget best-i 0)))
 
+;; Per-channel gamma applied before xterm-256 quantization.
+;; 0.50 (square-root curve) lifts the entire dark range so brown/olive
+;; shadow bands land in distinguishable codes instead of collapsing
+;; to near-black. Red (200,0,0) and yellow (200,180,0) are preserved
+;; because the lift is proportional on all three channels.
+(def- bake-gamma 0.50)
+
+;; Extra upward shift applied to grayscale ramp codes (232-255) after
+;; quantization. The ramp has 10-lum spacing; +3 steps (+30 lum) pushes
+;; the main body shadow tones (lum~58) into clearly visible territory
+;; (lum~88) while leaving the coloured cube codes (warm browns, reds,
+;; yellows) untouched so hue identity is preserved.
+(def- gray-ramp-shift 3)
+
+(defn- tone-lift
+  "Apply bake-gamma to a single 0-255 channel before quantization."
+  [^int v]
+  (php/intval (php/round (php/* (php/pow (php// v 255.0) bake-gamma) 255.0))))
+
+(defn- gray-shift
+  "Shift a grayscale ramp code (232-255) upward by gray-ramp-shift steps.
+   Caps at 248 to avoid blowing out the near-white end.
+   Cube codes (16-231) pass through unchanged."
+  [^int code]
+  (if (php/>= code 232)
+    (php/min 248 (php/+ code gray-ramp-shift))
+    code))
+
+(defn rgb->256-lifted
+  "Like rgb->256 but applies tone-lift to each channel then gray-shift
+   to the resulting code, lifting dark body shadows into visible range."
+  [^int r ^int g ^int b]
+  (gray-shift (rgb->256 (tone-lift r) (tone-lift g) (tone-lift b))))
+
 (defn rgb->256 [^int r ^int g ^int b]
   ;; Map an RGB triple to the nearest xterm-256 code.
   ;; Checks the 6x6x6 colour cube and the 24-step grayscale ramp (232-255),
@@ -90,9 +124,9 @@
         (dotimes [i (php/* w h)]
           (let [v (php/aget px i)]
             (php/array_push row (if (php/=== v -1) "-1"
-                                    (php/strval (rgb->256 (php/aget (php/aget pal v) 0)
-                                                          (php/aget (php/aget pal v) 1)
-                                                          (php/aget (php/aget pal v) 2)))))))
+                                    (php/strval (rgb->256-lifted (php/aget (php/aget pal v) 0)
+                                                                 (php/aget (php/aget pal v) 1)
+                                                                 (php/aget (php/aget pal v) 2)))))))
         (php/sprintf "{:w %d :h %d :px [%s]}" w h (php/implode " " row))))))
 
 (defn entry [wad k lump]
@@ -139,9 +173,9 @@
               (php/array_push row
                               (if (php/=== 0 (php/aget acc 3))
                                 "-1"
-                                (php/strval (rgb->256 (php/intdiv (php/aget acc 0) (php/aget acc 3))
-                                                      (php/intdiv (php/aget acc 1) (php/aget acc 3))
-                                                      (php/intdiv (php/aget acc 2) (php/aget acc 3)))))))))
+                                (php/strval (rgb->256-lifted (php/intdiv (php/aget acc 0) (php/aget acc 3))
+                                                             (php/intdiv (php/aget acc 1) (php/aget acc 3))
+                                                             (php/intdiv (php/aget acc 2) (php/aget acc 3)))))))))
         (php/sprintf "{:w %d :h %d :px [%s]}" tw th (php/implode " " row))))))
 
 (defn mip-entry [wad k lump tmax]

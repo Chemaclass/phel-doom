@@ -233,21 +233,17 @@
     (is (nil? (sprite-for-type-lod :not-a-monster 10)) "unknown type nil")))
 
 ;; ---------------------------------------------------------------------
-;; Palette correctness: the old broken rgb->256 bake formula assumed
-;; evenly-spaced cube levels 0/51/102/153/204/255 instead of the actual
-;; 0/95/135/175/215/255. The fix re-quantises by nearest squared-distance,
-;; matching the rgb-code function used by half-mip.
+;; Palette correctness guards (three invariants):
 ;;
-;; Two regression guards:
-;;   1. Correct dark-brown code 94 = (135,95,0) MUST appear. Under the
-;;      broken formula those texels landed on code 101 (135,135,95)
-;;      instead. Absence of 94 means the fix has been reverted.
-;;   2. Near-black gray code 59 = (95,95,95) must be rare (< 10 px).
-;;      The broken formula mapped every very-dark-brown source pixel to
-;;      code 59; after the fix they land on proper near-black grayscale
-;;      codes (232-236). A count >= 10 means the systematic error is back.
-;;      (A small handful of 59s is fine: some genuine imp shadow pixels
-;;      quantise to (95,95,95) correctly.)
+;;   1. Lifted warm-brown code 136 = (175,135,0) MUST appear. Under
+;;      gamma=0.50 + gray-ramp-shift the original dark-brown texels
+;;      remap to code 136 (lum=131). Absence means tone-lift reverted.
+;;   2. Red crest code 196 = (255,0,0) MUST appear. The hue-preserving
+;;      per-channel lift keeps saturated reds intact; absence means
+;;      colour identity broke.
+;;   3. Near-black gray code 59 = (95,95,95) must be absent (< 5 px).
+;;      The broken bake formula mapped dark-brown sources to code 59;
+;;      correct quantisation lands on pure grayscale ramp codes instead.
 ;; ---------------------------------------------------------------------
 
 (deftest test-imp-sprite-palette-correctness
@@ -261,9 +257,12 @@
           (when (php/!== c -1)
             (php/aset cnt c (php/+ (php/aget cnt c) 1))))
         (recur (php/+ i 1))))
-    ;; Correct brown MUST appear (absent under broken formula)
-    (is (php/> (php/aget cnt 94) 0)
-        "code 94 (135,95,0 correct dark-brown) present in imp palette")
-    ;; Broken near-black gray must be rare
-    (is (php/< (php/aget cnt 59) 10)
-        "code 59 (95,95,95) not dominant - broken dark-brown mapping absent")))
+    ;; Lifted brown must appear (absent if tone-lift reverted)
+    (is (php/> (php/aget cnt 136) 0)
+        "code 136 (175,135,0 lifted brown) present - tone-lift active")
+    ;; Red crest must survive lift unchanged
+    (is (php/> (php/aget cnt 196) 0)
+        "code 196 (255,0,0 red) present - crest colour intact")
+    ;; Broken near-black gray must be absent
+    (is (php/< (php/aget cnt 59) 5)
+        "code 59 (95,95,95) absent - broken dark-brown mapping absent")))

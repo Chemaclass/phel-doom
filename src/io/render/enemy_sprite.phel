@@ -145,58 +145,159 @@
   "Box-filter a `{:w :h :px}` sprite down to half resolution. Each
    output texel averages its 2×2 source block in RGB space and
    requantizes to the nearest xterm-256 code; a block with fewer than
-   two opaque sources stays transparent (-1), keeping silhouettes
-   tight. Pure; runs once at load to build `sprite-mips`."
-  [spr]
+   `min-opaque` opaque sources (default 2) stays transparent (-1).
+   Use `min-opaque` 1 for the m2 level to preserve thin features
+   (limbs, head) that a double box-filter would otherwise discard.
+   Pure; runs once at load to build `sprite-mips`."
+  ([spr] (half-mip spr 2))
+  ([spr ^int min-opaque]
+   (let [sw  (:w spr)
+         sh  (:h spr)
+         px  (:px spr)
+         w2  (php/intdiv (php/+ sw 1) 2)
+         h2  (php/intdiv (php/+ sh 1) 2)
+         out (php/array)]
+     (loop [y 0]
+       (when (php/< y h2)
+         (loop [x 0]
+           (when (php/< x w2)
+             (let [x0 (php/* 2 x)
+                   y0 (php/* 2 y)
+                   x1 (php/min (php/- sw 1) (php/+ x0 1))
+                   y1 (php/min (php/- sh 1) (php/+ y0 1))
+                   a  (php/aget px (php/+ (php/* y0 sw) x0))
+                   b  (php/aget px (php/+ (php/* y0 sw) x1))
+                   c  (php/aget px (php/+ (php/* y1 sw) x0))
+                   d  (php/aget px (php/+ (php/* y1 sw) x1))
+                   n  (php/+ (if (php/=== a -1) 0 1)
+                             (if (php/=== b -1) 0 1)
+                             (if (php/=== c -1) 0 1)
+                             (if (php/=== d -1) 0 1))]
+               (php/aset out (php/+ (php/* y w2) x)
+                         (if (php/< n min-opaque)
+                           -1
+                           (rgb-code
+                            (php/intdiv (php/+ (php/aget rgb-r a) (php/aget rgb-r b)
+                                               (php/aget rgb-r c) (php/aget rgb-r d))
+                                        n)
+                            (php/intdiv (php/+ (php/aget rgb-g a) (php/aget rgb-g b)
+                                               (php/aget rgb-g c) (php/aget rgb-g d))
+                                        n)
+                            (php/intdiv (php/+ (php/aget rgb-b a) (php/aget rgb-b b)
+                                               (php/aget rgb-b c) (php/aget rgb-b d))
+                                        n)))))
+             (recur (php/+ x 1))))
+         (recur (php/+ y 1))))
+     {:w w2 :h h2 :px out})))
+
+(defn- contrast-stretch
+  "In-place luminance contrast stretch on a `{:w :h :px}` sprite.
+   Scans opaque texels for min/max luminance; if the range is at least
+   `min-range` (avoids over-stretching already-contrasty sprites),
+   rescales each opaque texel's RGB so the darkest maps to 0 and the
+   brightest maps to 255. Requantizes back to xterm-256. Transparent
+   pixels (-1) are untouched. Returns a NEW sprite map (does not
+   mutate `spr`). Load-time only; not called per frame."
+  [spr ^int min-range]
+  (let [sw (:w spr)
+        sh (:h spr)
+        px (:px spr)
+        n  (php/* sw sh)
+        lo (php/array)
+        hi (php/array)]
+    ;; First pass: find luminance (approx: 0.299R + 0.587G + 0.114B) min/max.
+    (php/aset lo 0 255)
+    (php/aset hi 0 0)
+    (loop [i 0]
+      (when (php/< i n)
+        (let [c (php/aget px i)]
+          (when (php/!== c -1)
+            (let [lum (php/intdiv (php/+ (php/* 299 (php/aget rgb-r c))
+                                         (php/* 587 (php/aget rgb-g c))
+                                         (php/* 114 (php/aget rgb-b c)))
+                                  1000)]
+              (when (php/< lum (php/aget lo 0)) (php/aset lo 0 lum))
+              (when (php/> lum (php/aget hi 0)) (php/aset hi 0 lum)))))
+        (recur (php/+ i 1))))
+    (let [range (php/- (php/aget hi 0) (php/aget lo 0))]
+      (if (php/< range min-range)
+        spr ;; sprite already has good contrast; leave untouched
+        (let [out (php/array)]
+          (loop [i 0]
+            (when (php/< i n)
+              (let [c (php/aget px i)]
+                (php/aset out i
+                          (if (php/=== c -1)
+                            -1
+                            (let [r   (php/aget rgb-r c)
+                                  g   (php/aget rgb-g c)
+                                  b   (php/aget rgb-b c)
+                                  lo0 (php/aget lo 0)]
+                              (rgb-code
+                               (php/min 255 (php/intdiv (php/* 255 (php/- r lo0)) range))
+                               (php/min 255 (php/intdiv (php/* 255 (php/- g lo0)) range))
+                               (php/min 255 (php/intdiv (php/* 255 (php/- b lo0)) range)))))))
+              (recur (php/+ i 1))))
+          {:w sw :h sh :px out})))))
+
+(defn- silhouette-darken
+  "In-place edge darkening for a `{:w :h :px}` sprite. Every opaque
+   texel that has at least one transparent 4-neighbour (up/down/left/right)
+   is darkened by shifting its RGB toward zero by `frac` (0.0–1.0 fraction
+   of the channel value). Returns a NEW sprite map. Load-time only."
+  [spr ^float frac]
   (let [sw  (:w spr)
         sh  (:h spr)
         px  (:px spr)
-        w2  (php/intdiv (php/+ sw 1) 2)
-        h2  (php/intdiv (php/+ sh 1) 2)
+        n   (php/* sw sh)
         out (php/array)]
-    (loop [y 0]
-      (when (php/< y h2)
-        (loop [x 0]
-          (when (php/< x w2)
-            (let [x0 (php/* 2 x)
-                  y0 (php/* 2 y)
-                  x1 (php/min (php/- sw 1) (php/+ x0 1))
-                  y1 (php/min (php/- sh 1) (php/+ y0 1))
-                  a  (php/aget px (php/+ (php/* y0 sw) x0))
-                  b  (php/aget px (php/+ (php/* y0 sw) x1))
-                  c  (php/aget px (php/+ (php/* y1 sw) x0))
-                  d  (php/aget px (php/+ (php/* y1 sw) x1))
-                  n  (php/+ (if (php/=== a -1) 0 1)
-                            (if (php/=== b -1) 0 1)
-                            (if (php/=== c -1) 0 1)
-                            (if (php/=== d -1) 0 1))]
-              (php/aset out (php/+ (php/* y w2) x)
-                        (if (php/< n 2)
-                          -1
+    (loop [i 0]
+      (when (php/< i n)
+        (let [c (php/aget px i)]
+          (php/aset out i
+                    (if (php/=== c -1)
+                      -1
+                      (let [y  (php/intdiv i sw)
+                            x  (php/% i sw)
+                            tu (if (php/> y 0)       (php/aget px (php/- i sw)) 0)
+                            td (if (php/< y (php/- sh 1)) (php/aget px (php/+ i sw)) 0)
+                            tl (if (php/> x 0)       (php/aget px (php/- i 1))  0)
+                            tr (if (php/< x (php/- sw 1)) (php/aget px (php/+ i 1))  0)]
+                        (if (or (php/=== tu -1) (php/=== td -1)
+                                (php/=== tl -1) (php/=== tr -1))
+                          ;; Edge texel: darken by frac toward black
                           (rgb-code
-                           (php/intdiv (php/+ (php/aget rgb-r a) (php/aget rgb-r b)
-                                              (php/aget rgb-r c) (php/aget rgb-r d))
-                                       n)
-                           (php/intdiv (php/+ (php/aget rgb-g a) (php/aget rgb-g b)
-                                              (php/aget rgb-g c) (php/aget rgb-g d))
-                                       n)
-                           (php/intdiv (php/+ (php/aget rgb-b a) (php/aget rgb-b b)
-                                              (php/aget rgb-b c) (php/aget rgb-b d))
-                                       n)))))
-            (recur (php/+ x 1))))
-        (recur (php/+ y 1))))
-    {:w w2 :h h2 :px out}))
+                           (php/intval (php/* (php/aget rgb-r c) (php/- 1.0 frac)))
+                           (php/intval (php/* (php/aget rgb-g c) (php/- 1.0 frac)))
+                           (php/intval (php/* (php/aget rgb-b c) (php/- 1.0 frac))))
+                          c)))))
+        (recur (php/+ i 1))))
+    {:w sw :h sh :px out}))
 
 (def sprite-mips
   "Per-sprite-id mip chain `{:m1 half-res :m2 quarter-res}` built once
-   at load by `half-mip`. The zone pass picks the level whose texel
-   density best matches the on-screen billboard (see
-   `sprite-for-type-lod`), so a distant monster samples a pre-filtered
-   image instead of skipping texels — far less shimmer and speckle."
+   at load. The zone pass picks the level whose texel density best matches
+   the on-screen billboard (see `sprite-for-type-lod`).
+
+   m1 (half res): standard box-filter, >= 2 opaque sources per block.
+   m2 (quarter res): three load-time passes applied after the second
+     box-filter to fight the readability loss from double averaging:
+     1. min-opaque=1 (any single opaque source keeps the block) --
+        preserves thin features (horns, limbs, head) that 2-of-4
+        would erase at quarter resolution.
+     2. contrast-stretch (min-range 40) -- the double box-filter
+        compresses luminance range; stretching it back toward 0-255
+        restores light/dark separation on far enemies.
+     3. silhouette-darken frac=0.40 -- texels bordering transparency
+        darken by 40%, cutting a clean 1-px dark outline that reads
+        as a figure silhouette at small on-screen sizes."
   (reduce
    (fn [acc sid]
-     (let [m1 (half-mip (get enemy-sprites sid))]
-       (assoc acc sid {:m1 m1 :m2 (half-mip m1)})))
+     (let [m1  (half-mip (get enemy-sprites sid))
+           m2r (half-mip m1 1)
+           m2c (contrast-stretch m2r 40)
+           m2  (silhouette-darken m2c 0.40)]
+       (assoc acc sid {:m1 m1 :m2 m2})))
    {}
    (keys enemy-sprites)))
 

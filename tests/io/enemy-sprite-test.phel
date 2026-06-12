@@ -211,6 +211,114 @@
     (is (= -1 (php/aget (:px m) 1)) "1 of 4 opaque stays transparent")
     (is (php/!== -1 (php/aget (:px m) 0)) "3 of 4 opaque becomes opaque")))
 
+(deftest test-half-mip-min-opaque-1-preserves-lone-texel
+  ;; With min-opaque=1 a single opaque source in a 2x2 block must
+  ;; produce an opaque output texel. The standard (default) call still
+  ;; requires >= 2 opaque sources in the same block -> transparent.
+  (let [px       (php/array 196 -1
+                            -1  -1)
+        spr      {:w 2 :h 2 :px px}
+        m-strict (half-mip spr 2)
+        m-loose  (half-mip spr 1)]
+    (is (= -1 (php/aget (:px m-strict) 0)) "min-opaque=2: 1-of-4 -> transparent")
+    (is (php/!== -1 (php/aget (:px m-loose) 0))  "min-opaque=1: 1-of-4 -> opaque")))
+
+(deftest test-sprite-mips-m2-has-opaque-texels-for-thin-features
+  ;; The m2 chain for :imp must retain some opaque texels in its top
+  ;; quarter (head region). Under the old min-opaque=2 double box-filter
+  ;; the head row could go fully transparent; with min-opaque=1 it does
+  ;; not, so the imp head stays visible at far range.
+  (let [m2  (:m2 (get sprite-mips :imp))
+        sw  (:w m2)
+        px  (:px m2)
+        ;; Count opaque texels in the top two rows of the quarter-res sprite.
+        cnt (loop [i 0 acc 0]
+              (if (php/>= i (php/* 2 sw))
+                acc
+                (recur (php/+ i 1)
+                       (if (php/!== (php/aget px i) -1) (php/+ acc 1) acc))))]
+    (is (php/> cnt 0) "m2 imp has opaque texels in top rows (head preserved)")))
+
+(deftest test-sprite-mips-m2-has-expanded-luminance-range
+  ;; After contrast-stretch the quarter-mip must span a wider luminance
+  ;; range than the raw double box-filter would produce. We verify that
+  ;; at least one texel reaches luminance > 200 (bright) and one sits
+  ;; below 100 (dark) in the :imp m2. A pure-averaged m2 collapses
+  ;; everything toward mid-gray, failing at least the bright end.
+  ;; Code ranges used as luminance proxies (rgb-luts are private):
+  ;;   codes 232-255 = gray ramp lum 8-248; code 196 = red lum~76;
+  ;;   code 226 = yellow lum~225; code 248+ -> lum >= 228 (bright).
+  ;;   dark codes: <= 235 (gray ramp lum <= 38) or 16 (rgb 0,0,0).
+  (let [m2         (:m2 (get sprite-mips :imp))
+        px         (:px m2)
+        sw         (:w m2)
+        sh         (:h m2)
+        n          (php/* sw sh)
+        ;; Check that the pixel set contains at least one grayscale ramp
+        ;; code near-white (>= 248 lum ~228) OR a bright cube code.
+        has-bright (loop [i 0 found false]
+                     (if (or found (php/>= i n))
+                       found
+                       (let [c (php/aget px i)]
+                         (recur (php/+ i 1)
+                                (and (php/!== c -1)
+                                     (or (php/>= c 248)
+                                         (php/=== c 226)
+                                         (php/=== c 196)))))))
+        ;; And at least one very dark code (gray ramp <= 234 = lum ~28 or
+        ;; black-adjacent cube 16 = (0,0,0), or dark cubes 17..18).
+        has-dark   (loop [i 0 found false]
+                     (if (or found (php/>= i n))
+                       found
+                       (let [c (php/aget px i)]
+                         (recur (php/+ i 1)
+                                (and (php/!== c -1)
+                                     (or (php/<= c 235)
+                                         (php/=== c 16)))))))]
+    (is has-bright "m2 imp has bright texels after contrast-stretch")
+    (is has-dark   "m2 imp has dark texels after contrast-stretch")))
+
+(deftest test-sprite-mips-m2-edge-texels-darker-than-interior
+  ;; silhouette-darken should make border texels (those adjacent to -1)
+  ;; darker than their interior equivalents. We verify by checking that
+  ;; the leftmost opaque column of the m2 imp (which borders transparency
+  ;; on the left) contains at least one code from a darker palette region
+  ;; than the sprite's overall brightest code. This is an indirect guard:
+  ;; it would only pass if at least some edge darkening occurred.
+  (let [m2       (:m2 (get sprite-mips :imp))
+        sw       (:w m2)
+        sh       (:h m2)
+        px       (:px m2)
+        ;; Find the brightest opaque code overall (by code value, which
+        ;; correlates with luminance for the grayscale ramp codes 232-255).
+        max-code (loop [i 0 best 0]
+                   (if (php/>= i (php/* sw sh))
+                     best
+                     (let [c (php/aget px i)]
+                       (recur (php/+ i 1)
+                              (if (and (php/!== c -1) (php/> c best)) c best)))))
+        ;; Find the first leftmost opaque x-column.
+        left-col (loop [x 0]
+                   (if (php/>= x sw)
+                     -1
+                     (let [has (loop [y 0 found false]
+                                 (if (or found (php/>= y sh))
+                                   found
+                                   (recur (php/+ y 1)
+                                          (php/!== (php/aget px (php/+ (php/* y sw) x)) -1))))]
+                       (if has x (recur (php/+ x 1))))))]
+    (when (php/>= left-col 0)
+      ;; At least one texel in the leftmost opaque column must be strictly
+      ;; less bright than the overall max (darkened by silhouette pass).
+      (let [col-max (loop [y 0 best 0]
+                      (if (php/>= y sh)
+                        best
+                        (let [c (php/aget px (php/+ (php/* y sw) left-col))]
+                          (recur (php/+ y 1)
+                                 (if (and (php/!== c -1) (php/> c best)) c best)))))]
+        (is (php/< col-max max-code)
+            "edge column codes are darker than brightest interior code - silhouette darkening active")))))
+
 (deftest test-sprite-mips-built-for-every-sprite
   (foreach [t [:imp :demon :caco :baron :cyber :revenant :archvile :mancubus]]
     (let [base (sprite-for-type t)

@@ -54,6 +54,13 @@
         (recur (php/+ lvl 1))))
     outer))
 
+(defn sprite-fade-index
+  "Map a 0-1 fade amount (distance fog + wound tint) to a `sprite-fade`
+   LUT level at half strength: sprites darken half as much as walls at
+   equal depth, so shading bands stay readable at mid/far range."
+  [^float fade-amt]
+  (php/max 0 (php/min 23 (php/intval (php/round (php/* (php/- 1.0 (php/* fade-amt 0.5)) 23.0))))))
+
 ;; =====================================================================
 ;; § Mip chain (box-filtered downscales)
 ;; =====================================================================
@@ -101,7 +108,10 @@
 (def- rgb-b (php/aget rgb-luts 2))
 
 (defn- cube-idx
-  ;; nearest 6x6x6 cube level index for one 0-255 channel value
+  ;; nearest 6x6x6 cube level index for one 0-255 channel value.
+  ;; Fast threshold approximation for the load-time mip builder; the
+  ;; bake tool (tools/bake-enemy-sprites.phel, nearest-cube-idx) uses
+  ;; the precise squared-distance search for bake-time quantization.
   [^int v]
   (cond (php/< v 48)  0
         (php/< v 115) 1

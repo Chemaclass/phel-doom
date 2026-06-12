@@ -5,7 +5,7 @@
   (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade sky-code floor-code door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright char-aspect shade-table shade-code-table shade-table-blood shade-code-table-blood])
   (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table bg-cell-cache halfblock build-sky-halfblock build-sky-codes-sub seam-darken-16 seam-darken-8 seam-darken-5 collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.wall-texture-data :refer [wall-tex])
-  (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type-lod sprite-fade sprite-col-x sprite-subcol-x enemy-sprite-cell enemy-sprite-quad])
+  (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type-lod sprite-fade sprite-fade-index sprite-col-x sprite-subcol-x enemy-sprite-cell enemy-sprite-quad])
   (:require phel-doom.io.render.hud :refer [minimap-door minimap-door-pulse minimap-rows hud-debug-line hud-line-str help-menu-string settings-menu-string])
   (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-door-face paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-flicker paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-weapon-hud paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
@@ -923,14 +923,11 @@
                    ;; enemy never fades to invisible.
               body-fade (php/min 0.65 (php/+ dist-fade (php/* dmg 0.35)))
                    ;; sprite-fade level for the whole billboard: half-
-                   ;; strength fog vs walls so sprite texels survive at
-                   ;; mid/far range. Wall tex-fade applies full body-fade;
-                   ;; sprites scale it by 0.5 so a monster at max depth
-                   ;; sits at fog level ~16 (30% darkening) rather than
-                   ;; level 8 (65% darkening), keeping shading bands visible
-                   ;; against dark stone. Quantized to 24-level fog LUT.
-              sfade     (php/aget sprite-fade
-                                  (php/max 0 (php/min 23 (php/intval (php/round (php/* (php/- 1.0 (php/* body-fade 0.5)) 23.0))))))]
+                   ;; strength fog vs walls (see sprite-fade-index) so a
+                   ;; monster at max depth sits at fog level ~16 (30%
+                   ;; darkening) rather than level 8 (65%), keeping its
+                   ;; shading bands visible against dark stone.
+              sfade     (php/aget sprite-fade (sprite-fade-index body-fade))]
           (let [e-top (php/intdiv (php/- svh h) 2)]
             (let [e-bot         (php/+ e-top h)
                   e-mid         (php/+ e-top (php/intdiv h 3))

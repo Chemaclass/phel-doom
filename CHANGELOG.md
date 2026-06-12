@@ -12,6 +12,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 ### Fixed
 
 - Enemy sprites at mid distance no longer show speckled noise columns: mip-switch thresholds tightened (native only below 1.5x oversampling ratio, half-mip below 3x, quarter-mip at 3x or more) so the pre-filtered level is chosen earlier, and sub-row sampling shifted to center-of-footprint coordinates to remove the top-left-corner bias that produced alternating bright/dark texels. No render-time cost change (integer arithmetic, same aget count).
+- Enemy sprites no longer show color-confetti (stray green, gray, pinkish specks) on brown/tan sprites such as the imp: the bake tool's palette quantization used evenly-spaced cube level thresholds (0/51/102/...) instead of the actual xterm-256 cube levels (0/95/135/175/215/255), causing source brown values (e.g. channel 47) to round to the wrong cube index and pick up spurious blue/green. The bake tool now uses nearest-squared-distance matching across the real cube levels (same algorithm as `rgb-code` in `enemy_sprite.phel`), and the baked data file has been corrected in place. Future rebakes from a Freedoom WAD will also be correct.
+- Mid-distance sprites no longer merge into the dark wall behind them: the distance-fog cap was lowered from 0.85 to 0.65, ensuring a monster at max range stays at least 35% lit. The squared `(d/max-depth)^2` curve is unchanged so close sprites stay fully saturated.
 
 ### Changed
 

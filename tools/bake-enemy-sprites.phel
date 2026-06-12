@@ -13,32 +13,68 @@
   (let [w (u16 s base) h (u16 s (php/+ base 2)) px (php/array)]
     (dotimes [i (php/* w h)] (php/aset px i -1))
     (dotimes [col w]
-             (let [colofs (u32 s (php/+ base 8 (php/* col 4)))]
-               (loop [p (php/+ base colofs)]
-                 (let [td (u8 s p)]
-                   (when (php/!== td 255)
-                     (let [len (u8 s (php/+ p 1)) dat (php/+ p 3)]
-                       (dotimes [k len]
-                                (let [y (php/+ td k)]
-                                  (when (php/< y h) (php/aset px (php/+ (php/* y w) col) (u8 s (php/+ dat k))))))
-                       (recur (php/+ dat len 1))))))))
+      (let [colofs (u32 s (php/+ base 8 (php/* col 4)))]
+        (loop [p (php/+ base colofs)]
+          (let [td (u8 s p)]
+            (when (php/!== td 255)
+              (let [len (u8 s (php/+ p 1)) dat (php/+ p 3)]
+                (dotimes [k len]
+                  (let [y (php/+ td k)]
+                    (when (php/< y h) (php/aset px (php/+ (php/* y w) col) (u8 s (php/+ dat k))))))
+                (recur (php/+ dat len 1))))))))
     {:w w :h h :px px}))
 
 (defn palette [s base]
   (let [pal (php/array)]
     (dotimes [i 256]
-             (php/aset pal i [(u8 s (php/+ base (php/* i 3)))
-                              (u8 s (php/+ base (php/* i 3) 1))
-                              (u8 s (php/+ base (php/* i 3) 2))]))
+      (php/aset pal i [(u8 s (php/+ base (php/* i 3)))
+                       (u8 s (php/+ base (php/* i 3) 1))
+                       (u8 s (php/+ base (php/* i 3) 2))]))
     pal))
 
-(defn rgb->256 [r g b]
+;; xterm-256 6x6x6 colour cube: actual level values (NOT evenly spaced).
+;; round(v*5/255) would assume 0/51/102/153/204/255 and mis-classify browns
+;; as gray-greens. We find the nearest actual level by squared distance.
+(def- cube-levels (php/array 0 95 135 175 215 255))
+
+(defn- nearest-cube-idx [^int v]
+  ;; Return the index (0-5) of the cube level closest to v.
+  (let [best-i  (php/array 0)
+        best-d2 (php/array 999999)]
+    (dotimes [i 6]
+      (let [d2 (let [diff (php/- v (php/aget cube-levels i))] (php/* diff diff))]
+        (when (php/< d2 (php/aget best-d2 0))
+          (php/aset best-d2 0 d2)
+          (php/aset best-i  0 i))))
+    (php/aget best-i 0)))
+
+(defn rgb->256 [^int r ^int g ^int b]
+  ;; Map an RGB triple to the nearest xterm-256 code.
+  ;; Checks the 6x6x6 colour cube and the 24-step grayscale ramp (232-255),
+  ;; keeps whichever is closer in squared RGB distance. Pure grays bypass
+  ;; the cube comparison and go straight to the ramp or the two edge codes.
   (if (and (php/=== r g) (php/=== g b))
-    (cond (php/< r 8)   16 (php/> r 248) 231
+    (cond (php/< r 8)   16
+          (php/> r 248) 231
           :else         (php/+ 232 (php/intval (php/round (php// (php/* (php/- r 8) 24) 247)))))
-    (php/+ 16 (php/* 36 (php/intval (php/round (php// (php/* r 5) 255))))
-           (php/* 6 (php/intval (php/round (php// (php/* g 5) 255))))
-           (php/intval (php/round (php// (php/* b 5) 255))))))
+    (let [ri   (nearest-cube-idx r)
+          gi   (nearest-cube-idx g)
+          bi   (nearest-cube-idx b)
+          cr   (php/aget cube-levels ri)
+          cg   (php/aget cube-levels gi)
+          cb   (php/aget cube-levels bi)
+          avg  (php/intdiv (php/+ r g b) 3)
+          gidx (php/max 0 (php/min 23 (php/intdiv (php/- avg 3) 10)))
+          gv   (php/+ 8 (php/* 10 gidx))
+          dc   (php/+ (let [d (php/- r cr)] (php/* d d))
+                      (let [d (php/- g cg)] (php/* d d))
+                      (let [d (php/- b cb)] (php/* d d)))
+          dg   (php/+ (let [d (php/- r gv)] (php/* d d))
+                      (let [d (php/- g gv)] (php/* d d))
+                      (let [d (php/- b gv)] (php/* d d)))]
+      (if (php/<= dc dg)
+        (php/+ 16 (php/* 36 ri) (php/* 6 gi) bi)
+        (php/+ 232 gidx)))))
 
 (defn load-wad [path]
   (let [s (php/file_get_contents path) dir (parse-directory s (parse-header s))]
@@ -52,11 +88,11 @@
             pic (decode-pic s (:offset e))
             w   (:w pic) h   (:h pic) px  (:px pic) row (php/array)]
         (dotimes [i (php/* w h)]
-                 (let [v (php/aget px i)]
-                   (php/array_push row (if (php/=== v -1) "-1"
-                                           (php/strval (rgb->256 (php/aget (php/aget pal v) 0)
-                                                                 (php/aget (php/aget pal v) 1)
-                                                                 (php/aget (php/aget pal v) 2)))))))
+          (let [v (php/aget px i)]
+            (php/array_push row (if (php/=== v -1) "-1"
+                                    (php/strval (rgb->256 (php/aget (php/aget pal v) 0)
+                                                          (php/aget (php/aget pal v) 1)
+                                                          (php/aget (php/aget pal v) 2)))))))
         (php/sprintf "{:w %d :h %d :px [%s]}" w h (php/implode " " row))))))
 
 (defn entry [wad k lump]
@@ -80,32 +116,32 @@
             th  (php/max 1 (php/intval (php/round (php// (php/* h tmax) mx))))
             row (php/array)]
         (dotimes [ty th]
-                 (dotimes [tx tw]
-                          (let [sx0 (php/intdiv (php/* tx w) tw)
-                                sx1 (php/max (php/+ sx0 1) (php/intdiv (php/* (php/+ tx 1) w) tw))
-                                sy0 (php/intdiv (php/* ty h) th)
-                                sy1 (php/max (php/+ sy0 1) (php/intdiv (php/* (php/+ ty 1) h) th))
-                                acc (php/array)]
-                            (php/aset acc 0 0) (php/aset acc 1 0) (php/aset acc 2 0) (php/aset acc 3 0)
-                            (loop [sy sy0]
-                              (when (php/< sy sy1)
-                                (loop [sx sx0]
-                                  (when (php/< sx sx1)
-                                    (let [v (php/aget px (php/+ (php/* sy w) sx))]
-                                      (when (php/!== v -1)
-                                        (let [c (php/aget pal v)]
-                                          (php/aset acc 0 (php/+ (php/aget acc 0) (php/aget c 0)))
-                                          (php/aset acc 1 (php/+ (php/aget acc 1) (php/aget c 1)))
-                                          (php/aset acc 2 (php/+ (php/aget acc 2) (php/aget c 2)))
-                                          (php/aset acc 3 (php/+ (php/aget acc 3) 1)))))
-                                    (recur (php/+ sx 1))))
-                                (recur (php/+ sy 1))))
-                            (php/array_push row
-                                            (if (php/=== 0 (php/aget acc 3))
-                                              "-1"
-                                              (php/strval (rgb->256 (php/intdiv (php/aget acc 0) (php/aget acc 3))
-                                                                    (php/intdiv (php/aget acc 1) (php/aget acc 3))
-                                                                    (php/intdiv (php/aget acc 2) (php/aget acc 3)))))))))
+          (dotimes [tx tw]
+            (let [sx0 (php/intdiv (php/* tx w) tw)
+                  sx1 (php/max (php/+ sx0 1) (php/intdiv (php/* (php/+ tx 1) w) tw))
+                  sy0 (php/intdiv (php/* ty h) th)
+                  sy1 (php/max (php/+ sy0 1) (php/intdiv (php/* (php/+ ty 1) h) th))
+                  acc (php/array)]
+              (php/aset acc 0 0) (php/aset acc 1 0) (php/aset acc 2 0) (php/aset acc 3 0)
+              (loop [sy sy0]
+                (when (php/< sy sy1)
+                  (loop [sx sx0]
+                    (when (php/< sx sx1)
+                      (let [v (php/aget px (php/+ (php/* sy w) sx))]
+                        (when (php/!== v -1)
+                          (let [c (php/aget pal v)]
+                            (php/aset acc 0 (php/+ (php/aget acc 0) (php/aget c 0)))
+                            (php/aset acc 1 (php/+ (php/aget acc 1) (php/aget c 1)))
+                            (php/aset acc 2 (php/+ (php/aget acc 2) (php/aget c 2)))
+                            (php/aset acc 3 (php/+ (php/aget acc 3) 1)))))
+                      (recur (php/+ sx 1))))
+                  (recur (php/+ sy 1))))
+              (php/array_push row
+                              (if (php/=== 0 (php/aget acc 3))
+                                "-1"
+                                (php/strval (rgb->256 (php/intdiv (php/aget acc 0) (php/aget acc 3))
+                                                      (php/intdiv (php/aget acc 1) (php/aget acc 3))
+                                                      (php/intdiv (php/aget acc 2) (php/aget acc 3)))))))))
         (php/sprintf "{:w %d :h %d :px [%s]}" tw th (php/implode " " row))))))
 
 (defn mip-entry [wad k lump tmax]

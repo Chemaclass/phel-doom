@@ -1,7 +1,7 @@
 (ns phel-doom-tests.io.enemy-sprite-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type sprite-for-type-lod sprite-mips sprite-fade half-mip sprite-col-x enemy-sprite-cell enemy-sprite-quad])
-  (:require phel-doom.io.render.enemy-sprites-data :refer [projectile-sprites death-sprites blood-sprites pickup-sprites]))
+  (:require phel-doom.io.render.enemy-sprites-data :refer [enemy-sprites projectile-sprites death-sprites blood-sprites pickup-sprites]))
 
 ;; ---------------------------------------------------------------------
 ;; sprite-for-type: every game enemy type resolves to a baked sprite,
@@ -222,7 +222,7 @@
 (deftest test-sprite-for-type-lod-picks-levels
   (let [base (sprite-for-type :imp)
         sh   (:h base)]
-    ;; tall on screen -> native; >= 2x oversample -> m1; >= 4x -> m2
+    ;; tall on screen -> native; >= 1.5x oversample -> m1; >= 3x -> m2
     (is (= sh (:h (sprite-for-type-lod :imp sh))) "near keeps native res")
     (is (= (:h (:m1 (get sprite-mips :imp)))
            (:h (sprite-for-type-lod :imp (php/intdiv sh 2))))
@@ -231,3 +231,39 @@
            (:h (sprite-for-type-lod :imp (php/intdiv sh 4))))
         "4x oversample picks the quarter mip")
     (is (nil? (sprite-for-type-lod :not-a-monster 10)) "unknown type nil")))
+
+;; ---------------------------------------------------------------------
+;; Palette correctness: the old broken rgb->256 bake formula assumed
+;; evenly-spaced cube levels 0/51/102/153/204/255 instead of the actual
+;; 0/95/135/175/215/255. The fix re-quantises by nearest squared-distance,
+;; matching the rgb-code function used by half-mip.
+;;
+;; Two regression guards:
+;;   1. Correct dark-brown code 94 = (135,95,0) MUST appear. Under the
+;;      broken formula those texels landed on code 101 (135,135,95)
+;;      instead. Absence of 94 means the fix has been reverted.
+;;   2. Near-black gray code 59 = (95,95,95) must be rare (< 10 px).
+;;      The broken formula mapped every very-dark-brown source pixel to
+;;      code 59; after the fix they land on proper near-black grayscale
+;;      codes (232-236). A count >= 10 means the systematic error is back.
+;;      (A small handful of 59s is fine: some genuine imp shadow pixels
+;;      quantise to (95,95,95) correctly.)
+;; ---------------------------------------------------------------------
+
+(deftest test-imp-sprite-palette-correctness
+  (let [imp (get enemy-sprites :imp)
+        px  (:px imp)
+        n   (php/* (:w imp) (:h imp))
+        cnt (php/array)]
+    (loop [i 0]
+      (when (php/< i n)
+        (let [c (php/aget px i)]
+          (when (php/!== c -1)
+            (php/aset cnt c (php/+ (php/aget cnt c) 1))))
+        (recur (php/+ i 1))))
+    ;; Correct brown MUST appear (absent under broken formula)
+    (is (php/> (php/aget cnt 94) 0)
+        "code 94 (135,95,0 correct dark-brown) present in imp palette")
+    ;; Broken near-black gray must be rare
+    (is (php/< (php/aget cnt 59) 10)
+        "code 59 (95,95,95) not dominant - broken dark-brown mapping absent")))

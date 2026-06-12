@@ -13,32 +13,169 @@
   (let [w (u16 s base) h (u16 s (php/+ base 2)) px (php/array)]
     (dotimes [i (php/* w h)] (php/aset px i -1))
     (dotimes [col w]
-             (let [colofs (u32 s (php/+ base 8 (php/* col 4)))]
-               (loop [p (php/+ base colofs)]
-                 (let [td (u8 s p)]
-                   (when (php/!== td 255)
-                     (let [len (u8 s (php/+ p 1)) dat (php/+ p 3)]
-                       (dotimes [k len]
-                                (let [y (php/+ td k)]
-                                  (when (php/< y h) (php/aset px (php/+ (php/* y w) col) (u8 s (php/+ dat k))))))
-                       (recur (php/+ dat len 1))))))))
+      (let [colofs (u32 s (php/+ base 8 (php/* col 4)))]
+        (loop [p (php/+ base colofs)]
+          (let [td (u8 s p)]
+            (when (php/!== td 255)
+              (let [len (u8 s (php/+ p 1)) dat (php/+ p 3)]
+                (dotimes [k len]
+                  (let [y (php/+ td k)]
+                    (when (php/< y h) (php/aset px (php/+ (php/* y w) col) (u8 s (php/+ dat k))))))
+                (recur (php/+ dat len 1))))))))
     {:w w :h h :px px}))
 
 (defn palette [s base]
   (let [pal (php/array)]
     (dotimes [i 256]
-             (php/aset pal i [(u8 s (php/+ base (php/* i 3)))
-                              (u8 s (php/+ base (php/* i 3) 1))
-                              (u8 s (php/+ base (php/* i 3) 2))]))
+      (php/aset pal i [(u8 s (php/+ base (php/* i 3)))
+                       (u8 s (php/+ base (php/* i 3) 1))
+                       (u8 s (php/+ base (php/* i 3) 2))]))
     pal))
 
-(defn rgb->256 [r g b]
+;; xterm-256 6x6x6 colour cube: actual level values (NOT evenly spaced).
+;; round(v*5/255) would assume 0/51/102/153/204/255 and mis-classify browns
+;; as gray-greens. We find the nearest actual level by squared distance.
+(def- cube-levels (php/array 0 95 135 175 215 255))
+
+(defn- sq [^int v] (php/* v v))
+
+(defn- nearest-cube-idx [^int v]
+  ;; Return the index (0-5) of the cube level closest to v.
+  (loop [i       1
+         best-i  0
+         best-d2 (sq (php/- v (php/aget cube-levels 0)))]
+    (if (php/>= i 6)
+      best-i
+      (let [d2 (sq (php/- v (php/aget cube-levels i)))]
+        (if (php/< d2 best-d2)
+          (recur (php/+ i 1) i d2)
+          (recur (php/+ i 1) best-i best-d2))))))
+
+;; Per-channel gamma applied before xterm-256 quantization.
+;; 0.50 (square-root curve) lifts the entire dark range so brown/olive
+;; shadow bands land in distinguishable codes instead of collapsing
+;; to near-black. Red (200,0,0) and yellow (200,180,0) are preserved
+;; because the lift is proportional on all three channels.
+(def- bake-gamma 0.50)
+
+;; Extra upward shift applied to grayscale ramp codes (232-255) after
+;; quantization. The ramp has 10-lum spacing; +3 steps (+30 lum) pushes
+;; the main body shadow tones (lum~58) into clearly visible territory
+;; (lum~88) while leaving the coloured cube codes (warm browns, reds,
+;; yellows) untouched so hue identity is preserved.
+(def- gray-ramp-shift 3)
+
+(defn- tone-lift
+  "Apply bake-gamma to a single 0-255 channel before quantization."
+  [^int v]
+  (php/intval (php/round (php/* (php/pow (php// v 255.0) bake-gamma) 255.0))))
+
+(defn- gray-shift
+  "Shift a grayscale ramp code (232-255) upward by gray-ramp-shift steps.
+   Caps at 248 to avoid blowing out the near-white end.
+   Cube codes (16-231) pass through unchanged."
+  [^int code]
+  (if (php/>= code 232)
+    (php/min 248 (php/+ code gray-ramp-shift))
+    code))
+
+(defn rgb->256 [^int r ^int g ^int b]
+  ;; Map an RGB triple to the nearest xterm-256 code.
+  ;; Checks the 6x6x6 colour cube and the 24-step grayscale ramp (232-255),
+  ;; keeps whichever is closer in squared RGB distance. Pure grays bypass
+  ;; the cube comparison and go straight to the ramp or the two edge codes.
   (if (and (php/=== r g) (php/=== g b))
-    (cond (php/< r 8)   16 (php/> r 248) 231
+    (cond (php/< r 8)   16
+          (php/> r 248) 231
           :else         (php/+ 232 (php/intval (php/round (php// (php/* (php/- r 8) 24) 247)))))
-    (php/+ 16 (php/* 36 (php/intval (php/round (php// (php/* r 5) 255))))
-           (php/* 6 (php/intval (php/round (php// (php/* g 5) 255))))
-           (php/intval (php/round (php// (php/* b 5) 255))))))
+    (let [ri   (nearest-cube-idx r)
+          gi   (nearest-cube-idx g)
+          bi   (nearest-cube-idx b)
+          cr   (php/aget cube-levels ri)
+          cg   (php/aget cube-levels gi)
+          cb   (php/aget cube-levels bi)
+          avg  (php/intdiv (php/+ r g b) 3)
+          gidx (php/max 0 (php/min 23 (php/intdiv (php/- avg 3) 10)))
+          gv   (php/+ 8 (php/* 10 gidx))
+          dc   (php/+ (sq (php/- r cr)) (sq (php/- g cg)) (sq (php/- b cb)))
+          dg   (php/+ (sq (php/- r gv)) (sq (php/- g gv)) (sq (php/- b gv)))]
+      (if (php/<= dc dg)
+        (php/+ 16 (php/* 36 ri) (php/* 6 gi) bi)
+        (php/+ 232 gidx)))))
+
+;; Source r-b threshold for warm-bias: only redirect gray pixels whose
+;; original red-channel exceeds blue by at least this amount (12 = ~5%).
+;; Keeps purely neutral grays (stone, concrete) on the gray ramp.
+(def- warm-bias-threshold 12)
+
+(defn- next-cube-level
+  "Return the smallest cube level strictly greater than v, or 255 if none."
+  [^int v]
+  (loop [i 0 best 255]
+    (if (php/>= i 6)
+      best
+      (let [lv (php/aget cube-levels i)]
+        (recur (php/+ i 1)
+               (if (and (php/> lv v) (php/< lv best)) lv best))))))
+
+(defn- prev-cube-level
+  "Return the largest cube level strictly less than v, or 0 if none."
+  [^int v]
+  (loop [i 0 best 0]
+    (if (php/>= i 6)
+      best
+      (let [lv (php/aget cube-levels i)]
+        (recur (php/+ i 1)
+               (if (and (php/< lv v) (php/> lv best)) lv best))))))
+
+(defn- warm-cube-code?
+  "True when a colour-cube code (16-231) is genuinely warm: its red
+   index strictly exceeds its blue index (not just equal/neutral)."
+  [^int code]
+  (let [ci (php/- code 16)]
+    (php/> (php/intdiv ci 36) (php/% ci 6))))
+
+(defn- warm-bias-code
+  "Given lifted r/g/b that quantized to the gray ramp, try to redirect to
+   the nearest warm cube code (r_idx > b_idx) by nudging r up one cube step
+   and b down one cube step before re-quantizing.
+   Returns the warm cube code if successful, else the original gray-shifted code."
+  [^int lr ^int lg ^int lb ^int gray-code]
+  (let [r2 (next-cube-level lr)
+        b2 (prev-cube-level lb)
+        c2 (rgb->256 r2 lg b2)]
+    (if (php/< c2 232)
+      (if (warm-cube-code? c2) c2 (gray-shift gray-code))
+      ;; Nudge didn't escape gray: try r-only boost
+      (let [c3 (rgb->256 r2 lg lb)]
+        (if (and (php/< c3 232) (warm-cube-code? c3))
+          c3
+          (gray-shift gray-code))))))
+
+(defn rgb->256-lifted
+  "Like rgb->256 but applies tone-lift to each channel, warm-biases dark
+   olive/brown source pixels that land on the gray ramp (r-b >= warm-bias-threshold),
+   and applies gray-ramp-shift to remaining gray codes. Used for enemy sprites
+   (imp, demon, caco) whose dark art needs both the lift and warm hue identity."
+  [^int r ^int g ^int b]
+  (let [lr   (tone-lift r)
+        lg   (tone-lift g)
+        lb   (tone-lift b)
+        code (rgb->256 lr lg lb)]
+    (if (and (php/>= code 232)
+             (php/>= (php/- r b) warm-bias-threshold))
+      (warm-bias-code lr lg lb code)
+      (gray-shift code))))
+
+(defn rgb->256-pickup
+  "Like rgb->256-lifted but skips the gray-ramp-shift. Pickup item
+   sprites (medkits, armor, ammo clips, keycards) are bright art that
+   already land in the readable lum 88-168 range after the gamma lift;
+   the +3-step gray shift would push them into near-white (lum 168),
+   washing out internal shading. Tone-lift is kept so hue and saturation
+   match the enemy palette."
+  [^int r ^int g ^int b]
+  (rgb->256 (tone-lift r) (tone-lift g) (tone-lift b)))
 
 (defn load-wad [path]
   (let [s (php/file_get_contents path) dir (parse-directory s (parse-header s))]
@@ -52,9 +189,9 @@
             pic (decode-pic s (:offset e))
             w   (:w pic) h   (:h pic) px  (:px pic) row (php/array)]
         (dotimes [i (php/* w h)]
-                 (let [v (php/aget px i)]
-                   (php/array_push row (if (php/=== v -1) "-1"
-                                           (php/strval (rgb->256 (php/aget (php/aget pal v) 0)
+          (let [v (php/aget px i)]
+            (php/array_push row (if (php/=== v -1) "-1"
+                                    (php/strval (rgb->256-lifted (php/aget (php/aget pal v) 0)
                                                                  (php/aget (php/aget pal v) 1)
                                                                  (php/aget (php/aget pal v) 2)))))))
         (php/sprintf "{:w %d :h %d :px [%s]}" w h (php/implode " " row))))))
@@ -69,7 +206,10 @@
 ;; requantises to xterm-256. Pre-averaging makes a small on-screen
 ;; pickup read as a clean colour blob instead of aliased point samples.
 ;; Returns "{:w .. :h .. :px [..]}".
-(defn mip-str [wad lump tmax]
+(defn- mip-str-with [wad lump tmax quantize-fn]
+  ;; Shared downscale core: `quantize-fn` is the (r g b -> code) used on
+  ;; each averaged texel (rgb->256-lifted for enemies, rgb->256-pickup
+  ;; for bright item art).
   (let [e (find-lump (:dir wad) lump)]
     (when e
       (let [s   (:s wad) pal (:pal wad)
@@ -80,36 +220,52 @@
             th  (php/max 1 (php/intval (php/round (php// (php/* h tmax) mx))))
             row (php/array)]
         (dotimes [ty th]
-                 (dotimes [tx tw]
-                          (let [sx0 (php/intdiv (php/* tx w) tw)
-                                sx1 (php/max (php/+ sx0 1) (php/intdiv (php/* (php/+ tx 1) w) tw))
-                                sy0 (php/intdiv (php/* ty h) th)
-                                sy1 (php/max (php/+ sy0 1) (php/intdiv (php/* (php/+ ty 1) h) th))
-                                acc (php/array)]
-                            (php/aset acc 0 0) (php/aset acc 1 0) (php/aset acc 2 0) (php/aset acc 3 0)
-                            (loop [sy sy0]
-                              (when (php/< sy sy1)
-                                (loop [sx sx0]
-                                  (when (php/< sx sx1)
-                                    (let [v (php/aget px (php/+ (php/* sy w) sx))]
-                                      (when (php/!== v -1)
-                                        (let [c (php/aget pal v)]
-                                          (php/aset acc 0 (php/+ (php/aget acc 0) (php/aget c 0)))
-                                          (php/aset acc 1 (php/+ (php/aget acc 1) (php/aget c 1)))
-                                          (php/aset acc 2 (php/+ (php/aget acc 2) (php/aget c 2)))
-                                          (php/aset acc 3 (php/+ (php/aget acc 3) 1)))))
-                                    (recur (php/+ sx 1))))
-                                (recur (php/+ sy 1))))
-                            (php/array_push row
-                                            (if (php/=== 0 (php/aget acc 3))
-                                              "-1"
-                                              (php/strval (rgb->256 (php/intdiv (php/aget acc 0) (php/aget acc 3))
-                                                                    (php/intdiv (php/aget acc 1) (php/aget acc 3))
-                                                                    (php/intdiv (php/aget acc 2) (php/aget acc 3)))))))))
+          (dotimes [tx tw]
+            (let [sx0 (php/intdiv (php/* tx w) tw)
+                  sx1 (php/max (php/+ sx0 1) (php/intdiv (php/* (php/+ tx 1) w) tw))
+                  sy0 (php/intdiv (php/* ty h) th)
+                  sy1 (php/max (php/+ sy0 1) (php/intdiv (php/* (php/+ ty 1) h) th))
+                  acc (php/array)]
+              (php/aset acc 0 0) (php/aset acc 1 0) (php/aset acc 2 0) (php/aset acc 3 0)
+              (loop [sy sy0]
+                (when (php/< sy sy1)
+                  (loop [sx sx0]
+                    (when (php/< sx sx1)
+                      (let [v (php/aget px (php/+ (php/* sy w) sx))]
+                        (when (php/!== v -1)
+                          (let [c (php/aget pal v)]
+                            (php/aset acc 0 (php/+ (php/aget acc 0) (php/aget c 0)))
+                            (php/aset acc 1 (php/+ (php/aget acc 1) (php/aget c 1)))
+                            (php/aset acc 2 (php/+ (php/aget acc 2) (php/aget c 2)))
+                            (php/aset acc 3 (php/+ (php/aget acc 3) 1)))))
+                      (recur (php/+ sx 1))))
+                  (recur (php/+ sy 1))))
+              (php/array_push row
+                              (if (php/=== 0 (php/aget acc 3))
+                                "-1"
+                                (php/strval (quantize-fn (php/intdiv (php/aget acc 0) (php/aget acc 3))
+                                                         (php/intdiv (php/aget acc 1) (php/aget acc 3))
+                                                         (php/intdiv (php/aget acc 2) (php/aget acc 3)))))))))
         (php/sprintf "{:w %d :h %d :px [%s]}" tw th (php/implode " " row))))))
+
+(defn mip-str
+  "Enemy-palette mip (rgb->256-lifted: gamma + warm-bias + gray-shift)."
+  [wad lump tmax]
+  (mip-str-with wad lump tmax rgb->256-lifted))
 
 (defn mip-entry [wad k lump tmax]
   (let [g (mip-str wad lump tmax)]
+    (when g (php/sprintf "\n   %s %s" k g))))
+
+(defn mip-str-pickup
+  "Pickup-palette mip: rgb->256-pickup (gamma lift, NO gray-ramp-shift)
+   so bright item art (medkit, armor, clips) is not washed toward
+   near-white."
+  [wad lump tmax]
+  (mip-str-with wad lump tmax rgb->256-pickup))
+
+(defn mip-entry-pickup [wad k lump tmax]
+  (let [g (mip-str-pickup wad lump tmax)]
     (when g (php/sprintf "\n   %s %s" k g))))
 
 ;; A death entry: "\n   :imp [<grid> <grid> ...]" of whatever frames
@@ -170,7 +326,9 @@
                 [":incinerator" "PLASA0"] [":rocket" "LAUNA0"] [":chainsaw" "CSAWA0"]]]
            ;; Pickups render small on screen, so bake an area-averaged
            ;; mip (longest side 18 px) -> clean at distance, not aliased.
-    (let [s (mip-entry w1 (php/aget pk 0) (php/aget pk 1) 18)]
+           ;; Use mip-entry-pickup (no gray-ramp-shift) so bright item art
+           ;; stays readable instead of washing toward near-white.
+    (let [s (mip-entry-pickup w1 (php/aget pk 0) (php/aget pk 1) 18)]
       (when s (php/array_push sb s))))
   (php/array_push sb "})\n\n")
   ;; Per-type death frames: collapse frame(s) then corpse.

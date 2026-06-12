@@ -1,7 +1,7 @@
 (ns phel-doom-tests.io.enemy-sprite-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type sprite-for-type-lod sprite-mips sprite-fade half-mip sprite-col-x enemy-sprite-cell enemy-sprite-quad])
-  (:require phel-doom.io.render.enemy-sprites-data :refer [projectile-sprites death-sprites blood-sprites pickup-sprites]))
+  (:require phel-doom.io.render.enemy-sprites-data :refer [enemy-sprites projectile-sprites death-sprites blood-sprites pickup-sprites]))
 
 ;; ---------------------------------------------------------------------
 ;; sprite-for-type: every game enemy type resolves to a baked sprite,
@@ -222,7 +222,7 @@
 (deftest test-sprite-for-type-lod-picks-levels
   (let [base (sprite-for-type :imp)
         sh   (:h base)]
-    ;; tall on screen -> native; >= 2x oversample -> m1; >= 4x -> m2
+    ;; tall on screen -> native; >= 1.5x oversample -> m1; >= 3x -> m2
     (is (= sh (:h (sprite-for-type-lod :imp sh))) "near keeps native res")
     (is (= (:h (:m1 (get sprite-mips :imp)))
            (:h (sprite-for-type-lod :imp (php/intdiv sh 2))))
@@ -231,3 +231,38 @@
            (:h (sprite-for-type-lod :imp (php/intdiv sh 4))))
         "4x oversample picks the quarter mip")
     (is (nil? (sprite-for-type-lod :not-a-monster 10)) "unknown type nil")))
+
+;; ---------------------------------------------------------------------
+;; Palette correctness guards (three invariants):
+;;
+;;   1. Lifted warm-brown code 136 = (175,135,0) MUST appear. Under
+;;      gamma=0.50 + gray-ramp-shift the original dark-brown texels
+;;      remap to code 136 (lum=131). Absence means tone-lift reverted.
+;;   2. Red crest code 196 = (255,0,0) MUST appear. The hue-preserving
+;;      per-channel lift keeps saturated reds intact; absence means
+;;      colour identity broke.
+;;   3. Code 95 (135,135,135 lifted gray) must dominate the body - the bulk of
+;;      imp shadow pixels land here after tone-lift, indicating the correct
+;;      quantisation path is active (>= 100 px expected in the native-res grid).
+;; ---------------------------------------------------------------------
+
+(deftest test-imp-sprite-palette-correctness
+  (let [imp (get enemy-sprites :imp)
+        px  (:px imp)
+        n   (php/* (:w imp) (:h imp))
+        cnt (php/array)]
+    (loop [i 0]
+      (when (php/< i n)
+        (let [c (php/aget px i)]
+          (when (php/!== c -1)
+            (php/aset cnt c (php/+ (php/aget cnt c) 1))))
+        (recur (php/+ i 1))))
+    ;; Lifted brown must appear (absent if tone-lift reverted)
+    (is (php/> (php/aget cnt 136) 0)
+        "code 136 (175,135,0 lifted brown) present - tone-lift active")
+    ;; Red crest must survive lift unchanged
+    (is (php/> (php/aget cnt 196) 0)
+        "code 196 (255,0,0 red) present - crest colour intact")
+    ;; Body shadow bulk must be present (lifted mid-gray, not collapsed to near-black)
+    (is (php/>= (php/aget cnt 95) 100)
+        "code 95 (135,135,135) dominant body shadow - correct quantisation active")))

@@ -76,24 +76,6 @@
     (php/min 248 (php/+ code gray-ramp-shift))
     code))
 
-(defn rgb->256-lifted
-  "Like rgb->256 but applies tone-lift to each channel then gray-shift
-   to the resulting code, lifting dark body shadows into visible range.
-   Used for enemy sprites (dark art: imp brown, demon gray) where the
-   ramp shift is needed to separate shadow bands from wall grays."
-  [^int r ^int g ^int b]
-  (gray-shift (rgb->256 (tone-lift r) (tone-lift g) (tone-lift b))))
-
-(defn rgb->256-pickup
-  "Like rgb->256-lifted but skips the gray-ramp-shift. Pickup item
-   sprites (medkits, armor, ammo clips, keycards) are bright art that
-   already land in the readable lum 88-168 range after the gamma lift;
-   the +3-step gray shift would push them into near-white (lum 168),
-   washing out internal shading. Tone-lift is kept so hue and saturation
-   match the enemy palette."
-  [^int r ^int g ^int b]
-  (rgb->256 (tone-lift r) (tone-lift g) (tone-lift b)))
-
 (defn rgb->256 [^int r ^int g ^int b]
   ;; Map an RGB triple to the nearest xterm-256 code.
   ;; Checks the 6x6x6 colour cube and the 24-step grayscale ramp (232-255),
@@ -121,6 +103,82 @@
       (if (php/<= dc dg)
         (php/+ 16 (php/* 36 ri) (php/* 6 gi) bi)
         (php/+ 232 gidx)))))
+
+;; Source r-b threshold for warm-bias: only redirect gray pixels whose
+;; original red-channel exceeds blue by at least this amount (12 = ~5%).
+;; Keeps purely neutral grays (stone, concrete) on the gray ramp.
+(def- warm-bias-threshold 12)
+
+(defn- next-cube-level
+  "Return the smallest cube level strictly greater than v, or 255 if none."
+  [^int v]
+  (let [result (php/array 255)]
+    (dotimes [i 6]
+      (let [lv (php/aget cube-levels i)]
+        (when (php/> lv v)
+          (when (php/< lv (php/aget result 0))
+            (php/aset result 0 lv)))))
+    (php/aget result 0)))
+
+(defn- prev-cube-level
+  "Return the largest cube level strictly less than v, or 0 if none."
+  [^int v]
+  (let [result (php/array 0)]
+    (dotimes [i 6]
+      (let [lv (php/aget cube-levels i)]
+        (when (php/< lv v)
+          (when (php/> lv (php/aget result 0))
+            (php/aset result 0 lv)))))
+    (php/aget result 0)))
+
+(defn- warm-bias-code
+  "Given lifted r/g/b that quantized to the gray ramp, try to redirect to
+   the nearest warm cube code (r_idx > b_idx) by nudging r up one cube step
+   and b down one cube step before re-quantizing.
+   Returns the warm cube code if successful, else the original gray-shifted code."
+  [^int lr ^int lg ^int lb ^int gray-code]
+  (let [r2 (next-cube-level lr)
+        b2 (prev-cube-level lb)
+        c2 (rgb->256 r2 lg b2)]
+    (if (php/< c2 232)
+      ;; Check r_idx > b_idx (genuine warm, not just equal)
+      (let [ci (php/- c2 16)
+            bi (php/% ci 6)
+            ri (php/intdiv ci 36)]
+        (if (php/> ri bi) c2 (gray-shift gray-code)))
+      ;; Nudge didn't escape gray: try r-only boost
+      (let [c3 (rgb->256 r2 lg lb)]
+        (if (php/< c3 232)
+          (let [ci (php/- c3 16)
+                bi (php/% ci 6)
+                ri (php/intdiv ci 36)]
+            (if (php/> ri bi) c3 (gray-shift gray-code)))
+          (gray-shift gray-code))))))
+
+(defn rgb->256-lifted
+  "Like rgb->256 but applies tone-lift to each channel, warm-biases dark
+   olive/brown source pixels that land on the gray ramp (r-b >= warm-bias-threshold),
+   and applies gray-ramp-shift to remaining gray codes. Used for enemy sprites
+   (imp, demon, caco) whose dark art needs both the lift and warm hue identity."
+  [^int r ^int g ^int b]
+  (let [lr   (tone-lift r)
+        lg   (tone-lift g)
+        lb   (tone-lift b)
+        code (rgb->256 lr lg lb)]
+    (if (and (php/>= code 232)
+             (php/>= (php/- r b) warm-bias-threshold))
+      (warm-bias-code lr lg lb code)
+      (gray-shift code))))
+
+(defn rgb->256-pickup
+  "Like rgb->256-lifted but skips the gray-ramp-shift. Pickup item
+   sprites (medkits, armor, ammo clips, keycards) are bright art that
+   already land in the readable lum 88-168 range after the gamma lift;
+   the +3-step gray shift would push them into near-white (lum 168),
+   washing out internal shading. Tone-lift is kept so hue and saturation
+   match the enemy palette."
+  [^int r ^int g ^int b]
+  (rgb->256 (tone-lift r) (tone-lift g) (tone-lift b)))
 
 (defn load-wad [path]
   (let [s (php/file_get_contents path) dir (parse-directory s (parse-header s))]

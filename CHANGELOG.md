@@ -11,6 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Changed
 
+- Enemy sprites render cleaner and fog with distance: each baked Freedoom sprite now carries box-filtered half / quarter mip levels picked by on-screen size, so mid and far monsters sample a pre-filtered image instead of point-skipping texels (far less sparkle/speckle; near monsters stay byte-identical), and every sprite texel routes through a 24-level fog LUT on the same darkening curve as the walls - a far monster sinks into the haze instead of popping full-saturation, and a wounded one reads darker. Corpses, blood splats, fireballs and near-LOD pickup blits share the same depth-keyed fade (close pickups land on the identity level, colours stay readable). Render cost: one extra aget per sprite texel - bench delta within noise.
 - Doors render as real textured doors: a procedural 64x64 amber metal door (rust border + frame, six vertical planks, horizontal mid rail) sampled through the stone-wall texture path, replacing the old one-stripe-per-column face that read as a striped curtain. Panels scale with perspective, fog with distance (floored so a door never fades to black, still haze-immune), edges trace the sub-row diagonal seams, and the 4 rad/s pulse breathes brightness instead of swapping stripe colours. Boss door keeps its flat pulsing red slab; seam accents now darken via hue-true LUTs (grayscale walls stay byte-identical).
 
 ## [0.13.0] - 2026-06-11

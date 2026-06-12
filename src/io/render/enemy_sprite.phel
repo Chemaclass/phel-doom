@@ -193,20 +193,30 @@
 (defn sprite-for-type-lod
   "Like `sprite-for-type` but mip-aware: given the billboard's
    on-screen sub-pixel row count (2 rows per cell), return the sprite
-   level whose native height best matches it — quarter res when the
-   source is >= 4× taller than the screen box, half res at >= 2×,
-   native otherwise. Returns nil when the type has no baked sprite."
+   level whose native height best matches it. Thresholds are tighter
+   than a naive 2x/4x split so that native is only used near 1:1
+   ratio (less than 1.5x oversampling), cutting point-sample speckle
+   at mid distances:
+
+     quarter res (m2) : source >= 3x taller than the screen box
+     half res (m1)    : source >= 1.5x taller
+     native           : otherwise (oversampling ratio < 1.5)
+
+   Returns nil when the type has no baked sprite."
   [type-kw ^int sub-rows]
   (let [sid (get sprite-type-map type-kw)]
     (when sid
       (let [base (get enemy-sprites sid)]
         (when base
           (let [sh   (:h base)
-                mips (get sprite-mips sid)]
+                mips (get sprite-mips sid)
+                ;; sub-rows * 3/2 expressed as integer: sh >= 3*sub-rows/2
+                ;; i.e. sh*2 >= sub-rows*3 to avoid float
+                sh2  (php/* sh 2)]
             (cond
-              (php/>= sh (php/* 4 sub-rows)) (:m2 mips)
-              (php/>= sh (php/* 2 sub-rows)) (:m1 mips)
-              :else                          base)))))))
+              (php/>= sh (php/* 3 sub-rows))  (:m2 mips)
+              (php/>= sh2 (php/* 3 sub-rows)) (:m1 mips)
+              :else                           base)))))))
 
 ;; =====================================================================
 ;; § Per-cell sampling
@@ -290,8 +300,12 @@
   [px ^int sw ^int sh ^int sx ^int sxr ^int etop ^int ebot ^int row fade]
   (let [h2  (php/max 1 (php/* 2 (php/- ebot etop)))
         sub (php/* 2 (php/- row etop))
-        ty  (php/max 0 (php/min (php/- sh 1) (php/intval (php// (php/* sub sh) h2))))
-        by  (php/max 0 (php/min (php/- sh 1) (php/intval (php// (php/* (php/+ sub 1) sh) h2))))
+        ;; Center-of-footprint sampling: add h2/2 before the divide so each
+        ;; screen sub-row samples the middle of its sprite footprint rather than
+        ;; the leading edge, suppressing top-left-biased speckle at mid distances.
+        hh  (php/intdiv h2 2)
+        ty  (php/max 0 (php/min (php/- sh 1) (php/intdiv (php/+ (php/* sub sh) hh) h2)))
+        by  (php/max 0 (php/min (php/- sh 1) (php/intdiv (php/+ (php/* (php/+ sub 1) sh) hh) h2)))
         ;; 2×2 sub-pixel sample: top/bottom rows × left(sx)/right(sxr) cols.
         tl  (php/aget fade (php/aget px (php/+ (php/* ty sw) sx)))
         tr  (php/aget fade (php/aget px (php/+ (php/* ty sw) sxr)))
@@ -332,8 +346,10 @@
   [px ^int sw ^int sh ^int sx ^int sxr ^int etop ^int ebot ^int row fade]
   (let [h2  (php/max 1 (php/* 2 (php/- ebot etop)))
         sub (php/* 2 (php/- row etop))
-        ty  (php/max 0 (php/min (php/- sh 1) (php/intval (php// (php/* sub sh) h2))))
-        by  (php/max 0 (php/min (php/- sh 1) (php/intval (php// (php/* (php/+ sub 1) sh) h2))))
+        ;; Center-of-footprint sampling: same half-step bias as enemy-sprite-cell.
+        hh  (php/intdiv h2 2)
+        ty  (php/max 0 (php/min (php/- sh 1) (php/intdiv (php/+ (php/* sub sh) hh) h2)))
+        by  (php/max 0 (php/min (php/- sh 1) (php/intdiv (php/+ (php/* (php/+ sub 1) sh) hh) h2)))
         out (php/array)]
     (php/aset out 0 (php/aget fade (php/aget px (php/+ (php/* ty sw) sx))))
     (php/aset out 1 (php/aget fade (php/aget px (php/+ (php/* ty sw) sxr))))

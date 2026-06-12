@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Fixed
+
+- Enemy sprites at mid distance no longer show speckled noise columns: mip-switch thresholds tightened (native only below 1.5x oversampling ratio, half-mip below 3x, quarter-mip at 3x or more) so the pre-filtered level is chosen earlier, and sub-row sampling shifted to center-of-footprint coordinates to remove the top-left-corner bias that produced alternating bright/dark texels. No render-time cost change (integer arithmetic, same aget count).
+
 ### Changed
 
 - Enemy sprites render cleaner and fog with distance: each baked Freedoom sprite now carries box-filtered half / quarter mip levels picked by on-screen size, so mid and far monsters sample a pre-filtered image instead of point-skipping texels (far less sparkle/speckle; near monsters stay byte-identical), and every sprite texel routes through a 24-level fog LUT on the same darkening curve as the walls - a far monster sinks into the haze instead of popping full-saturation, and a wounded one reads darker. Corpses, blood splats, fireballs and near-LOD pickup blits share the same depth-keyed fade (close pickups land on the identity level, colours stay readable). Render cost: one extra aget per sprite texel - bench delta within noise.

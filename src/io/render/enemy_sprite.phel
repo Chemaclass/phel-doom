@@ -1,7 +1,8 @@
 ;; Pure helpers for sampling baked Freedoom enemy sprite pixels.
 ;; No side effects; used by main.phel's row loop.
 (ns phel-doom.io.render.enemy-sprite
-  (:require phel-doom.io.render.enemy-sprites-data :refer [enemy-sprites]))
+  (:require phel-doom.io.render.enemy-sprites-data :refer [enemy-sprites])
+  (:require phel-doom.io.render.frame-math :refer [tex-fade-table]))
 
 ;; =====================================================================
 ;; § Sprite-id resolution
@@ -31,6 +32,181 @@
   (let [sid (get sprite-type-map type-kw)]
     (when sid
       (get enemy-sprites sid))))
+
+;; =====================================================================
+;; § Distance fog
+;; =====================================================================
+
+(def sprite-fade
+  "24-level × 256-code distance-fog LUT for enemy sprite texels.
+   Level 23 = identity (near, full brightness), lower levels darken
+   toward black on the same curve as the textured-wall fog (see
+   `tex-fade-table`), so a far monster sinks into the same haze as
+   the wall behind it. Every level also maps the transparent marker
+   -1 to itself, letting the samplers fade a texel with a single
+   unguarded aget."
+  (let [outer (php/array)]
+    (loop [lvl 0]
+      (when (php/< lvl 24)
+        (let [inner (php/aget tex-fade-table lvl)]
+          (php/aset inner -1 -1)
+          (php/aset outer lvl inner))
+        (recur (php/+ lvl 1))))
+    outer))
+
+;; =====================================================================
+;; § Mip chain (box-filtered downscales)
+;; =====================================================================
+
+;; xterm-256 code -> RGB channel LUTs (flat 256 + [-1] = 0) used by the
+;; load-time mip builder. Codes 0-15 use the standard system palette.
+(def- sys-rgb
+  (php/array 0 0 0 205 0 0 0 205 0 205 205 0 0 0 238 205 0 205 0 205 205 229 229 229
+             127 127 127 255 0 0 0 255 0 255 255 0 92 92 255 255 0 255 0 255 255 255 255 255))
+
+(def- cube-lv (php/array 0 95 135 175 215 255))
+
+(def- rgb-luts
+  (let [r   (php/array)
+        g   (php/array)
+        b   (php/array)
+        out (php/array)]
+    (loop [c 0]
+      (when (php/< c 256)
+        (if (php/>= c 232)
+          (let [v (php/+ 8 (php/* 10 (php/- c 232)))]
+            (php/aset r c v)
+            (php/aset g c v)
+            (php/aset b c v))
+          (if (php/>= c 16)
+            (let [k (php/- c 16)]
+              (php/aset r c (php/aget cube-lv (php/intdiv k 36)))
+              (php/aset g c (php/aget cube-lv (php/intdiv (php/% k 36) 6)))
+              (php/aset b c (php/aget cube-lv (php/% k 6))))
+            (do
+              (php/aset r c (php/aget sys-rgb (php/* 3 c)))
+              (php/aset g c (php/aget sys-rgb (php/+ (php/* 3 c) 1)))
+              (php/aset b c (php/aget sys-rgb (php/+ (php/* 3 c) 2))))))
+        (recur (php/+ c 1))))
+    (php/aset r -1 0)
+    (php/aset g -1 0)
+    (php/aset b -1 0)
+    (php/aset out 0 r)
+    (php/aset out 1 g)
+    (php/aset out 2 b)
+    out))
+
+(def- rgb-r (php/aget rgb-luts 0))
+(def- rgb-g (php/aget rgb-luts 1))
+(def- rgb-b (php/aget rgb-luts 2))
+
+(defn- cube-idx
+  ;; nearest 6x6x6 cube level index for one 0-255 channel value
+  [^int v]
+  (cond (php/< v 48)  0
+        (php/< v 115) 1
+        (php/< v 155) 2
+        (php/< v 195) 3
+        (php/< v 235) 4
+        :else         5))
+
+(defn- sq [^int v] (php/* v v))
+
+(defn- rgb-code
+  ;; nearest xterm-256 code for an RGB triple: tries the 6x6x6 cube and
+  ;; the 24-step grayscale ramp, keeps whichever is closer.
+  [^int r ^int g ^int b]
+  (let [ri   (cube-idx r)
+        gi   (cube-idx g)
+        bi   (cube-idx b)
+        cr   (php/aget cube-lv ri)
+        cg   (php/aget cube-lv gi)
+        cb   (php/aget cube-lv bi)
+        avg  (php/intdiv (php/+ r g b) 3)
+        gidx (php/max 0 (php/min 23 (php/intdiv (php/- avg 3) 10)))
+        gv   (php/+ 8 (php/* 10 gidx))
+        dc   (php/+ (sq (php/- r cr)) (sq (php/- g cg)) (sq (php/- b cb)))
+        dg   (php/+ (sq (php/- r gv)) (sq (php/- g gv)) (sq (php/- b gv)))]
+    (if (php/<= dc dg)
+      (php/+ 16 (php/* 36 ri) (php/* 6 gi) bi)
+      (php/+ 232 gidx))))
+
+(defn half-mip
+  "Box-filter a `{:w :h :px}` sprite down to half resolution. Each
+   output texel averages its 2×2 source block in RGB space and
+   requantizes to the nearest xterm-256 code; a block with fewer than
+   two opaque sources stays transparent (-1), keeping silhouettes
+   tight. Pure; runs once at load to build `sprite-mips`."
+  [spr]
+  (let [sw  (:w spr)
+        sh  (:h spr)
+        px  (:px spr)
+        w2  (php/intdiv (php/+ sw 1) 2)
+        h2  (php/intdiv (php/+ sh 1) 2)
+        out (php/array)]
+    (loop [y 0]
+      (when (php/< y h2)
+        (loop [x 0]
+          (when (php/< x w2)
+            (let [x0 (php/* 2 x)
+                  y0 (php/* 2 y)
+                  x1 (php/min (php/- sw 1) (php/+ x0 1))
+                  y1 (php/min (php/- sh 1) (php/+ y0 1))
+                  a  (php/aget px (php/+ (php/* y0 sw) x0))
+                  b  (php/aget px (php/+ (php/* y0 sw) x1))
+                  c  (php/aget px (php/+ (php/* y1 sw) x0))
+                  d  (php/aget px (php/+ (php/* y1 sw) x1))
+                  n  (php/+ (if (php/=== a -1) 0 1)
+                            (if (php/=== b -1) 0 1)
+                            (if (php/=== c -1) 0 1)
+                            (if (php/=== d -1) 0 1))]
+              (php/aset out (php/+ (php/* y w2) x)
+                        (if (php/< n 2)
+                          -1
+                          (rgb-code
+                           (php/intdiv (php/+ (php/aget rgb-r a) (php/aget rgb-r b)
+                                              (php/aget rgb-r c) (php/aget rgb-r d))
+                                       n)
+                           (php/intdiv (php/+ (php/aget rgb-g a) (php/aget rgb-g b)
+                                              (php/aget rgb-g c) (php/aget rgb-g d))
+                                       n)
+                           (php/intdiv (php/+ (php/aget rgb-b a) (php/aget rgb-b b)
+                                              (php/aget rgb-b c) (php/aget rgb-b d))
+                                       n)))))
+            (recur (php/+ x 1))))
+        (recur (php/+ y 1))))
+    {:w w2 :h h2 :px out}))
+
+(def sprite-mips
+  "Per-sprite-id mip chain `{:m1 half-res :m2 quarter-res}` built once
+   at load by `half-mip`. The zone pass picks the level whose texel
+   density best matches the on-screen billboard (see
+   `sprite-for-type-lod`), so a distant monster samples a pre-filtered
+   image instead of skipping texels — far less shimmer and speckle."
+  (reduce
+   (fn [acc sid]
+     (let [m1 (half-mip (get enemy-sprites sid))]
+       (assoc acc sid {:m1 m1 :m2 (half-mip m1)})))
+   {}
+   (keys enemy-sprites)))
+
+(defn sprite-for-type-lod
+  "Like `sprite-for-type` but mip-aware: given the billboard's
+   on-screen sub-pixel row count (2 rows per cell), return the sprite
+   level whose native height best matches it — quarter res when the
+   source is >= 4× taller than the screen box, half res at >= 2×,
+   native otherwise. Returns nil when the type has no baked sprite."
+  [type-kw ^int sub-rows]
+  (let [sid (get sprite-type-map type-kw)]
+    (when sid
+      (let [base (get enemy-sprites sid)]
+        (when base
+          (let [sh   (:h base)
+                mips (get sprite-mips sid)]
+            (cond
+              (php/>= sh (php/* 4 sub-rows)) (:m2 mips)
+              (php/>= sh (php/* 2 sub-rows)) (:m1 mips)
+              :else                          base)))))))
 
 ;; =====================================================================
 ;; § Per-cell sampling
@@ -109,17 +285,18 @@
      - only one opaque        -> solid `█` of that colour (clean edge,
                                  no halo against the wall behind)
      - both transparent       -> nil (caller keeps the wall/floor cell)
-   sy is clamped to [0, sh-1]."
-  [px ^int sw ^int sh ^int sx ^int sxr ^int etop ^int ebot ^int row]
+   sy is clamped to [0, sh-1]. `fade` is one level of `sprite-fade`
+   (distance fog + wound tint, -1 passes through)."
+  [px ^int sw ^int sh ^int sx ^int sxr ^int etop ^int ebot ^int row fade]
   (let [h2  (php/max 1 (php/* 2 (php/- ebot etop)))
         sub (php/* 2 (php/- row etop))
         ty  (php/max 0 (php/min (php/- sh 1) (php/intval (php// (php/* sub sh) h2))))
         by  (php/max 0 (php/min (php/- sh 1) (php/intval (php// (php/* (php/+ sub 1) sh) h2))))
         ;; 2×2 sub-pixel sample: top/bottom rows × left(sx)/right(sxr) cols.
-        tl  (php/aget px (php/+ (php/* ty sw) sx))
-        tr  (php/aget px (php/+ (php/* ty sw) sxr))
-        bl  (php/aget px (php/+ (php/* by sw) sx))
-        br  (php/aget px (php/+ (php/* by sw) sxr))]
+        tl  (php/aget fade (php/aget px (php/+ (php/* ty sw) sx)))
+        tr  (php/aget fade (php/aget px (php/+ (php/* ty sw) sxr)))
+        bl  (php/aget fade (php/aget px (php/+ (php/* by sw) sx)))
+        br  (php/aget fade (php/aget px (php/+ (php/* by sw) sxr)))]
     (cond
       ;; Fully-opaque interior cell: render a 2×2 quadrant for horizontal
       ;; detail. Reduce the (up to 4) colours to fg = top-left and bg =
@@ -150,15 +327,16 @@
    transparent) instead of a composed cell string. The pixel-doubled
    renderer spreads the four texels over a real 2×2 terminal block (top
    pair on the upper output row, bottom pair on the lower), so a sprite
-   keeps full sub-pixel detail at pixel scale 2."
-  [px ^int sw ^int sh ^int sx ^int sxr ^int etop ^int ebot ^int row]
+   keeps full sub-pixel detail at pixel scale 2. `fade` is one level of
+   `sprite-fade` (distance fog + wound tint, -1 passes through)."
+  [px ^int sw ^int sh ^int sx ^int sxr ^int etop ^int ebot ^int row fade]
   (let [h2  (php/max 1 (php/* 2 (php/- ebot etop)))
         sub (php/* 2 (php/- row etop))
         ty  (php/max 0 (php/min (php/- sh 1) (php/intval (php// (php/* sub sh) h2))))
         by  (php/max 0 (php/min (php/- sh 1) (php/intval (php// (php/* (php/+ sub 1) sh) h2))))
         out (php/array)]
-    (php/aset out 0 (php/aget px (php/+ (php/* ty sw) sx)))
-    (php/aset out 1 (php/aget px (php/+ (php/* ty sw) sxr)))
-    (php/aset out 2 (php/aget px (php/+ (php/* by sw) sx)))
-    (php/aset out 3 (php/aget px (php/+ (php/* by sw) sxr)))
+    (php/aset out 0 (php/aget fade (php/aget px (php/+ (php/* ty sw) sx))))
+    (php/aset out 1 (php/aget fade (php/aget px (php/+ (php/* ty sw) sxr))))
+    (php/aset out 2 (php/aget fade (php/aget px (php/+ (php/* by sw) sx))))
+    (php/aset out 3 (php/aget fade (php/aget px (php/+ (php/* by sw) sxr))))
     out))

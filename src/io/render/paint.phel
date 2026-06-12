@@ -6,8 +6,8 @@
   (:require phel-doom.io.render.frame-math :refer [sprite-h sprite-h-pd aggro-distance project-enemy project-enemy-pd collect-enemy-projs pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.weapon-sprites-data :refer [baked-weapons weapon-flashes])
   (:require phel-doom.io.render.enemy-sprites-data :refer [projectile-sprites death-sprites blood-sprites pickup-sprites])
-  (:require phel-doom.io.render.enemy-sprite :refer [sprite-col-x sprite-subcol-x enemy-sprite-cell])
-  (:require phel-doom.core.engine :refer [proj-dist])
+  (:require phel-doom.io.render.enemy-sprite :refer [sprite-col-x sprite-subcol-x enemy-sprite-cell sprite-fade])
+  (:require phel-doom.core.engine :refer [proj-dist max-depth])
   (:require phel-doom.core.combat :refer [fx-ttl-seconds corpse-ttl-seconds])
   (:require phel-doom.core.map :refer [find-door-cell]))
 
@@ -1157,7 +1157,14 @@
         r-lo   (php/max 0 etop)
         r-hi   (php/min vh ebot)
         c-from (php/max 0 (php/- col ehw))
-        c-to   (php/min (php/- vw 1) (php/+ col ehw))]
+        c-to   (php/min (php/- vw 1) (php/+ col ehw))
+        ;; Same distance fog as the live-enemy zone pass: corpses,
+        ;; splats and far billboards sink into the wall haze. Near
+        ;; blits (close pickups, muzzle range) land on the identity
+        ;; level so their colours stay readable.
+        df     (php/min 0.85 (php/* (php// d max-depth) (php// d max-depth)))
+        fade   (php/aget sprite-fade
+                         (php/max 0 (php/min 23 (php/intval (php/round (php/* (php/- 1.0 df) 23.0))))))]
     (loop [c c-from]
       (when (php/<= c c-to)
         (when (pickup-visible-at? d c dists edists)
@@ -1165,7 +1172,7 @@
                 sxr (sprite-subcol-x sw col ehw c)]
             (loop [r r-lo]
               (when (php/< r r-hi)
-                (let [cell (enemy-sprite-cell px sw sh sx sxr etop ebot r)]
+                (let [cell (enemy-sprite-cell px sw sh sx sxr etop ebot r fade)]
                   (when cell (buf-set buf (php/+ (php/* r vw) c) cell)))
                 (recur (php/+ r 1))))))
         (recur (php/+ c 1))))

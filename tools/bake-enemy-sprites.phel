@@ -78,9 +78,21 @@
 
 (defn rgb->256-lifted
   "Like rgb->256 but applies tone-lift to each channel then gray-shift
-   to the resulting code, lifting dark body shadows into visible range."
+   to the resulting code, lifting dark body shadows into visible range.
+   Used for enemy sprites (dark art: imp brown, demon gray) where the
+   ramp shift is needed to separate shadow bands from wall grays."
   [^int r ^int g ^int b]
   (gray-shift (rgb->256 (tone-lift r) (tone-lift g) (tone-lift b))))
+
+(defn rgb->256-pickup
+  "Like rgb->256-lifted but skips the gray-ramp-shift. Pickup item
+   sprites (medkits, armor, ammo clips, keycards) are bright art that
+   already land in the readable lum 88-168 range after the gamma lift;
+   the +3-step gray shift would push them into near-white (lum 168),
+   washing out internal shading. Tone-lift is kept so hue and saturation
+   match the enemy palette."
+  [^int r ^int g ^int b]
+  (rgb->256 (tone-lift r) (tone-lift g) (tone-lift b)))
 
 (defn rgb->256 [^int r ^int g ^int b]
   ;; Map an RGB triple to the nearest xterm-256 code.
@@ -182,6 +194,52 @@
   (let [g (mip-str wad lump tmax)]
     (when g (php/sprintf "\n   %s %s" k g))))
 
+;; Area-averaged downscale for pickup item sprites: identical to mip-str
+;; but uses rgb->256-pickup (gamma lift, NO gray-ramp-shift) so bright
+;; item art (medkit, armor, clips) is not washed toward near-white.
+(defn mip-str-pickup [wad lump tmax]
+  (let [e (find-lump (:dir wad) lump)]
+    (when e
+      (let [s   (:s wad) pal (:pal wad)
+            pic (decode-pic s (:offset e))
+            w   (:w pic) h   (:h pic) px  (:px pic)
+            mx  (php/max w h)
+            tw  (php/max 1 (php/intval (php/round (php// (php/* w tmax) mx))))
+            th  (php/max 1 (php/intval (php/round (php// (php/* h tmax) mx))))
+            row (php/array)]
+        (dotimes [ty th]
+          (dotimes [tx tw]
+            (let [sx0 (php/intdiv (php/* tx w) tw)
+                  sx1 (php/max (php/+ sx0 1) (php/intdiv (php/* (php/+ tx 1) w) tw))
+                  sy0 (php/intdiv (php/* ty h) th)
+                  sy1 (php/max (php/+ sy0 1) (php/intdiv (php/* (php/+ ty 1) h) th))
+                  acc (php/array)]
+              (php/aset acc 0 0) (php/aset acc 1 0) (php/aset acc 2 0) (php/aset acc 3 0)
+              (loop [sy sy0]
+                (when (php/< sy sy1)
+                  (loop [sx sx0]
+                    (when (php/< sx sx1)
+                      (let [v (php/aget px (php/+ (php/* sy w) sx))]
+                        (when (php/!== v -1)
+                          (let [c (php/aget pal v)]
+                            (php/aset acc 0 (php/+ (php/aget acc 0) (php/aget c 0)))
+                            (php/aset acc 1 (php/+ (php/aget acc 1) (php/aget c 1)))
+                            (php/aset acc 2 (php/+ (php/aget acc 2) (php/aget c 2)))
+                            (php/aset acc 3 (php/+ (php/aget acc 3) 1)))))
+                      (recur (php/+ sx 1))))
+                  (recur (php/+ sy 1))))
+              (php/array_push row
+                              (if (php/=== 0 (php/aget acc 3))
+                                "-1"
+                                (php/strval (rgb->256-pickup (php/intdiv (php/aget acc 0) (php/aget acc 3))
+                                                             (php/intdiv (php/aget acc 1) (php/aget acc 3))
+                                                             (php/intdiv (php/aget acc 2) (php/aget acc 3)))))))))
+        (php/sprintf "{:w %d :h %d :px [%s]}" tw th (php/implode " " row))))))
+
+(defn mip-entry-pickup [wad k lump tmax]
+  (let [g (mip-str-pickup wad lump tmax)]
+    (when g (php/sprintf "\n   %s %s" k g))))
+
 ;; A death entry: "\n   :imp [<grid> <grid> ...]" of whatever frames
 ;; exist (collapse frames then corpse). nil when none resolve.
 (defn death-entry [wad k lumps]
@@ -240,7 +298,9 @@
                 [":incinerator" "PLASA0"] [":rocket" "LAUNA0"] [":chainsaw" "CSAWA0"]]]
            ;; Pickups render small on screen, so bake an area-averaged
            ;; mip (longest side 18 px) -> clean at distance, not aliased.
-    (let [s (mip-entry w1 (php/aget pk 0) (php/aget pk 1) 18)]
+           ;; Use mip-entry-pickup (no gray-ramp-shift) so bright item art
+           ;; stays readable instead of washing toward near-white.
+    (let [s (mip-entry-pickup w1 (php/aget pk 0) (php/aget pk 1) 18)]
       (when s (php/array_push sb s))))
   (php/array_push sb "})\n\n")
   ;; Per-type death frames: collapse frame(s) then corpse.

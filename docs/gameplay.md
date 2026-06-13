@@ -55,6 +55,10 @@ DPS-balanced niches, not monotonic upgrades. Found on the map, selected with key
 
 Hold `space` for auto-fire on pistol/chaingun/chainsaw/incinerator. Shotgun, BFG, rocket fire one shot per pull.
 
+## End screen (rank + summary)
+
+Death and victory both show a run summary: cumulative kills + time, **accuracy %** (connecting trigger pulls / total pulls), **secrets** found/total, and a letter **rank** S/A/B/C/D from `0.7*accuracy + 0.3*secrets`. The rank is colour-coded (gold S down to dim D). Persisted bests show below it. See [scores.md](scores.md) for the exact grade formula and the "what counts as a hit" rule (pierce / cone / AoE).
+
 ## CLI flags
 
 - `--difficulty=easy|normal|hard|nightmare` (`-d`) - scale enemy speed, HP, count, ammo-box budget, heal/armor pickup counts

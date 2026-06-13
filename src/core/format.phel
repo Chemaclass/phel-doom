@@ -15,3 +15,35 @@
     (if (php/> h 0)
       (php/sprintf "%d:%02d:%02d" h m sec)
       (php/sprintf "%d:%02d" m sec))))
+
+(defn accuracy-pct
+  "Integer hit percentage (0..100) for a run: `hit` connecting trigger
+   pulls out of `fired` total pulls. Returns 0 when nothing was fired
+   (guards the division). A pierce/spread pull that strikes several
+   enemies counts as a single hit, matching how the combat step bumps
+   the counters - see docs/scores.md."
+  [^int fired ^int hit]
+  (if (php/> fired 0)
+    (php/intval (php/round (php// (php/* 100.0 hit) fired)))
+    0))
+
+(defn run-grade
+  {:doc "Letter grade S/A/B/C/D for a finished run, from a weighted blend
+         of `accuracy` (0..1) and the secrets ratio (found/total, treated
+         as 1.0 when a run had no secrets so a secret-less level never
+         drags the grade down): score = 0.7*accuracy + 0.3*secrets, then
+         S >= 0.9, A >= 0.75, B >= 0.6, C >= 0.4, else D. Pure +
+         deterministic so a recorded demo always grades the same."
+   :see-also ["accuracy-pct"]
+   :example "(run-grade 0.9 2 2) ; => \"S\""}
+  [^float accuracy ^int secrets-found ^int secrets-total]
+  (let [sr    (if (php/> secrets-total 0)
+                (php// secrets-found secrets-total)
+                1.0)
+        score (php/+ (php/* 0.7 accuracy) (php/* 0.3 sr))]
+    (cond
+      (php/>= score 0.9)  "S"
+      (php/>= score 0.75) "A"
+      (php/>= score 0.6)  "B"
+      (php/>= score 0.4)  "C"
+      :else               "D")))

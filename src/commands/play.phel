@@ -26,6 +26,7 @@
   (:require phel-doom.core.level    :refer [build-world num-levels place-secret-reward])
   (:require phel-doom.core.perf     :refer [target-frame-us cap-dims auto-pixel-scale auto-cal-frames])
   (:require phel-doom.core.version  :refer [version])
+  (:require phel-doom.core.format   :refer [accuracy-pct run-grade])
   (:require phel-doom.io.scores   :refer [update-scores!])
   (:require phel-doom.io.render   :refer [render! clear-screen
                                           read-perf-snapshot
@@ -740,19 +741,31 @@
 ;; § Per-level result kinds returned by game-loop
 ;; =====================================================================
 
+;; Per-level run-stat snapshot folded into the cumulative carry by
+;; `merge-run-stats`: accuracy counters + secrets found/total (issue #202).
+(defn- run-stat-fields [world]
+  {:shots-fired   (or (:shots-fired world) 0)
+   :shots-hit     (or (:shots-hit world) 0)
+   :secrets-found (or (:secrets-found world) 0)
+   :secrets-total (or (:secrets-total world) 0)})
+
 (defn- result-game-over [world ^float t-start ^float now]
-  {:game-over  true
-   :kills      (:kills world)
-   :level      (:level world)
-   :level-name (:level-name world)
-   :survived-s (php/intval (php/- now t-start))})
+  (merge
+   {:game-over  true
+    :kills      (:kills world)
+    :level      (:level world)
+    :level-name (:level-name world)
+    :survived-s (php/intval (php/- now t-start))}
+   (run-stat-fields world)))
 
 (defn- result-victory [world ^float t-start ^float now]
-  {:victory    true
-   :kills      (:kills world)
-   :level      (:level world)
-   :level-name (:level-name world)
-   :survived-s (php/intval (php/- now t-start))})
+  (merge
+   {:victory    true
+    :kills      (:kills world)
+    :level      (:level world)
+    :level-name (:level-name world)
+    :survived-s (php/intval (php/- now t-start))}
+   (run-stat-fields world)))
 
 (defn- result-next-level [world ^float t-start ^float now]
   ;; Everything that survives the level cut goes through this map:
@@ -767,23 +780,26 @@
         stash' (assoc stash active
                       {:mag     (or (:mag world) 0)
                        :reserve (or (:ammo-reserve world) 0)})]
-    {:next-level    true
-     :level         (php/+ (:level world) 1)
-     :kills         (:kills world)
-     :lives         (:lives world)
-     :backpack-level (backpack-level world)
-     :owned-weapons  (or (:owned-weapons world) #{:pistol})
-     :weapon        active
-     :weapon-state  stash'
-     ;; User-preference toggles also follow the player through the
-     ;; door — turning the minimap off / muting sound should NOT
-     ;; reset every level cut.
-     :show-map      (boolean (:show-map world))
-     :sound-on      (boolean (:sound-on world))
-     ;; Settings edited mid-run carry to the next level so the options
-     ;; page keeps showing the player's current choices.
-     :settings      (:settings world)
-     :survived-s    (php/intval (php/- now t-start))}))
+    (merge
+     {:next-level    true
+      :level         (php/+ (:level world) 1)
+      :kills         (:kills world)
+      :lives         (:lives world)
+      :backpack-level (backpack-level world)
+      :owned-weapons  (or (:owned-weapons world) #{:pistol})
+      :weapon        active
+      :weapon-state  stash'
+      ;; User-preference toggles also follow the player through the
+      ;; door — turning the minimap off / muting sound should NOT
+      ;; reset every level cut.
+      :show-map      (boolean (:show-map world))
+      :sound-on      (boolean (:sound-on world))
+      ;; Settings edited mid-run carry to the next level so the options
+      ;; page keeps showing the player's current choices.
+      :settings      (:settings world)
+      :survived-s    (php/intval (php/- now t-start))}
+     ;; Accuracy + secrets accumulate across the level cut (issue #202).
+     (run-stat-fields world))))
 
 (defn- play-door-sfx [world]
   (when (:sound-on world) (play-sfx! :door)))
@@ -996,29 +1012,55 @@
           (str/contains? keys "r") :restart
           :else                    (recur [rows cols]))))))
 
-(defn- death-loop [kills survived-s level level-name scores]
+(defn- death-loop [kills survived-s level level-name scores summary]
   (end-loop (fn [cols rows]
-              (render-death-screen cols rows kills survived-s level level-name scores))))
+              (render-death-screen cols rows kills survived-s level level-name scores summary))))
 
-(defn- victory-loop [kills survived-s level level-name scores]
+(defn- victory-loop [kills survived-s level level-name scores summary]
   (end-loop (fn [cols rows]
-              (render-victory-screen cols rows kills survived-s level level-name scores))))
+              (render-victory-screen cols rows kills survived-s level level-name scores summary))))
 
 ;; =====================================================================
 ;; § Run lifecycle (level chain + restart)
 ;; =====================================================================
 
-(defn- carry-on [carry-kills carry-time result]
+(def- empty-run-stats
+  ;; Cumulative run counters carried across levels (issue #202): total
+  ;; shots fired / hit and secrets found / total. Reset on restart.
+  {:fired 0 :hit 0 :secrets-found 0 :secrets-total 0})
+
+(defn- merge-run-stats [carry result]
+  ;; Accumulate every per-level snapshot so the end screen reports the
+  ;; whole run: total shots, total secrets found out of total available.
+  {:fired         (php/+ (:fired carry)         (or (:shots-fired result) 0))
+   :hit           (php/+ (:hit carry)           (or (:shots-hit result) 0))
+   :secrets-found (php/+ (:secrets-found carry) (or (:secrets-found result) 0))
+   :secrets-total (php/+ (:secrets-total carry) (or (:secrets-total result) 0))})
+
+(defn- carry-on [carry-kills carry-time carry-stats result]
   [(php/+ carry-kills (:kills result))
-   (php/+ carry-time  (:survived-s result))])
+   (php/+ carry-time  (:survived-s result))
+   (merge-run-stats carry-stats result)])
+
+(defn- run-summary
+  "End-of-run summary panel data (issue #202): accuracy percentage,
+   secrets found/total, and the letter grade from `run-grade`. Pure."
+  [stats]
+  (let [acc (accuracy-pct (:fired stats) (:hit stats))]
+    {:accuracy      acc
+     :secrets-found (:secrets-found stats)
+     :secrets-total (:secrets-total stats)
+     :grade         (run-grade (php// acc 100.0)
+                               (:secrets-found stats)
+                               (:secrets-total stats))}))
 
 (defn- maybe-restart
   "Run the end-loop and pass the raw choice (:quit / :restart /
    :restart-same) back to run-levels so it can branch on which kind
    of restart the player asked for."
-  [end-fn kills survived-s level level-name scores]
+  [end-fn kills survived-s level level-name scores summary]
   (clear-screen)
-  (let [choice (end-fn kills survived-s level level-name scores)]
+  (let [choice (end-fn kills survived-s level level-name scores summary)]
     (clear-screen)
     choice))
 
@@ -1029,12 +1071,14 @@
      [:quit]              quit out
      [:fresh]             restart with a fresh PRNG seed
      [:same seed]         restart re-using the saved seed
-   Anything else returns [:quit]."
-  [end-fn k t result seed victory?]
+   Anything else returns [:quit]. `summary` is the run accuracy/grade
+   panel data (issue #202)."
+  [end-fn k t summary result seed victory?]
   (let [choice (maybe-restart end-fn k t
                               (:level result)
                               (:level-name result)
-                              (update-scores! k (:level result) t victory?))]
+                              (update-scores! k (:level result) t victory?)
+                              summary)]
     (cond
       (= choice :restart-same) [:same seed]
       (= choice :restart)      [:fresh]
@@ -1070,6 +1114,7 @@
          lives       max-lives
          carry-kills 0
          carry-time  0
+         carry-stats empty-run-stats
          seed        init-seed
          ;; Backpack stack carried across levels (0..max-backpacks).
          ;; Was a boolean before #68 part 3 - swapped to an int so
@@ -1125,8 +1170,8 @@
         ;; NOT carried across the door — stepping into the next level
         ;; counts as a breather, the pool refills to max via new-world.
         ;; Lives, weapons, mag/reserve and player toggles do carry.
-        (let [[k t] (carry-on carry-kills carry-time result)]
-          (recur (:level result) (:lives result) k t (rng/next-raw!)
+        (let [[k t stats] (carry-on carry-kills carry-time carry-stats result)]
+          (recur (:level result) (:lives result) k t stats (rng/next-raw!)
                  (backpack-level result)
                  (or (:owned-weapons result) #{:pistol})
                  (or (:weapon result) :pistol)
@@ -1136,23 +1181,23 @@
                  (or (:settings result) init-settings)))
 
         (and (map? result) (:victory result))
-        (let [[k t]           (carry-on carry-kills carry-time result)
-              [kind new-seed] (handle-end victory-loop k t result seed true)]
+        (let [[k t stats]     (carry-on carry-kills carry-time carry-stats result)
+              [kind new-seed] (handle-end victory-loop k t (run-summary stats) result seed true)]
           (cond
-            (= kind :fresh) (recur 1 max-lives 0 0 (rng/fresh-seed) 0 #{:pistol} nil nil true true init-settings)
-            (= kind :same)  (recur 1 max-lives 0 0 new-seed 0 #{:pistol} nil nil true true init-settings)
+            (= kind :fresh) (recur 1 max-lives 0 0 empty-run-stats (rng/fresh-seed) 0 #{:pistol} nil nil true true init-settings)
+            (= kind :same)  (recur 1 max-lives 0 0 empty-run-stats new-seed 0 #{:pistol} nil nil true true init-settings)
             :else           nil))
 
         (and (map? result) (:game-over result))
-        (let [[k t]           (carry-on carry-kills carry-time result)
-              [kind new-seed] (handle-end death-loop k t result seed false)
+        (let [[k t stats]     (carry-on carry-kills carry-time carry-stats result)
+              [kind new-seed] (handle-end death-loop k t (run-summary stats) result seed false)
               died-on         (or (:level result) 1)]
           (cond
             ;; r: try the level you died on again with a fresh map.
-            (= kind :fresh) (recur died-on max-lives 0 0 (rng/fresh-seed) 0 #{:pistol} nil nil true true init-settings)
+            (= kind :fresh) (recur died-on max-lives 0 0 empty-run-stats (rng/fresh-seed) 0 #{:pistol} nil nil true true init-settings)
             ;; R: replay the exact level you died on (same seed + same
             ;; level number reproduces identical geometry + enemies).
-            (= kind :same)  (recur died-on max-lives 0 0 new-seed 0 #{:pistol} nil nil true true init-settings)
+            (= kind :same)  (recur died-on max-lives 0 0 empty-run-stats new-seed 0 #{:pistol} nil nil true true init-settings)
             :else           nil))
 
         :else

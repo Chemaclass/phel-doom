@@ -311,9 +311,13 @@
   ;; Stamp the crosshair hit-marker for a connecting shot: a kill marker
   ;; when `killed?`, else a wound marker, both lit for hit-marker-seconds.
   ;; One call per trigger pull (each fire path already aggregates its
-  ;; kill count), so no intra-frame stickiness is needed.
+  ;; kill count), so no intra-frame stickiness is needed. This is also the
+  ;; single "this shot connected" point, so it bumps the :shots-hit
+  ;; accuracy counter here (issue #202).
   [world killed?]
-  (assoc world :hit-fx {:kill? (boolean killed?) :ttl hit-marker-seconds}))
+  (-> world
+      (assoc :hit-fx {:kill? (boolean killed?) :ttl hit-marker-seconds})
+      (update :shots-hit (fn [n] (php/+ (or n 0) 1)))))
 
 (defn- decay-hit-fx
   ;; Tick the hit-marker ttl down by `dt`; drop the whole FX (nil) once it
@@ -968,6 +972,22 @@
                                                  wall-d half max-r prim graze targets dtype)]
     (finish-multikill world es' killed hit-pos tough)))
 
+(defn- single-hitscan-fire
+  "Single-target hitscan path (chaingun / chainsaw / incinerator): scan
+   the one nearest enemy on the player's facing, wake the room, and route
+   to on-shot-hit / on-shot-miss."
+  [world]
+  (let [[enemies' hit? hit-pos idx] (resolve-shot world)
+        p                           (:player world)
+        woken                       (noise-wake enemies' (:grid world) (:x p) (:y p))
+        killed?                     (and hit?
+                                         (false? (:alive (get woken idx))))]
+    (enqueue-shot-sfx
+     (apply-heat (if hit?
+                   (on-shot-hit world woken hit-pos idx)
+                   (on-shot-miss (assoc world :enemies woken))))
+     world hit? killed? hit-pos)))
+
 (defn fire-shot
   "Resolve one trigger pull end-to-end. Weapons with `:splash-radius`
    (BFG, rocket) route to `bfg-fire`; `:pierce?` weapons (pistol) to
@@ -977,21 +997,16 @@
    same room hear it and switch to :aware. Doors block the BFS so the
    wake stays local — same per-sector noise rule DOOM uses."
   [world]
-  (cond
-    (:splash-radius (w-spec world)) (bfg-fire world)
-    (:pierce? (w-spec world))       (pierce-fire world)
-    (:spread? (w-spec world))       (spread-fire world)
-    :else
-    (let [[enemies' hit? hit-pos idx] (resolve-shot world)
-          p                           (:player world)
-          woken                       (noise-wake enemies' (:grid world) (:x p) (:y p))
-          killed?                     (and hit?
-                                           (false? (:alive (get woken idx))))]
-      (enqueue-shot-sfx
-       (apply-heat (if hit?
-                     (on-shot-hit world woken hit-pos idx)
-                     (on-shot-miss (assoc world :enemies woken))))
-       world hit? killed? hit-pos))))
+  ;; Accuracy (issue #202): every trigger pull that reaches fire-shot
+  ;; counts as one shot fired, regardless of weapon or whether it lands.
+  ;; :shots-hit is bumped per connecting pull inside stamp-hit-fx.
+  (update
+   (cond
+     (:splash-radius (w-spec world)) (bfg-fire world)
+     (:pierce? (w-spec world))       (pierce-fire world)
+     (:spread? (w-spec world))       (spread-fire world)
+     :else                           (single-hitscan-fire world))
+   :shots-fired (fn [n] (php/+ (or n 0) 1))))
 
 (defn- empty-trigger-pull
   "Trigger pulled while mag = 0 AND no cooldown / jam in the way. Arm

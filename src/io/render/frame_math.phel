@@ -55,6 +55,11 @@
   ;; survives the 256-colour round-trip.
   (php/array 95 95 135))
 
+(def- filmic-norm
+  ;; The ACES-ish curve evaluated at b=1, used to normalise `filmic` so a
+  ;; full-brightness input maps to 1.0: num/den = 2.54/3.16.
+  (php// 2.54 3.16))
+
 (defn- filmic
   ;; Normalised ACES-ish filmic tone curve on a brightness factor
   ;; b in [0,1]: a toe that keeps shadow contrast and a shoulder that
@@ -62,10 +67,10 @@
   ;; dimmed. Mid-tones gain contrast; near walls (b~1) roll to full.
   ;; Evaluated load-time only.
   [^float b]
-  (let [bc (cond (php/< b 0.0) 0.0 (php/> b 1.0) 1.0 :else b)
-        f  (fn [^float x] (php// (php/* x (php/+ (php/* 2.51 x) 0.03))
-                                 (php/+ (php/* x (php/+ (php/* 2.43 x) 0.59)) 0.14)))]
-    (php// (f bc) (f 1.0))))
+  (let [bc  (cond (php/< b 0.0) 0.0 (php/> b 1.0) 1.0 :else b)
+        num (php/* bc (php/+ (php/* 2.51 bc) 0.03))
+        den (php/+ (php/* bc (php/+ (php/* 2.43 bc) 0.59)) 0.14)]
+    (php// (php// num den) filmic-norm)))
 
 (defn- fade-256-fog
   ;; Distance fade that lerps a colour code toward `fog-rgb` (not black)
@@ -93,11 +98,12 @@
 
 (def tex-fade-table
   "24-level × 256-code distance-fog lookup for textured walls:
-   `tex-fade-table[level][code]` is `code` darkened toward black by
-   `1 - level/23`. Level 23 = full brightness (near wall), 0 = darkest
+   `tex-fade-table[level][code]` is `code` faded by `1 - level/23` toward
+   the cool haze tint (or toward black under `PHEL_DOOM_FLAT_FOG=1`) via
+   `fog-fade`. Level 23 = full brightness (near wall), 0 = fully fogged
    (far). Lets the wall-texture path apply per-cell fog with a single
-   nested `aget` instead of a `fade-256` call per cell. Built once at
-   load (24×256 fade-256 calls); pure + immutable thereafter."
+   nested `aget` instead of a `fog-fade` call per cell. Built once at
+   load (24×256 calls); pure + immutable thereafter."
   (let [outer (php/array)]
     (loop [lvl 0]
       (when (php/< lvl 24)

@@ -51,7 +51,10 @@
    SCENE cells, so the emitted terminal coordinates multiply by `sc`
    (1 = full detail, identity; 2 = pixel-doubled scene)."
   [parts world stats vw vh dists edists face-phase ^int sc]
-  (let [scare? (php/> (or (get stats :scare-secs) 0.0) 0.0)]
+  ;; Reduced-motion: drop the one-shot jump-scare glyph swap (a sudden
+  ;; flash); the resting / attack faces still animate on their own beat.
+  (let [scare? (and (php/> (or (get stats :scare-secs) 0.0) 0.0)
+                    (not (get stats :reduced-motion?)))]
     (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
       (let [col         (:col proj)
             d           (:dist proj)
@@ -190,7 +193,13 @@
    SCENE cells, so emitted terminal coordinates multiply by `sc`."
   [parts stats vw vh hits tops bots ^int sc]
   (when (php/> (or (get stats :door-face-active-secs) 0.0) 0.0)
-    (let [glyph "\e[5;48;5;232;38;5;196;1mʘ\e[0m"]
+    ;; Reduced-motion: SGR 5 is terminal HARDWARE blink (~1-3 Hz), outside
+    ;; the code-driven `pulse` gating, so it must be stripped here - drop
+    ;; the `5;` for a static red eye that still marks the door without
+    ;; strobing.
+    (let [glyph (if (get stats :reduced-motion?)
+                  "\e[48;5;232;38;5;196;1mʘ\e[0m"
+                  "\e[5;48;5;232;38;5;196;1mʘ\e[0m")]
       (loop [col 0]
         (when (php/< col vw)
           (when (let [h (buf-get hits col)] (or (php/=== 2 h) (php/=== 3 h) (php/=== 4 h)))
@@ -236,7 +245,7 @@
    game-time so it freezes on pause — terminal SGR 5 would keep
    ticking against the wall clock."
   [parts ^float t stats vw]
-  (when (and (get stats :rear-warning?) (pulse t 3.0))
+  (when (and (get stats :rear-warning?) (or (get stats :reduced-motion?) (pulse t 3.0)))
     (let [label "\e[40;38;5;160;1m‹ behind ›\e[0m"
           col   (php/max 1 (php/- (php/intdiv vw 2) 5))]
       (buf-push parts (str "\e[2;" col "H" label))))
@@ -257,7 +266,7 @@
   [parts ^float t stats vw]
   (let [total (php/+ (or (get stats :mag) 0)
                      (or (get stats :ammo-reserve) 0))]
-    (when (and (php/> total 0) (php/<= total 3) (pulse t 4.0))
+    (when (and (php/> total 0) (php/<= total 3) (or (get stats :reduced-motion?) (pulse t 4.0)))
       (let [colour (cond (php/<= total 1) "38;5;196"
                          :else            "38;5;214")
             label  (str "\e[40;" colour ";1m! LOW AMMO " total " !\e[0m")
@@ -463,7 +472,9 @@
    banners; row decides their stacking order when both fire at once."
   [parts ^float t stats vw secs-key label sgr ^int row ^float freq]
   (let [secs (or (get stats secs-key) 0.0)]
-    (when (and (php/> secs 0.0) (pulse t freq))
+    ;; Reduced-motion: hold the badge steady (always visible while the
+    ;; timer ticks) instead of pulsing it on/off.
+    (when (and (php/> secs 0.0) (or (get stats :reduced-motion?) (pulse t freq)))
       (let [text (str " " label " " (php/intval (php/ceil secs)) "s ")
             col  (php/max 1 (php/- (php/intdiv vw 2)
                                    (php/intdiv (php/strlen text) 2)))]
@@ -517,7 +528,10 @@
    underneath so the picture isn't blacked out. Skips the bottom 6
    rows so the pistol + HUD stays readable through the flicker."
   [parts stats vw vh]
-  (when (php/> (or (get stats :flicker-active-secs) 0.0) 0.0)
+  ;; Reduced-motion (accessibility): the flicker is a pure strobe with no
+  ;; gameplay information, so it is dropped entirely rather than calmed.
+  (when (and (php/> (or (get stats :flicker-active-secs) 0.0) 0.0)
+             (not (get stats :reduced-motion?)))
     (let [line   (php/str_repeat " " vw)
           dark   "\e[48;5;232m"
           bottom (php/max 1 (php/- vh 6))]
@@ -551,7 +565,12 @@
   [parts stats vw vh]
   (let [lives (or (get stats :lives) 0)
         phase (or (get stats :heartbeat-phase) 0.0)
-        bg    (heartbeat-bg phase lives)]
+        ;; Reduced-motion: keep the low-health danger cue but freeze it -
+        ;; a steady dim-red edge whenever in the last ~2 hearts, with no
+        ;; per-frame phase pulse.
+        bg    (if (get stats :reduced-motion?)
+                (if (and (php/< lives 5) (php/> lives 0)) "\e[48;5;52m" nil)
+                (heartbeat-bg phase lives))]
     (when bg
       (let [left-c0  1
             right-c0 (php/max 1 (php/- vw 1))
@@ -600,7 +619,9 @@
   (let [secs    (or (get stats :berserk-secs) 0.0)
         bloody? (php/> (or (get stats :iframes) 0.0) 0.0)]
     (when (and (php/> secs 0.0) (not bloody?))
-      (let [bright? (pulse t 9.0)
+      ;; Reduced-motion: hold the border on the steady deep-crimson (88)
+      ;; instead of swapping to the bright pulse frame (124).
+      (let [bright? (and (pulse t 9.0) (not (get stats :reduced-motion?)))
             bg      (if bright? "\e[48;5;124m" "\e[48;5;88m")
             top     (str bg (php/str_repeat " " vw) "\e[0m")
             edge    (str bg " \e[0m")]

@@ -200,6 +200,18 @@ Walls/sky/floor/enemies go into one string via the row loop. HUD, minimap, cross
 
 See [performance.md](performance.md).
 
+## Accessibility: reduced motion
+
+The strobing overlay paints branch on `stats[:reduced-motion?]` (driven by the Settings toggle or `PHEL_DOOM_REDUCED_MOTION=1`). When on:
+
+- `paint-flicker` is skipped (pure strobe, no info).
+- `paint-heartbeat-vignette` and `paint-berserk-tint` hold a steady tint instead of pulsing.
+- the jump-scare glyph swap in `paint-face-overlay` is suppressed.
+- `paint-door-face` drops the `\e[5;` SGR-5 prefix on the door-eye glyph: SGR 5 is terminal HARDWARE blink (~1-3 Hz), outside the code-driven `pulse` gating, so it must be stripped here for a static red eye.
+- the pulsing HUD labels (`paint-low-ammo`, `paint-rear-warning`) and the powerup banners (`paint-timed-badge` -> berserk/invuln) hold steady (always visible while active) instead of blinking on/off.
+
+The single-shot directional `paint-hit-vignette` and the kill flash stay - they are feedback, not strobe. All of this is a once-per-frame overlay branch, so the per-cell hot loop is untouched.
+
 ## Minimap panel (frame + inset)
 
 The minimap is a once-per-frame overlay blitted via absolute cursor positioning; the 3D per-cell loop emits flat sky for the cells the overlay will overdraw (a row-constant `mini-lim`, not per-cell work), so the panel is free on the hot path.

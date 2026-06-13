@@ -619,6 +619,22 @@
 ;; § Per-frame IO + stats
 ;; =====================================================================
 
+(def- reduced-motion-env
+  ;; Memoised PHEL_DOOM_REDUCED_MOTION probe; the env can't change
+  ;; mid-run, so resolve it once. nil = not yet probed.
+  (atom nil))
+
+(defn- reduced-motion-env?
+  "True when PHEL_DOOM_REDUCED_MOTION=1 forces reduced motion on,
+   independent of the saved setting (accessibility A/B override)."
+  []
+  (let [c @reduced-motion-env]
+    (if (nil? c)
+      (let [on (php/=== "1" (php/getenv "PHEL_DOOM_REDUCED_MOTION"))]
+        (reset! reduced-motion-env on)
+        on)
+      c)))
+
 (defn- frame-stats
   "Snapshot of `world` + per-frame timing the render layer needs."
   [world fps frame-ms]
@@ -698,7 +714,12 @@
    ;; play leaves them nil): hide the weapon name/ammo chunk and the
    ;; enemy-themed level label from the top game-info line.
    :hide-weapon?         (boolean (:hide-weapon? world))
-   :hide-level-name?     (boolean (:hide-level-name? world))})
+   :hide-level-name?     (boolean (:hide-level-name? world))
+   ;; Accessibility: reduced-motion gates the strobing horror beats
+   ;; (flicker, heartbeat pulse, jump-scare, berserk pulse). Driven by
+   ;; the saved setting OR the PHEL_DOOM_REDUCED_MOTION env override.
+   :reduced-motion?      (or (boolean (:reduced-motion (:settings world)))
+                             (reduced-motion-env?))})
 
 (defn- ms-since
   "Whole-millisecond delta between two microtime samples. Args tagged

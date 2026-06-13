@@ -78,6 +78,10 @@ Triggered on life drop or enemy proximity:
 - Door eye: blinking red o flashes on every visible door every 8-18s for 500ms.
 - Behind: dim red blinker below compass when alive enemy in rear 90° wedge, 10 units.
 
+## Accessibility
+
+- Reduced motion (Settings toggle, default off; `PHEL_DOOM_REDUCED_MOTION=1` to force on): photosensitivity-safe mode that gates the strobing horror beats. Lights-flicker scanlines are dropped; the low-health heartbeat edge and the berserk border hold steady instead of pulsing; the jump-scare face flash is suppressed; the door-eye drops its terminal hardware blink (SGR 5) for a static eye; and the pulsing HUD labels (low-ammo, behind-you) and powerup banners hold steady. Essential single-shot feedback (directional hit-vignette, kill flash) is kept. Pure overlay branch, no frame-speed cost.
+
 ## Audio
 
 OS audio: `afplay` (macOS) / `paplay`/`aplay`/`play` (Linux) or terminal bell. Distance-scaled kill volume. N key toggles sound. Background OST: an original, license-clean riff synthesised to a 16-bit mono 22050 Hz WAV, looped by a crash-safe shell. Tests mute with `PHEL_DOOM_SILENT=1`.

@@ -16,6 +16,7 @@ Player options: music volume, SFX volume, minimap default, difficulty default. P
 | SFX | pct | 0-100 (step 10) | Global multiplier on `play-sfx!` events. 0% mutes without affecting N toggle. |
 | Minimap | bool | on / off | Default `:show-map` state. Live edits apply immediately. |
 | Difficulty | enum | easy / normal / hard / nightmare | Default for next run. CLI `--difficulty` overrides. Baked at level build time. |
+| Reduced motion | bool | on / off | Accessibility / photosensitivity. When on, gates the strobing horror beats: lights-flicker scanlines dropped; heartbeat edge, berserk border, pulsing HUD labels (low-ammo / behind-you) and powerup banners hold steady; jump-scare face flash suppressed; the door-eye drops its SGR-5 terminal hardware blink. Essential single-shot feedback (directional hit-vignette, kill flash) is kept. `PHEL_DOOM_REDUCED_MOTION=1` forces it on regardless of the saved value. |
 
 ## Access
 

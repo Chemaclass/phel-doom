@@ -1,0 +1,103 @@
+(ns phel-doom-tests.io.reduced-motion-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.io.render.buffer :refer [buf-mk])
+  (:require phel-doom.io.render.paint :refer [paint-flicker paint-heartbeat-vignette paint-berserk-tint paint-door-face paint-low-ammo paint-rear-warning paint-berserk-badge]))
+
+;; ---------------------------------------------------------------------
+;; Reduced-motion (accessibility): the strobing horror beats must not
+;; flash when `:reduced-motion?` is set. Flicker is dropped entirely;
+;; the heartbeat + berserk edge cues become STEADY (no per-frame pulse).
+;; ---------------------------------------------------------------------
+
+(defn- s [parts] (php/implode "" parts))
+
+;; --- paint-flicker: dropped under reduced motion ---------------------
+
+(deftest flicker-fires-normally
+  (let [out (s (paint-flicker (buf-mk) {:flicker-active-secs 0.5} 80 24))]
+    (is (php/str_contains out "\e[48;5;232m") "strobing scanlines present by default")))
+
+(deftest flicker-suppressed-under-reduced-motion
+  (let [out (s (paint-flicker (buf-mk) {:flicker-active-secs 0.5 :reduced-motion? true} 80 24))]
+    (is (= "" out) "no scanlines emitted under reduced motion")))
+
+;; --- paint-heartbeat-vignette: steady, not pulsing -------------------
+
+(deftest heartbeat-pulses-by-phase-normally
+  ;; phase 0.9 is OFF in the normal pulse cycle -> nothing painted.
+  (let [out (s (paint-heartbeat-vignette (buf-mk) {:lives 2 :heartbeat-phase 0.9} 80 24))]
+    (is (= "" out) "normal heartbeat is off in the gap between thumps")))
+
+(deftest heartbeat-steady-under-reduced-motion
+  ;; Under reduced motion the low-health edge is present regardless of
+  ;; phase (a steady tint), so the SAME off-phase now paints a cue.
+  (let [out (s (paint-heartbeat-vignette (buf-mk)
+                                         {:lives 2 :heartbeat-phase 0.9 :reduced-motion? true}
+                                         80 24))]
+    (is (php/str_contains out "\e[48;5;52m") "steady dim-red edge present")))
+
+(deftest heartbeat-stays-off-at-full-health-under-reduced-motion
+  ;; Reduced motion does not invent a cue when health is fine.
+  (let [out (s (paint-heartbeat-vignette (buf-mk)
+                                         {:lives 8 :heartbeat-phase 0.0 :reduced-motion? true}
+                                         80 24))]
+    (is (= "" out) "no edge above the 2-heart threshold")))
+
+;; --- paint-berserk-tint: steady border, no pulse ---------------------
+
+(defn- berserk-out [t rm?]
+  (s (paint-berserk-tint (buf-mk) t {:berserk-secs 5.0 :iframes 0.0 :reduced-motion? rm?} 80 24)))
+
+(deftest berserk-pulses-normally
+  ;; Default: the border swaps between bright (124) and dim (88) on a
+  ;; pulse, so across two sampled times at least one bright frame shows.
+  (let [a (berserk-out 0.0 false)
+        b (berserk-out 0.18 false)]
+    (is (or (php/str_contains a "\e[48;5;124m") (php/str_contains b "\e[48;5;124m"))
+        "a bright pulse frame appears at some sample time")))
+
+(deftest berserk-steady-under-reduced-motion
+  ;; Under reduced motion the border is the dim crimson at every time,
+  ;; never the bright pulse colour.
+  (let [a (berserk-out 0.0 true)
+        b (berserk-out 0.18 true)]
+    (is (php/str_contains a "\e[48;5;88m") "steady deep crimson present")
+    (is (not (php/str_contains a "\e[48;5;124m")) "no bright pulse at t=0")
+    (is (not (php/str_contains b "\e[48;5;124m")) "no bright pulse at t=0.18")))
+
+;; --- paint-door-face: no terminal hardware blink (SGR 5) -------------
+
+(defn- door-face-out [rm?]
+  ;; One door column (hit 2) at col 0, wall rows 2..8, scale 1.
+  (s (paint-door-face (buf-mk)
+                      (merge {:door-face-active-secs 0.5} (if rm? {:reduced-motion? true} {}))
+                      1 24 (php/array 2) (php/array 2) (php/array 8) 1)))
+
+(deftest door-eye-blinks-normally
+  (is (php/str_contains (door-face-out false) "\e[5;") "default door eye uses SGR-5 blink"))
+
+(deftest door-eye-static-under-reduced-motion
+  (let [out (door-face-out true)]
+    (is (php/str_contains out "ʘ") "door eye still drawn")
+    (is (not (php/str_contains out "\e[5;")) "no SGR-5 hardware blink under reduced motion")))
+
+;; --- HUD label pulses become steady under reduced motion -------------
+
+(deftest low-ammo-steady-under-reduced-motion
+  ;; Steady = present at BOTH sample times (a pulsing label would gap).
+  (let [a (s (paint-low-ammo (buf-mk) 0.0  {:mag 1 :ammo-reserve 0 :reduced-motion? true} 80))
+        b (s (paint-low-ammo (buf-mk) 0.18 {:mag 1 :ammo-reserve 0 :reduced-motion? true} 80))]
+    (is (php/str_contains a "LOW AMMO") "low-ammo shown at t=0")
+    (is (php/str_contains b "LOW AMMO") "low-ammo shown at t=0.18 (steady)")))
+
+(deftest rear-warning-steady-under-reduced-motion
+  (let [a (s (paint-rear-warning (buf-mk) 0.0  {:rear-warning? true :reduced-motion? true} 80))
+        b (s (paint-rear-warning (buf-mk) 0.18 {:rear-warning? true :reduced-motion? true} 80))]
+    (is (php/str_contains a "behind") "rear cue shown at t=0")
+    (is (php/str_contains b "behind") "rear cue shown at t=0.18 (steady)")))
+
+(deftest berserk-badge-steady-under-reduced-motion
+  (let [a (s (paint-berserk-badge (buf-mk) 0.0  {:berserk-secs 5.0 :reduced-motion? true} 80))
+        b (s (paint-berserk-badge (buf-mk) 0.18 {:berserk-secs 5.0 :reduced-motion? true} 80))]
+    (is (php/str_contains a "BERSERK") "badge shown at t=0")
+    (is (php/str_contains b "BERSERK") "badge shown at t=0.18 (steady)")))

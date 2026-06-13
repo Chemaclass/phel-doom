@@ -84,9 +84,11 @@
 
 (defn coerce-settings
   "Normalise a loaded (or partial) settings map against the defaults:
-   clamp volumes into 0..100, force minimap to a bool, and fall back to
-   :normal for an unrecognised difficulty. Always returns a complete,
-   valid map, so callers downstream never have to re-validate."
+   clamp volumes into 0..100, force the bool fields (minimap, run timer,
+   reduced motion) to booleans, and fall back to a valid choice for the
+   enums (:normal difficulty, :cross crosshair) when the saved value is
+   unrecognised. Always returns a complete, valid map, so callers
+   downstream never have to re-validate."
   [raw]
   (let [m (or raw {})
         d (get m :difficulty (:difficulty default-settings))
@@ -116,14 +118,16 @@
       (= (:key (first fs)) field-key) (first fs)
       :else                           (recur (rest fs)))))
 
-(defn- field-kind [field-key]
-  (:kind (field-descriptor field-key)))
-
 (defn- cycle-choices [cur choices steps]
-  (let [n  (count choices)
-        i  (index-of cur choices)
-        i' (if (php/< i 0) 0 i)]
-    (get choices (wrap (php/+ i' steps) n))))
+  ;; Guard a missing/empty choice list (an :enum field that forgot its
+  ;; :choices): hold the current value rather than returning nil and
+  ;; silently corrupting the setting.
+  (if (or (nil? choices) (empty? choices))
+    cur
+    (let [n  (count choices)
+          i  (index-of cur choices)
+          i' (if (php/< i 0) 0 i)]
+      (get choices (wrap (php/+ i' steps) n)))))
 
 (defn adjust
   "Adjust `field-key` on `settings` by `steps` (negative = left,
@@ -132,7 +136,8 @@
    Any integer magnitude is allowed (a held key ramps a slider).
    Returns the new settings map; an unknown field leaves it untouched."
   [settings field-key steps]
-  (let [kind (field-kind field-key)]
+  (let [desc (field-descriptor field-key)
+        kind (:kind desc)]
     (cond
       (= kind :pct)
       (update settings field-key
@@ -144,8 +149,7 @@
         settings)
 
       (= kind :enum)
-      (let [choices (:choices (field-descriptor field-key))]
-        (update settings field-key (fn [v] (cycle-choices v choices steps))))
+      (update settings field-key (fn [v] (cycle-choices v (:choices desc) steps)))
 
       :else          settings)))
 

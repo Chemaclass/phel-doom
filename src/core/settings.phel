@@ -19,12 +19,18 @@
    is a bed, not a lead). Minimap starts hidden; difficulty normal.
    Reduced motion off (accessibility opt-in: gates the strobing horror
    beats - see io/render/paint)."
-  {:music 60 :sfx 90 :minimap false :difficulty :normal :reduced-motion false})
+  {:music 60 :sfx 90 :minimap false :difficulty :normal :reduced-motion false
+   :crosshair :cross :timer false})
 
 (def difficulty-choices
   "Difficulty keywords the enum field cycles through, easiest first.
    Mirrors the --difficulty CLI option."
   [:easy :normal :hard :nightmare])
+
+(def crosshair-choices
+  "Crosshair reticle styles the enum field cycles through. `:off` hides
+   the idle reticle entirely (the hit-marker still flashes on a hit)."
+  [:cross :dot :open :off])
 
 (def pct-step
   "Percent a volume field moves per left/right press."
@@ -39,11 +45,14 @@
 (def page-fields
   "Ordered field descriptors driving both navigation and rendering.
    `:kind` selects the adjust + paint behaviour (:pct slider, :bool
-   toggle, :enum cycle)."
+   toggle, :enum cycle). An :enum field carries its own `:choices`
+   vector so the cycle logic is generic (not difficulty-specific)."
   [{:key :music          :label "Music"          :kind :pct}
    {:key :sfx            :label "SFX"            :kind :pct}
    {:key :minimap        :label "Minimap"        :kind :bool}
-   {:key :difficulty     :label "Difficulty"     :kind :enum}
+   {:key :difficulty     :label "Difficulty"     :kind :enum :choices difficulty-choices}
+   {:key :crosshair      :label "Crosshair"      :kind :enum :choices crosshair-choices}
+   {:key :timer          :label "Run timer"      :kind :bool}
    {:key :reduced-motion :label "Reduced motion" :kind :bool}])
 
 (defn field-count
@@ -80,11 +89,14 @@
    valid map, so callers downstream never have to re-validate."
   [raw]
   (let [m (or raw {})
-        d (get m :difficulty (:difficulty default-settings))]
+        d (get m :difficulty (:difficulty default-settings))
+        x (get m :crosshair (:crosshair default-settings))]
     {:music          (clamp-pct (get m :music (:music default-settings)))
      :sfx            (clamp-pct (get m :sfx (:sfx default-settings)))
      :minimap        (boolean (get m :minimap (:minimap default-settings)))
      :difficulty     (if (valid-difficulty? d) d :normal)
+     :crosshair      (if (php/>= (index-of x crosshair-choices) 0) x :cross)
+     :timer          (boolean (get m :timer (:timer default-settings)))
      :reduced-motion (boolean (get m :reduced-motion (:reduced-motion default-settings)))}))
 
 (defn- wrap [i n]
@@ -97,18 +109,21 @@
   [idx steps]
   (wrap (php/+ idx steps) (field-count)))
 
-(defn- cycle-difficulty [cur steps]
-  (let [n  (count difficulty-choices)
-        i  (index-of cur difficulty-choices)
-        i' (if (php/< i 0) 0 i)]
-    (get difficulty-choices (wrap (php/+ i' steps) n))))
-
-(defn- field-kind [field-key]
+(defn- field-descriptor [field-key]
   (loop [fs page-fields]
     (cond
       (empty? fs)                     nil
-      (= (:key (first fs)) field-key) (:kind (first fs))
+      (= (:key (first fs)) field-key) (first fs)
       :else                           (recur (rest fs)))))
+
+(defn- field-kind [field-key]
+  (:kind (field-descriptor field-key)))
+
+(defn- cycle-choices [cur choices steps]
+  (let [n  (count choices)
+        i  (index-of cur choices)
+        i' (if (php/< i 0) 0 i)]
+    (get choices (wrap (php/+ i' steps) n))))
 
 (defn adjust
   "Adjust `field-key` on `settings` by `steps` (negative = left,
@@ -129,7 +144,8 @@
         settings)
 
       (= kind :enum)
-      (update settings field-key (fn [v] (cycle-difficulty v steps)))
+      (let [choices (:choices (field-descriptor field-key))]
+        (update settings field-key (fn [v] (cycle-choices v choices steps))))
 
       :else          settings)))
 

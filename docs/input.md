@@ -75,7 +75,7 @@ Edges consumed by: `:fire` -> `tick-shooting`; `:reload` -> ammo refill; `:actio
 
 Note: `h` and `esc` both toggle the info panel (pause-coupled).
 
-The settings page is the pause overlay. While `:paused` (and not viewing the info panel) navigation uses `nav-deltas`, not rising-edges: it sums arrow + WASD keypresses into net `{:cursor :value}` steps so a held key ramps a slider through OS key-repeat.
+The settings page is the pause overlay. While `:paused` (and not viewing the info panel) navigation uses `nav-deltas`, not rising-edges: it sums arrow + WASD keypresses into net `{:cursor :value}` steps so a held key ramps a slider through OS key-repeat. The same up/down + left/right nav drives every field generically by `:kind`: `:pct` sliders, `:bool` toggles, and `:enum` cyclers (Difficulty, Crosshair) - an `:enum` field carries its own `:choices` vector, so adding a new cycler is data-only (no per-field nav code). See [settings.md](settings.md) for the full field list.
 
 ## Architecture
 

@@ -43,6 +43,41 @@
    blink (5) is intentionally dropped so the swap freezes on pause."
   "\e[40;93;1mD\e[0m")
 
+;; Box-drawing frame around the minimap panel. Dim grey on the panel's
+;; black BG so the border reads as chrome, not content; the title strip
+;; is a brighter cyan so "MAP" labels the panel without shouting.
+(def- panel-border "\e[40;90m")
+(def- panel-title  "\e[40;96;1m")
+(def- panel-reset  "\e[0m")
+
+(defn minimap-frame
+  "Wrap pre-rendered minimap content rows in a box-drawing panel. Returns
+   a vector of complete blit strings, one per panel row: a top border
+   (with a centred `title` strip when the interior is wide enough), each
+   content row flanked by `│`, and a bottom border. `cw` is the content
+   width in cells (so each content row in `content-rows` is `cw` cells
+   wide). Pure; the caller positions the panel via absolute cursor moves."
+  [content-rows ^int cw title]
+  (let [dash (php/str_repeat "─" cw)
+        tlen (php/mb_strlen title)
+        ;; Title strip `─ TITLE ─…` only when the interior leaves room for
+        ;; the word plus a lead dash; the title gets the brighter SGR, then
+        ;; the rule resumes the border colour. Otherwise a plain rule.
+        top  (if (php/>= cw (php/+ tlen 2))
+               (str "─" panel-title title panel-border
+                    (php/str_repeat "─" (php/- cw (php/+ tlen 1))))
+               dash)
+        out  (buf-mk)]
+    (buf-push out (str panel-border "┌" top "┐" panel-reset))
+    (loop [i 0]
+      (when (php/< i (php/count content-rows))
+        (buf-push out (str panel-border "│" panel-reset
+                           (php/aget content-rows i)
+                           panel-border "│" panel-reset))
+        (recur (php/+ i 1))))
+    (buf-push out (str panel-border "└" dash "┘" panel-reset))
+    out))
+
 (defn- scaled-cells
   "Build a PHP array keyed by `row*out-w+col` (in MINIMAP coords)
    whose truthy entries mark cells currently holding a thing

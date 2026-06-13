@@ -200,6 +200,14 @@ Walls/sky/floor/enemies go into one string via the row loop. HUD, minimap, cross
 
 See [performance.md](performance.md).
 
+## Minimap panel (frame + inset)
+
+The minimap is a once-per-frame overlay blitted via absolute cursor positioning; the 3D per-cell loop emits flat sky for the cells the overlay will overdraw (a row-constant `mini-lim`, not per-cell work), so the panel is free on the hot path.
+
+`layout` returns the content origin (`:map-col` / `:map-row`) and width (`:map-mw`). The content is wrapped in a box-drawing panel by `minimap-frame` (`hud.phel`): a top border carrying a cyan `MAP` title strip, each content row flanked by `│`, and a bottom border, all in a dim grey border colour so the chrome reads as a deliberate HUD element rather than glyphs floating over the world. The panel is inset one row from the top edge (row 1 margin, row 2 top border, content from row 3) and stays flush to the right edge: the right border replaces the old edge-butting glyph column. There is no right-edge margin because the per-row 3D skip runs from a left column to end-of-row, so reserving a right margin would leak flat sky there.
+
+The skip is a rectangle, not a half-plane: `mini-row-lo`/`mini-row-hi` (scene rows) bound it vertically so the top-margin row and everything below the panel render the real 3D scene, and `mini-col0` bounds it on the left. The same rectangle is mirrored into scene-cell coordinates (`mini-srow-lo`/`mini-srow-hi`/`mini-scol0`) for the pixel-doubled path. When the map is hidden the bounds collapse to sentinels that never match, so the skip is a no-op.
+
 ## Minimap fog-of-war (issue #67)
 
 Cells stay hidden behind `minimap-unseen` until the player visually crosses them. `mark-visible-cells` runs once per frame: scans `visit-radius = 8` bounding box, runs Bresenham `los-clear?` per cell, stamps `:visited` PHP array (keyed by `y * width + x`).

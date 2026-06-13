@@ -6,7 +6,7 @@
   (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table bg-cell-cache halfblock build-sky-halfblock build-sky-codes-sub seam-darken-16 seam-darken-8 seam-darken-5 collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.wall-texture-data :refer [wall-tex])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type-lod sprite-fade sprite-fade-index sprite-col-x sprite-subcol-x enemy-sprite-cell enemy-sprite-quad])
-  (:require phel-doom.io.render.hud :refer [minimap-door minimap-door-pulse minimap-rows hud-debug-line hud-line-str help-menu-string settings-menu-string])
+  (:require phel-doom.io.render.hud :refer [minimap-door minimap-door-pulse minimap-rows minimap-frame hud-debug-line hud-line-str help-menu-string settings-menu-string])
   (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-door-face paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-flicker paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-weapon-hud paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
   (:require phel-doom.core.perf :refer [render-scale])
@@ -560,7 +560,7 @@
    so resizing the terminal widens the FOV instead of growing the walls.
    Minimap is overlaid top-right when (:show-map world) is truthy."
   [world stats cols rows]
-  (let [{:keys [vw vh map-col map-row map-step]}
+  (let [{:keys [vw vh map-col map-row map-step map-mw]}
         (layout cols rows (count (first (:grid world))) stats)
         ;; Pixel-doubled mode (auto-picked by the game loop on machines
         ;; where full detail can't hold a smooth framerate): the SCENE
@@ -862,15 +862,24 @@
         mrows                              (if (:show-map world)
                                              (minimap-rows world mini-door map-step)
                                              (buf-mk))
-        visible-mh                         (php/min (php/count mrows) vh)
-        ;; First 0-indexed column the minimap overdraws. When the
-        ;; minimap is on, the inner row loop emits sky' for those
-        ;; cells (rows < visible-mh) since the minimap blits over
-        ;; them via absolute cursor positioning anyway — saves a
-        ;; chain of aget + cond per cell in the overlay region.
-        mini-col0                          (if (php/> visible-mh 0)
-                                             (php/max 0 (php/- map-col 1))
-                                             vw)]
+        ;; Content rows that fit below the top border + edge margin
+        ;; without overrunning the 3D viewport; the bottom border sits
+        ;; one row past them.
+        visible-mh                         (if (:show-map world)
+                                             (php/min (php/count mrows)
+                                                      (php/max 0 (php/- vh map-row)))
+                                             0)
+        map-shown?                         (php/> visible-mh 0)
+        ;; Framed-panel skip RECTANGLE in 0-indexed scene-row/col terms.
+        ;; The inner row loop emits flat sky for every cell the panel will
+        ;; overdraw (box border + content), so the blit is the only writer
+        ;; there — a chain of aget + cond per cell saved in the overlay
+        ;; region. Outside the rectangle (including the top + right edge
+        ;; margins) the real 3D scene renders. When the map is hidden the
+        ;; bounds collapse to sentinels that never match.
+        mini-col0                          (if map-shown? (php/max 0 (php/- map-col 2)) vw)
+        mini-row-lo                        (if map-shown? (php/max 0 (php/- map-row 2)) vh)
+        mini-row-hi                        (if map-shown? (php/- (php/+ map-row visible-mh) 1) -1)]
     (doseq [proj enemy-projs]
       (let [col (if px2? (php/intdiv (:col proj) 2) (:col proj))
             hw  (if px2? (php/max 1 (php/intdiv (:half-width proj) 2)) (:half-width proj))
@@ -1154,7 +1163,8 @@
           ;; Minimap skip region in scene cells (the blit itself stays at
           ;; full terminal coordinates).
           mini-scol0          (php/intdiv mini-col0 px-sc)
-          mini-srow-lim       (php/intdiv (php/+ visible-mh (php/- px-sc 1)) px-sc)
+          mini-srow-lo        (php/intdiv mini-row-lo px-sc)
+          mini-srow-hi        (php/intdiv mini-row-hi px-sc)
           ;; Full-resolution floor gradient for the weapon-sprite painter
           ;; (it paints at terminal coordinates; the scene gradient is
           ;; half-res in pixel-doubled mode).
@@ -1242,7 +1252,7 @@
                 blood-sky-r2   (if blood-sky-gradient (buf-get blood-sky-gradient r2) nil)
                 flr-r2         (buf-get floor-gradient r2)
                 floor-flat?    (if floor-tex-on? false true)
-                mini-slim      (if (php/< r2 mini-srow-lim) mini-scol0 svw)
+                mini-slim      (if (and (php/>= r2 mini-srow-lo) (php/<= r2 mini-srow-hi)) mini-scol0 svw)
                 cap-this-srow? (php/=== r2 cap-sr)
                 rowbase2       (php/* r2 svw)]
             (loop [col 0 pa nil ra 0 pb nil rb 0]
@@ -1627,7 +1637,7 @@
                 blood-flr-row blood-sky-row
                 floor-flat?   (if floor-tex-on? false true)
                 rowbase       (php/* row vw)
-                mini-lim      (if (php/< row visible-mh) mini-col0 vw)
+                mini-lim      (if (and (php/>= row mini-row-lo) (php/<= row mini-row-hi)) mini-col0 vw)
                 cap-this-row? (php/=== row cap-row)
                 s-top         (php/* 2 row)
                 s-bot         (php/+ s-top 1)
@@ -1862,8 +1872,18 @@
         (buf-push parts (hud-debug-line world stats))
         (buf-push parts "\n"))
       (buf-push parts hud-line-str)
-      (dotimes [i visible-mh]
-        (buf-push parts (str "\e[" (php/+ map-row i) ";" map-col "H" (buf-get mrows i))))
+      ;; Framed minimap panel: wrap the visible content rows in a box
+      ;; border (title strip) and blit it inset from the top + right edges.
+      ;; The box top/left sit one cell up-left of the content origin; the
+      ;; skip rectangle above reserved exactly these cells.
+      (when (php/> visible-mh 0)
+        (let [content (buf-mk)]
+          (dotimes [i visible-mh] (buf-push content (buf-get mrows i)))
+          (let [panel (minimap-frame content map-mw "MAP")
+                ftop  (php/- map-row 1)
+                fleft (php/- map-col 1)]
+            (dotimes [j (php/count panel)]
+              (buf-push parts (str "\e[" (php/+ ftop j) ";" fleft "H" (buf-get panel j)))))))
       ;; Overlay chain: each helper returns the parts buffer because
       ;; PHP arrays pass by value across fn boundaries. Rebind every
       ;; step so the pushed escapes actually accumulate.

@@ -91,6 +91,12 @@ The same mixer runs at both render scales: 2 sub-rows per cell at full detail, 4
 
 Per-row shade by distance from horizon (`vh/2`): rows near horizon darkest (atmospheric haze), overhead/feet brightest. Sky and floor share the gradient, pre-baked per viewport height in `build-horizon-gradient`.
 
+## Atmospheric fog tint (tinted + filmic)
+
+Distance fog on the textured walls and the themed floor fades toward a cool blue-grey haze tint (cube (1,1,2) = rgb 95/95/135) instead of pure black, and runs the brightness through a normalised ACES-ish filmic tone curve (toe keeps shadow contrast, shoulder rolls off near-wall highlights). Aerial perspective: distant surfaces converge on the same desaturated cool haze (bright codes roll down toward it, codes darker than the haze lift up toward it) so depth reads as "hazy/far" rather than just "dark", and mid-tones gain contrast so the scene reads lit rather than linearly dimmed.
+
+All of this is baked at load: `fade-256-fog` (in `frame_math`) lerps each code toward the fog tint in true RGB and re-quantizes to the nearest 256-colour code via `palette/nearest-256`, so the rebuilt `tex-fade-table` / `build-themed-gradient(-codes)` LUTs cost the hot path nothing extra - still one nested `aget` per cell. The far tint is the dimmest cool colour that survives the 256-colour round-trip; a darker tint re-quantizes back onto the dense grayscale ramp and loses the hue. `PHEL_DOOM_FLAT_FOG=1` restores the legacy linear fade-to-black (A/B fallback, same pattern as `NO_SUBPIXEL` / `FLAT_WALLS`). The grayscale-ramp sky gradient and the enemy/seam fades are unchanged.
+
 ## Enemy sprite paint
 
 Two modes, chosen by `PHEL_DOOM_NO_SPRITES` (same flag as the weapon view; sprites on by default).
@@ -143,7 +149,7 @@ Consecutive same-color cells coalesce: one escape + N spaces (terminal repeats B
 
 ## Textured walls
 
-Plain stone walls are sampled from the baked Freedoom flat `wall-tex` (WALL70_2, 64x64, in `wall_texture_data.phel`). Per wall-body cell: `u` = `wallxs[col] * 64` (the ray's wall-hit fraction from the cast), `v` = row-within-wall * 64 / wall-height. The texture code is fogged by the column's 0..23 shade level through `tex-fade-table` (a prebaked 24x256 fade LUT) and resolved to a ready cell via `bg-cell-cache` - one nested `aget`, no per-cell `fade-256` or string alloc, so texturing costs ~2% over flat shading.
+Plain stone walls are sampled from the baked Freedoom flat `wall-tex` (WALL70_2, 64x64, in `wall_texture_data.phel`). Per wall-body cell: `u` = `wallxs[col] * 64` (the ray's wall-hit fraction from the cast), `v` = row-within-wall * 64 / wall-height. The texture code is fogged by the column's 0..23 shade level through `tex-fade-table` (a prebaked 24x256 fade LUT, tinted + filmic toward the cool haze - see "Atmospheric fog tint") and resolved to a ready cell via `bg-cell-cache` - one nested `aget`, no per-cell `fade-256` or string alloc, so texturing costs ~2% over flat shading.
 
 The boss door and blood-band columns are NOT textured (`tex-level = -1`): they keep their flat shade so the boss nav glyph / the red hit-wash stay clean. `PHEL_DOOM_FLAT_WALLS=1` forces the old flat-shaded stone (and the striped flat door).
 
@@ -153,7 +159,7 @@ Door columns (unlocked + keycard-locked, map cells 2/3/4/9) run through the same
 
 Door texels are xterm-256 colour-CUBE codes (not grayscale ramp), which two pieces of machinery must respect:
 
-- `tex-fade-table` fog already darkens cube codes hue-true via `fade-256`.
+- `tex-fade-table` fog already fades cube codes hue-true (toward the cool haze tint via `fade-256-fog`, or toward black under `PHEL_DOOM_FLAT_FOG=1`).
 - The sub-row seam accents darken through `seam-darken-16/-8/-5` LUTs (in `frame_math`) instead of plain `code - n` arithmetic: subtracting from a cube code jumps hue (amber 166 - 16 = green 150). For grayscale-ramp codes the LUTs reproduce the old subtraction exactly.
 
 Door fog is the wall formula with two nav-cue exceptions: the level floors at 8 (a door never fades to black) and ignores the near-death haze. The door pulse rides the fog level (`door-tex-boost`, +3 levels on the 4 rad/s beat) instead of swapping paint strings. Blood-band door columns keep the flat striped `door-shade` (the seam mixer's sky/floor codes are grayscale-only), as do glyph-enemy columns and all-flat fallback modes.

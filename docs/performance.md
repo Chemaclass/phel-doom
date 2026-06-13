@@ -90,6 +90,8 @@ Unspecialised Phel dispatch through the runtime. Hot loops use `php/+`, `php/<`,
 
 Parallel `shade-code-table` holds colour codes as strings for half-block edge composition (avoids re-parsing codes from ANSI strings).
 
+The distance-fog LUTs (`tex-fade-table`, `build-themed-gradient(-codes)`) bake a tinted + filmic fade toward a cool haze tint (see `docs/rendering.md`, "Atmospheric fog tint"). The RGB lerp, filmic curve, and nearest-256 re-quantization all run inside the load-time bake; the hot path is unchanged (one nested `aget`). Measured render-ms delta vs the legacy `PHEL_DOOM_FLAT_FOG=1` fade-to-black is within noise at 80x24 / 120x30 / 180x40 (load-time-only change), and the built artifact adds zero `function() use(` closures to the per-cell loops in `main.php`.
+
 ## PHP-native nested array for the grid (`:pgrid`)
 
 Phel vectors are slow for indexed reads in tight loops. `new-world` builds a PHP-array twin:

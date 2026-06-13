@@ -2,7 +2,7 @@
 ;; enemy projection, visibility tests. Pure helpers.
 (ns phel-doom.io.render.frame-math
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get])
-  (:require phel-doom.io.render.palette :refer [char-aspect base-hud-rows])
+  (:require phel-doom.io.render.palette :refer [char-aspect base-hud-rows code-r code-g code-b nearest-256])
   (:require phel-doom.core.enemies :refer [enemy-types])
   (:require phel-doom.core.engine :refer [proj-dist]))
 
@@ -38,6 +38,59 @@
 
     :else             code))
 
+(defn- fog-tinted?
+  ;; Tinted + filmic atmospheric fog is ON by default. PHEL_DOOM_FLAT_FOG=1
+  ;; forces the legacy linear fade-to-black distance fog (A/B fallback,
+  ;; same pattern as NO_SUBPIXEL / FLAT_WALLS). Read once at load.
+  []
+  (not (php/=== "1" (php/getenv "PHEL_DOOM_FLAT_FOG"))))
+
+(def- fog-rgb
+  ;; Far-distance fog target: a cool desaturated blue-grey (cube (1,1,2)
+  ;; = rgb 95/95/135 = code 60). Distance fades lerp toward THIS instead
+  ;; of pure black, so depth reads as atmospheric haze (aerial
+  ;; perspective: distant surfaces go lighter + cooler) rather than just
+  ;; "dark". A darker tint would re-quantize back onto the dense grayscale
+  ;; ramp and lose the hue, so 95/95/135 is the dimmest cool tint that
+  ;; survives the 256-colour round-trip.
+  (php/array 95 95 135))
+
+(defn- filmic
+  ;; Normalised ACES-ish filmic tone curve on a brightness factor
+  ;; b in [0,1]: a toe that keeps shadow contrast and a shoulder that
+  ;; rolls off highlights, so the scene reads "lit" rather than linearly
+  ;; dimmed. Mid-tones gain contrast; near walls (b~1) roll to full.
+  ;; Evaluated load-time only.
+  [^float b]
+  (let [bc (cond (php/< b 0.0) 0.0 (php/> b 1.0) 1.0 :else b)
+        f  (fn [^float x] (php// (php/* x (php/+ (php/* 2.51 x) 0.03))
+                                 (php/+ (php/* x (php/+ (php/* 2.43 x) 0.59)) 0.14)))]
+    (php// (f bc) (f 1.0))))
+
+(defn- fade-256-fog
+  ;; Distance fade that lerps a colour code toward `fog-rgb` (not black)
+  ;; with a filmic brightness curve, then re-quantizes to the nearest
+  ;; 256-colour code. `t` in [0,1] = fog amount (0 near, 1 far). System
+  ;; codes (0-15) pass through unchanged, matching fade-256. Pure RGB-space
+  ;; lerp; load-time LUT bake only.
+  [^int code ^float t]
+  (if (php/< code 16)
+    code
+    (let [b  (filmic (php/- 1.0 t))
+          fr (php/aget fog-rgb 0)
+          fg (php/aget fog-rgb 1)
+          fb (php/aget fog-rgb 2)
+          r  (php/intval (php/round (php/+ fr (php/* b (php/- (php/aget code-r code) fr)))))
+          g  (php/intval (php/round (php/+ fg (php/* b (php/- (php/aget code-g code) fg)))))
+          bl (php/intval (php/round (php/+ fb (php/* b (php/- (php/aget code-b code) fb)))))]
+      (nearest-256 r g bl))))
+
+(def- fog-fade
+  ;; Resolved-once distance fade for every fog LUT bake below. Tinted +
+  ;; filmic by default; PHEL_DOOM_FLAT_FOG=1 -> legacy fade-256 (toward
+  ;; black). Both share the `(code, t)` signature so callers are agnostic.
+  (if (fog-tinted?) fade-256-fog fade-256))
+
 (def tex-fade-table
   "24-level × 256-code distance-fog lookup for textured walls:
    `tex-fade-table[level][code]` is `code` darkened toward black by
@@ -52,7 +105,7 @@
               t     (php/- 1.0 (php// lvl 23.0))]
           (loop [c 0]
             (when (php/< c 256)
-              (php/aset inner c (fade-256 c t))
+              (php/aset inner c (fog-fade c t))
               (recur (php/+ c 1))))
           (php/aset outer lvl inner))
         (recur (php/+ lvl 1))))
@@ -301,7 +354,7 @@
               fade' (if (and stripe? (php/=== (mod r 2) 1))
                       (php/max 0.0 (php/- fade 0.12))
                       fade)
-              code  (fade-256 base-code fade')]
+              code  (fog-fade base-code fade')]
           (buf-set arr r (str "\e[48;5;" code "m ")))
         (recur (php/+ r 1))))
     arr))
@@ -345,7 +398,7 @@
               fade' (if (and stripe? (php/=== (mod r 2) 1))
                       (php/max 0.0 (php/- fade 0.12))
                       fade)
-              code  (fade-256 base-code fade')]
+              code  (fog-fade base-code fade')]
           (buf-set arr r (php/strval code)))
         (recur (php/+ r 1))))
     arr))

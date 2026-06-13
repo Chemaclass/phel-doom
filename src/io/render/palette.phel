@@ -347,3 +347,72 @@
         (buf-set t i (php/strval (php/- 196 (php/intval (php/* i 6)))))
         (recur (php/+ i 1))))
     t))
+
+;; ---------------------------------------------------------------------
+;; Colour-space helpers: 256-colour code <-> RGB. Used by load-time LUT
+;; bakes (distance fog) that must lerp in true RGB so a fade lands on the
+;; perceptually nearest code instead of jumping hue. All load-time only;
+;; never called on the per-cell hot path.
+;; ---------------------------------------------------------------------
+
+(def- cube-lv (php/array 0 95 135 175 215 255))
+
+(def- color-rgb-luts
+  ;; Three parallel 256-entry LUTs: code -> R / G / B (0-255). Cube
+  ;; (16-231), grayscale (232-255), and the 16 ANSI system colours.
+  (let [r   (php/array)
+        g   (php/array)
+        b   (php/array)
+        sys (php/array 0 0 0 205 0 0 0 205 0 205 205 0 0 0 238 205 0 205 0 205 205 229 229 229
+                       127 127 127 255 0 0 0 255 0 255 255 0 92 92 255 255 0 255 0 255 255 255 255 255)]
+    (loop [c 0]
+      (when (php/< c 256)
+        (cond
+          (php/>= c 232) (let [v (php/+ 8 (php/* 10 (php/- c 232)))]
+                           (php/aset r c v) (php/aset g c v) (php/aset b c v))
+          (php/>= c 16)  (let [k (php/- c 16)]
+                           (php/aset r c (php/aget cube-lv (php/intdiv k 36)))
+                           (php/aset g c (php/aget cube-lv (php/intdiv (php/% k 36) 6)))
+                           (php/aset b c (php/aget cube-lv (php/% k 6))))
+          :else          (do (php/aset r c (php/aget sys (php/* 3 c)))
+                             (php/aset g c (php/aget sys (php/+ (php/* 3 c) 1)))
+                             (php/aset b c (php/aget sys (php/+ (php/* 3 c) 2)))))
+        (recur (php/+ c 1))))
+    (php/array r g b)))
+
+(def code-r "256-colour code -> red channel (0-255). Load-time LUT bakes only." (php/aget color-rgb-luts 0))
+(def code-g "256-colour code -> green channel (0-255). Load-time LUT bakes only." (php/aget color-rgb-luts 1))
+(def code-b "256-colour code -> blue channel (0-255). Load-time LUT bakes only." (php/aget color-rgb-luts 2))
+
+(defn- cube-idx
+  ;; nearest 6x6x6 cube level index for one 0-255 channel value.
+  [^int v]
+  (cond (php/< v 48)  0
+        (php/< v 115) 1
+        (php/< v 155) 2
+        (php/< v 195) 3
+        (php/< v 235) 4
+        :else         5))
+
+(defn- color-sq [^int v] (php/* v v))
+
+(defn nearest-256
+  "Nearest xterm-256 code for an RGB triple (0-255 each): tries the
+   6x6x6 cube and the 24-step grayscale ramp, keeps whichever is closer
+   in squared RGB distance. Load-time colour quantizer; never on the hot
+   path."
+  [^int r ^int g ^int b]
+  (let [ri   (cube-idx r)
+        gi   (cube-idx g)
+        bi   (cube-idx b)
+        cr   (php/aget cube-lv ri)
+        cg   (php/aget cube-lv gi)
+        cb   (php/aget cube-lv bi)
+        avg  (php/intdiv (php/+ r g b) 3)
+        gidx (php/max 0 (php/min 23 (php/intdiv (php/- avg 3) 10)))
+        gv   (php/+ 8 (php/* 10 gidx))
+        dc   (php/+ (color-sq (php/- r cr)) (color-sq (php/- g cg)) (color-sq (php/- b cb)))
+        dg   (php/+ (color-sq (php/- r gv)) (color-sq (php/- g gv)) (color-sq (php/- b gv)))]
+    (if (php/<= dc dg)
+      (php/+ 16 (php/* 36 ri) (php/* 6 gi) bi)
+      (php/+ 232 gidx))))

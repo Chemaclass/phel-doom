@@ -95,14 +95,25 @@
   (let [firing? (php/> (or (get stats :fire-anim) 0.0) 0.0)
         ch-row  (php/+ (php/intdiv vh 2) (if firing? 0 1))
         ch-col  (php/+ (php/intdiv vw 2) 1)
+        ;; Hit-marker (issue #201): a live :hit-fx overrides the reticle
+        ;; for its brief ttl - a bold-red ✗ confirms a kill, a bold-yellow
+        ;; × confirms a wound. Single-shot feedback, so it is kept even
+        ;; under reduced motion (it does not strobe).
+        hit-fx  (get stats :hit-fx)
+        hit?    (and hit-fx (php/> (or (:ttl hit-fx) 0.0) 0.0))
+        kill?   (and hit? (:kill? hit-fx))
+        glyph   (cond kill? "✗" hit? "×" :else "+")
         ;; Idle: bold bright-white (NOT the old faint `2`, which read as a
         ;; translucent smudge against the busy half-block floor). Firing:
         ;; bold bright-yellow as a muzzle-kick flash, paired with the
         ;; one-row jump above. center-bg keeps the underlying cell colour
         ;; as the glyph's background so the reticle still sits in the scene.
-        ch-att  (if firing? "\e[93;1m" "\e[97;1m")]
+        ch-att  (cond kill?   "\e[91;1m"
+                      hit?    "\e[93;1m"
+                      firing? "\e[93;1m"
+                      :else   "\e[97;1m")]
     (buf-push parts
-              (str "\e[" ch-row ";" ch-col "H" center-bg ch-att "+\e[0m")))
+              (str "\e[" ch-row ";" ch-col "H" center-bg ch-att glyph "\e[0m")))
   parts)
 
 (defn paint-intro-splash

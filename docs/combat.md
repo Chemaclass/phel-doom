@@ -57,7 +57,11 @@ Two-step scan per shot:
 1. **Wall ray** along player facing via `cast-ray`, returns distance to first wall.
 2. **Enemy scan**: project each alive enemy onto heading (dot product). Nearest one in front, closer than wall, within max-range, within hit-radius perpendicular = hit. Flip `:alive false`, arm respawn timer (3-6s uniform).
 
-On hit: `play-shot-sfx` emits weapon report + kill cue (distance-attenuated). `on-shot-hit` bumps `:kills`, chains streak, pushes blood splatter, arms hit-stop if tough enemy dies.
+On hit: `play-shot-sfx` emits weapon report + kill cue (distance-attenuated). `on-shot-hit` bumps `:kills`, chains streak, pushes blood splatter, arms hit-stop if tough enemy dies, and stamps the crosshair hit-marker (see below).
+
+### Hit-marker (crosshair feedback)
+
+Every connecting shot stamps `:hit-fx {:kill? :ttl}` on the world via `stamp-hit-fx`: `:kill?` is true on a killing blow, false on a wound, and `:ttl` starts at `hit-marker-seconds` (0.12 s). `decay-timers` ticks the ttl down each frame and clears the field at 0. All three hit tails set it - `on-shot-hit` (single-target), `finish-multikill` (pierce/spread, one stamp for the aggregate volley), and `bfg-fire` (kill is the hit proxy: splash has no wound-only signal). The render layer reads it through `stats[:hit-fx]`; `paint-crosshair` swaps the `+` reticle for a bold-red `✗` on a kill or a bold-yellow `×` on a wound for the ttl window. It is single-shot feedback (no strobe), so it stays on under reduced motion.
 
 On miss: weapon report only.
 

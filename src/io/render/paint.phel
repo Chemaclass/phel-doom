@@ -51,7 +51,10 @@
    SCENE cells, so the emitted terminal coordinates multiply by `sc`
    (1 = full detail, identity; 2 = pixel-doubled scene)."
   [parts world stats vw vh dists edists face-phase ^int sc]
-  (let [scare? (php/> (or (get stats :scare-secs) 0.0) 0.0)]
+  ;; Reduced-motion: drop the one-shot jump-scare glyph swap (a sudden
+  ;; flash); the resting / attack faces still animate on their own beat.
+  (let [scare? (and (php/> (or (get stats :scare-secs) 0.0) 0.0)
+                    (not (get stats :reduced-motion?)))]
     (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
       (let [col         (:col proj)
             d           (:dist proj)
@@ -517,7 +520,10 @@
    underneath so the picture isn't blacked out. Skips the bottom 6
    rows so the pistol + HUD stays readable through the flicker."
   [parts stats vw vh]
-  (when (php/> (or (get stats :flicker-active-secs) 0.0) 0.0)
+  ;; Reduced-motion (accessibility): the flicker is a pure strobe with no
+  ;; gameplay information, so it is dropped entirely rather than calmed.
+  (when (and (php/> (or (get stats :flicker-active-secs) 0.0) 0.0)
+             (not (get stats :reduced-motion?)))
     (let [line   (php/str_repeat " " vw)
           dark   "\e[48;5;232m"
           bottom (php/max 1 (php/- vh 6))]
@@ -551,7 +557,12 @@
   [parts stats vw vh]
   (let [lives (or (get stats :lives) 0)
         phase (or (get stats :heartbeat-phase) 0.0)
-        bg    (heartbeat-bg phase lives)]
+        ;; Reduced-motion: keep the low-health danger cue but freeze it -
+        ;; a steady dim-red edge whenever in the last ~2 hearts, with no
+        ;; per-frame phase pulse.
+        bg    (if (get stats :reduced-motion?)
+                (if (and (php/< lives 5) (php/> lives 0)) "\e[48;5;52m" nil)
+                (heartbeat-bg phase lives))]
     (when bg
       (let [left-c0  1
             right-c0 (php/max 1 (php/- vw 1))
@@ -600,7 +611,9 @@
   (let [secs    (or (get stats :berserk-secs) 0.0)
         bloody? (php/> (or (get stats :iframes) 0.0) 0.0)]
     (when (and (php/> secs 0.0) (not bloody?))
-      (let [bright? (pulse t 9.0)
+      ;; Reduced-motion: hold the border on the steady deep-crimson (88)
+      ;; instead of swapping to the bright pulse frame (124).
+      (let [bright? (and (pulse t 9.0) (not (get stats :reduced-motion?)))
             bg      (if bright? "\e[48;5;124m" "\e[48;5;88m")
             top     (str bg (php/str_repeat " " vw) "\e[0m")
             edge    (str bg " \e[0m")]

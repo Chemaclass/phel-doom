@@ -73,6 +73,12 @@
    dips (a too-short window collapsed the kick into one frame)."
   0.13)
 
+(def hit-marker-seconds
+  "How long the crosshair hit-marker (`✗` kill / `×` wound) stays lit
+   after a shot connects. A brief game-feel flash, sized like the recoil
+   kick so it reads even at a dipped frame rate."
+  0.12)
+
 (def tracer-flight-seconds
   "Flight time of a cosmetic shot tracer (BFG ball / rocket). The shot's
    damage is instant (hitscan splash); the tracer is a purely visual
@@ -301,6 +307,22 @@
   [world k ^float dt]
   (php/max 0.0 (php/- (or (get world k) 0.0) dt)))
 
+(defn- stamp-hit-fx
+  ;; Stamp the crosshair hit-marker for a connecting shot: a kill marker
+  ;; when `killed?`, else a wound marker, both lit for hit-marker-seconds.
+  ;; One call per trigger pull (each fire path already aggregates its
+  ;; kill count), so no intra-frame stickiness is needed.
+  [world killed?]
+  (assoc world :hit-fx {:kill? (boolean killed?) :ttl hit-marker-seconds}))
+
+(defn- decay-hit-fx
+  ;; Tick the hit-marker ttl down by `dt`; drop the whole FX (nil) once it
+  ;; expires so the overlay stops drawing and the field doesn't linger.
+  [fx ^float dt]
+  (when fx
+    (let [ttl' (php/- (or (:ttl fx) 0.0) dt)]
+      (when (php/> ttl' 0.0) (assoc fx :ttl ttl')))))
+
 (defn- decay-timers [world ^float dt]
   (let [streak-secs' (decay-timer world :streak-secs dt)]
     (assoc world
@@ -320,7 +342,8 @@
            ;; Window expired: streak counter goes back to 0 so the HUD
            ;; stops showing it.
            :streak                (if (php/<= streak-secs' 0.0) 0 (or (:streak world) 0))
-           :fx                    (decay-fx (:fx world) dt))))
+           :fx                    (decay-fx (:fx world) dt)
+           :hit-fx                (decay-hit-fx (:hit-fx world) dt))))
 
 (defn player-immune?
   "True when an incoming hit can't land: i-frames still ticking, an
@@ -681,8 +704,10 @@
                     (let [hs (hit-stop-for (or (:max-lives killed-e) 1))]
                       (if (php/> hs 0.0) (assoc with-loot :hit-stop-secs hs) with-loot))
                     with-loot)]
-    (push-blood-fx (assoc juiced :fire-anim fire-anim-seconds) hit-pos
-                   (when killed? (:type killed-e)))))
+    (stamp-hit-fx
+     (push-blood-fx (assoc juiced :fire-anim fire-anim-seconds) hit-pos
+                    (when killed? (:type killed-e)))
+     killed?)))
 
 (defn- on-shot-miss [world]
   (assoc world :fire-anim fire-anim-seconds))
@@ -852,8 +877,11 @@
     ;; a kill is the hit proxy: a killing blast attenuates by the impact
     ;; distance, a wall hit / whiff plays at full volume.
     (enqueue-shot-sfx
-     (apply-heat (push-blood-fx (assoc tracered :fire-anim fire-anim-seconds) hit-pos
-                                (when killed? (corpse-type-at woken hit-pos))))
+     (apply-heat (let [bw (push-blood-fx (assoc tracered :fire-anim fire-anim-seconds) hit-pos
+                                         (when killed? (corpse-type-at woken hit-pos)))]
+                   ;; bfg has no wound-only signal, so a kill is the hit
+                   ;; proxy for the marker too (no marker on a whiff).
+                   (if killed? (stamp-hit-fx bw true) bw)))
      world killed? killed? hit-pos)))
 
 (defn- finish-multikill
@@ -894,8 +922,10 @@
         based        (assoc juiced :fire-anim fire-anim-seconds)]
     (enqueue-shot-sfx
      (apply-heat (if hit?
-                   (push-blood-fx based hit-pos
-                                  (when killed? (corpse-type-at enemies-after hit-pos)))
+                   (stamp-hit-fx
+                    (push-blood-fx based hit-pos
+                                   (when killed? (corpse-type-at enemies-after hit-pos)))
+                    killed?)
                    based))
      world hit? killed? (or hit-pos {:x (:x p) :y (:y p)}))))
 

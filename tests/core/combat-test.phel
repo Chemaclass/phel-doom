@@ -305,6 +305,43 @@
         w'   (tick-shooting w true)]
     (is (= 1.0 (:vol (first (sfx-named w' :shoot-chaingun)))))))
 
+;; ---------------------------------------------------------------------
+;; Hit-marker FX (issue #201): a connecting shot stamps `:hit-fx`
+;; {:kill? :ttl} so the crosshair overlay can flash a wound / kill tick.
+;; ---------------------------------------------------------------------
+
+(defn- fire-at [enemy-hp]
+  (let [base (new-world corridor-grid (new-player 1.5 1.5 0.0))
+        w    (assoc base :weapon :chaingun :owned-weapons #{:chaingun}
+                    :mag 30 :ammo-reserve 10 :fire-cooldown 0.0
+                    :reload-cooldown 0.0 :jam-secs 0.0 :iframes 0.0
+                    :enemies (if (nil? enemy-hp) [] [(new-enemy 3.5 1.5 enemy-hp)]))]
+    (tick-shooting w true)))
+
+(deftest test-fire-shot-stamps-kill-marker
+  ;; Chaingun does 1 dmg; a 1-HP enemy dies -> kill marker.
+  (let [fx (:hit-fx (fire-at 1))]
+    (is (not (nil? fx)) "hit-fx stamped on a connecting shot")
+    (is (= true (:kill? fx)) "kill marker when the enemy dies")
+    (is (php/> (:ttl fx) 0.0) "marker ttl is live")))
+
+(deftest test-fire-shot-stamps-wound-marker
+  ;; 3-HP enemy survives one chaingun round -> wound marker.
+  (let [fx (:hit-fx (fire-at 3))]
+    (is (not (nil? fx)) "hit-fx stamped on a wound")
+    (is (= false (:kill? fx)) "wound marker when the enemy survives")))
+
+(deftest test-fire-shot-miss-no-marker
+  (is (nil? (:hit-fx (fire-at nil))) "no marker on a miss"))
+
+(deftest test-hit-marker-decays-and-clears
+  (let [base (assoc (new-world corridor-grid (new-player 1.5 1.5 0.0))
+                    :hit-fx {:kill? true :ttl 0.1})
+        w1   (damage-step base 0.05)
+        w2   (damage-step base 0.2)]
+    (is (php/< (:ttl (:hit-fx w1)) 0.1) "ttl decays")
+    (is (nil? (:hit-fx w2)) "cleared once ttl runs out")))
+
 (deftest test-tick-shooting-empty-mag-skip-when-jammed
   ;; Jam already has its own visual cue (paint-door-face / fire-anim).
   ;; Suppress the click so we don't double up.

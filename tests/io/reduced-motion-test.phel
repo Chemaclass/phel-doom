@@ -1,7 +1,7 @@
 (ns phel-doom-tests.io.reduced-motion-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.io.render.buffer :refer [buf-mk])
-  (:require phel-doom.io.render.paint :refer [paint-flicker paint-heartbeat-vignette paint-berserk-tint]))
+  (:require phel-doom.io.render.paint :refer [paint-flicker paint-heartbeat-vignette paint-berserk-tint paint-door-face paint-low-ammo paint-rear-warning paint-berserk-badge]))
 
 ;; ---------------------------------------------------------------------
 ;; Reduced-motion (accessibility): the strobing horror beats must not
@@ -64,3 +64,40 @@
     (is (php/str_contains a "\e[48;5;88m") "steady deep crimson present")
     (is (not (php/str_contains a "\e[48;5;124m")) "no bright pulse at t=0")
     (is (not (php/str_contains b "\e[48;5;124m")) "no bright pulse at t=0.18")))
+
+;; --- paint-door-face: no terminal hardware blink (SGR 5) -------------
+
+(defn- door-face-out [rm?]
+  ;; One door column (hit 2) at col 0, wall rows 2..8, scale 1.
+  (s (paint-door-face (buf-mk)
+                      (merge {:door-face-active-secs 0.5} (if rm? {:reduced-motion? true} {}))
+                      1 24 (php/array 2) (php/array 2) (php/array 8) 1)))
+
+(deftest door-eye-blinks-normally
+  (is (php/str_contains (door-face-out false) "\e[5;") "default door eye uses SGR-5 blink"))
+
+(deftest door-eye-static-under-reduced-motion
+  (let [out (door-face-out true)]
+    (is (php/str_contains out "ʘ") "door eye still drawn")
+    (is (not (php/str_contains out "\e[5;")) "no SGR-5 hardware blink under reduced motion")))
+
+;; --- HUD label pulses become steady under reduced motion -------------
+
+(deftest low-ammo-steady-under-reduced-motion
+  ;; Steady = present at BOTH sample times (a pulsing label would gap).
+  (let [a (s (paint-low-ammo (buf-mk) 0.0  {:mag 1 :ammo-reserve 0 :reduced-motion? true} 80))
+        b (s (paint-low-ammo (buf-mk) 0.18 {:mag 1 :ammo-reserve 0 :reduced-motion? true} 80))]
+    (is (php/str_contains a "LOW AMMO") "low-ammo shown at t=0")
+    (is (php/str_contains b "LOW AMMO") "low-ammo shown at t=0.18 (steady)")))
+
+(deftest rear-warning-steady-under-reduced-motion
+  (let [a (s (paint-rear-warning (buf-mk) 0.0  {:rear-warning? true :reduced-motion? true} 80))
+        b (s (paint-rear-warning (buf-mk) 0.18 {:rear-warning? true :reduced-motion? true} 80))]
+    (is (php/str_contains a "behind") "rear cue shown at t=0")
+    (is (php/str_contains b "behind") "rear cue shown at t=0.18 (steady)")))
+
+(deftest berserk-badge-steady-under-reduced-motion
+  (let [a (s (paint-berserk-badge (buf-mk) 0.0  {:berserk-secs 5.0 :reduced-motion? true} 80))
+        b (s (paint-berserk-badge (buf-mk) 0.18 {:berserk-secs 5.0 :reduced-motion? true} 80))]
+    (is (php/str_contains a "BERSERK") "badge shown at t=0")
+    (is (php/str_contains b "BERSERK") "badge shown at t=0.18 (steady)")))

@@ -80,7 +80,7 @@ Triggered on life drop or enemy proximity:
 
 ## Accessibility
 
-- Reduced motion (Settings toggle, default off; `PHEL_DOOM_REDUCED_MOTION=1` to force on): photosensitivity-safe mode that gates the strobing horror beats. Lights-flicker scanlines are dropped; the low-health heartbeat edge and the berserk border hold steady instead of pulsing; the jump-scare face flash is suppressed. Essential single-shot feedback (directional hit-vignette, kill flash) is kept. Pure overlay branch, no frame-speed cost.
+- Reduced motion (Settings toggle, default off; `PHEL_DOOM_REDUCED_MOTION=1` to force on): photosensitivity-safe mode that gates the strobing horror beats. Lights-flicker scanlines are dropped; the low-health heartbeat edge and the berserk border hold steady instead of pulsing; the jump-scare face flash is suppressed; the door-eye drops its terminal hardware blink (SGR 5) for a static eye; and the pulsing HUD labels (low-ammo, behind-you) and powerup banners hold steady. Essential single-shot feedback (directional hit-vignette, kill flash) is kept. Pure overlay branch, no frame-speed cost.
 
 ## Audio
 

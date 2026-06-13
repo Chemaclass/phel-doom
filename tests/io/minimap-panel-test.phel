@@ -1,0 +1,51 @@
+(ns phel-doom-tests.io.minimap-panel-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.io.render.frame-math :refer [layout])
+  (:require phel-doom.io.render.hud :refer [minimap-frame]))
+
+;; ---------------------------------------------------------------------
+;; layout: the minimap is now inset from the top + right terminal edges
+;; (breathing room) so the framed panel never butts the border.
+;; ---------------------------------------------------------------------
+
+(deftest layout-insets-minimap-from-edges
+  (let [{:keys [map-col map-row map-mw]} (layout 80 24 32 {})]
+    ;; 80 cols, grid-w 32 -> step 2 -> mini-mw 16.
+    (is (= 16 map-mw) "minimap content width")
+    ;; flush-right: right border sits on the last col, so content left =
+    ;; cols - mw = 64 (left border at 63).
+    (is (= 64 map-col) "content left leaves room for the left border")
+    ;; top inset: content starts on row 3 (row 1 margin, row 2 top border).
+    (is (= 3 map-row) "content top leaves a margin row + border row")))
+
+(deftest layout-clamps-on-tiny-terminal
+  ;; A narrow terminal must never push the frame-left col (< map-col) off
+  ;; the left edge.
+  (let [{:keys [map-col]} (layout 12 24 32 {})]
+    (is (>= map-col 2) "map-col stays >= 2 so frame-left >= 1")))
+
+;; ---------------------------------------------------------------------
+;; minimap-frame: wrap pre-rendered content rows in a box-drawing panel.
+;; ---------------------------------------------------------------------
+
+(deftest minimap-frame-wraps-content
+  (let [content (php/array "AAAAAAAA" "BBBBBBBB")
+        panel   (minimap-frame content 8 "MAP")]
+    ;; content rows + top + bottom border.
+    (is (= 4 (php/count panel)) "panel has content + 2 border rows")
+    (is (php/str_contains (php/aget panel 0) "┌") "top-left corner")
+    (is (php/str_contains (php/aget panel 0) "┐") "top-right corner")
+    (is (php/str_contains (php/aget panel 0) "MAP") "title in top border")
+    (is (php/str_contains (php/aget panel 1) "│") "content row has side border")
+    (is (php/str_contains (php/aget panel 1) "AAAAAAAA") "content row keeps its payload")
+    (is (php/str_contains (php/aget panel 3) "└") "bottom-left corner")
+    (is (php/str_contains (php/aget panel 3) "┘") "bottom-right corner")))
+
+(deftest minimap-frame-narrow-content-has-no-title
+  ;; When the interior is too narrow to fit " MAP " the title is dropped
+  ;; but the border still closes cleanly.
+  (let [panel (minimap-frame (php/array "X") 1 "MAP")]
+    (is (= 3 (php/count panel)) "still framed top + bottom")
+    (is (php/str_contains (php/aget panel 0) "┌") "top-left corner")
+    (is (php/str_contains (php/aget panel 0) "┐") "top-right corner")
+    (is (not (php/str_contains (php/aget panel 0) "MAP")) "title dropped when too narrow")))

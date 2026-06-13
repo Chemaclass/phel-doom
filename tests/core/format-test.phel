@@ -1,6 +1,6 @@
 (ns phel-doom-tests.core.format-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.format :refer [format-duration]))
+  (:require phel-doom.core.format :refer [format-duration accuracy-pct run-grade]))
 
 ;; ---------------------------------------------------------------------
 ;; format-duration (#131): turn a second count into a readable clock.
@@ -31,3 +31,32 @@
 (deftest test-format-duration-truncates-float
   ;; survived-s is already an int, but be defensive: a float floors.
   (is (= "1:05" (format-duration 65.9))))
+
+;; ---------------------------------------------------------------------
+;; Run grade (#202): accuracy% + a letter rank S/A/B/C/D from
+;; 0.7*accuracy + 0.3*secrets-ratio. Pure + deterministic.
+;; ---------------------------------------------------------------------
+
+(deftest test-accuracy-pct
+  (is (= 0 (accuracy-pct 0 0)) "no shots fired -> 0%")
+  (is (= 100 (accuracy-pct 10 10)) "all hit -> 100%")
+  (is (= 50 (accuracy-pct 10 5)) "half hit -> 50%")
+  (is (= 33 (accuracy-pct 3 1)) "rounds to nearest percent")
+  (is (= 0 (accuracy-pct 0 5)) "no fired guards against div-by-zero"))
+
+(deftest test-run-grade-thresholds
+  ;; secrets full (ratio 1.0) isolates the accuracy weighting.
+  (is (= "S" (run-grade 1.0 2 2)) "perfect accuracy + secrets = S")
+  (is (= "S" (run-grade 0.9 2 2)) "0.7*0.9+0.3 = 0.93 -> S")
+  (is (= "A" (run-grade 0.7 2 2)) "0.7*0.7+0.3 = 0.79 -> A")
+  (is (= "B" (run-grade 0.5 2 2)) "0.7*0.5+0.3 = 0.65 -> B")
+  (is (= "D" (run-grade 0.0 0 0)) "no accuracy, no secrets -> D"))
+
+(deftest test-run-grade-no-secrets-no-penalty
+  ;; A level with no secrets must not drag the grade down.
+  (is (= "S" (run-grade 1.0 0 0)) "full accuracy on a secret-less run still S"))
+
+(deftest test-run-grade-secrets-lift
+  ;; Finding all secrets lifts a mediocre-accuracy run vs missing them.
+  (is (= "D" (run-grade 0.3 0 2)) "0.7*0.3 + 0 = 0.21 -> D when secrets missed")
+  (is (= "C" (run-grade 0.3 2 2)) "0.7*0.3 + 0.3 = 0.51 -> C with all secrets"))

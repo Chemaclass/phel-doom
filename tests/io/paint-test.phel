@@ -1,7 +1,7 @@
 (ns phel-doom-tests.io.paint-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.io.render.buffer :refer [buf-mk])
-  (:require phel-doom.io.render.paint :refer [paint-crosshair paint-door-face]))
+  (:require phel-doom.io.render.paint :refer [paint-crosshair paint-door-face paint-game-info]))
 
 ;; ---------------------------------------------------------------------
 ;; Crosshair legibility. The reticle must be a SOLID glyph, never the old
@@ -38,6 +38,43 @@
 (deftest test-crosshair-expired-hit-fx-is-plain-reticle
   (let [s (crosshair-str {:fire-anim 0.0 :hit-fx {:kill? true :ttl 0.0}})]
     (is (php/str_contains s "+") "expired marker (ttl 0) falls back to +")))
+
+;; Crosshair style setting (issue #203): :cross + / :dot · / :open ○ /
+;; :off hides the idle reticle (the hit-marker still flashes on a hit).
+
+(deftest test-crosshair-style-dot
+  (let [s (crosshair-str {:fire-anim 0.0 :crosshair :dot})]
+    (is (php/str_contains s "·") "dot style reticle")
+    (is (not (php/str_contains s "+")) "no plus when dot is selected")))
+
+(deftest test-crosshair-style-open
+  (is (php/str_contains (crosshair-str {:fire-anim 0.0 :crosshair :open}) "○") "open ring reticle"))
+
+(deftest test-crosshair-style-off-hides-idle
+  (let [s (crosshair-str {:fire-anim 0.0 :crosshair :off})]
+    (is (= "" s) "off draws no idle reticle")))
+
+(deftest test-crosshair-style-off-still-shows-hit-marker
+  ;; The marker is essential feedback, so it overrides an :off reticle.
+  (let [s (crosshair-str {:fire-anim 0.0 :crosshair :off :hit-fx {:kill? true :ttl 0.1}})]
+    (is (php/str_contains s "✗") "kill marker shows even with reticle off")))
+
+;; Run-timer setting (issue #203): elapsed run time appended to the
+;; row-2 game-info strip only when :run-timer? is on.
+
+(defn- game-info-str [extra]
+  ;; stamina-chip divides by :max-stamina (no fallback by design), so the
+  ;; fixture supplies the always-present HUD fields.
+  (let [stats (merge {:stamina 100.0 :max-stamina 100.0} extra)]
+    (php/implode "" (paint-game-info (buf-mk) stats 80))))
+
+(deftest test-run-timer-shown-when-enabled
+  (is (php/str_contains (game-info-str {:run-timer? true :game-time 65}) "1:05")
+      "elapsed run time appears when the timer is on"))
+
+(deftest test-run-timer-hidden-when-disabled
+  (is (not (php/str_contains (game-info-str {:run-timer? false :game-time 65}) "1:05"))
+      "no timer text when the setting is off"))
 
 ;; ---------------------------------------------------------------------
 ;; Scene-coordinate painters carry a pixel-scale `sc`: their inputs live

@@ -9,6 +9,7 @@
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-col-x sprite-subcol-x enemy-sprite-cell sprite-fade sprite-fade-index])
   (:require phel-doom.core.engine :refer [proj-dist max-depth])
   (:require phel-doom.core.combat :refer [fx-ttl-seconds corpse-ttl-seconds])
+  (:require phel-doom.core.format :refer [format-duration])
   (:require phel-doom.core.map :refer [find-door-cell]))
 
 ;; Each fn appends one logical UI overlay to the `parts` PHP-array via
@@ -84,8 +85,10 @@
 ;; =====================================================================
 
 (defn paint-crosshair
-  "Centre `+` glyph. Jumps one row up + brightens while :fire-anim > 0
-   so the recoil feels like a kick.
+  "Centre reticle glyph, style from the Crosshair setting (`+` cross /
+   `·` dot / `○` open / hidden when `:off`). Jumps one row up + brightens
+   while :fire-anim > 0 so the recoil feels like a kick; a live hit-fx
+   overrides the idle glyph with a `✗`/`×` hit-marker (even when `:off`).
 
    `center-bg` is the SGR-only prefix of the cell currently under the
    crosshair (the wall/door body shade at the centre column). Painting
@@ -102,7 +105,15 @@
         hit-fx  (get stats :hit-fx)
         hit?    (and hit-fx (php/> (or (:ttl hit-fx) 0.0) 0.0))
         kill?   (and hit? (:kill? hit-fx))
-        glyph   (cond kill? "✗" hit? "×" :else "+")
+        ;; Idle reticle glyph from the crosshair-style setting (#203);
+        ;; :off draws nothing when idle (nil glyph). The hit-marker
+        ;; overrides regardless so a hit always confirms.
+        style   (or (get stats :crosshair) :cross)
+        idle    (cond (= style :dot)  "·"
+                      (= style :open) "○"
+                      (= style :off)  nil
+                      :else           "+")
+        glyph   (cond kill? "✗" hit? "×" :else idle)
         ;; Idle: bold bright-white (NOT the old faint `2`, which read as a
         ;; translucent smudge against the busy half-block floor). Firing:
         ;; bold bright-yellow as a muzzle-kick flash, paired with the
@@ -116,8 +127,9 @@
                       hit?    "\e[93;1m"
                       firing? "\e[93;1m"
                       :else   "\e[97;1m")]
-    (buf-push parts
-              (str "\e[" ch-row ";" ch-col "H" center-bg ch-att glyph "\e[0m")))
+    (when glyph
+      (buf-push parts
+                (str "\e[" ch-row ";" ch-col "H" center-bg ch-att glyph "\e[0m"))))
   parts)
 
 (defn paint-intro-splash
@@ -460,6 +472,12 @@
                         (if (contains? keys' :red)    "\e[40m \e[40;91;1m⚿\e[40;97m" "")
                         (if (contains? keys' :yellow) "\e[40m \e[40;93;1m⚿\e[40;97m" ""))
         sta-chip   (stamina-chip stats)
+        ;; Always-on run timer (issue #203): elapsed run time appended to
+        ;; the strip when the Run-timer setting is on. game-time already
+        ;; rides in stats, so this is a pure format + concat.
+        timer-tag  (if (get stats :run-timer?)
+                     (str "\e[40m \e[40;96;1m" (format-duration (or (get stats :game-time) 0.0)) "\e[40;97m")
+                     "")
         ;; No weapon in hand (`:hide-weapon?`): drop the name + ammo chunk
         ;; so the info line never advertises a gun that isn't drawn.
         wpn-chunk  (if hide-wpn?
@@ -473,7 +491,7 @@
         styled     (str "\e[40;97m\e[1mL" lvl "\e[22m " name'
                         "  \e[1mkills\e[22m " kills
                         wpn-chunk
-                        pack sta-chip keys-tag diff-tag "\e[0m")]
+                        pack sta-chip keys-tag diff-tag timer-tag "\e[0m")]
     (buf-push parts (str "\e[2;1H" styled)))
   parts)
 ;; =====================================================================

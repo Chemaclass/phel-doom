@@ -1,0 +1,66 @@
+(ns phel-doom-tests.io.fog-lut-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.io.render.palette :refer [code-r code-g code-b nearest-256])
+  (:require phel-doom.io.render.frame-math :refer [tex-fade-table]))
+
+;; ---------------------------------------------------------------------
+;; Colour-space helpers (palette): 256-colour code <-> RGB round-trip.
+;; These back the load-time fog LUT bake, so they must be exact for the
+;; known anchor codes.
+;; ---------------------------------------------------------------------
+
+(deftest code-rgb-cube-anchors
+  ;; cube code 16 = (0,0,0), 231 = (255,255,255), 21 = (0,0,255).
+  (is (= 0 (php/aget code-r 16)) "cube 16 red = 0")
+  (is (= 0 (php/aget code-g 16)) "cube 16 green = 0")
+  (is (= 0 (php/aget code-b 16)) "cube 16 blue = 0")
+  (is (= 255 (php/aget code-r 231)) "cube 231 red = 255")
+  (is (= 255 (php/aget code-b 231)) "cube 231 blue = 255")
+  (is (= 255 (php/aget code-b 21)) "cube 21 blue = 255")
+  (is (= 0 (php/aget code-r 21)) "cube 21 red = 0"))
+
+(deftest code-rgb-grayscale-anchors
+  ;; grayscale 232 = (8,8,8), 255 = (238,238,238).
+  (is (= 8 (php/aget code-r 232)) "gray 232 = 8")
+  (is (= 238 (php/aget code-r 255)) "gray 255 = 238"))
+
+(deftest nearest-256-round-trips
+  (is (= 231 (nearest-256 255 255 255)) "white -> 231")
+  (is (= 16 (nearest-256 0 0 0)) "black -> 16")
+  (is (= 60 (nearest-256 95 95 135)) "blue-gray fog target -> cube 60"))
+
+;; ---------------------------------------------------------------------
+;; Tinted + filmic distance fog (frame-math tex-fade-table). Default ON.
+;; ---------------------------------------------------------------------
+
+(defn- decode [^int code] [(php/aget code-r code) (php/aget code-g code) (php/aget code-b code)])
+
+(deftest near-level-preserves-code
+  ;; Level 23 = nearest wall: filmic(1) = 1, so the fade is a no-op and
+  ;; the code round-trips to itself.
+  (is (= 196 (php/aget (php/aget tex-fade-table 23) 196)) "near red preserved")
+  (is (= 46 (php/aget (php/aget tex-fade-table 23) 46)) "near green preserved"))
+
+(deftest far-level-is-cool-haze-not-black
+  ;; Level 0 = farthest: fully faded toward the blue-gray fog tint, not
+  ;; black. A pure-red wall ends cool (blue >= red) and non-zero.
+  (let [far     (php/aget (php/aget tex-fade-table 0) 196)
+        [r g b] (decode far)]
+    (is (not (= 16 far)) "far is not pure black (code 16)")
+    (is (>= b r) "far haze is cool: blue >= red")
+    (is (> b 0) "far haze has blue energy")))
+
+(deftest fog-converges-toward-haze
+  ;; Aerial perspective: every code converges to the same blue-grey haze
+  ;; at the far end. A bright code (white) rolls DOWN toward the haze;
+  ;; a code dimmer than the haze rolls UP toward it. Both meet at fog.
+  (let [luma        (fn [^int code] (let [[r g b] (decode code)] (php/+ r g b)))
+        haze        (luma 60)
+        bright-near (luma (php/aget (php/aget tex-fade-table 23) 231))
+        bright-far  (luma (php/aget (php/aget tex-fade-table 0) 231))
+        dim-near    (luma (php/aget (php/aget tex-fade-table 23) 16))
+        dim-far     (luma (php/aget (php/aget tex-fade-table 0) 16))]
+    (is (>= bright-near bright-far) "bright code darkens toward haze with distance")
+    (is (<= dim-near dim-far) "dim code lightens toward haze with distance")
+    (is (= haze bright-far) "bright code reaches the haze at the far end")
+    (is (= haze dim-far) "dim code reaches the haze at the far end")))

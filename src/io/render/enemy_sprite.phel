@@ -2,7 +2,8 @@
 ;; No side effects; used by main.phel's row loop.
 (ns phel-doom.io.render.enemy-sprite
   (:require phel-doom.io.render.enemy-sprites-data :refer [enemy-sprites])
-  (:require phel-doom.io.render.frame-math :refer [tex-fade-table]))
+  (:require phel-doom.io.render.frame-math :refer [tex-fade-table])
+  (:require phel-doom.io.render.palette :refer [code-r code-g code-b nearest-256]))
 
 ;; =====================================================================
 ;; § Sprite-id resolution
@@ -65,81 +66,10 @@
 ;; § Mip chain (box-filtered downscales)
 ;; =====================================================================
 
-;; xterm-256 code -> RGB channel LUTs (flat 256 + [-1] = 0) used by the
-;; load-time mip builder. Codes 0-15 use the standard system palette.
-(def- sys-rgb
-  (php/array 0 0 0 205 0 0 0 205 0 205 205 0 0 0 238 205 0 205 0 205 205 229 229 229
-             127 127 127 255 0 0 0 255 0 255 255 0 92 92 255 255 0 255 0 255 255 255 255 255))
-
-(def- cube-lv (php/array 0 95 135 175 215 255))
-
-(def- rgb-luts
-  (let [r   (php/array)
-        g   (php/array)
-        b   (php/array)
-        out (php/array)]
-    (loop [c 0]
-      (when (php/< c 256)
-        (if (php/>= c 232)
-          (let [v (php/+ 8 (php/* 10 (php/- c 232)))]
-            (php/aset r c v)
-            (php/aset g c v)
-            (php/aset b c v))
-          (if (php/>= c 16)
-            (let [k (php/- c 16)]
-              (php/aset r c (php/aget cube-lv (php/intdiv k 36)))
-              (php/aset g c (php/aget cube-lv (php/intdiv (php/% k 36) 6)))
-              (php/aset b c (php/aget cube-lv (php/% k 6))))
-            (do
-              (php/aset r c (php/aget sys-rgb (php/* 3 c)))
-              (php/aset g c (php/aget sys-rgb (php/+ (php/* 3 c) 1)))
-              (php/aset b c (php/aget sys-rgb (php/+ (php/* 3 c) 2))))))
-        (recur (php/+ c 1))))
-    (php/aset r -1 0)
-    (php/aset g -1 0)
-    (php/aset b -1 0)
-    (php/aset out 0 r)
-    (php/aset out 1 g)
-    (php/aset out 2 b)
-    out))
-
-(def- rgb-r (php/aget rgb-luts 0))
-(def- rgb-g (php/aget rgb-luts 1))
-(def- rgb-b (php/aget rgb-luts 2))
-
-(defn- cube-idx
-  ;; nearest 6x6x6 cube level index for one 0-255 channel value.
-  ;; Fast threshold approximation for the load-time mip builder; the
-  ;; bake tool (tools/bake-enemy-sprites.phel, nearest-cube-idx) uses
-  ;; the precise squared-distance search for bake-time quantization.
-  [^int v]
-  (cond (php/< v 48)  0
-        (php/< v 115) 1
-        (php/< v 155) 2
-        (php/< v 195) 3
-        (php/< v 235) 4
-        :else         5))
-
-(defn- sq [^int v] (php/* v v))
-
-(defn- rgb-code
-  ;; nearest xterm-256 code for an RGB triple: tries the 6x6x6 cube and
-  ;; the 24-step grayscale ramp, keeps whichever is closer.
-  [^int r ^int g ^int b]
-  (let [ri   (cube-idx r)
-        gi   (cube-idx g)
-        bi   (cube-idx b)
-        cr   (php/aget cube-lv ri)
-        cg   (php/aget cube-lv gi)
-        cb   (php/aget cube-lv bi)
-        avg  (php/intdiv (php/+ r g b) 3)
-        gidx (php/max 0 (php/min 23 (php/intdiv (php/- avg 3) 10)))
-        gv   (php/+ 8 (php/* 10 gidx))
-        dc   (php/+ (sq (php/- r cr)) (sq (php/- g cg)) (sq (php/- b cb)))
-        dg   (php/+ (sq (php/- r gv)) (sq (php/- g gv)) (sq (php/- b gv)))]
-    (if (php/<= dc dg)
-      (php/+ 16 (php/* 36 ri) (php/* 6 gi) bi)
-      (php/+ 232 gidx))))
+;; Colour-space quantization (256-code <-> RGB) lives in `palette`:
+;; `code-r/code-g/code-b` (channel LUTs, index -1 -> 0 for transparent
+;; texels) and `nearest-256` (RGB -> nearest xterm-256 code). Both are
+;; load-time helpers shared with the distance-fog LUT bake in frame-math.
 
 (defn half-mip
   "Box-filter a `{:w :h :px}` sprite down to half resolution. Each
@@ -176,15 +106,15 @@
                (php/aset out (php/+ (php/* y w2) x)
                          (if (php/< n min-opaque)
                            -1
-                           (rgb-code
-                            (php/intdiv (php/+ (php/aget rgb-r a) (php/aget rgb-r b)
-                                               (php/aget rgb-r c) (php/aget rgb-r d))
+                           (nearest-256
+                            (php/intdiv (php/+ (php/aget code-r a) (php/aget code-r b)
+                                               (php/aget code-r c) (php/aget code-r d))
                                         n)
-                            (php/intdiv (php/+ (php/aget rgb-g a) (php/aget rgb-g b)
-                                               (php/aget rgb-g c) (php/aget rgb-g d))
+                            (php/intdiv (php/+ (php/aget code-g a) (php/aget code-g b)
+                                               (php/aget code-g c) (php/aget code-g d))
                                         n)
-                            (php/intdiv (php/+ (php/aget rgb-b a) (php/aget rgb-b b)
-                                               (php/aget rgb-b c) (php/aget rgb-b d))
+                            (php/intdiv (php/+ (php/aget code-b a) (php/aget code-b b)
+                                               (php/aget code-b c) (php/aget code-b d))
                                         n)))))
              (recur (php/+ x 1))))
          (recur (php/+ y 1))))
@@ -212,9 +142,9 @@
       (when (php/< i n)
         (let [c (php/aget px i)]
           (when (php/!== c -1)
-            (let [lum (php/intdiv (php/+ (php/* 299 (php/aget rgb-r c))
-                                         (php/* 587 (php/aget rgb-g c))
-                                         (php/* 114 (php/aget rgb-b c)))
+            (let [lum (php/intdiv (php/+ (php/* 299 (php/aget code-r c))
+                                         (php/* 587 (php/aget code-g c))
+                                         (php/* 114 (php/aget code-b c)))
                                   1000)]
               (when (php/< lum (php/aget lo 0)) (php/aset lo 0 lum))
               (when (php/> lum (php/aget hi 0)) (php/aset hi 0 lum)))))
@@ -229,11 +159,11 @@
                 (php/aset out i
                           (if (php/=== c -1)
                             -1
-                            (let [r   (php/aget rgb-r c)
-                                  g   (php/aget rgb-g c)
-                                  b   (php/aget rgb-b c)
+                            (let [r   (php/aget code-r c)
+                                  g   (php/aget code-g c)
+                                  b   (php/aget code-b c)
                                   lo0 (php/aget lo 0)]
-                              (rgb-code
+                              (nearest-256
                                (php/min 255 (php/intdiv (php/* 255 (php/- r lo0)) range))
                                (php/min 255 (php/intdiv (php/* 255 (php/- g lo0)) range))
                                (php/min 255 (php/intdiv (php/* 255 (php/- b lo0)) range)))))))
@@ -266,10 +196,10 @@
                         (if (or (php/=== tu -1) (php/=== td -1)
                                 (php/=== tl -1) (php/=== tr -1))
                           ;; Edge texel: darken by frac toward black
-                          (rgb-code
-                           (php/intval (php/* (php/aget rgb-r c) (php/- 1.0 frac)))
-                           (php/intval (php/* (php/aget rgb-g c) (php/- 1.0 frac)))
-                           (php/intval (php/* (php/aget rgb-b c) (php/- 1.0 frac))))
+                          (nearest-256
+                           (php/intval (php/* (php/aget code-r c) (php/- 1.0 frac)))
+                           (php/intval (php/* (php/aget code-g c) (php/- 1.0 frac)))
+                           (php/intval (php/* (php/aget code-b c) (php/- 1.0 frac))))
                           c)))))
         (recur (php/+ i 1))))
     {:w sw :h sh :px out}))

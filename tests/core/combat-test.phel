@@ -3,7 +3,7 @@
   (:require phel-doom.core.state :refer [new-world new-player max-lives])
   (:require phel-doom.core.enemy :refer [new-enemy])
   (:require phel-doom.core.combat
-            :refer [arm-berserk armory-reserve closest-attacker attacker-side berserk? berserk-damage-mul berserk-melee-mul berserk-mul-for berserk-seconds can-fire? apply-heat damage-step empty-click-seconds enemy-hit-damage hit-damage-for hit-player-at hit-stop-for hit-stop-tough-seconds hit-stop-boss-seconds invuln? invuln-seconds knockback mag-size pick-loot-weapon reload reloading? roll-loot-kind tick-armory tick-shooting]))
+            :refer [arm-berserk armory-reserve closest-attacker attacker-side attacker-octant berserk? berserk-damage-mul berserk-melee-mul berserk-mul-for berserk-seconds can-fire? apply-heat damage-step empty-click-seconds enemy-hit-damage hit-damage-for hit-player-at hit-stop-for hit-stop-tough-seconds hit-stop-boss-seconds invuln? invuln-seconds knockback mag-size pick-loot-weapon reload reloading? roll-loot-kind tick-armory tick-shooting]))
 
 ;; ---------------------------------------------------------------------
 ;; closest-attacker: selection rule.
@@ -57,6 +57,27 @@
   ;; Player facing +x. Enemy due east at (1, 0) is in the ±30° front
   ;; arc -> :front (the new direction for issue #66).
   (is (= :front (attacker-side {:x 1.0 :y 0.0} 0.0 0.0 0.0))))
+
+;; ---------------------------------------------------------------------
+;; attacker-octant (#201): 8-way bearing, 0 = front then clockwise.
+;; ---------------------------------------------------------------------
+
+(deftest test-attacker-octant-nil
+  (is (= nil (attacker-octant nil 0.0 0.0 0.0))))
+
+(deftest test-attacker-octant-cardinals
+  (is (= 0 (attacker-octant {:x 1.0 :y 0.0}  0.0 0.0 0.0)) "dead ahead = 0 front")
+  (is (= 2 (attacker-octant {:x 0.0 :y 1.0}  0.0 0.0 0.0)) "due right = 2")
+  (is (= 4 (attacker-octant {:x -1.0 :y 0.0} 0.0 0.0 0.0)) "behind = 4")
+  (is (= 6 (attacker-octant {:x 0.0 :y -1.0} 0.0 0.0 0.0)) "due left = 6"))
+
+(deftest test-attacker-octant-diagonals
+  (is (= 1 (attacker-octant {:x 1.0 :y 1.0}  0.0 0.0 0.0)) "front-right = 1")
+  (is (= 7 (attacker-octant {:x 1.0 :y -1.0} 0.0 0.0 0.0)) "front-left = 7"))
+
+(deftest test-attacker-octant-respects-facing
+  ;; Enemy due east; rotate player to face south (π/2): now on the left (6).
+  (is (= 6 (attacker-octant {:x 1.0 :y 0.0} 0.0 0.0 (php/* 0.5 php/M_PI)))))
 
 (deftest test-attacker-side-enemy-directly-behind
   ;; Player facing +x. Enemy due west at (-1, 0) lands in the ±30°

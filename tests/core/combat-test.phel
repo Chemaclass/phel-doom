@@ -482,6 +482,25 @@
     (is (= 7 (:lives (hit-player-at w 6.0 5.0 3))))
     (is (= 9 (:lives (hit-player-at w 6.0 5.0)))   "default arity = 1 HP")))
 
+(deftest test-damage-taken-counter-accumulates-hp-lost
+  ;; Run-summary stat (#202): :damage-taken sums HP actually lost.
+  (let [w  {:lives 10 :armor 0 :player (new-player 5.0 5.0 0.0)}
+        w1 (hit-player-at w 6.0 5.0 3)]
+    (is (= 3 (:damage-taken w1)) "first hit records 3 HP lost")
+    (is (= 5 (:damage-taken (hit-player-at w1 6.0 5.0 2))) "accumulates across hits")))
+
+(deftest test-damage-taken-not-counted-when-armor-absorbs
+  ;; Armor eats the whole hit, no HP lost -> nothing added to damage-taken.
+  (let [w {:lives 10 :armor 2 :player (new-player 5.0 5.0 0.0)}]
+    (is (or (nil? (:damage-taken (hit-player-at w 6.0 5.0 3)))
+            (= 0 (:damage-taken (hit-player-at w 6.0 5.0 3))))
+        "armor-absorbed hit records no damage taken")))
+
+(deftest test-kills-by-weapon-tally
+  ;; A chaingun kill bumps :kills-by-weapon[:chaingun].
+  (let [w (fire-at 1)]
+    (is (= 1 (get (:kills-by-weapon w) :chaingun)) "kill tallied under the active weapon")))
+
 (deftest test-armor-absorbs-whole-hit-regardless-of-size
   ;; One armor unit negates the entire incoming hit (no life lost), even
   ;; a 3-HP boss strike, dropping exactly one armor.

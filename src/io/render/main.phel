@@ -2090,6 +2090,23 @@
 (defn- best-victory-cell [s]
   (if (php/<= s 0) "--" (format-duration s)))
 
+(defn- weapon-kills-line
+  "Compact `pistol 5  chaingun 12` breakdown from a `:kills-by-weapon`
+   map, skipping weapons with no kills. Empty string when nothing landed
+   (so the caller can drop the row). end-row-text clips it to the box
+   width, so a long loadout never overflows."
+  [kbw]
+  (let [m      (or kbw {})
+        kept   (filter (fn [p] (php/> (get p 1) 0))
+                       (map (fn [w] [w (or (get m w) 0)]) (keys m)))
+        ;; Most-used weapon first, so the width clip drops the least-used
+        ;; rather than the headline weapon's count.
+        sorted (sort-by (fn [p] (php/- 0 (get p 1))) kept)]
+    (reduce (fn [acc p]
+              (str acc (if (php/=== acc "") "" "  ") (name (get p 0)) " " (get p 1)))
+            ""
+            sorted)))
+
 (defn- grade-sgr
   "Bold SGR colour for a run grade letter so the rank reads at a glance:
    gold S, green A, cyan B, white C, dim D."
@@ -2123,6 +2140,7 @@
         stat     (fn [text] (str "\e[97m" (end-row-text (str "  " text) width) "\e[0m"))
         ;; Run-summary panel (issue #202): accuracy %, secrets (only when
         ;; the run had any), and the letter rank centred + colour-coded.
+        wkl      (if summary (weapon-kills-line (:kills-by-weapon summary)) "")
         sum-rows (if summary
                    (apply vector
                           (concat
@@ -2131,6 +2149,10 @@
                              [(stat (str "secrets:  " (:secrets-found summary)
                                          "/" (:secrets-total summary)))]
                              [])
+                           [(stat (str "damage:   " (or (:damage-taken summary) 0)))]
+                           (if (php/=== wkl "")
+                             []
+                             [(stat (str "by: " wkl))])
                            [(end-centre (str "RANK  " (:grade summary)) width
                                         (grade-sgr (:grade summary)))]))
                    [])]

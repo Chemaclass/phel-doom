@@ -753,10 +753,12 @@
 ;; Per-level run-stat snapshot folded into the cumulative carry by
 ;; `merge-run-stats`: accuracy counters + secrets found/total (issue #202).
 (defn- run-stat-fields [world]
-  {:shots-fired   (or (:shots-fired world) 0)
-   :shots-hit     (or (:shots-hit world) 0)
-   :secrets-found (or (:secrets-found world) 0)
-   :secrets-total (or (:secrets-total world) 0)})
+  {:shots-fired    (or (:shots-fired world) 0)
+   :shots-hit      (or (:shots-hit world) 0)
+   :secrets-found  (or (:secrets-found world) 0)
+   :secrets-total  (or (:secrets-total world) 0)
+   :damage-taken   (or (:damage-taken world) 0)
+   :kills-by-weapon (or (:kills-by-weapon world) {})})
 
 (defn- result-game-over [world ^float t-start ^float now]
   (merge
@@ -1035,16 +1037,23 @@
 
 (def- empty-run-stats
   ;; Cumulative run counters carried across levels (issue #202): total
-  ;; shots fired / hit and secrets found / total. Reset on restart.
-  {:fired 0 :hit 0 :secrets-found 0 :secrets-total 0})
+  ;; shots fired / hit, secrets found / total, HP damage taken, and a
+  ;; per-weapon kill tally. Reset on restart.
+  {:fired 0 :hit 0 :secrets-found 0 :secrets-total 0 :dmg 0 :kbw {}})
 
 (defn- merge-run-stats [carry result]
   ;; Accumulate every per-level snapshot so the end screen reports the
-  ;; whole run: total shots, total secrets found out of total available.
+  ;; whole run: total shots, total secrets found out of total available,
+  ;; total HP lost, and per-weapon kills summed across levels.
   {:fired         (php/+ (:fired carry)         (or (:shots-fired result) 0))
    :hit           (php/+ (:hit carry)           (or (:shots-hit result) 0))
    :secrets-found (php/+ (:secrets-found carry) (or (:secrets-found result) 0))
-   :secrets-total (php/+ (:secrets-total carry) (or (:secrets-total result) 0))})
+   :secrets-total (php/+ (:secrets-total carry) (or (:secrets-total result) 0))
+   :dmg           (php/+ (:dmg carry)           (or (:damage-taken result) 0))
+   :kbw           (let [rkbw (or (:kills-by-weapon result) {})]
+                    (reduce (fn [m w] (assoc m w (php/+ (or (get m w) 0) (get rkbw w))))
+                            (:kbw carry)
+                            (keys rkbw)))})
 
 (defn- carry-on [carry-kills carry-time carry-stats result]
   [(php/+ carry-kills (:kills result))
@@ -1053,15 +1062,18 @@
 
 (defn- run-summary
   "End-of-run summary panel data (issue #202): accuracy percentage,
-   secrets found/total, and the letter grade from `run-grade`. Pure."
+   secrets found/total, HP damage taken, the per-weapon kill tally, and
+   the letter grade from `run-grade`. Pure."
   [stats]
   (let [acc (accuracy-pct (:fired stats) (:hit stats))]
-    {:accuracy      acc
-     :secrets-found (:secrets-found stats)
-     :secrets-total (:secrets-total stats)
-     :grade         (run-grade (php// acc 100.0)
-                               (:secrets-found stats)
-                               (:secrets-total stats))}))
+    {:accuracy        acc
+     :secrets-found   (:secrets-found stats)
+     :secrets-total   (:secrets-total stats)
+     :damage-taken    (:dmg stats)
+     :kills-by-weapon (:kbw stats)
+     :grade           (run-grade (php// acc 100.0)
+                                 (:secrets-found stats)
+                                 (:secrets-total stats))}))
 
 (defn- maybe-restart
   "Run the end-loop and pass the raw choice (:quit / :restart /

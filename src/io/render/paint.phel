@@ -442,9 +442,12 @@
         mag-col    (cond (php/<= mag 0)       "\e[1;91m"
                          (php/<= mag mag-low) "\e[1;93m"
                          :else                "\e[1m")
-        res-col    (cond (php/<= reserve 0)       "\e[1;91m"
-                         (php/<= reserve res-low) "\e[1;93m"
-                         :else                    "\e[2m")
+        ;; High-contrast (#200): a healthy reserve count shows bold white
+        ;; instead of the default dim (SGR 2) that reads as a smudge.
+        res-col    (cond (php/<= reserve 0)          "\e[1;91m"
+                         (php/<= reserve res-low)    "\e[1;93m"
+                         (get stats :high-contrast?) "\e[1m"
+                         :else                       "\e[2m")
         ;; Each trailing chunk starts with an explicit `\e[40m` so
         ;; the leading-space byte renders on the dark HUD wash
         ;; instead of inheriting the terminal-default BG that a
@@ -775,7 +778,16 @@
    stays visible when the player is already aimed at the right
    cardinal. Other letters render dim white on the dark HUD strip."
   [parts world vw]
-  (let [pang   (or (:angle (:player world)) 0.0)
+  ;; paint-compass takes `world` (not the stats map), so it reads the
+  ;; high-contrast setting straight from `:settings` rather than the
+  ;; stats `:high-contrast?` the other HUD paints use. Both resolve the
+  ;; same value (frame-stats derives `:high-contrast?` from this), so they
+  ;; can't diverge within a render pass.
+  (let [hc?    (boolean (:high-contrast (:settings world)))
+        ;; High-contrast (#200): bold white non-facing letters instead of
+        ;; the default dim (SGR 2) white that washes out on poor terminals.
+        other  (if hc? "\e[40;97;1m" "\e[40;2;97m")
+        pang   (or (:angle (:player world)) 0.0)
         facing (sector-for-angle pang)
         quest  (quest-target-hint world)
         q-sec  (when quest (:sector quest))
@@ -799,7 +811,7 @@
                                  (str "\e[40;1;93m" (get labels i) "\e[0m")
 
                                  :else
-                                 (str "\e[40;2;97m" (get labels i) "\e[0m"))
+                                 (str other (get labels i) "\e[0m"))
                                (if (php/< i 3) "\e[40m  " "")))))]
     (buf-push parts
               (str "\e[1;" (php/max 1 (php/- (php/intdiv vw 2) 3))
@@ -840,29 +852,32 @@
    stays readable on terminals whose default BG is light or
    transparent."
   [parts ^float t stats bloody?]
-  (let [hp    (or (get stats :lives) 0)
-        cap   (or (get stats :max-lives) 10)
+  (let [hp        (or (get stats :lives) 0)
+        cap       (or (get stats :max-lives) 10)
         ;; HP is a half-heart pool: 2 HP per heart. Draw `slots` base
         ;; hearts (10 HP -> 5) as full ♥ / half ◖ / empty ·, with any
         ;; soulsphere over-cap HP shown as extra full hearts beyond the
         ;; base row. Clamp the displayed pool (cap + soul headroom) so
         ;; dev god mode (lives = thousands) can't blow the strip across
         ;; the screen; the engine still tracks the real :lives value.
-        slots (php/intdiv (php/+ cap 1) 2)
-        disp  (php/max 0 (php/min hp (php/+ cap 4)))
-        full  (php/intdiv disp 2)
-        half? (php/=== 1 (php/% disp 2))
-        empty (php/max 0 (php/- slots (php/+ full (if half? 1 0))))
-        armor (or (get stats :armor) 0)
-        god?  (:god? stats)
-        blink (cond (and bloody? (pulse t 8.0)) "\e[1m"
-                    bloody?                     "\e[2m"
-                    :else                       "\e[1m")]
+        slots     (php/intdiv (php/+ cap 1) 2)
+        disp      (php/max 0 (php/min hp (php/+ cap 4)))
+        full      (php/intdiv disp 2)
+        half?     (php/=== 1 (php/% disp 2))
+        empty     (php/max 0 (php/- slots (php/+ full (if half? 1 0))))
+        armor     (or (get stats :armor) 0)
+        god?      (:god? stats)
+        ;; High-contrast (#200): empty heart pips in plain white instead
+        ;; of the dim grey (90) that disappears on washed-out terminals.
+        empty-sgr (if (get stats :high-contrast?) "\e[40;97m" "\e[40;90m")
+        blink     (cond (and bloody? (pulse t 8.0)) "\e[1m"
+                        bloody?                     "\e[2m"
+                        :else                       "\e[1m")]
     (buf-push parts
               (str "\e[1;1H\e[40m" blink "\e[91m"
                    (php/str_repeat "♥ " full)
                    (if half? "◖ " "")
-                   "\e[40;90m"
+                   empty-sgr
                    (php/str_repeat "· " empty)
                    (if (php/> armor 0)
                      (str "\e[40;94;1m" (php/str_repeat "◆ " armor))

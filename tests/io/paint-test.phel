@@ -1,7 +1,7 @@
 (ns phel-doom-tests.io.paint-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.io.render.buffer :refer [buf-mk])
-  (:require phel-doom.io.render.paint :refer [paint-crosshair paint-door-face paint-game-info]))
+  (:require phel-doom.io.render.paint :refer [paint-crosshair paint-door-face paint-game-info paint-compass paint-hearts-hud]))
 
 ;; ---------------------------------------------------------------------
 ;; Crosshair legibility. The reticle must be a SOLID glyph, never the old
@@ -75,6 +75,54 @@
 (deftest test-run-timer-hidden-when-disabled
   (is (not (php/str_contains (game-info-str {:run-timer? false :game-time 65}) "1:05"))
       "no timer text when the setting is off"))
+
+;; High-contrast HUD (issue #200): un-dim the compass non-facing letters,
+;; empty heart pips, and a healthy reserve count.
+
+(defn- compass-str [hc?]
+  (php/implode "" (paint-compass (buf-mk)
+                                 {:player {:angle 0.0} :settings {:high-contrast hc?}}
+                                 80)))
+
+(deftest test-compass-default-dims-other-letters
+  (is (php/str_contains (compass-str false) "\e[40;2;97m") "default uses dim (SGR 2) letters"))
+
+(deftest test-compass-high-contrast-bolds-other-letters
+  (let [s (compass-str true)]
+    (is (not (php/str_contains s "\e[40;2;97m")) "no dim letters under high contrast")
+    (is (php/str_contains s "\e[40;97;1m") "bold white non-facing letters")))
+
+(defn- hearts-str [hc?]
+  ;; 4/10 HP -> some empty pips drawn.
+  (php/implode "" (paint-hearts-hud (buf-mk) 0.0
+                                    {:lives 4 :max-lives 10 :armor 0 :high-contrast? hc?}
+                                    false)))
+
+(deftest test-hearts-default-grey-empties
+  (is (php/str_contains (hearts-str false) "\e[40;90m") "default empty pips are grey (90)"))
+
+(deftest test-hearts-high-contrast-white-empties
+  (let [s (hearts-str true)]
+    (is (not (php/str_contains s "\e[40;90m")) "no grey empties under high contrast")
+    (is (php/str_contains s "\e[40;97m") "empty pips are white")))
+
+;; game-info reserve: healthy reserve dims by default, bolds under high
+;; contrast, but a critical-low reserve always flashes (cond priority).
+
+(deftest test-reserve-dim-by-default
+  (is (php/str_contains (game-info-str {:ammo-reserve 50 :mag-size 10 :high-contrast? false})
+                        "\e[2m[50]")
+      "healthy reserve is dim (SGR 2) by default"))
+
+(deftest test-reserve-bold-under-high-contrast
+  (let [s (game-info-str {:ammo-reserve 50 :mag-size 10 :high-contrast? true})]
+    (is (not (php/str_contains s "\e[2m[50]")) "no dim reserve under high contrast")
+    (is (php/str_contains s "\e[1m[50]") "healthy reserve is bold white")))
+
+(deftest test-critical-reserve-stays-red-under-high-contrast
+  (is (php/str_contains (game-info-str {:ammo-reserve 0 :mag-size 10 :high-contrast? true})
+                        "\e[1;91m[0]")
+      "critical reserve still flashes red with high contrast on (cond priority)"))
 
 ;; ---------------------------------------------------------------------
 ;; Scene-coordinate painters carry a pixel-scale `sc`: their inputs live

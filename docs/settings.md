@@ -18,6 +18,7 @@ Player options: music volume, SFX volume, minimap default, difficulty default. P
 | Difficulty | enum | easy / normal / hard / nightmare | Default for next run. CLI `--difficulty` overrides. Baked at level build time. |
 | Crosshair | enum | cross / dot / open / off | Idle reticle glyph (`+` / `·` / `○` / hidden). `off` hides the idle reticle; the hit-marker still flashes on a hit. |
 | Run timer | bool | on / off | Append the elapsed run time (`M:SS`) to the row-2 HUD strip. |
+| High contrast | bool | on / off | Accessibility. Un-dims the dim/grey HUD elements - compass non-facing letters, empty heart pips, and a healthy ammo-reserve count render bold white instead of SGR-dim/grey so the HUD reads on washed-out or low-quality terminals. |
 | Reduced motion | bool | on / off | Accessibility / photosensitivity. When on, gates the strobing horror beats: lights-flicker scanlines dropped; heartbeat edge, berserk border, pulsing HUD labels (low-ammo / behind-you) and powerup banners hold steady; jump-scare face flash suppressed; the door-eye drops its SGR-5 terminal hardware blink. Essential single-shot feedback (directional hit-vignette, kill flash) is kept. `PHEL_DOOM_REDUCED_MOTION=1` forces it on regardless of the saved value. |
 
 ## Access

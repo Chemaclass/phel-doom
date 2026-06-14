@@ -41,26 +41,29 @@
   (is (= 196 (php/aget (php/aget tex-fade-table 23) 196)) "near red preserved")
   (is (= 46 (php/aget (php/aget tex-fade-table 23) 46)) "near green preserved"))
 
-(deftest far-level-is-cool-haze-not-black
-  ;; Level 0 = farthest: fully faded toward the blue-gray fog tint, not
-  ;; black. A pure-red wall ends cool (blue >= red) and non-zero.
+(deftest far-level-is-neutral-haze-not-black
+  ;; Level 0 = farthest: fully faded toward the near-neutral grey fog
+  ;; tint, not black. A pure-red wall ends neutral (no warm cast left:
+  ;; blue >= red) and non-zero. The tint is desaturated, so the channels
+  ;; sit close together rather than carrying an obvious blue.
   (let [far     (php/aget (php/aget tex-fade-table 0) 196)
         [r g b] (decode far)]
     (is (not (= 16 far)) "far is not pure black (code 16)")
-    (is (>= b r) "far haze is cool: blue >= red")
-    (is (> b 0) "far haze has blue energy")))
+    (is (>= b r) "far haze is not warm: blue >= red")
+    (is (> b 0) "far haze has light energy")
+    (is (<= (php/abs (php/- b r)) 24) "far haze is near-neutral, not a saturated blue")))
 
 (deftest fog-converges-toward-haze
-  ;; Aerial perspective: every code converges to the same blue-grey haze
-  ;; at the far end. A bright code (white) rolls DOWN toward the haze;
-  ;; a code dimmer than the haze rolls UP toward it. Both meet at fog.
+  ;; Aerial perspective: every code converges to the SAME grey haze at the
+  ;; far end. A bright code (white) rolls DOWN toward the haze; a code
+  ;; dimmer than the haze rolls UP toward it. Both meet at the same fog
+  ;; level (whatever the tint quantizes to), so compare them to each other
+  ;; rather than to a hard-coded code.
   (let [luma        (fn [^int code] (let [[r g b] (decode code)] (php/+ r g b)))
-        haze        (luma 60)
         bright-near (luma (php/aget (php/aget tex-fade-table 23) 231))
         bright-far  (luma (php/aget (php/aget tex-fade-table 0) 231))
         dim-near    (luma (php/aget (php/aget tex-fade-table 23) 16))
         dim-far     (luma (php/aget (php/aget tex-fade-table 0) 16))]
     (is (>= bright-near bright-far) "bright code darkens toward haze with distance")
     (is (<= dim-near dim-far) "dim code lightens toward haze with distance")
-    (is (= haze bright-far) "bright code reaches the haze at the far end")
-    (is (= haze dim-far) "dim code reaches the haze at the far end")))
+    (is (= bright-far dim-far) "bright + dim codes both reach the same haze at the far end")))

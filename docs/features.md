@@ -55,7 +55,8 @@ See [monsters.md](monsters.md), [combat.md](combat.md).
 ## HUD + screens
 
 - Top-left strip: hearts + armor + GOD badge (dev). Row 2: level/monster count, kills, weapon, ammo, backpack tier, stamina bar, keycard, difficulty tag.
-- Compass top-center: facing letter yellow, locked level letter tints lock color.
+- Compass top-center: facing letter yellow; a quest-target letter tints toward the objective - the un-picked keycard (lock colour) on a locked level, or the exit door (orange) once the key is in hand / on a plain level.
+- Objective subtitle on the level-intro splash: `FIND THE <COLOUR> KEY` on locked levels, `KILL THE BOSS TO ESCAPE` on the boss arena, `FIND THE EXIT` (orange, matching the compass arrow) on plain levels - so every level states its goal.
 - Minimap (m toggle, default OFF): top-right, auto-scales <= 1/3 width on narrow terminals. Perf mode caps 40 cols.
 - F3 debug: frame-ms, cast/render split, bytes, RLE, mem, pos, angle, fps (off by default, zero overhead when off).
 - Ammo cues: pulsing `! LOW AMMO N !` when <= 3 rounds; dry-fire `CLICK` prompt.

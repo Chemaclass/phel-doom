@@ -319,6 +319,14 @@
       (assoc :hit-fx {:kill? (boolean killed?) :ttl hit-marker-seconds})
       (update :shots-hit (fn [n] (php/+ (or n 0) 1)))))
 
+(defn- bump-weapon-kills
+  ;; Tally `n` kills under the active weapon for the run-summary per-weapon
+  ;; breakdown (issue #202). Keyed by the world's current :weapon.
+  [world ^int n]
+  (let [w   (or (:weapon world) :pistol)
+        kbw (or (:kills-by-weapon world) {})]
+    (assoc world :kills-by-weapon (assoc kbw w (php/+ (or (get kbw w) 0) n)))))
+
 (defn- decay-hit-fx
   ;; Tick the hit-marker ttl down by `dt`; drop the whole FX (nil) once it
   ;; expires so the overlay stops drawing and the field doesn't linger.
@@ -481,9 +489,15 @@
   [world att ^float vol ^int dmg]
   (let [p       (:player world)
         armor   (or (:armor world) 0)
+        ;; HP ACTUALLY lost (clamped to the pool) feeds the run-summary
+        ;; :damage-taken counter (issue #202) so an overkill blow on the
+        ;; last point doesn't over-count; armor-absorbed hits cost no HP.
+        lost    (php/min dmg (or (:lives world) 0))
         damaged (if (php/> armor 0)
                   (assoc world :armor (php/- armor 1))
-                  (update world :lives (fn [l] (php/max 0 (php/- l dmg)))))]
+                  (-> world
+                      (update :lives (fn [l] (php/max 0 (php/- l dmg))))
+                      (update :damage-taken (fn [d] (php/+ (or d 0) lost)))))]
     (push-sfx
      (assoc (knockback damaged att)
             :iframes    iframe-seconds
@@ -708,10 +722,12 @@
                                        idx cos-a sin-a
                                        shot-knockback-dist)))
         scored    (if killed?
-                    (assoc (update (assoc world :enemies pushed-es)
-                                   :kills (fn [k] (php/+ k 1)))
-                           :streak      streak'
-                           :streak-secs streak-window-seconds)
+                    (bump-weapon-kills
+                     (assoc (update (assoc world :enemies pushed-es)
+                                    :kills (fn [k] (php/+ k 1)))
+                            :streak      streak'
+                            :streak-secs streak-window-seconds)
+                     1)
                     (assoc world :enemies pushed-es))
         unlocked  (if killed? (maybe-unlock-boss-door scored killed-e) scored)
         ;; Kill drops a random pickup at the corpse's cell. Wounds
@@ -873,14 +889,15 @@
                           (some (fn [e] (and (= (:type e) :cyber)
                                              (false? (:alive e))))
                                 woken))
-        scored       (assoc world
-                            :enemies     woken
-                            :kills       (php/+ (or (:kills world) 0) killed)
-                            :streak      (if killed?
-                                           (php/+ (if chain? (or (:streak world) 0) 0) killed)
-                                           (or (:streak world) 0))
-                            :streak-secs (if killed? streak-window-seconds
-                                             (or (:streak-secs world) 0.0)))
+        scored       (let [s (assoc world
+                                    :enemies     woken
+                                    :kills       (php/+ (or (:kills world) 0) killed)
+                                    :streak      (if killed?
+                                                   (php/+ (if chain? (or (:streak world) 0) 0) killed)
+                                                   (or (:streak world) 0))
+                                    :streak-secs (if killed? streak-window-seconds
+                                                     (or (:streak-secs world) 0.0)))]
+                       (if killed? (bump-weapon-kills s killed) s))
         unlocked     (if boss-killed?
                        (assoc scored :held-keys (conj (or (:held-keys scored) #{}) :boss))
                        scored)
@@ -921,14 +938,15 @@
                           (some (fn [e] (and (= (:type e) :cyber)
                                              (false? (:alive e))))
                                 woken))
-        scored       (assoc world
-                            :enemies     woken
-                            :kills       (php/+ (or (:kills world) 0) killed)
-                            :streak      (if killed?
-                                           (php/+ (if chain? (or (:streak world) 0) 0) killed)
-                                           (or (:streak world) 0))
-                            :streak-secs (if killed? streak-window-seconds
-                                             (or (:streak-secs world) 0.0)))
+        scored       (let [s (assoc world
+                                    :enemies     woken
+                                    :kills       (php/+ (or (:kills world) 0) killed)
+                                    :streak      (if killed?
+                                                   (php/+ (if chain? (or (:streak world) 0) 0) killed)
+                                                   (or (:streak world) 0))
+                                    :streak-secs (if killed? streak-window-seconds
+                                                     (or (:streak-secs world) 0.0)))]
+                       (if killed? (bump-weapon-kills s killed) s))
         unlocked     (if boss-killed?
                        (assoc scored :held-keys (conj (or (:held-keys scored) #{}) :boss))
                        scored)

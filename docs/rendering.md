@@ -93,9 +93,11 @@ Per-row shade by distance from horizon (`vh/2`): rows near horizon darkest (atmo
 
 ## Atmospheric fog tint (tinted + filmic)
 
-Distance fog on the textured walls and the themed floor fades toward a cool blue-grey haze tint (cube (1,1,2) = rgb 95/95/135) instead of pure black, and runs the brightness through a normalised ACES-ish filmic tone curve (toe keeps shadow contrast, shoulder rolls off near-wall highlights). Aerial perspective: distant surfaces converge on the same desaturated cool haze (bright codes roll down toward it, codes darker than the haze lift up toward it) so depth reads as "hazy/far" rather than just "dark", and mid-tones gain contrast so the scene reads lit rather than linearly dimmed.
+Distance fog on the textured walls and the themed floor fades toward a near-neutral light-grey haze tint (rgb 112/112/120, re-quantizes to grey ~118 at the far end) instead of pure black, and runs the brightness through a normalised ACES-ish filmic tone curve (toe keeps shadow contrast, shoulder rolls off near-wall highlights). Aerial perspective: distant surfaces converge on the same grey haze (bright codes roll down toward it, codes darker than the haze lift up toward it) so depth reads as "hazy/far" rather than just "dark", and mid-tones gain contrast so the scene reads lit rather than linearly dimmed.
 
-All of this is baked at load: `fade-256-fog` (in `frame-math`) lerps each code toward the fog tint in true RGB and re-quantizes to the nearest 256-colour code via `palette/nearest-256`, so the rebuilt `tex-fade-table` / `build-themed-gradient(-codes)` LUTs cost the hot path nothing extra - still one nested `aget` per cell. The far tint is the dimmest cool colour that survives the 256-colour round-trip; a darker tint re-quantizes back onto the dense grayscale ramp and loses the hue. `PHEL_DOOM_FLAT_FOG=1` restores the legacy linear fade-to-black (A/B fallback, same pattern as `NO_SUBPIXEL` / `FLAT_WALLS`). The grayscale-ramp sky gradient and the enemy/seam fades are unchanged.
+The tint is deliberately near-neutral. An earlier version used a saturated blue-grey (cube (1,1,2) = rgb 95/95/135) - the only distinctly-cool tint the 256-colour cube can hold near mid-grey - but in the game's near-monochrome levels that read as an out-of-place blue band through far openings rather than subtle haze. The 256-colour palette cannot express a "barely cool" mid-grey (the grey ramp is dense, so anything close to neutral snaps onto it and loses the hue; anything bluer jumps to the obvious 95/95/135), so the honest desaturation is a neutral grey.
+
+All of this is baked at load: `fade-256-fog` (in `frame-math`) lerps each code toward the fog tint in true RGB and re-quantizes to the nearest 256-colour code via `palette/nearest-256`, so the rebuilt `tex-fade-table` / `build-themed-gradient(-codes)` LUTs cost the hot path nothing extra - still one nested `aget` per cell. `PHEL_DOOM_FLAT_FOG=1` restores the legacy linear fade-to-black (A/B fallback, same pattern as `NO_SUBPIXEL` / `FLAT_WALLS`). The grayscale-ramp sky gradient and the enemy/seam fades are unchanged.
 
 ## Enemy sprite paint
 
@@ -159,7 +161,7 @@ Door columns (unlocked + keycard-locked, map cells 2/3/4/9) run through the same
 
 Door texels are xterm-256 colour-CUBE codes (not grayscale ramp), which two pieces of machinery must respect:
 
-- `tex-fade-table` fog already fades cube codes hue-true (toward the cool haze tint via `fade-256-fog`, or toward black under `PHEL_DOOM_FLAT_FOG=1`).
+- `tex-fade-table` fog already fades cube codes hue-true (toward the neutral grey haze tint via `fade-256-fog`, or toward black under `PHEL_DOOM_FLAT_FOG=1`).
 - The sub-row seam accents darken through `seam-darken-16/-8/-5` LUTs (in `frame_math`) instead of plain `code - n` arithmetic: subtracting from a cube code jumps hue (amber 166 - 16 = green 150). For grayscale-ramp codes the LUTs reproduce the old subtraction exactly.
 
 Door fog is the wall formula with two nav-cue exceptions: the level floors at 8 (a door never fades to black) and ignores the near-death haze. The door pulse rides the fog level (`door-tex-boost`, +3 levels on the 4 rad/s beat) instead of swapping paint strings. Blood-band door columns keep the flat striped `door-shade` (the seam mixer's sky/floor codes are grayscale-only), as do glyph-enemy columns and all-flat fallback modes.

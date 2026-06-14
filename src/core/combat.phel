@@ -489,13 +489,15 @@
   [world att ^float vol ^int dmg]
   (let [p       (:player world)
         armor   (or (:armor world) 0)
+        ;; HP ACTUALLY lost (clamped to the pool) feeds the run-summary
+        ;; :damage-taken counter (issue #202) so an overkill blow on the
+        ;; last point doesn't over-count; armor-absorbed hits cost no HP.
+        lost    (php/min dmg (or (:lives world) 0))
         damaged (if (php/> armor 0)
                   (assoc world :armor (php/- armor 1))
-                  ;; HP actually lost feeds the run-summary :damage-taken
-                  ;; counter (issue #202); armor-absorbed hits cost no HP.
                   (-> world
                       (update :lives (fn [l] (php/max 0 (php/- l dmg))))
-                      (update :damage-taken (fn [d] (php/+ (or d 0) dmg)))))]
+                      (update :damage-taken (fn [d] (php/+ (or d 0) lost)))))]
     (push-sfx
      (assoc (knockback damaged att)
             :iframes    iframe-seconds

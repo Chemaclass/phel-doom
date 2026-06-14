@@ -619,27 +619,56 @@
   parts)
 
 (defn paint-hit-vignette
-  "Red bar on the screen edge the attacker came from. Painted while
-   iframes active AND :hurt-side is set. :left / :right paint a 2-col
-   vertical strip; :front / :back paint a 1-row horizontal strip at
-   the top / bottom so the player can read all four directions of
-   incoming damage from the cue alone (issue #66)."
+  "Directional damage arc on the screen edge the attacker came from,
+   8-way (issue #201). Painted while iframes active AND `:hurt-dir` is
+   set (octant 0..7 from `attacker-octant`). The four cardinals paint a
+   centred red bar on the matching edge; the four diagonals paint an L at
+   the matching corner, so the player reads the precise incoming-damage
+   bearing instead of the old 4-way band. Single-shot feedback, so it is
+   kept under reduced motion. No paint when `:hurt-dir` is absent."
   [parts stats bloody? vw vh]
-  (when (and bloody? (get stats :hurt-side))
-    (let [side  (get stats :hurt-side)
-          edge  "\e[48;5;160m  "
-          strip (str "\e[48;5;160m" (php/str_repeat " " vw))]
-      (cond
-        (or (php/=== side :left) (php/=== side :right))
-        (let [c0 (if (php/=== side :left) 1 (php/max 1 (php/- vw 1)))]
-          (loop [r 1]
-            (when (php/<= r vh)
-              (buf-push parts (str "\e[" r ";" c0 "H" edge "\e[0m"))
-              (recur (php/+ r 1)))))
-        (php/=== side :front)
-        (buf-push parts (str "\e[1;1H" strip "\e[0m"))
-        (php/=== side :back)
-        (buf-push parts (str "\e[" vh ";1H" strip "\e[0m")))))
+  (let [oct (get stats :hurt-dir)]
+    (when (and bloody? (php/!== oct nil))
+      ;; `h` = [row c0 c1] horizontal edge strip or nil; `v` = [col r0 r1]
+      ;; vertical edge strip or nil. Diagonals set both (an L at a corner).
+      ;; Pushes stay in statement position - a buf-push inside a closure
+      ;; would mutate a COPY of `parts` and vanish (closure array-copy).
+      (let [red "\e[48;5;160m"
+            cc  (php/intdiv vw 2)
+            cr  (php/intdiv vh 2)
+            hw  (php/max 2 (php/intdiv vw 6))
+            hh  (php/max 1 (php/intdiv vh 6))
+            h   (cond
+                  (php/=== oct 0) [1  (php/- cc hw) (php/+ cc hw)]
+                  (php/=== oct 4) [vh (php/- cc hw) (php/+ cc hw)]
+                  (php/=== oct 1) [1  (php/- vw hw) vw]
+                  (php/=== oct 3) [vh (php/- vw hw) vw]
+                  (php/=== oct 5) [vh 1 hw]
+                  (php/=== oct 7) [1  1 hw]
+                  :else           nil)
+            v   (cond
+                  (php/=== oct 2) [(php/- vw 1) (php/- cr hh) (php/+ cr hh)]
+                  (php/=== oct 6) [1            (php/- cr hh) (php/+ cr hh)]
+                  (php/=== oct 1) [(php/- vw 1) 1 hh]
+                  (php/=== oct 3) [(php/- vw 1) (php/- vh hh) vh]
+                  (php/=== oct 5) [1            (php/- vh hh) vh]
+                  (php/=== oct 7) [1            1 hh]
+                  :else           nil)]
+        (when h
+          (let [row (get h 0)
+                a   (php/max 1 (get h 1))
+                b   (php/min vw (get h 2))]
+            (buf-push parts (str "\e[" row ";" a "H" red
+                                 (php/str_repeat " " (php/max 1 (php/+ (php/- b a) 1)))
+                                 "\e[0m"))))
+        (when v
+          (let [col (php/max 1 (get v 0))
+                r0  (php/max 1 (get v 1))
+                r1  (php/min vh (get v 2))]
+            (loop [r r0]
+              (when (php/<= r r1)
+                (buf-push parts (str "\e[" r ";" col "H" red "  \e[0m"))
+                (recur (php/+ r 1)))))))))
   parts)
 
 (defn paint-berserk-tint

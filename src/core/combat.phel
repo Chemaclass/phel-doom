@@ -406,6 +406,18 @@
         (php/> s 0.0)    :right
         :else            :left))))
 
+(defn attacker-octant
+  "Map an attacker position to an octant index 0..7 relative to player
+   facing: 0 = dead ahead, then clockwise (1 front-right, 2 right,
+   3 back-right, 4 behind, 5 back-left, 6 left, 7 front-left). nil when
+   `att` is nil. The 8-way twin of `attacker-side` (same atan2 / screen-
+   Y-down convention): render draws the directional damage arc at the
+   matching screen edge."
+  [att ^float px ^float py ^float pangle]
+  (when att
+    (let [rel (php/- (php/atan2 (php/- (:y att) py) (php/- (:x att) px)) pangle)]
+      (mod (php/intval (php/round (php// rel (php// php/M_PI 4.0)))) 8))))
+
 (defn knockback
   "Shove the player one knockback-dist step AWAY from `att`.
    Uses try-move so walls clamp the displacement. Returns the world
@@ -476,7 +488,10 @@
      (assoc (knockback damaged att)
             :iframes    iframe-seconds
             :flash-secs flash-seconds
-            :hurt-side  (attacker-side att (:x p) (:y p) (:angle p)))
+            :hurt-side  (attacker-side att (:x p) (:y p) (:angle p))
+            ;; 8-way bearing for the precise directional damage arc
+            ;; (issue #201); :hurt-side stays for the 4-way blood-drip cols.
+            :hurt-dir   (attacker-octant att (:x p) (:y p) (:angle p)))
      :hit vol)))
 
 (defn hit-player-at

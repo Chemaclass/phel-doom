@@ -84,7 +84,8 @@ On contact:
 - Arm 1.0s i-frames (prevent double-drain).
 - 0.05s white flash (impact jolt).
 - Knockback away from attacker (try 1.0 / 0.5 / 0.25 units on wall collision).
-- Stamp `:hurt-side` (`:front` / `:back` / `:left` / `:right`) for directional red band at impact edge. Front/back use ±30° wedges around facing; everything else routes to left/right.
+- Stamp `:hurt-side` (`:front` / `:back` / `:left` / `:right`, via `attacker-side`) for the 4-way blood-drip edge columns. Front/back use ±30° wedges around facing; everything else routes to left/right.
+- Stamp `:hurt-dir` (octant 0..7, via `attacker-octant`) for the precise 8-way directional damage arc (issue #201): render paints a centred red bar on the matching edge for the four cardinals, or an L at the matching corner for the four diagonals, so the player reads the exact incoming-damage bearing while i-frames are active. Single-shot feedback, kept under reduced motion.
 
 Both `take-damage` (contact, reads the nearest attacker's `:type`) and `hit-player-at` (projectile, the bolt carries its caster's `:dmg`) share `apply-hit`. `player-immune?` gates both: i-frames, invuln sphere, or dev god mode.
 

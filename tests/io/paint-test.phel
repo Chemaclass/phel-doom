@@ -1,7 +1,7 @@
 (ns phel-doom-tests.io.paint-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.io.render.buffer :refer [buf-mk])
-  (:require phel-doom.io.render.paint :refer [paint-crosshair paint-door-face paint-game-info paint-compass paint-hearts-hud]))
+  (:require phel-doom.io.render.paint :refer [paint-crosshair paint-door-face paint-game-info paint-compass paint-hearts-hud paint-hit-vignette]))
 
 ;; ---------------------------------------------------------------------
 ;; Crosshair legibility. The reticle must be a SOLID glyph, never the old
@@ -123,6 +123,31 @@
   (is (php/str_contains (game-info-str {:ammo-reserve 0 :mag-size 10 :high-contrast? true})
                         "\e[1;91m[0]")
       "critical reserve still flashes red with high contrast on (cond priority)"))
+
+;; Directional damage arc (issue #201): 8-way edge cue from :hurt-dir.
+
+(defn- hit-vig-str [hurt-dir bloody?]
+  (php/implode "" (paint-hit-vignette (buf-mk)
+                                      (if (nil? hurt-dir) {} {:hurt-dir hurt-dir})
+                                      bloody? 80 24)))
+
+(deftest test-hit-arc-front-paints-top-edge
+  (let [s (hit-vig-str 0 true)]
+    (is (php/str_contains s "\e[1;") "front arc sits on the top row")
+    (is (php/str_contains s "\e[48;5;160m") "arc is red")))
+
+(deftest test-hit-arc-back-paints-bottom-edge
+  (is (php/str_contains (hit-vig-str 4 true) "\e[24;") "back arc sits on the bottom row (vh=24)"))
+
+(deftest test-hit-arc-right-paints-right-edge
+  ;; right octant -> 2-wide strip at col vw-1 = 79.
+  (is (php/str_contains (hit-vig-str 2 true) ";79H") "right arc sits at col 79"))
+
+(deftest test-hit-arc-absent-dir-no-paint
+  (is (= "" (hit-vig-str nil true)) "no :hurt-dir -> nothing painted"))
+
+(deftest test-hit-arc-not-bloody-no-paint
+  (is (= "" (hit-vig-str 0 false)) "no i-frames -> nothing painted"))
 
 ;; ---------------------------------------------------------------------
 ;; Scene-coordinate painters carry a pixel-scale `sc`: their inputs live

@@ -134,10 +134,11 @@
 
 (defn paint-intro-splash
   "Centred banner showing 'LEVEL N · NAME' while :intro-secs > 0.
-   On locked levels (L4 blue / L5 red / L7 yellow) appends a 'FIND THE <COLOUR>
-   KEY' subtitle so the player knows the door at the exit needs a
-   keycard before they go hunting for it. Subtitle SGR matches the
-   lock colour so the cue reads at a glance."
+   Appends an objective subtitle: 'FIND THE <COLOUR> KEY' on locked levels
+   (L4 blue / L5 red / L7 yellow), 'KILL THE BOSS TO ESCAPE' on the boss
+   level, and 'FIND THE EXIT' (orange, matching the compass exit arrow) on
+   plain levels - so the player always has a stated objective (issue #203).
+   Subtitle SGR matches the lock / exit colour so the cue reads at a glance."
   [parts stats vw vh]
   (when (php/> (or (get stats :intro-secs) 0.0) 0.0)
     (let [title    (str "LEVEL " (or (get stats :level) 1)
@@ -148,13 +149,16 @@
                      (php/=== lock :red)    "FIND THE RED KEY"
                      (php/=== lock :yellow) "FIND THE YELLOW KEY"
                      (php/=== lock :boss)   "KILL THE BOSS TO ESCAPE"
-                     :else                  nil)
+                     ;; Unlocked level: point the player at the exit (the
+                     ;; compass already tints the cardinal orange toward it).
+                     :else                  "FIND THE EXIT")
           sub-sgr  (cond
                      (php/=== lock :blue)   "\e[40;94;1m"
                      (php/=== lock :red)    "\e[40;91;1m"
                      (php/=== lock :yellow) "\e[40;93;1m"
                      (php/=== lock :boss)   "\e[40;38;5;196;1m"
-                     :else                  "\e[40;93;1m")
+                     ;; Orange to match the compass exit-door arrow (SGR 214).
+                     :else                  "\e[40;38;5;214;1m")
           ;; Box width sized to the longer of title / subtitle so
           ;; both lines fit symmetrically with the same 4-col pad.
           inner    (php/max (php/mb_strlen title)

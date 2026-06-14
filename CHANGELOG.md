@@ -11,6 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+- Every level states an objective on its intro splash: plain levels show **FIND THE EXIT** (orange, matching the compass exit arrow), alongside the existing **FIND THE \<COLOUR\> KEY** on locked levels and **KILL THE BOSS TO ESCAPE** on the boss arena. Overlay-only, no frame-speed cost.
 - End-screen run summary + letter rank: death/victory screens show **accuracy %** (connecting pulls / total pulls), **secrets** found/total, and a colour-coded **rank** S/A/B/C/D alongside kills/time/bests. Grade is `0.7*accuracy + 0.3*secrets-ratio` (a secret-less run is never penalised). New `:shots-fired` / `:shots-hit` counters accumulate across levels; grade + accuracy live in `core/format` (unit-tested).
 - End-screen summary also reports **damage taken** (HP lost across the run; armor-absorbed hits don't count) and a **per-weapon kill breakdown** (`by: chaingun 29  shotgun 8  pistol 5`, most-used first), via `:damage-taken` in `apply-hit` and `:kills-by-weapon` (`bump-weapon-kills`) carried across levels.
 - 8-way directional damage feedback: a hit paints a red arc on the screen edge the attacker came from - a centred bar for the four cardinals, an L at the corner for the four diagonals - so you read the exact incoming bearing during i-frames. New `:hurt-dir` octant (`attacker-octant`); the 4-way `:hurt-side` stays for blood-drip columns. Kept under reduced motion.

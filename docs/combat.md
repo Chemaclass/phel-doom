@@ -155,7 +155,7 @@ High-burst tank-killer (issue #126): DOOM II's SSG. Reuses the shotgun `:spread?
 Berserk sphere (`Ω` glyph, 1-in-8 levels). Melee-biased, DOOM-style (issue #127): it is a "go punch everything" surge plus a full heal, not a flat all-weapon buff.
 
 1. `pickup-berserks` removes sphere, plays `:berserk` sfx, calls `arm-berserk`.
-2. `arm-berserk` stamps `:berserk-secs` to 20s (refresh, not stack) AND full-heals the player to `max-lives` (never lowering an over-cap soulsphere count).
+2. `arm-berserk` stamps `:berserk-secs` to 18s (refresh, not stack) AND full-heals the player to `max-lives` (never lowering an over-cap soulsphere count).
 3. `decay-timers` ticks down. While active, `berserk-mul-for` scales weapon damage by `damage-type`: `:melee` (the chainsaw) gets the big `berserk-melee-mul` (6), every ranged type gets the modest `berserk-damage-mul` (2). So berserk turns the chainsaw into a tank shredder while only mildly buffing guns.
 4. Render paints red pulsing border (suppressed by i-frames, which take priority).
 

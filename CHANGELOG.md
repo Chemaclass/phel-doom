@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Changed
+
+- Berserk window trimmed from 20s to 18s: still long enough to chain two or three room clears, but the rage now ends with a touch of use-it-or-lose-it pressure instead of lingering passively.
+
 ## [0.14.0] - 2026-06-14
 
 ### Added

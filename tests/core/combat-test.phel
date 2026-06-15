@@ -3,7 +3,7 @@
   (:require phel-doom.core.state :refer [new-world new-player max-lives])
   (:require phel-doom.core.enemy :refer [new-enemy])
   (:require phel-doom.core.combat
-            :refer [arm-berserk armory-reserve closest-attacker attacker-side attacker-octant berserk? berserk-damage-mul berserk-melee-mul berserk-mul-for berserk-seconds can-fire? apply-heat damage-step empty-click-seconds enemy-hit-damage hit-damage-for hit-player-at hit-stop-for hit-stop-tough-seconds hit-stop-boss-seconds invuln? invuln-seconds knockback mag-size pick-loot-weapon player-immune? reload reloading? roll-loot-kind tick-armory tick-shooting]))
+            :refer [arm-berserk armory-reserve closest-attacker attacker-side attacker-octant berserk? berserk-damage-mul berserk-melee-mul berserk-mul-for berserk-seconds can-fire? apply-heat damage-step empty-click-seconds enemy-hit-damage hit-damage-for hit-player-at hit-stop-for hit-stop-tough-seconds hit-stop-boss-seconds invuln? invuln-seconds knockback mag-size pick-loot-weapon player-immune? push-sfx reload reloading? roll-loot-kind tick-armory tick-shooting]))
 
 ;; ---------------------------------------------------------------------
 ;; closest-attacker: selection rule.
@@ -952,3 +952,19 @@
 (deftest test-player-immune-false-when-vulnerable
   (is (not (player-immune? {:iframes 0.0 :invuln-secs 0.0 :god? false}))
       "no i-frames, no invuln, no god -> hittable"))
+
+;; ---------------------------------------------------------------------
+;; push-sfx: the pure :sfx queue envelope. io (commands/play) drains it
+;; after the tick. Pin the {:name :vol} event shape, the nil-seed (or s
+;; []), and conj append order so a regression can't silently reorder or
+;; drop queued sounds.
+;; ---------------------------------------------------------------------
+
+(deftest test-push-sfx-appends-event-to-empty-queue
+  (is (= [{:name :hit :vol 1.0}] (:sfx (push-sfx {} :hit 1.0)))
+      "first event seeds the queue with one {:name :vol} map"))
+
+(deftest test-push-sfx-accumulates-in-order
+  (let [w (-> {} (push-sfx :hit 1.0) (push-sfx :kill 0.6))]
+    (is (= [{:name :hit :vol 1.0} {:name :kill :vol 0.6}] (:sfx w))
+        "events stay in enqueue order")))

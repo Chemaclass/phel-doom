@@ -35,6 +35,8 @@ Empty trigger pulls → `empty-trigger-pull`: arm `:empty-click-secs` (0.8s), pl
 
 The periodic `press R to RELOAD` nag is gated by the pure `reload-reminder-visible?` (`io/render.phel`). It arms on the remaining-mag **fraction** (`<= reload-reminder-frac`, 0.3) rather than an absolute count, so a 10-round pistol and a 4-round shotgun both nag at "nearly empty". Single-round mags (BFG, chainsaw: `mag-size <= 1`) reload every shot by design, so the nag is suppressed entirely. It is also suppressed while reloading, when the reserve is dry, during the dry-fire CLICK, and on viewports under 9 rows.
 
+When the reload finishes (the `:reload-cooldown` `>0 -> <=0` edge, detected in `tick-world` since `damage-step`'s `decay-timers` is the sole site that ticks it), a one-shot bright-green ` READY! ` cue flashes at the same row for `reload-ready-flash-seconds` (0.30s) so the gun-hot-again moment reads. Pure overlay (`paint-reload-ready`), driven by the `:reload-ready-secs` timer, suppressed on viewports under 9 rows.
+
 Fresh run starts with 30 reserve (3 mags); cap 50. Pickups refill (see [`level-system.md`](level-system.md)).
 
 ## Kill loot

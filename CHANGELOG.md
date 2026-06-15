@@ -12,6 +12,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 ### Changed
 
 - Berserk window trimmed from 20s to 18s: still long enough to chain two or three room clears, but the rage now ends with a touch of use-it-or-lose-it pressure instead of lingering passively.
+- Critical-HP heartbeat eased from 0.85s to 0.90s in the 3-4 heart tier: the first low-HP thump lands with a clearer percussive peak before accelerating into the 0.55s last-heart panic tier (last-heart tier unchanged).
 
 ## [0.14.0] - 2026-06-14
 

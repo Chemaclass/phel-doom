@@ -70,7 +70,7 @@ See [monsters.md](monsters.md), [combat.md](combat.md).
 
 Triggered on life drop or enemy proximity:
 
-- Heartbeat (last 2 hearts, <=4 HP): red edge vignette + low thump every 0.85s, accelerating to 0.55s in the last heart.
+- Heartbeat (last 2 hearts, <=4 HP): red edge vignette + low thump every 0.90s, accelerating to 0.55s in the last heart.
 - Lights flicker: brief scanline darken every 20-30s (calm), 6-12s in the last 2 hearts.
 - Jump-scare (enemy 3.5 units): magenta wide-eyed skull on face for 600ms.
 - Sudden silence (enemy 1.5 units): all sfx muted 400ms.

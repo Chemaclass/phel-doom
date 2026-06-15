@@ -11,7 +11,7 @@ Hitscan + damage timing + i-frames. `src/core/combat.phel`. Pure: no side effect
 | `shot-knockback-dist` | 1.0 | Push distance per wounding hit |
 | `touch-damage-dist` | 0.7 | Contact damage range |
 | `iframe-seconds` | 1.0 | Post-hit invulnerability window |
-| `fire-anim-seconds` | 0.09 | Muzzle flash visibility |
+| `fire-anim-seconds` | 0.13 | Muzzle flash visibility |
 | `fx-ttl-seconds` | 0.7 | Blood splatter lifetime |
 | `flash-seconds` | 0.05 | White impact jolt |
 | `heat-per-shot` | 0.30 | Overheat per shot (dormant - no weapon overheats) |

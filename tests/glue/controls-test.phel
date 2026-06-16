@@ -375,3 +375,32 @@
     (is (php/> (:turn-left (:moves w')) 0)))
   (let [w' (refresh-from-keys blank-world "\eOC")]
     (is (php/> (:turn-right (:moves w')) 0))))
+
+;; ---------------------------------------------------------------------
+;; Menu confirm (#225): key-states :enter detects ENTER/Return; the
+;; :confirm rising edge (space OR enter) drives pause-menu select +
+;; settings back-out. Edge-gated so a held key can't auto-select.
+;; ---------------------------------------------------------------------
+
+(deftest test-key-states-detects-enter
+  (is (= true (:enter (key-states "\r"))) "CR is Enter")
+  (is (= true (:enter (key-states "\n"))) "LF is Enter")
+  (is (not (:enter (key-states ""))) "no Enter in empty input")
+  (is (not (:enter (key-states "x"))) "a plain key is not Enter"))
+
+(deftest test-rising-edges-confirm-fires-on-enter
+  (let [edges (rising-edges {:sp false :enter true} {:sp false :enter false})]
+    (is (= true (:confirm edges)) "fresh Enter confirms")))
+
+(deftest test-rising-edges-confirm-fires-on-space
+  (let [edges (rising-edges {:sp true :enter false} {:sp false :enter false})]
+    (is (= true (:confirm edges)) "fresh space confirms")))
+
+(deftest test-rising-edges-confirm-held-does-not-refire
+  ;; Held space/enter (e.g. fire carried from gameplay into pause, or
+  ;; Enter auto-repeat) must NOT keep confirming - edge only.
+  (is (= false (:confirm (rising-edges {:sp true :enter false} {:sp true :enter false}))))
+  (is (= false (:confirm (rising-edges {:sp false :enter true} {:sp false :enter true})))))
+
+(deftest test-rising-edges-confirm-silent-when-idle
+  (is (= false (:confirm (rising-edges {:sp false :enter false} {:sp false :enter false})))))

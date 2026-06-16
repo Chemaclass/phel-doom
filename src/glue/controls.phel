@@ -191,6 +191,18 @@
           (press-slot w1 :sprint)
           w1)))))
 
+(defn- kitty-mods
+  "Decode an optional kitty mods capture: empty / nil means no modifiers (0).
+   Kitty encodes modifiers as a bitfield + 1; bit 0 = SHIFT (sprint arming)."
+  [raw]
+  (if (or (nil? raw) (= raw "")) 0 (php/intval raw)))
+
+(defn- kitty-event
+  "Decode an optional kitty event-type capture: empty / nil means a press (1).
+   Event types: 1 = press, 2 = repeat, 3 = release."
+  [raw]
+  (if (or (nil? raw) (= raw "")) 1 (php/intval raw)))
+
 (defn- apply-kitty-events
   "Scan `keys` for kitty CSI-u sequences and fold them into `world`.
    Returns [world-after-events leftover-string]; leftover-string is
@@ -213,13 +225,8 @@
         (if (php/>= i n)
           [w (php/preg_replace re "" keys)]
           (let [code  (php/intval (php/aget codes-arr i))
-                mraw  (php/aget mods-arr i)
-                mods  (if (or (nil? mraw) (= mraw "")) 0 (php/intval mraw))
-                evraw (php/aget ev-arr i)
-                ;; Missing :event capture means press (event-type 1).
-                event (if (or (nil? evraw) (= evraw ""))
-                        1
-                        (php/intval evraw))]
+                mods  (kitty-mods (php/aget mods-arr i))
+                event (kitty-event (php/aget ev-arr i))]
             (recur (php/+ i 1) (handle-kitty-event w code event mods))))))))
 
 (def arrow-letter->slot
@@ -252,12 +259,8 @@
         (if (php/>= i n)
           [w (php/preg_replace re "" keys)]
           (let [letter (php/aget letters i)
-                mraw   (php/aget mods-arr i)
-                mods   (if (or (nil? mraw) (= mraw "")) 0 (php/intval mraw))
-                evraw  (php/aget ev-arr i)
-                event  (if (or (nil? evraw) (= evraw ""))
-                         1
-                         (php/intval evraw))
+                mods   (kitty-mods (php/aget mods-arr i))
+                event  (kitty-event (php/aget ev-arr i))
                 slot   (get arrow-letter->slot letter)]
             (recur (php/+ i 1)
                    (cond

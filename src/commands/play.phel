@@ -541,6 +541,11 @@
          :door 1.0)
         world))))
 
+(def reload-ready-flash-seconds
+  "How long the ' READY! ' HUD cue holds after a reload cooldown
+   finishes (the gun goes hot again)."
+  0.30)
+
 (defn tick-world
   "Pure one-frame state transition. `keys` is the drained input string,
    `dt` is seconds since the previous tick, `edges` is the rising-edge
@@ -631,7 +636,15 @@
             w5c  (tick-armory w5b)
             w6   (tick-shooting w5c (:fire edges) (:fire-held edges))
             w7   (damage-step   w6 dt)
-            w8   (tick-heartbeat w7 dt)
+            ;; READY flash: damage-step's decay-timers is the sole site
+            ;; that ticks :reload-cooldown. If it crossed from >0 to <=0
+            ;; this frame the reload just finished and the gun is hot
+            ;; again, so stamp the one-shot ' READY! ' HUD cue.
+            w7b  (if (and (php/> (or (:reload-cooldown w6) 0.0) 0.0)
+                          (php/<= (or (:reload-cooldown w7) 0.0) 0.0))
+                   (assoc w7 :reload-ready-secs reload-ready-flash-seconds)
+                   w7)
+            w8   (tick-heartbeat w7b dt)
             w9   (tick-flicker  w8 dt)
             w10  (tick-scare    w9 dt)
             w11  (tick-blood-drops w10 dt)
@@ -640,8 +653,10 @@
             ;; Decay the F5/F9 save/load HUD cue (set in game-loop after
             ;; the tick).
             w13b (update w13 :save-flash-secs
+                         (fn [s] (php/max 0.0 (php/- (or s 0.0) dt))))
+            w13c (update w13b :reload-ready-secs
                          (fn [s] (php/max 0.0 (php/- (or s 0.0) dt))))]
-        (advance-game-time w13b dt)))))
+        (advance-game-time w13c dt)))))
 
 ;; =====================================================================
 ;; § Per-frame IO + stats
@@ -737,6 +752,7 @@
    :enemy                (or (:enemy world) :imp)
    :save-flash-secs      (or (:save-flash-secs world) 0.0)
    :save-flash-msg       (:save-flash-msg world)
+   :reload-ready-secs    (or (:reload-ready-secs world) 0.0)
    ;; Settings page (issue #107): the pause overlay paints the box from
    ;; these. The page IS the pause screen, so the render layer keys off
    ;; :paused; the cursor + values ride along here.

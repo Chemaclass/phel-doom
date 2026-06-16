@@ -1,0 +1,36 @@
+(ns phel-doom-tests.io.palette-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.io.render.palette :refer [colorblind-markers]))
+
+;; ---------------------------------------------------------------------
+;; colorblind-markers (issue #200): keycard (k) + door (▌) minimap
+;; markers are the only glyphs distinguished by COLOUR alone, so CVD
+;; modes remap them to a brightness+hue-separated triad. :none keeps the
+;; defaults (nil here -> caller falls back).
+;; ---------------------------------------------------------------------
+
+(deftest test-colorblind-markers-none-is-nil
+  (is (nil? (colorblind-markers :none)) ":none keeps the default palette")
+  (is (nil? (colorblind-markers :nonsense)) "unknown mode falls back too"))
+
+(deftest test-colorblind-markers-triad-is-distinct
+  ;; Within a mode the three keycard colours must render as DIFFERENT
+  ;; strings (the whole point: a CVD player can tell them apart).
+  (let [m (colorblind-markers :deuteran)]
+    (is (not (nil? m)))
+    (is (not (= (:keycard-blue m) (:keycard-red m))) "blue vs red key differ")
+    (is (not (= (:keycard-red m) (:keycard-yellow m))) "red vs yellow key differ")
+    (is (not (= (:keycard-blue m) (:keycard-yellow m))) "blue vs yellow key differ")
+    ;; A key and its matching door share the colour code (so 'match key
+    ;; to door' still works) but differ by glyph.
+    (is (php/str_contains (:keycard-blue m) "k") "keycard keeps the k glyph")
+    (is (php/str_contains (:door-blue m) "▌") "door keeps the ▌ glyph")))
+
+(deftest test-colorblind-deuteran-and-protan-share-triad
+  ;; Both are red-green deficiencies -> same remap.
+  (is (= (colorblind-markers :deuteran) (colorblind-markers :protan))))
+
+(deftest test-colorblind-tritan-differs-from-deuteran
+  ;; Blue-yellow deficiency uses a different (red-based) triad than the
+  ;; red-green (orange-based) one.
+  (is (not (= (colorblind-markers :tritan) (colorblind-markers :deuteran)))))

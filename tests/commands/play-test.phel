@@ -276,3 +276,20 @@
   (let [w (step-pause-menu {:paused true :pause-cursor 0} -1 true)]
     (is (= 3 (:pause-cursor w)))
     (is (= :quit (:pause-action w)))))
+;; READY flash (reload-ready-secs): tick-world stamps the one-shot cue on
+;; the frame the reload cooldown crosses from >0 to <=0. damage-step's
+;; decay-timers is the sole site that ticks :reload-cooldown.
+
+(deftest test-tick-world-reload-completion-arms-ready-flash
+  (let [w' (tick-world (assoc (new-world open-grid (new-player 5.0 5.0 0.0))
+                              :reload-cooldown 0.01)
+                       "" 0.05 no-edges)]
+    (is (php/> (or (:reload-ready-secs w') 0.0) 0.0)
+        "reload finishing this frame arms the READY flash")))
+
+(deftest test-tick-world-reload-in-progress-does-not-arm-ready-flash
+  (let [w' (tick-world (assoc (new-world open-grid (new-player 5.0 5.0 0.0))
+                              :reload-cooldown 1.0)
+                       "" 0.016 no-edges)]
+    (is (= 0.0 (or (:reload-ready-secs w') 0.0))
+        "a mid-reload frame does not arm the flash")))

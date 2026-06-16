@@ -1,7 +1,7 @@
 ;; HUD + menu text: minimap, debug line, help menu, settings panel.
 (ns phel-doom.io.render.hud
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
-  (:require phel-doom.io.render.palette :refer [enemy-marker heart-marker ammo-marker berserk-marker invuln-marker soulsphere-marker armor-shard-marker backpack-marker keycard-blue-marker keycard-red-marker keycard-yellow-marker door-blue-marker door-red-marker door-yellow-marker shotgun-pickup-marker chaingun-pickup-marker boss-door-marker])
+  (:require phel-doom.io.render.palette :refer [enemy-marker heart-marker ammo-marker berserk-marker invuln-marker soulsphere-marker armor-shard-marker backpack-marker keycard-blue-marker keycard-red-marker keycard-yellow-marker door-blue-marker door-red-marker door-yellow-marker shotgun-pickup-marker chaingun-pickup-marker boss-door-marker colorblind-markers])
   (:require phel-doom.io.render.frame-math :refer [direction-char])
   (:require phel-doom.core.weapons :refer [weapon-order weapons])
   (:require phel-doom.core.settings :refer [page-fields pause-menu-options])
@@ -98,6 +98,57 @@
 (defn- enemy-cells [enemies step out-w]
   (scaled-cells enemies step out-w (fn [e] (:alive e))))
 
+(defn- block-has-wall?
+  "True when any cell in the step×step grid block at (r0, c0) is a
+   wall (code 1). Walls take minimap priority so corridors never
+   visually vanish when a sampled block is mixed."
+  [pgrid step r0 c0]
+  (loop [dr 0]
+    (cond
+      (php/>= dr step) false
+      (let [grow (buf-get pgrid (php/+ r0 dr))]
+        (loop [dc 0]
+          (cond
+            (php/>= dc step)                         false
+            (php/=== 1 (buf-get grow (php/+ c0 dc))) true
+            :else                                    (recur (php/+ dc 1))))) true
+      :else (recur (php/+ dr 1)))))
+
+(defn- sample-cell
+  "Collapse the step×step grid block at (r0, c0) to one minimap code.
+   Priority: wall (1) > any door (2/3/4/5/9) > switch (7/8) > floor (0).
+   Door + switch variants flow through so the caller can paint
+   blue/red/yellow/boss + switch-on/off markers distinct from each other."
+  [pgrid step r0 c0]
+  (loop [dr 0 found 0]
+    (if (php/>= dr step)
+      found
+      (let [grow (buf-get pgrid (php/+ r0 dr))
+            v    (loop [dc 0 acc 0]
+                   (if (php/>= dc step)
+                     acc
+                     (let [cell (buf-get grow (php/+ c0 dc))]
+                       (cond
+                         (php/=== cell 1) 1
+                         (or (php/=== cell 2)
+                             (php/=== cell 3)
+                             (php/=== cell 4)
+                             (php/=== cell 5)
+                             (php/=== cell 7)
+                             (php/=== cell 8)
+                             (php/=== cell 9)) (recur (php/+ dc 1) cell)
+                         :else            (recur (php/+ dc 1) acc)))))]
+        (cond
+          (php/=== v 1) 1
+          (or (php/=== v 2)
+              (php/=== v 3)
+              (php/=== v 4)
+              (php/=== v 5)
+              (php/=== v 7)
+              (php/=== v 8)
+              (php/=== v 9)) (recur (php/+ dr 1) v)
+          :else         (recur (php/+ dr 1) found))))))
+
 (defn minimap-rows
   "Render the world's grid into a PHP array of ANSI-coded strings,
    one per OUTPUT row. `step` collapses every step×step grid block
@@ -142,6 +193,17 @@
                                           true
                                           (recur (php/+ dr 1))))))))
         marker              (str "\e[40;93;1m" (direction-char angle) "\e[0m")
+        ;; Colorblind-safe keycard/door markers (issue #200): the only
+        ;; minimap glyphs distinguished by colour alone. nil for :none,
+        ;; falling back to the default colour markers. Selected once here,
+        ;; not per minimap cell - overlay-only, no hot-3D-path cost.
+        cbm                 (colorblind-markers (:colorblind (:settings world)))
+        kb-mk               (or (:keycard-blue cbm) keycard-blue-marker)
+        kr-mk               (or (:keycard-red cbm) keycard-red-marker)
+        ky-mk               (or (:keycard-yellow cbm) keycard-yellow-marker)
+        db-mk               (or (:door-blue cbm) door-blue-marker)
+        dr-mk               (or (:door-red cbm) door-red-marker)
+        dy-mk               (or (:door-yellow cbm) door-yellow-marker)
         emap                (enemy-cells (:enemies world) step out-w)
         hmap                (scaled-cells (:hearts world) step out-w (fn [_] true))
         amap                (scaled-cells (:ammo-boxes world) step out-w (fn [_] true))
@@ -160,52 +222,7 @@
                                           (fn [w] (php/=== (:weapon w) :shotgun)))
         wcmap               (scaled-cells (:weapon-pickups world) step out-w
                                           (fn [w] (php/=== (:weapon w) :chaingun)))
-        rows                (buf-mk)
-        block-has-wall?     (fn [r0 c0]
-                              (loop [dr 0]
-                                (cond
-                                  (php/>= dr step) false
-                                  (let [grow (buf-get pgrid (php/+ r0 dr))]
-                                    (loop [dc 0]
-                                      (cond
-                                        (php/>= dc step)                         false
-                                        (php/=== 1 (buf-get grow (php/+ c0 dc))) true
-                                        :else                                    (recur (php/+ dc 1))))) true
-                                  :else (recur (php/+ dr 1)))))
-        sample-cell         (fn [r0 c0]
-                              ;; Priority: wall (1) > any door (2/3/4/5/9) >
-                              ;; switch (7 / 8) > floor (0). Door + switch
-                              ;; variants flow through so minimap-rows can
-                              ;; paint blue/red/yellow/boss + switch-on/off
-                              ;; markers distinct from each other.
-                              (loop [dr 0 found 0]
-                                (if (php/>= dr step)
-                                  found
-                                  (let [grow (buf-get pgrid (php/+ r0 dr))
-                                        v    (loop [dc 0 acc 0]
-                                               (if (php/>= dc step)
-                                                 acc
-                                                 (let [cell (buf-get grow (php/+ c0 dc))]
-                                                   (cond
-                                                     (php/=== cell 1) 1
-                                                     (or (php/=== cell 2)
-                                                         (php/=== cell 3)
-                                                         (php/=== cell 4)
-                                                         (php/=== cell 5)
-                                                         (php/=== cell 7)
-                                                         (php/=== cell 8)
-                                                         (php/=== cell 9)) (recur (php/+ dc 1) cell)
-                                                     :else            (recur (php/+ dc 1) acc)))))]
-                                    (cond
-                                      (php/=== v 1) 1
-                                      (or (php/=== v 2)
-                                          (php/=== v 3)
-                                          (php/=== v 4)
-                                          (php/=== v 5)
-                                          (php/=== v 7)
-                                          (php/=== v 8)
-                                          (php/=== v 9)) (recur (php/+ dr 1) v)
-                                      :else         (recur (php/+ dr 1) found))))))]
+        rows                (buf-mk)]
     (loop [row 0]
       (when (php/< row out-h)
         (let [r0    (php/* row step)
@@ -213,17 +230,17 @@
           (loop [col 0]
             (when (php/< col out-w)
               (let [c0   (php/* col step)
-                    cell (sample-cell r0 c0)]
+                    cell (sample-cell pgrid step r0 c0)]
                 (buf-push parts
                           (cond
                             (and (php/=== row prow) (php/=== col pcol))   marker
                             (not (block-visited? r0 c0))                  minimap-unseen
                             (php/=== 1 cell)                              minimap-wall
-                            (block-has-wall? r0 c0)                       minimap-wall
+                            (block-has-wall? pgrid step r0 c0)            minimap-wall
                             (php/=== 2 cell)                              door-glyph
-                            (php/=== 3 cell)                              door-blue-marker
-                            (php/=== 4 cell)                              door-red-marker
-                            (php/=== 9 cell)                              door-yellow-marker
+                            (php/=== 3 cell)                              db-mk
+                            (php/=== 4 cell)                              dr-mk
+                            (php/=== 9 cell)                              dy-mk
                             (php/=== 5 cell)                              boss-door-marker
                             (php/=== 7 cell)                              minimap-switch-off
                             (php/=== 8 cell)                              minimap-switch-on
@@ -235,9 +252,9 @@
                             (buf-get ssmap (php/+ (php/* row out-w) col)) soulsphere-marker
                             (buf-get asmap (php/+ (php/* row out-w) col)) armor-shard-marker
                             (buf-get pmap (php/+ (php/* row out-w) col))  backpack-marker
-                            (buf-get kbmap (php/+ (php/* row out-w) col)) keycard-blue-marker
-                            (buf-get krmap (php/+ (php/* row out-w) col)) keycard-red-marker
-                            (buf-get kymap (php/+ (php/* row out-w) col)) keycard-yellow-marker
+                            (buf-get kbmap (php/+ (php/* row out-w) col)) kb-mk
+                            (buf-get krmap (php/+ (php/* row out-w) col)) kr-mk
+                            (buf-get kymap (php/+ (php/* row out-w) col)) ky-mk
                             (buf-get wsmap (php/+ (php/* row out-w) col)) shotgun-pickup-marker
                             (buf-get wcmap (php/+ (php/* row out-w) col)) chaingun-pickup-marker
                             :else                                         minimap-floor)))

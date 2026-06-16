@@ -68,8 +68,9 @@
    a wall OR a locked door without the matching keycard. When a
    bump is caused specifically by a missing keycard, arm
    :locked-door-bump-secs + record the colour so the render layer
-   can paint 'NEED <COLOUR> KEY' over the 3D view. Wall bumps are
-   silent — only the locked-door case is informational."
+   can paint 'NEED <COLOUR> KEY' over the 3D view, and enqueue a
+   muted `:click` deny cue on the :sfx queue. Wall bumps are silent —
+   only the locked-door case is informational."
   [world ^float dx ^float dy]
   (let [{:keys [grid player held-keys]} world
         nx                              (+ (:x player) dx)
@@ -84,9 +85,18 @@
       (let [need (missing-key-for grid held-keys ix iy)]
         (if (php/=== need nil)
           world
-          (assoc world
-                 :locked-door-bump-secs   locked-bump-secs
-                 :locked-door-bump-colour need))))))
+          ;; Rising-edge deny click: enqueue the muted `:click` only when
+          ;; the bump timer was not already armed, so holding into the door
+          ;; re-clicks at the ~1.5s hint cadence instead of every frame.
+          ;; Inlined (not push-sfx) to avoid a core/combat <-> physics
+          ;; require cycle — combat already requires physics/try-move.
+          (let [armed? (php/> (or (:locked-door-bump-secs world) 0.0) 0.0)
+                w      (assoc world
+                              :locked-door-bump-secs   locked-bump-secs
+                              :locked-door-bump-colour need)]
+            (if armed?
+              w
+              (update w :sfx (fn [s] (conj (or s []) {:name :click :vol 0.5}))))))))))
 
 (defn- counter-on? [moves slot]
   (php/> (get moves slot) 0))
@@ -292,7 +302,7 @@
   (cond
     (php/<= lives 0) nil
     (php/<= lives 2) 0.55
-    (php/<= lives 4) 0.85
+    (php/<= lives 4) 0.90
     :else            nil))
 
 (defn- flicker-cooldown-bounds

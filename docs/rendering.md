@@ -214,6 +214,15 @@ The strobing overlay paints branch on `stats[:reduced-motion?]` (driven by the S
 
 The single-shot directional `paint-hit-vignette`, the kill flash, and the crosshair hit-marker (`paint-crosshair` swaps the `+` for a `✗`/`×` while `stats[:hit-fx]` is live - see [combat.md](combat.md)) stay - they are feedback, not strobe. All of this is a once-per-frame overlay branch, so the per-cell hot loop is untouched.
 
+## Accessibility: colorblind palettes
+
+The minimap keycard (`k`) and door (`▌`) markers are the only minimap glyphs distinguished by COLOUR alone (the blue/red/yellow triad shares one glyph each); every other marker carries a distinct glyph already (shape-not-colour, CHANGELOG 0.3.0). `palette/colorblind-markers` remaps just that triad for the `:colorblind` Settings mode (`:none` keeps the defaults):
+
+- `:deuteran` / `:protan` (red-green) -> sky-blue (39) / orange (208) / white (231).
+- `:tritan` (blue-yellow) -> blue (33) / red (196) / white (231).
+
+Each triad is separated by BRIGHTNESS (preserved under every CVD type) as well as hue, and the same 256-code is applied to a key and its matching door so "match key colour to door colour" still holds. `minimap-rows` reads the mode from `(:settings world)` and selects the six markers ONCE per frame (overlay-only), so the per-cell hot loop is untouched. `cb-triad` uses `def-` with a `;;` comment (not a string docstring, which `def-` would store as the value).
+
 ## Minimap panel (frame + inset)
 
 The minimap is a once-per-frame overlay blitted via absolute cursor positioning; the 3D per-cell loop emits flat sky for the cells the overlay will overdraw (a row-constant `mini-lim`, not per-cell work), so the panel is free on the hot path.

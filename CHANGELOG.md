@@ -9,10 +9,6 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
-### Added
-
-- Colorblind accessibility palette (Settings -> Colorblind: `none` / `deuteran` / `protan` / `tritan`; issue #200). The minimap keycard (`k`) and door (`▌`) markers were the only glyphs told apart by colour alone (blue/red/yellow share a glyph), so a colour-vision-deficient player could take the wrong key to the wrong door. Non-`none` modes remap that triad to a brightness-plus-hue-separated CVD-safe set (red-green modes: sky-blue/orange/white; blue-yellow mode: blue/red/white), applying the same code to a key and its matching door. Overlay-only palette swap selected once per frame, so zero hot-3D-path cost. Persists to the settings JSON.
-
 ## [0.14.0] - 2026-06-14
 
 ### Added

@@ -34,7 +34,7 @@ Terminal quirks (kitty, tmux): [input.md](input.md).
 - **armor shard**: plus 1 armor over cap 5, up to 10 total
 - **soulsphere**: boost to 7 lives (max 10), over-cap decays back over 5 seconds
 - **ammo box**: plus N to active weapon reserve
-- **berserk**: full heal plus 20s melee surge (chainsaw 6x, guns 2x)
+- **berserk**: full heal plus 18s melee surge (chainsaw 6x, guns 2x)
 - **invuln**: 10s damage immunity
 - **backpack**: increases reserve cap by one base (stacks 3 times)
 - **keycard**: blue unlocks L4 exit, red unlocks L5, yellow unlocks L7. L10 boss-locked

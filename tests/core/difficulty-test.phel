@@ -1,6 +1,7 @@
 (ns phel-doom-tests.core.difficulty-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.difficulty :refer [normalise scale-cfg spec-for]))
+  (:require phel-doom.core.difficulty :refer [normalise scale-cfg spec-for])
+  (:require phel-doom.core.enemies :refer [default-lives-for]))
 
 (deftest test-normalise-defaults-to-normal-on-nil
   (is (= :normal (normalise nil))))
@@ -60,3 +61,24 @@
   (let [cfg (scale-cfg {:chase 1.0 :enemy-lives 1 :enemies 1} :easy)]
     (is (= 1 (:enemies cfg)))
     (is (= 1 (:enemy-lives cfg)))))
+
+;; ---------------------------------------------------------------------
+;; scale-cfg, mixed-spec branch: when :enemies is a VECTOR of specs the
+;; hp-mul scales each spec's :lives but leaves :count alone (the author's
+;; roster is the design intent, not an auto-scaled knob). The int-:enemies
+;; branch is covered above; these pin the vector? path.
+;; ---------------------------------------------------------------------
+
+(deftest test-scale-cfg-mixed-spec-scales-lives-leaves-counts
+  ;; nightmare hp-mul 1.5: ceil(3 * 1.5) = 5; :count untouched.
+  (let [cfg  (scale-cfg {:chase 1.0 :enemies [{:type :caco :lives 3 :count 2}]} :nightmare)
+        spec (first (:enemies cfg))]
+    (is (= 5 (:lives spec)) "explicit :lives scaled by hp-mul")
+    (is (= 2 (:count spec)) "spec :count left as authored")))
+
+(deftest test-scale-cfg-mixed-spec-without-lives-uses-catalog-default
+  ;; No explicit :lives -> base is the type's catalog default-lives-for.
+  (let [cfg      (scale-cfg {:chase 1.0 :enemies [{:type :caco}]} :nightmare)
+        spec     (first (:enemies cfg))
+        expected (php/intval (php/ceil (php/* (default-lives-for :caco) 1.5)))]
+    (is (= expected (:lives spec)) "catalog HP scaled when spec omits :lives")))

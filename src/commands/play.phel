@@ -17,7 +17,7 @@
   (:require phel-doom.core.weapons  :refer [effective-reserve-cap give-weapon switch-weapon weapon-spec weapon-order weapons])
   (:require phel-doom.io.sound    :refer [play-sfx! mute-for! set-sfx-scalar!])
   (:require phel-doom.io.music    :as music)
-  (:require phel-doom.core.settings :refer [navigate music-volume sfx-scalar valid-difficulty?])
+  (:require phel-doom.core.settings :refer [navigate music-volume sfx-scalar valid-difficulty? pause-menu-move pause-menu-action])
   (:require phel-doom.io.settings :refer [load-settings save-settings!])
   (:require phel-doom.io.savegame :refer [save-game! load-game])
   (:require phel-doom.io.demo     :as demo)
@@ -96,7 +96,15 @@
    outside the paused short-circuit so F3 / H / ESC still flip
    overlays while paused."
   [world edges]
-  (let [after-pause (if (:toggle-pause edges) (toggle-pause world) world)
+  (let [after-pause (if (:toggle-pause edges)
+                      ;; Pausing ON opens the navigable pause MENU (#203):
+                      ;; reset its cursor + screen so P always lands on the
+                      ;; top menu, not whatever sub-page was last open.
+                      (let [tp (toggle-pause world)]
+                        (if (:paused tp)
+                          (assoc tp :pause-screen :menu :pause-cursor 0 :pause-action nil)
+                          tp))
+                      world)
         after-map   (if (:toggle-map edges) (toggle-map after-pause) after-pause)
         after-sound (if (:toggle-sound edges) (toggle-sound after-map) after-map)
         after-debug (if (:toggle-debug edges) (toggle-debug after-sound) after-sound)
@@ -146,6 +154,25 @@
            :settings-cursor cursor
            :settings        settings
            :show-map        (boolean (:minimap settings)))))
+
+(defn step-pause-menu
+  "Pure: one frame of pause-MENU navigation (issue #203). up/down (W/S)
+   move the cursor; the select edge (space) resolves the highlighted
+   option: `:resume` unpauses here; `:settings` switches to the options
+   sub-page; `:restart` / `:quit` are stamped on `:pause-action` for the
+   game loop to hand back to the run lifecycle. No select = just move."
+  [world cursor-steps select?]
+  (let [cursor (pause-menu-move (or (:pause-cursor world) 0) cursor-steps)
+        w      (assoc world :pause-cursor cursor)]
+    (if (not select?)
+      w
+      (let [action (pause-menu-action cursor)]
+        (cond
+          (= action :resume)   (assoc w :paused false)
+          (= action :settings) (assoc w :pause-screen :settings)
+          (= action :restart)  (assoc w :pause-action :restart)
+          (= action :quit)     (assoc w :pause-action :quit)
+          :else                w)))))
 
 (defn resumed-pause?
   "True when the pause/settings page just closed this frame (was paused,
@@ -715,6 +742,11 @@
    ;; :paused; the cursor + values ride along here.
    :settings             (:settings world)
    :settings-cursor      (or (:settings-cursor world) 0)
+   ;; Pause menu (#203): which pause screen is up (:menu top-level options
+   ;; vs :settings sub-page) + the menu cursor, so render can paint the
+   ;; right overlay.
+   :pause-screen         (or (:pause-screen world) :menu)
+   :pause-cursor         (or (:pause-cursor world) 0)
    ;; Generic HUD-suppression flags (the demo showcase sets them; normal
    ;; play leaves them nil): hide the weapon name/ammo chunk and the
    ;; enemy-themed level label from the top game-info line.
@@ -957,13 +989,20 @@
 
               :else
               (let [ticked0 (tick-world world keys (php// ms 1000.0) edges)
-                  ;; Pause IS the settings page: while paused (and not
-                  ;; in the H info panel), the arrows / WASD tune the
-                  ;; options shown in the overlay. tick-world already
-                  ;; froze the gameplay step, so this only edits settings.
-                    ticked  (if (and (:paused ticked0) (not (:help? ticked0)))
-                              (step-settings! ticked0 keys)
-                              ticked0)
+                  ;; Pause overlay (#203): while paused (and not in the H
+                  ;; info panel) the navigable pause MENU is up. up/down move
+                  ;; the cursor, space selects. Selecting Settings drops into
+                  ;; the options sub-page (same nav as before); space (or P)
+                  ;; backs out to the menu. tick-world already froze gameplay,
+                  ;; so this only drives menu/settings state.
+                    ticked  (cond
+                              (not (and (:paused ticked0) (not (:help? ticked0))))
+                              ticked0
+                              (= (:pause-screen ticked0) :settings)
+                              (let [s (step-settings! ticked0 keys)]
+                                (if (:fire edges) (assoc s :pause-screen :menu) s))
+                              :else
+                              (step-pause-menu ticked0 (:cursor (nav-deltas keys)) (:fire edges)))
                   ;; F5 / F9 quick-save / load run here (file IO),
                   ;; outside the pure tick. Load swaps the whole world;
                   ;; both stamp a brief HUD flash so the player sees it
@@ -990,13 +1029,20 @@
                 (when (php/!== (:sound-on world) (:sound-on world'))
                   (music/sync-music! (:sound-on world')))
                 (cond
-                  (php/<= (:lives world') 0) (result-game-over world' t-start now)
-                  (on-door? world')          (door-result      world' t-start now)
-                  :else                      (recur world' now ms
-                                                    (fps-from-ms ms)
-                                                    now-keys
-                                                    [rows cols]
-                                                    cal'))))))))))
+                  ;; Pause-menu Quit / Restart (#203): hand the run
+                  ;; lifecycle the same signals the end screen uses. Persist
+                  ;; settings first (Quit never hits the resume transition).
+                  (= (:pause-action world') :quit)
+                  (do (persist-settings! world') :quit)
+                  (= (:pause-action world') :restart)
+                  (do (persist-settings! world') :restart)
+                  (php/<= (:lives world') 0)          (result-game-over world' t-start now)
+                  (on-door? world')                   (door-result      world' t-start now)
+                  :else                               (recur world' now ms
+                                                             (fps-from-ms ms)
+                                                             now-keys
+                                                             [rows cols]
+                                                             cal'))))))))))
 
 ;; =====================================================================
 ;; § End screens (death / victory)
@@ -1185,6 +1231,11 @@
       (cond
         (= result :quit)
         nil
+
+        ;; Pause-menu Restart (#203): restart the whole run from L1 with a
+        ;; fresh seed, same reset as a fresh end-screen restart.
+        (= result :restart)
+        (recur 1 max-lives 0 0 empty-run-stats (rng/fresh-seed) 0 #{:pistol} nil nil true true init-settings)
 
         (and (map? result) (:next-level result))
         ;; Stamina + sprint-cooldown + :sprint-blocked? are deliberately

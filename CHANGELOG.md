@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Added
+
+- Navigable pause menu (issue #203): pressing `p` now opens a `Resume` / `Settings` / `Restart` / `Quit` menu instead of dropping straight into the options page. `up`/`down` move the cursor, `space` selects. `Settings` opens the existing options sub-page (`space`/`p` backs out); `Restart` restarts the run from level 1 with a fresh seed (reusing the end-screen restart path); `Quit` exits. The nav model + transitions are pure (`pause-menu-*`, `step-pause-menu`) and unit-tested; menu/settings paint only when paused, so the hot 3D loop is untouched.
+
 ## [0.14.0] - 2026-06-14
 
 ### Added

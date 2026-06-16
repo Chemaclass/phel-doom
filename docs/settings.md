@@ -23,9 +23,9 @@ Player options: music volume, SFX volume, minimap default, difficulty default. P
 
 ## Access
 
-The pause screen (`p`) IS the settings page. Start menu: ENTER to play, `s` for settings, `q` quit.
+Pressing `p` opens the navigable **pause menu** (issue #203): `Resume` / `Settings` / `Restart` / `Quit`. `up`/`down` (or `w`/`s`) move the cursor; `space` selects. `Resume` unpauses, `Settings` drops into the options sub-page below, `Restart` restarts the run from level 1 with a fresh seed, `Quit` exits to the shell. Start menu: ENTER to play, `s` for settings, `q` quit.
 
-Navigation: `up`/`down` (or `w`/`s`) move cursor. `left`/`right` (or `a`/`d`) adjust value. WASD fallback when arrow codes misfire. Holding ramps sliders. Resume with `p` or `esc` persists changes.
+On the **Settings** sub-page: `up`/`down` (or `w`/`s`) move cursor, `left`/`right` (or `a`/`d`) adjust the selected value. WASD fallback when arrow codes misfire. Holding ramps sliders. `space` (or `p`) backs out to the pause menu; leaving the pause overlay persists changes.
 
 Control internals: `glue/controls.nav-deltas` converts raw key drain to `{:cursor :value}` steps. `core/settings.navigate` applies them. Settings live on world as `:settings` / `:settings-cursor` so `frame-stats` can render and edits carry across level cuts.
 

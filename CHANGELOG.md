@@ -9,10 +9,6 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
-### Added
-
-- Locked-door bump now plays a muted "denied" click (the dry-fire `:click` at half volume) so a blocked door reads by ear, not just the `NEED <COLOUR> KEY` hint. Rising-edge gated: holding into the door re-clicks at the ~1.5s hint cadence instead of spamming every frame. Enqueued from `physics/try-move`, drained like every other cue (gated on `:sound-on`).
-
 ## [0.14.0] - 2026-06-14
 
 ### Added

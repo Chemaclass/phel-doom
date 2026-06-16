@@ -60,6 +60,41 @@
    exit reads as 'danger / locked' against the dim minimap floor."
   "\e[40;91;1m▌\e[0m")
 
+;; Colorblind-safe minimap palettes (issue #200). The keycard (`k`) and
+;; door (`▌`) markers are the ONLY minimap glyphs distinguished by COLOUR
+;; alone - blue/red/yellow share one glyph each - so a colour-vision-
+;; deficient player can confuse which key opens which door. Every other
+;; marker already carries a distinct glyph (E/♥/A/B/I/●/▲/P/S/C), so the
+;; shape-not-colour rule (CHANGELOG 0.3.0) already covers them.
+;; 256-colour code per logical keycard/door colour, per CVD mode. Each
+;; triad separates the three colours by BRIGHTNESS (preserved under every
+;; CVD type) AND hue. :deuteran + :protan share the red-green-safe set
+;; (sky-blue / orange / white); :tritan uses the blue-yellow-safe set
+;; (blue / red / white). The SAME code is applied to a key and its
+;; matching door so "match key colour to door colour" still works.
+;; NOTE: def- (not def) so NO string docstring — def- stores a leading
+;; string AS the value, which would corrupt the map.
+(def- cb-triad
+  {:deuteran {:blue "39" :red "208" :yellow "231"}
+   :protan   {:blue "39" :red "208" :yellow "231"}
+   :tritan   {:blue "33" :red "196" :yellow "231"}})
+
+(defn colorblind-markers
+  "Keycard + door minimap markers remapped to the CVD-safe triad for
+   `mode` (issue #200), or nil for `:none` / unknown (the caller then
+   keeps the default colour markers). Pure; selected once per frame in
+   `minimap-rows`, so it adds no hot-3D-path cost."
+  [mode]
+  (let [t (get cb-triad mode)]
+    (when t
+      (let [mk (fn [code glyph] (str "\e[40;38;5;" code ";1m" glyph "\e[0m"))]
+        {:keycard-blue   (mk (:blue t) "k")
+         :keycard-red    (mk (:red t) "k")
+         :keycard-yellow (mk (:yellow t) "k")
+         :door-blue      (mk (:blue t) "▌")
+         :door-red       (mk (:red t) "▌")
+         :door-yellow    (mk (:yellow t) "▌")}))))
+
 ;; Color CODES used for half-block edge anti-aliasing. The outer
 ;; column loop composes 'top edge' and 'bottom edge' cells by
 ;; combining a wall code with the sky / floor code into a single

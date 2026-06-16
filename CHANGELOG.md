@@ -11,7 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Navigable pause menu (issue #203): `p` opens a Resume / Settings / Restart / Quit menu (up/down move, space selects). Settings opens the options sub-page (space/`p` back); Restart restarts the run from level 1 with a fresh seed; Quit exits. Paints only when paused, so the 3D loop is untouched.
+- Navigable pause menu (issue #203): `p` opens a Resume / Settings / Restart / Quit menu (up/down move, enter or space selects). Settings opens the options sub-page (enter/space/`p` back); Restart restarts the run from level 1 with a fresh seed; Quit exits. Paints only when paused, so the 3D loop is untouched.
 - Colorblind-safe minimap palette (issue #200): a `Colorblind` setting (`none` / `deuteran` / `protan` / `tritan`) remaps the keycard and door markers - the only minimap glyphs told apart by colour alone - to a brightness-plus-hue CVD-safe triad (red-green: sky-blue/orange/white; blue-yellow: blue/red/white), a key and its door sharing one code. Persisted; overlay-only, no hot-path cost.
 - Reload-ready cue: a one-shot bright-green ` READY! ` flash at the reload-reminder row when a reload finishes.
 - Locked-door deny click: bumping a locked door without its key plays a muted click (rising-edge, at the ~1.5s `NEED <COLOUR> KEY` hint cadence) so a blocked door reads by ear.

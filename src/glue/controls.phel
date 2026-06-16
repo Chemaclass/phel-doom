@@ -334,6 +334,15 @@
     (or (= 1 (php/preg_match kitty-esc-re keys))
         (str/contains? stripped "\e"))))
 
+(defn- enter-pressed?
+  "True when ENTER / Return appears in `keys`. Raw mode sends CR (`\\r`),
+   some terminals LF (`\\n`); kitty CSI-u wraps Return (code 13) as
+   `\\e[13u` (press-only, same `:1`/no-`:event` rule as key-pressed?)."
+  [keys]
+  (or (str/contains? keys "\r")
+      (str/contains? keys "\n")
+      (= 1 (php/preg_match "/\\x1b\\[13(?:u|;\\d+(?::1)?u)/" keys))))
+
 (defn- key-pressed?
   "True when the byte `plain` OR its kitty CSI-u PRESS code appears in
    `keys`. Some terminals running with `CSI >3u` enabled wrap every
@@ -406,6 +415,7 @@
    :r  (key-pressed? keys "r" 114)
    :h  (key-pressed? keys "h" 104)
    :esc (esc-pressed? keys)
+   :enter (enter-pressed? keys)
    :k1 (key-pressed? keys "1" 49)
    :k2 (key-pressed? keys "2" 50)
    :k3 (key-pressed? keys "3" 51)
@@ -426,6 +436,12 @@
    ;; the trigger is held, and single-action weapons (shotgun)
    ;; still need one press per shot.
    :fire-held      (boolean (:sp now))
+   ;; Menu CONFIRM / select (#225): space OR Enter, rising-edge so a held
+   ;; key (fire from gameplay, or Enter auto-repeat) can't auto-select on
+   ;; pause-open or oscillate menu<->settings. The pause menu + the
+   ;; settings sub-page back-out key off this.
+   :confirm        (and (or (:sp now)  (:enter now))
+                        (not (or (:sp prev) (:enter prev))))
    :toggle-map     (and (:m now)  (not (:m prev)))
    :toggle-pause   (and (:p now)  (not (:p prev)))
    :toggle-sound   (and (:n now)  (not (:n prev)))

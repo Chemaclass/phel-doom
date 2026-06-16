@@ -1,0 +1,83 @@
+(ns phel-doom-tests.io.settings-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.settings :as core)
+  (:require phel-doom.io.settings :refer [load-settings save-settings!]))
+
+;; Round-trip tests run against an isolated temp $HOME so they never
+;; touch the user's real ~/.phel-doom-settings.json. settings-path reads
+;; $HOME on every call, so swapping the env var redirects load + save.
+
+(defn- with-temp-home [f]
+  (let [prev (php/getenv "HOME")
+        tmp  (str (php/sys_get_temp_dir) "/" (php/uniqid "phel-doom-settings-test-"))
+        file (str tmp "/.phel-doom-settings.json")]
+    (php/mkdir tmp 0777 true)
+    (php/putenv (str "HOME=" tmp))
+    (try
+      (f)
+      (finally
+        (php/putenv (str "HOME=" prev))
+        (when (php/file_exists file) (php/unlink file))
+        (php/rmdir tmp)))))
+
+(deftest test-missing-file-returns-coerced-defaults
+  (with-temp-home
+   (fn []
+      ;; No file written yet -> defaults.
+     (let [loaded (load-settings)]
+       (is (= (core/coerce-settings core/default-settings) loaded))))))
+
+(deftest test-round-trips-all-nine-settings
+  (with-temp-home
+   (fn []
+      ;; A non-default value for every field, so a dropped key fails loud.
+     (let [custom (-> core/default-settings
+                      (core/adjust :music 2)          ; 60 -> 80
+                      (core/adjust :sfx -3)           ; 90 -> 60
+                      (core/adjust :minimap 1)        ; -> true
+                      (core/adjust :difficulty 2)     ; normal -> nightmare
+                      (core/adjust :crosshair 2)      ; cross -> open
+                      (core/adjust :timer 1)          ; -> true
+                      (core/adjust :reduced-motion 1) ; -> true
+                      (core/adjust :high-contrast 1)  ; -> true
+                      (core/adjust :colorblind 1))]   ; none -> deuteran
+       (save-settings! custom)
+       (let [loaded (load-settings)]
+         (is (= (:music custom)          (:music loaded))          "music")
+         (is (= (:sfx custom)            (:sfx loaded))            "sfx")
+         (is (= (:minimap custom)        (:minimap loaded))        "minimap")
+         (is (= (:difficulty custom)     (:difficulty loaded))     "difficulty")
+         (is (= (:crosshair custom)      (:crosshair loaded))      "crosshair")
+         (is (= (:timer custom)          (:timer loaded))          "timer")
+         (is (= (:reduced-motion custom) (:reduced-motion loaded)) "reduced-motion")
+         (is (= (:high-contrast custom)  (:high-contrast loaded))  "high-contrast")
+         (is (= (:colorblind custom)     (:colorblind loaded))     "colorblind"))))))
+
+(deftest test-enum-fields-stored-as-keywords-after-load
+  (with-temp-home
+   (fn []
+     (save-settings! (-> core/default-settings
+                         (core/adjust :crosshair 1)
+                         (core/adjust :colorblind 2)))
+     (let [loaded (load-settings)]
+        ;; Loaded enums must be keywords (not raw "dot"/"protan" strings).
+       (is (= :dot (:crosshair loaded)))
+       (is (= :protan (:colorblind loaded)))))))
+
+(deftest test-malformed-enum-on-disk-coerces-to-default
+  (with-temp-home
+   (fn []
+      ;; Hand-write a file with a bogus enum value; load must heal it.
+     (let [path (str (php/getenv "HOME") "/.phel-doom-settings.json")]
+       (php/file_put_contents
+        path
+        (php/json_encode
+         (let [a (php/array)]
+           (php/aset a "crosshair" "bogus")
+           (php/aset a "colorblind" "weird")
+           (php/aset a "difficulty" "impossible")
+           a))))
+     (let [loaded (load-settings)]
+       (is (= :cross  (:crosshair loaded)))
+       (is (= :none   (:colorblind loaded)))
+       (is (= :normal (:difficulty loaded)))))))

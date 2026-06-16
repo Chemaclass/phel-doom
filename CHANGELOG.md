@@ -9,6 +9,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-06-16
+
 ### Added
 
 - Navigable pause menu (issue #203): `p` opens a Resume / Settings / Restart / Quit menu (up/down move, enter or space selects). Settings opens the options sub-page (enter/space/`p` back); Restart restarts from level 1 with a fresh seed; Quit exits. Paints only when paused, so the 3D loop is untouched.
@@ -370,7 +372,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `cast + render` under 5 ms per frame at 120×30.
 - Flat PHP arrays on hot paths; `:tag` types for OPcache JIT tracing.
 
-[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/Chemaclass/phel-doom/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/Chemaclass/phel-doom/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/Chemaclass/phel-doom/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/Chemaclass/phel-doom/compare/v0.11.0...v0.12.0

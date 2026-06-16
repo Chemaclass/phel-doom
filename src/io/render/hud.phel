@@ -4,7 +4,7 @@
   (:require phel-doom.io.render.palette :refer [enemy-marker heart-marker ammo-marker berserk-marker invuln-marker soulsphere-marker armor-shard-marker backpack-marker keycard-blue-marker keycard-red-marker keycard-yellow-marker door-blue-marker door-red-marker door-yellow-marker shotgun-pickup-marker chaingun-pickup-marker boss-door-marker colorblind-markers])
   (:require phel-doom.io.render.frame-math :refer [direction-char])
   (:require phel-doom.core.weapons :refer [weapon-order weapons])
-  (:require phel-doom.core.settings :refer [page-fields])
+  (:require phel-doom.core.settings :refer [page-fields pause-menu-options])
   (:require phel-doom.core.format :refer [format-duration]))
 
 ;; Minimap glyphs. Walls use the full-block char █ so adjacent
@@ -665,6 +665,54 @@
         sgr     (if selected? "\e[1;93m" "\e[97m")
         pad     (php/str_repeat " " (php/max 0 (php/- w (php/mb_strlen body))))]
     (str "│" sgr body "\e[40;97m" pad "│")))
+
+(defn- pause-menu-row
+  "One pause-menu option as a full bordered row. The selected row paints
+   bold yellow with a ▸ marker; others plain white. Body carries no inline
+   SGR so the trailing pad (mb_strlen) counts display columns."
+  [label selected? w]
+  (let [marker (if selected? "▸ " "  ")
+        body   (str "      " marker label)
+        sgr    (if selected? "\e[1;93m" "\e[97m")
+        pad    (php/str_repeat " " (php/max 0 (php/- w (php/mb_strlen body))))]
+    (str "│" sgr body "\e[40;97m" pad "│")))
+
+(defn pause-menu-string
+  "Build the navigable PAUSE menu (issue #203) as one ANSI string with
+   absolute cursor moves, centred in the viewport. `cursor` is the
+   highlighted option index over `pause-menu-options`
+   (Resume/Settings/Restart/Quit); labels derive from the model so the
+   page can't drift from it. Pure: caller pushes the result into parts."
+  [vw vh cursor]
+  (let [w         settings-inner-width
+        bar       (php/str_repeat "─" w)
+        blnk      (str "│" (pause-pad "" w) "│")
+        rows-head [(str "┌" bar "┐")
+                   blnk
+                   (str "│\e[1;93m" (pause-pad "               PAUSED" w) "\e[40;97m│")
+                   blnk]
+        rows-opts (apply vector
+                         (map-indexed
+                          (fn [i kw]
+                            (pause-menu-row (php/ucfirst (name kw)) (php/=== i cursor) w))
+                          pause-menu-options))
+        rows-foot [blnk
+                   (str "├" bar "┤")
+                   blnk
+                   (str "│\e[2;97m" (pause-pad "  ↑↓ move   space select" w) "\e[22;40;97m│")
+                   blnk
+                   (str "└" bar "┘")]
+        rows      (apply vector (concat rows-head rows-opts rows-foot))
+        cnt       (count rows)
+        col0      (php/max 1 (php/- (php/+ (php/intdiv vw 2) 1)
+                                    (php/intdiv (php/+ w 2) 2)))
+        row0      (php/max 1 (php/intdiv (php/max 1 (php/- vh cnt)) 2))]
+    (loop [i 0 acc ""]
+      (if (php/>= i cnt)
+        acc
+        (recur (php/+ i 1)
+               (str acc "\e[" (php/+ row0 i) ";" col0 "H\e[40;97m"
+                    (get rows i) "\e[0m"))))))
 
 (defn settings-menu-string
   "Build the settings page as one ANSI string with absolute cursor

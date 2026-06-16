@@ -4,7 +4,7 @@
   (:require phel-doom.core.enemy  :refer [new-enemy])
   (:require phel-doom.core.level  :refer [build-world])
   (:require phel-doom.core.rng    :as rng)
-  (:require phel-doom.commands.play  :refer [tick-world resumed-pause?]))
+  (:require phel-doom.commands.play  :refer [tick-world resumed-pause? step-pause-menu]))
 
 (def open-grid
   (apply vector
@@ -242,6 +242,40 @@
   (is (= false (resumed-pause? {:paused true}  {:paused true}))  "still paused")
   (is (= false (resumed-pause? {:paused false} {:paused false})) "never paused"))
 
+;; ---------------------------------------------------------------------
+;; step-pause-menu (#203): pure pause-MENU navigation. up/down move the
+;; cursor; the select edge resolves the highlighted option. :resume
+;; unpauses here; :settings switches screen; :restart/:quit stamp
+;; :pause-action for the game loop to hand to the run lifecycle.
+;; ---------------------------------------------------------------------
+
+(deftest test-step-pause-menu-moves-cursor-without-select
+  (let [w (step-pause-menu {:paused true :pause-cursor 0} 1 false)]
+    (is (= 1 (:pause-cursor w)) "down moves the cursor")
+    (is (= true (:paused w)) "no select leaves pause untouched")
+    (is (nil? (:pause-action w)) "no action stamped")))
+
+(deftest test-step-pause-menu-resume-unpauses
+  ;; cursor 0 = Resume; selecting it clears :paused.
+  (let [w (step-pause-menu {:paused true :pause-cursor 0} 0 true)]
+    (is (= false (:paused w)))))
+
+(deftest test-step-pause-menu-settings-switches-screen
+  ;; cursor 1 = Settings.
+  (let [w (step-pause-menu {:paused true :pause-cursor 1} 0 true)]
+    (is (= :settings (:pause-screen w)))
+    (is (= true (:paused w)) "still paused, just on the sub-page")))
+
+(deftest test-step-pause-menu-restart-and-quit-stamp-action
+  ;; cursor 2 = Restart, cursor 3 = Quit -> :pause-action for the loop.
+  (is (= :restart (:pause-action (step-pause-menu {:paused true :pause-cursor 2} 0 true))))
+  (is (= :quit    (:pause-action (step-pause-menu {:paused true :pause-cursor 3} 0 true)))))
+
+(deftest test-step-pause-menu-cursor-wraps-then-selects
+  ;; From cursor 0, up wraps to 3 (Quit); selecting stamps :quit.
+  (let [w (step-pause-menu {:paused true :pause-cursor 0} -1 true)]
+    (is (= 3 (:pause-cursor w)))
+    (is (= :quit (:pause-action w)))))
 ;; READY flash (reload-ready-secs): tick-world stamps the one-shot cue on
 ;; the frame the reload cooldown crosses from >0 to <=0. damage-step's
 ;; decay-timers is the sole site that ticks :reload-cooldown.

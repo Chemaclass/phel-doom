@@ -11,15 +11,19 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Navigable pause menu (issue #203): `p` opens a Resume / Settings / Restart / Quit menu (up/down move, enter or space selects). Settings opens the options sub-page (enter/space/`p` back); Restart restarts the run from level 1 with a fresh seed; Quit exits. Paints only when paused, so the 3D loop is untouched.
-- Colorblind-safe minimap palette (issue #200): a `Colorblind` setting (`none` / `deuteran` / `protan` / `tritan`) remaps the keycard and door markers - the only minimap glyphs told apart by colour alone - to a brightness-plus-hue CVD-safe triad (red-green: sky-blue/orange/white; blue-yellow: blue/red/white), a key and its door sharing one code. Persisted; overlay-only, no hot-path cost.
+- Navigable pause menu (issue #203): `p` opens a Resume / Settings / Restart / Quit menu (up/down move, enter or space selects). Settings opens the options sub-page (enter/space/`p` back); Restart restarts from level 1 with a fresh seed; Quit exits. Paints only when paused, so the 3D loop is untouched.
+- Colorblind-safe minimap palette (issue #200): a `Colorblind` setting (`none` / `deuteran` / `protan` / `tritan`) remaps keycard and door markers - the only minimap glyphs told apart by colour alone - to a brightness-plus-hue CVD-safe triad (red-green: sky-blue/orange/white; blue-yellow: blue/red/white), a key and its door sharing one code. Overlay-only, no hot-path cost.
 - Reload-ready cue: a one-shot bright-green ` READY! ` flash at the reload-reminder row when a reload finishes.
-- Locked-door deny click: bumping a locked door without its key plays a muted click (rising-edge, at the ~1.5s `NEED <COLOUR> KEY` hint cadence) so a blocked door reads by ear.
+- Locked-door deny click: bumping a locked door without its key plays a muted click (at the ~1.5s `NEED <COLOUR> KEY` hint cadence) so a blocked door reads by ear.
 
 ### Changed
 
-- Berserk window trimmed from 20s to 18s: enough to chain two or three room clears, but the rage now ends with use-it-or-lose-it pressure.
-- Critical-HP heartbeat eased from 0.85s to 0.90s in the 3-4 heart tier for a clearer first thump; the last-heart 0.55s panic tier is unchanged.
+- Berserk window trimmed 20s to 18s: still chains two or three room clears, but ends with use-it-or-lose-it pressure.
+- Critical-HP heartbeat eased 0.85s to 0.90s in the 3-4 heart tier for a clearer first thump; the last-heart 0.55s panic tier is unchanged.
+
+### Fixed
+
+- Settings persistence dropped 5 of 9 fields: crosshair, run timer, reduced motion, high contrast and colorblind were never written to the settings JSON and reset to defaults on every launch (only music, SFX, minimap and difficulty survived). All nine now round-trip; enum fields save as their bare keyword name and a malformed value heals to its default on load.
 
 ## [0.14.0] - 2026-06-14
 

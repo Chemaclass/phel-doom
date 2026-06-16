@@ -8,6 +8,8 @@ One-shot SFX via `src/io/sound.phel` (shell-out) plus a background OST riff via 
 
 Combat enqueues events on the world's per-frame `:sfx` queue via `combat/push-sfx`: `:shoot`, `:shoot-shotgun`, `:shoot-chaingun`, `:shoot-chainsaw`, `:shoot-bfg`, `:shoot-incinerator`, `:shoot-rocket`, `:hit`, `:kill`, `:reload`, `:click`, `:door`, `:heartbeat`, `:berserk`, `:wound`.
 
+A locked-door bump also enqueues a muted `:click` (vol 0.5) as a "denied" cue, on the rising edge only (re-fires at the ~1.5s `NEED <COLOUR> KEY` hint cadence, not every frame). It is enqueued by `physics/try-move` directly (inlined, not via `push-sfx`) to avoid a `core/combat` <-> `core/physics` require cycle - `combat` already requires `physics/try-move`.
+
 This queue keeps `tick-world` pure: no `play-sfx!` calls in-tick. `commands/play` drains it after `tick-world` and emits each event, gated on `:sound-on`. The queue clears at frame start so events never replay. (Level-transition cues like door advance play directly in the outer loop, outside the pure tick.)
 
 Weapon-fire events play baked Freedoom (BSD) DMX reports (see "Weapon fire sounds" below). Everything else falls to the per-OS system map. macOS system map: Pop (pistol/kill), Blow (shotgun), Morse (chaingun), Purr (chainsaw), Glass (BFG), Frog (incinerator), Ping (rocket), Sosumi (player-hurt), Funk (reload), Tink (door/pickup), Submarine (wound), Bottle (heartbeat), Hero (berserk).

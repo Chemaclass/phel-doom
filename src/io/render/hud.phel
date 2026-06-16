@@ -98,6 +98,57 @@
 (defn- enemy-cells [enemies step out-w]
   (scaled-cells enemies step out-w (fn [e] (:alive e))))
 
+(defn- block-has-wall?
+  "True when any cell in the step×step grid block at (r0, c0) is a
+   wall (code 1). Walls take minimap priority so corridors never
+   visually vanish when a sampled block is mixed."
+  [pgrid step r0 c0]
+  (loop [dr 0]
+    (cond
+      (php/>= dr step) false
+      (let [grow (buf-get pgrid (php/+ r0 dr))]
+        (loop [dc 0]
+          (cond
+            (php/>= dc step)                         false
+            (php/=== 1 (buf-get grow (php/+ c0 dc))) true
+            :else                                    (recur (php/+ dc 1))))) true
+      :else (recur (php/+ dr 1)))))
+
+(defn- sample-cell
+  "Collapse the step×step grid block at (r0, c0) to one minimap code.
+   Priority: wall (1) > any door (2/3/4/5/9) > switch (7/8) > floor (0).
+   Door + switch variants flow through so the caller can paint
+   blue/red/yellow/boss + switch-on/off markers distinct from each other."
+  [pgrid step r0 c0]
+  (loop [dr 0 found 0]
+    (if (php/>= dr step)
+      found
+      (let [grow (buf-get pgrid (php/+ r0 dr))
+            v    (loop [dc 0 acc 0]
+                   (if (php/>= dc step)
+                     acc
+                     (let [cell (buf-get grow (php/+ c0 dc))]
+                       (cond
+                         (php/=== cell 1) 1
+                         (or (php/=== cell 2)
+                             (php/=== cell 3)
+                             (php/=== cell 4)
+                             (php/=== cell 5)
+                             (php/=== cell 7)
+                             (php/=== cell 8)
+                             (php/=== cell 9)) (recur (php/+ dc 1) cell)
+                         :else            (recur (php/+ dc 1) acc)))))]
+        (cond
+          (php/=== v 1) 1
+          (or (php/=== v 2)
+              (php/=== v 3)
+              (php/=== v 4)
+              (php/=== v 5)
+              (php/=== v 7)
+              (php/=== v 8)
+              (php/=== v 9)) (recur (php/+ dr 1) v)
+          :else         (recur (php/+ dr 1) found))))))
+
 (defn minimap-rows
   "Render the world's grid into a PHP array of ANSI-coded strings,
    one per OUTPUT row. `step` collapses every step×step grid block
@@ -171,52 +222,7 @@
                                           (fn [w] (php/=== (:weapon w) :shotgun)))
         wcmap               (scaled-cells (:weapon-pickups world) step out-w
                                           (fn [w] (php/=== (:weapon w) :chaingun)))
-        rows                (buf-mk)
-        block-has-wall?     (fn [r0 c0]
-                              (loop [dr 0]
-                                (cond
-                                  (php/>= dr step) false
-                                  (let [grow (buf-get pgrid (php/+ r0 dr))]
-                                    (loop [dc 0]
-                                      (cond
-                                        (php/>= dc step)                         false
-                                        (php/=== 1 (buf-get grow (php/+ c0 dc))) true
-                                        :else                                    (recur (php/+ dc 1))))) true
-                                  :else (recur (php/+ dr 1)))))
-        sample-cell         (fn [r0 c0]
-                              ;; Priority: wall (1) > any door (2/3/4/5/9) >
-                              ;; switch (7 / 8) > floor (0). Door + switch
-                              ;; variants flow through so minimap-rows can
-                              ;; paint blue/red/yellow/boss + switch-on/off
-                              ;; markers distinct from each other.
-                              (loop [dr 0 found 0]
-                                (if (php/>= dr step)
-                                  found
-                                  (let [grow (buf-get pgrid (php/+ r0 dr))
-                                        v    (loop [dc 0 acc 0]
-                                               (if (php/>= dc step)
-                                                 acc
-                                                 (let [cell (buf-get grow (php/+ c0 dc))]
-                                                   (cond
-                                                     (php/=== cell 1) 1
-                                                     (or (php/=== cell 2)
-                                                         (php/=== cell 3)
-                                                         (php/=== cell 4)
-                                                         (php/=== cell 5)
-                                                         (php/=== cell 7)
-                                                         (php/=== cell 8)
-                                                         (php/=== cell 9)) (recur (php/+ dc 1) cell)
-                                                     :else            (recur (php/+ dc 1) acc)))))]
-                                    (cond
-                                      (php/=== v 1) 1
-                                      (or (php/=== v 2)
-                                          (php/=== v 3)
-                                          (php/=== v 4)
-                                          (php/=== v 5)
-                                          (php/=== v 7)
-                                          (php/=== v 8)
-                                          (php/=== v 9)) (recur (php/+ dr 1) v)
-                                      :else         (recur (php/+ dr 1) found))))))]
+        rows                (buf-mk)]
     (loop [row 0]
       (when (php/< row out-h)
         (let [r0    (php/* row step)
@@ -224,13 +230,13 @@
           (loop [col 0]
             (when (php/< col out-w)
               (let [c0   (php/* col step)
-                    cell (sample-cell r0 c0)]
+                    cell (sample-cell pgrid step r0 c0)]
                 (buf-push parts
                           (cond
                             (and (php/=== row prow) (php/=== col pcol))   marker
                             (not (block-visited? r0 c0))                  minimap-unseen
                             (php/=== 1 cell)                              minimap-wall
-                            (block-has-wall? r0 c0)                       minimap-wall
+                            (block-has-wall? pgrid step r0 c0)            minimap-wall
                             (php/=== 2 cell)                              door-glyph
                             (php/=== 3 cell)                              db-mk
                             (php/=== 4 cell)                              dr-mk

@@ -9,6 +9,18 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Added
+
+- Navigable pause menu (issue #203): `p` opens a Resume / Settings / Restart / Quit menu (up/down move, space selects) instead of dropping straight into options. Settings opens the options sub-page (space/`p` backs out); Restart restarts the run from level 1 with a fresh seed; Quit exits. Menus paint only when paused, so the 3D loop is untouched.
+- Colorblind-safe minimap palette (issue #200): a Colorblind setting (`none` / `deuteran` / `protan` / `tritan`) remaps the keycard and door markers - the only minimap glyphs told apart by colour alone - to a brightness-plus-hue-separated CVD-safe triad (red-green modes: sky-blue/orange/white; blue-yellow: blue/red/white), keeping a key and its matching door the same code. Persists to settings; overlay-only swap, no hot-path cost.
+- Reload-ready cue: a one-shot bright-green ` READY! ` flash when a reload finishes (the gun is hot again), at the reload-reminder row, mirroring the SAVED/LOADED flash.
+- Locked-door deny click: bumping a locked door without its key now plays a muted "denied" click (rising-edge gated, re-firing at the ~1.5s `NEED <COLOUR> KEY` hint cadence) so a blocked door reads by ear, not just on screen.
+
+### Changed
+
+- Berserk window trimmed from 20s to 18s: still long enough to chain two or three room clears, but the rage now ends with use-it-or-lose-it pressure instead of lingering passively.
+- Critical-HP heartbeat eased from 0.85s to 0.90s in the 3-4 heart tier so the first low-HP thump lands with a clearer peak; the last-heart 0.55s panic tier is unchanged.
+
 ## [0.14.0] - 2026-06-14
 
 ### Added

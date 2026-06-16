@@ -76,6 +76,20 @@
     (is (= 0.0 (or (:locked-door-bump-secs w) 0.0)))
     (is (php/=== nil (:locked-door-bump-colour w)))))
 
+(deftest test-try-move-locked-door-enqueues-one-deny-click
+  ;; First bump from a non-armed state plays the muted deny click.
+  (let [w (try-move blue-door-world 1.0 0.0)]
+    (is (= [{:name :click :vol 0.5}] (:sfx w)))))
+
+(deftest test-try-move-locked-door-hold-does-not-respam-click
+  ;; While the bump timer is still armed (player holding into the door)
+  ;; no new click is enqueued — the click re-fires only after the timer
+  ;; decays, at the HUD-hint cadence, not every frame.
+  (let [w1 (try-move blue-door-world 1.0 0.0)
+        w2 (try-move (assoc w1 :sfx []) 1.0 0.0)]
+    (is (= [] (or (:sfx w2) [])))
+    (is (php/> (:locked-door-bump-secs w2) 0.0) "stays armed")))
+
 ;; ---------------------------------------------------------------------
 ;; apply-physics: counters drive movement, decay each frame.
 ;; ---------------------------------------------------------------------

@@ -9,10 +9,6 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
-### Added
-
-- Reload-ready cue: a one-shot bright-green ` READY! ` flash appears when a reload finishes (the gun is hot again), at the reload-reminder row for 0.30s. Stamped in `tick-world` on the `:reload-cooldown` `>0 -> <=0` edge, painted as a pure overlay (`paint-reload-ready`) mirroring the SAVED/LOADED flash; suppressed on viewports under 9 rows.
-
 ## [0.14.0] - 2026-06-14
 
 ### Added

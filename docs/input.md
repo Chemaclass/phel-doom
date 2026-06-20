@@ -9,7 +9,7 @@ Raw stdin to world state.
 
 `init-input!` sequence: `stty -icanon -echo min 0 time 0` (raw mode, immediate return) + `stream_set_blocking(STDIN, false)` + ANSI setup:
 - `\e[?1049h`: alternate screen buffer
-- `\e[?25l`: hide cursor
+- `\e[?25l`: hide cursor (also re-asserted every frame by `render!` so the caret can't resurface mid-session behind streaming mouse reports or after a resize - see [Aim point](#aim-point-hidden-pointer-fixed-centre-crosshair))
 - `\e[?7l`: disable autowrap
 - `\e[2J\e[H`: clear + home
 - `\e[>3u`: kitty keyboard protocol opt-in (press/repeat/release events)
@@ -70,6 +70,7 @@ So `b=0` final `M` is a left press, `b=32` is a left drag (button 0 + motion), `
 
 `controls/mouse-look` (pure) parses every report in the drained byte string and returns `{:yaw :pitch :fire? :fire-held? :pos}`:
 - Terminals report **absolute** cell coords with **no pointer lock and no warp**, so yaw/pitch come from the **delta between consecutive position reports**, summed across the frame. This is NOT the discrete hold-counter model the keyboard uses (turn-hold-frames etc.); it is a per-frame angular delta applied directly to `:angle` / `:pitch`.
+- Per-cell scales (`mouse-yaw-scale` 0.018 rad, `mouse-pitch-scale` 0.02 fraction) tune the native-FPS feel. Yaw is sized so a brisk full-width flick (~120 cols) sweeps ~2.16 rad (~124 deg) at the neutral 1.0x sensitivity - a strong turn per stroke before the pointer saturates at the edge. Pitch covers a useful slice of the clamped [-1, 1] range in a few cells of vertical travel.
 - Motion RIGHT (+dx) -> +yaw; motion UP -> +pitch (rows grow DOWNWARD, so up is a decreasing y, hence the dy is negated).
 - **Edge-clamp caveat**: because the coords are absolute and clamp to `1..cols` / `1..rows`, a continuous drag into a screen edge produces a **zero delta** there - the terminal equivalent of running the mouse off the pad. There is no recentering. This approximates true mouselook within the terminal's limits, not perfectly.
 - `:pos` threads forward as the next frame's baseline (in `game-loop`, alongside `prev-keys`). The very first report of a session only establishes the baseline (zero delta), so the pointer's opening absolute position can't read as one giant jump.
@@ -80,9 +81,16 @@ So `b=0` final `M` is a left press, `b=32` is a left drag (button 0 + motion), `
 
 A left-button **press** (`b=0`, final `M`) sets `:fire?`, which the game loop ORs into the existing `:fire` rising edge - so a click shoots exactly like space. A held / dragged left button (`b=32`) sets `:fire-held?`, ORed into `:fire-held` so auto-fire weapons (pistol, chaingun) spray while the button is down, matching the space `:fire-held` path. Release (`m`) clears both.
 
+### Aim point: hidden pointer, fixed centre crosshair
+
+The aim is the **fixed screen-centre crosshair**, never a moving pointer (the terminal reports motion but offers no pointer warp, so a roaming pointer would not even track the aim). Two things keep that contract:
+
+- **Caret stays hidden.** `init-input!` hides the terminal caret once with `\e[?25l`, and `render!` re-asserts `\e[?25l` every frame. A terminal can resurface the caret on a mode flip, a resize, or when SGR mouse tracking is enabled, which would leave a blinking caret racing the crosshair; the per-frame re-assert (one idempotent escape) keeps it hidden for the whole session. The OS pointer arrow some terminals draw over their own window is outside our control, but the in-terminal caret never reappears.
+- **Crosshair is always the aim indicator while mouse-aiming.** `paint-crosshair` reads a `:mouse` flag (the Mouse setting, threaded through `frame-stats`). When mouselook is ON, an `:off` Crosshair style still draws a minimal centre dot `·` so the player is never left with no aim point. With the mouse OFF, `:off` keeps hiding the idle reticle exactly as before. The hit-marker (`✗` kill / `×` wound) overrides regardless of style or mouse state.
+
 ### Sensitivity
 
-A `Sensitivity` percent setting (0..100, step 10, default 50) maps through `core/settings.mouse-sensitivity` to a multiplier: the midpoint (50%) is the neutral 1.0x, 0% disables the look (delta scaled to 0), 100% doubles the per-cell yaw/pitch. `mouse-look` multiplies the raw delta by it.
+A `Sensitivity` percent setting (0..100, step 10, default 50) maps through `core/settings.mouse-sensitivity` to a multiplier: the midpoint (50%) is the neutral 1.0x, 0% disables the look (delta scaled to 0), 100% doubles the per-cell yaw/pitch. `mouse-look` multiplies the raw delta by it. Combined with the snappier 0.018 yaw scale, the default (50% / 1.0x) gives a responsive turn out of the box; raise it for a faster flick, lower it for fine tracking.
 
 ### Backward-compat guard
 

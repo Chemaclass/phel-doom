@@ -6,9 +6,10 @@ Full controls, pickups, weapons, and CLI flags. The README has the short version
 
 | Key | Action |
 |---|---|
-| `w` / `s` / ↑↓ | Forward / back |
+| `w` / `s` | Forward / back |
 | `a` / `d` | Strafe left / right |
 | `←` / `→` | Turn left / right |
+| `↑` / `↓` | Look up / down |
 | `SHIFT` / `x` | Sprint (1.6x speed) |
 | `e` | About-face (180 degrees) |
 | `space` | Fire (hold to spray auto-fire) |

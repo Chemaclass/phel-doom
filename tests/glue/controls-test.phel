@@ -284,47 +284,49 @@
     (is (php/<= (:sprint (:moves w')) 5))))
 
 ;; ---------------------------------------------------------------------
-;; Look up/down (pitch): 't' arms :pitch-up, 'g' arms :pitch-down. Both
-;; legacy single-byte and kitty CSI-u (codepoints 116 / 103) paths.
+;; Look up/down (pitch): ↑/↓ arrows arm :pitch-up / :pitch-down on every
+;; encoding (legacy CSI \e[A/\e[B, SS3 \eOA/\eOB, kitty-enhanced
+;; \e[1;..A/B). 't'/'g' are no longer bound.
 ;; ---------------------------------------------------------------------
 
-(deftest test-t-byte-refreshes-pitch-up-slot
-  (let [w' (refresh-from-keys blank-world "t")]
+(deftest test-up-arrow-refreshes-pitch-up-slot
+  (let [w' (refresh-from-keys blank-world "\e[A")]
     (is (php/> (:pitch-up   (:moves w')) 0))
-    (is (= 0   (:pitch-down (:moves w'))))))
+    (is (= 0   (:pitch-down (:moves w'))))
+    (is (= 0   (:fwd        (:moves w'))) "up arrow looks, no longer moves forward")))
 
-(deftest test-g-byte-refreshes-pitch-down-slot
-  (let [w' (refresh-from-keys blank-world "g")]
+(deftest test-down-arrow-refreshes-pitch-down-slot
+  (let [w' (refresh-from-keys blank-world "\e[B")]
     (is (php/> (:pitch-down (:moves w')) 0))
-    (is (= 0   (:pitch-up   (:moves w'))))))
+    (is (= 0   (:pitch-up   (:moves w'))))
+    (is (= 0   (:back       (:moves w'))) "down arrow looks, no longer moves back")))
 
-(deftest test-refresh-move-maps-t-to-pitch-up
-  ;; Direct slot-map check, mirroring the blank-moves style: the byte
-  ;; lands in exactly the :pitch-up slot, nothing else.
-  (let [w' (refresh-move blank-world "t")]
-    (is (php/> (:pitch-up (:moves w')) 0))
+(deftest test-ss3-up-down-arrows-pitch
+  ;; App-cursor SS3 form (tmux / alt-screen) reaches the same slots.
+  (is (php/> (:pitch-up   (:moves (refresh-from-keys blank-world "\eOA"))) 0))
+  (is (php/> (:pitch-down (:moves (refresh-from-keys blank-world "\eOB"))) 0)))
+
+(deftest test-kitty-enhanced-up-down-arrows-pitch
+  ;; Kitty enhanced arrows keep the legacy letter suffix: \e[1;mods:eventA.
+  (is (php/> (:pitch-up   (:moves (refresh-from-keys blank-world "\e[1;1:1A"))) 0))
+  (is (php/> (:pitch-down (:moves (refresh-from-keys blank-world "\e[1;1:1B"))) 0)))
+
+(deftest test-refresh-move-maps-up-standin-to-pitch-up
+  ;; refresh-move sees the normalised single-byte stand-in (^ = up arrow);
+  ;; it lands in exactly :pitch-up, nothing else.
+  (let [w' (refresh-move blank-world "^")]
     (is (= (assoc blank-moves :pitch-up (:pitch-up (:moves w')))
            (:moves w')))))
 
-(deftest test-refresh-move-maps-g-to-pitch-down
-  (let [w' (refresh-move blank-world "g")]
-    (is (php/> (:pitch-down (:moves w')) 0))
-    (is (= (assoc blank-moves :pitch-down (:pitch-down (:moves w')))
-           (:moves w')))))
-
-(deftest test-t-still-works-under-kitty-as-codepoint-116
-  ;; Under kitty, 't' arrives wrapped as \e[116u. Must still hit :pitch-up.
-  (let [w' (refresh-from-keys blank-world "\e[116u")]
-    (is (php/> (:pitch-up (:moves w')) 0))))
-
-(deftest test-g-still-works-under-kitty-as-codepoint-103
-  (let [w' (refresh-from-keys blank-world "\e[103u")]
-    (is (php/> (:pitch-down (:moves w')) 0))))
+(deftest test-t-and-g-no-longer-bound
+  ;; The old t/g pitch keys are freed - they touch no slot now.
+  (is (= blank-moves (:moves (refresh-from-keys blank-world "t"))))
+  (is (= blank-moves (:moves (refresh-from-keys blank-world "g")))))
 
 (deftest test-pitch-slot-uses-short-hold-frames
   ;; Pitch halts fast (like turn), not the long move-hold bridge, so the
   ;; camera doesn't keep drifting after the key is released.
-  (let [w' (refresh-from-keys blank-world "t")]
+  (let [w' (refresh-from-keys blank-world "\e[A")]
     (is (php/<= (:pitch-up (:moves w')) 5))))
 
 ;; ---------------------------------------------------------------------

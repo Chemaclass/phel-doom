@@ -43,7 +43,7 @@ Four lifecycle layers:
 
 1. Capture terminal size; clear buffer on resize.
 2. Render frame via `draw-frame` + `render!` (io/render.phel); adaptive-sleep yields per frame budget.
-3. Drain input: `drain-keys` reads up to 64 bytes non-blocking. Held keys send multiple bytes per frame.
+3. Drain input: `drain-keys` reads up to `drain-bytes` (512) bytes non-blocking. Held keys send multiple bytes per frame.
 4. Compute dt + edges: `ms-since` for wall-clock; `rising-edges` diffs key snapshots for one-shots.
 5. Tick world: pure `tick-world` call (used by tests too).
 6. Branch: quit (Q), die (lives <= 0), door (next level or victory), or recur.

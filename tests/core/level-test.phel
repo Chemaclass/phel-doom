@@ -403,3 +403,134 @@
   ;; (reach num-levels) and the out-of-range clamp are unchanged.
   (is (= 10 num-levels))
   (is (= "the final" (:name (config-for num-levels)))))
+
+;; ---------------------------------------------------------------------
+;; Campaign verticality beyond the L2 showcase: L3 (descending trench),
+;; L5 (raised central dais), L7 (staircase + ledge + low tunnel). Each is
+;; hand-authored the same way the showcase is (flat :layout + a separate
+;; height map), so build-world stamps the heights onto :floor-pgrid /
+;; :ceil-pgrid at the feature cells. Each level KEEPS its catalog identity
+;; (name, enemy mix, chase, lock) so the difficulty curve + progression
+;; are unchanged - only the geometry is now authored.
+;; ---------------------------------------------------------------------
+
+(deftest test-l3-trench-keeps-identity-and-loads
+  ;; The descending trench rides on L3: still the "cacodemons" room (name,
+  ;; primary enemy, chase) with the caco + demon + imp mix, so progression
+  ;; + the chaingun drop are unchanged.
+  (let [w     (build-world 3 5)
+        types (set (map :type (:enemies w)))]
+    (is (= "cacodemons" (:level-name w)))
+    (is (= :caco        (:enemy w)))
+    (is (= 1.2          (:chase-speed w)))
+    (is (contains? types :caco)  "caco shooter present")
+    (is (contains? types :demon) "demon present")
+    (is (contains? types :imp)   "imp present")
+    ;; Hand-authored layout parsed (not random-grid): 28x24.
+    (is (= 28 (count (first (:grid w)))))
+    (is (= 24 (count (:grid w))))))
+
+(deftest test-l3-trench-steps-down-two-tiers
+  ;; The trench rim (rows 9 + 13) sits one step down (-0.4), the bottom
+  ;; (rows 10-12) one tier deeper (-0.8). Each tier is one step-up-max
+  ;; (0.4) so the descent + climb-out are both walkable.
+  (let [w (build-world 3 5)]
+    (is (< (php/abs (- (floor-h w 13 9)  -0.4)) 1.0e-9) "upper rim -0.4")
+    (is (< (php/abs (- (floor-h w 13 13) -0.4)) 1.0e-9) "lower rim -0.4")
+    (is (< (php/abs (- (floor-h w 13 10) -0.8)) 1.0e-9) "bottom -0.8")
+    (is (< (php/abs (- (floor-h w 13 12) -0.8)) 1.0e-9) "bottom -0.8")
+    ;; Each tier transition is exactly one 0.4 step (<= step-up-max).
+    (is (< (php/abs (- (- (floor-h w 13 9) (floor-h w 13 10)) 0.4)) 1.0e-9)
+        "rim->bottom is one step")
+    (is (< (php/abs (- (- 0.0 (floor-h w 13 9)) 0.4)) 1.0e-9)
+        "ground->rim is one step")))
+
+(deftest test-l3-trench-flanks-and-spawn-stay-flat
+  ;; The flanking ground (cols 1-4, 23-26) + the spawn row stay flat (0.0),
+  ;; so the player can skirt the trench to the exit without descending.
+  (let [w (build-world 3 5)]
+    (is (= 0.0 (floor-h w 2 11))  "west flank flat")
+    (is (= 0.0 (floor-h w 25 11)) "east flank flat")
+    (is (= 0.0 (floor-h w 13 20)) "spawn cell flat")
+    (is (= 13.5 (:x (:player w))))
+    (is (= 20.5 (:y (:player w))))))
+
+(deftest test-l5-dais-keeps-identity-and-loads
+  ;; The central dais rides on L5: still "cyberdemons" (name, primary
+  ;; enemy, chase, red lock) with the cyber + imp mix, so the rocket drop
+  ;; + lock gating are unchanged.
+  (let [w     (build-world 5 5)
+        types (set (map :type (:enemies w)))]
+    (is (= "cyberdemons" (:level-name w)))
+    (is (= :cyber        (:enemy w)))
+    (is (= 1.6           (:chase-speed w)))
+    (is (= :red          (:door-lock w)) "red lock preserved")
+    (is (contains? types :cyber) "cyberdemon present")
+    (is (contains? types :imp)   "imp fodder present")
+    ;; Hand-authored layout parsed: 30x26.
+    (is (= 30 (count (first (:grid w)))))
+    (is (= 26 (count (:grid w))))
+    ;; Locked level still spawns its keycard.
+    (is (= 1 (count (:keycards w))) "red keycard spawned")))
+
+(deftest test-l5-dais-ramp-rises-onto-a-plateau
+  ;; The two-step ramp (rows 13 + 12) climbs 0 -> 0.4 -> 0.8 onto the dais
+  ;; plateau (rows 8-11), continuous with the ramp top (no lip). Each rise
+  ;; is one step-up-max (0.4) so the climb is walkable.
+  (let [w (build-world 5 5)]
+    (is (< (php/abs (- (floor-h w 14 13) 0.4)) 1.0e-9) "ramp step 1 = 0.4")
+    (is (< (php/abs (- (floor-h w 14 12) 0.8)) 1.0e-9) "ramp step 2 = 0.8")
+    (is (< (php/abs (- (floor-h w 14 9)  0.8)) 1.0e-9) "plateau centre = 0.8")
+    (is (< (php/abs (- (floor-h w 12 8)  0.8)) 1.0e-9) "plateau NW corner")
+    (is (< (php/abs (- (floor-h w 17 11) 0.8)) 1.0e-9) "plateau SE corner")
+    ;; Plateau is continuous with the top ramp step (no lip).
+    (is (< (php/abs (- (floor-h w 14 11) (floor-h w 14 12))) 1.0e-9))
+    ;; The ground ringing the dais stays flat so the exit is reachable.
+    (is (= 0.0 (floor-h w 2 12))  "west ring flat")
+    (is (= 0.0 (floor-h w 14 22)) "spawn cell flat")))
+
+(deftest test-l7-staircase-keeps-identity-and-loads
+  ;; The staircase + ledge rides on L7: still "revenants" (name, primary
+  ;; enemy, chase, yellow lock) with the revenant + demon + baron mix, so
+  ;; the BFG drop + lock gating are unchanged.
+  (let [w     (build-world 7 5)
+        types (set (map :type (:enemies w)))]
+    (is (= "revenants" (:level-name w)))
+    (is (= :revenant   (:enemy w)))
+    (is (= 1.8         (:chase-speed w)))
+    (is (= :yellow     (:door-lock w)) "yellow lock preserved")
+    (is (contains? types :revenant) "revenant present")
+    (is (contains? types :baron)    "baron ranged pressure present")
+    ;; Hand-authored layout parsed: 30x26.
+    (is (= 30 (count (first (:grid w)))))
+    (is (= 26 (count (:grid w))))
+    (is (= 1 (count (:keycards w))) "yellow keycard spawned")))
+
+(deftest test-l7-staircase-climbs-onto-a-ledge
+  ;; The three-step flight (rows 12 -> 10) climbs 0 -> 0.35 -> 0.70 -> 1.05
+  ;; onto the ledge plateau (rows 2-9), each rise <= step-up-max (0.4). The
+  ;; ledge cap is continuous with the top step.
+  (let [w (build-world 7 5)]
+    (is (< (php/abs (- (floor-h w 5 12) 0.35)) 1.0e-9) "step 1 = 0.35")
+    (is (< (php/abs (- (floor-h w 5 11) 0.70)) 1.0e-9) "step 2 = 0.70")
+    (is (< (php/abs (- (floor-h w 5 10) 1.05)) 1.0e-9) "step 3 = 1.05")
+    (is (< (php/abs (- (floor-h w 5 5)  1.05)) 1.0e-9) "ledge = 1.05")
+    ;; Every successive rise is one 0.35 step (<= 0.4 step-up-max).
+    (is (< (php/abs (- (- (floor-h w 5 11) (floor-h w 5 12)) 0.35)) 1.0e-9))
+    (is (< (php/abs (- (- (floor-h w 5 10) (floor-h w 5 11)) 0.35)) 1.0e-9))
+    ;; Ledge is continuous with the top step (no lip).
+    (is (< (php/abs (- (floor-h w 5 9) (floor-h w 5 10))) 1.0e-9))
+    ;; The east half stays flat so the exit is reachable off the climb.
+    (is (= 0.0 (floor-h w 22 22)) "spawn cell flat")
+    (is (= 0.0 (floor-h w 20 10)) "east of the stairs flat")))
+
+(deftest test-l7-low-ceiling-tunnel-over-the-stair-foot
+  ;; The two rows just south of the staircase foot (rows 13-14, cols 3-7)
+  ;; carry a hanging ceiling at 0.6 (below the default 1.0), so the climb
+  ;; threads a low tunnel; the rest of the ceiling is the flat 1.0.
+  (let [w (build-world 7 5)]
+    (is (< (php/abs (- (ceil-h w 5 13) 0.6)) 1.0e-9) "tunnel ceiling 0.6")
+    (is (< (php/abs (- (ceil-h w 5 14) 0.6)) 1.0e-9) "tunnel ceiling 0.6")
+    (is (php/< (ceil-h w 5 13) 1.0) "tunnel hangs below the default ceiling")
+    (is (= 1.0 (ceil-h w 5 5))   "ceiling over the ledge is flat 1.0")
+    (is (= 1.0 (ceil-h w 22 22)) "ceiling over the spawn is flat 1.0")))

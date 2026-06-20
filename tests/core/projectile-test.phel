@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.state :refer [new-world new-player])
   (:require phel-doom.core.projectile
-            :refer [spawn-from-enemies step resolve-hits tick-projectiles hit-radius projectile-ttl spawn-offset]))
+            :refer [spawn-from-enemies step resolve-hits tick-projectiles tick-tracers hit-radius projectile-ttl spawn-offset]))
 
 ;; A roomy open arena so bolts have floor to travel across. Wall ring,
 ;; floor interior.
@@ -155,3 +155,32 @@
         w' (tick-projectiles w 0.1)]
     (is (= 1 (count (:projectiles w'))) "bolt spawned and survived the frame")
     (is (php/> (:x (first (:projectiles w'))) 2.0) "bolt moved east toward the player")))
+
+;; ---------------------------------------------------------------------
+;; tick-tracers: cosmetic shot trails age by dt and drop once their
+;; flight time runs out. The survive/drop boundary is tested AFTER the
+;; increment, so a tracer lives while :t+dt < :dur and dies at >= :dur.
+;; ---------------------------------------------------------------------
+
+(deftest test-tick-tracers-keeps-live-tracer
+  (let [w  (assoc (new-world open-grid (new-player 3.5 3.5 0.0))
+                  :shot-tracers [{:t 0.1 :dur 1.0}])
+        w' (tick-tracers w 0.2)]
+    (is (= 1 (count (:shot-tracers w'))) "t+dt (0.3) < dur (1.0) -> tracer survives")
+    (is (php/< (php/abs (php/- 0.3 (:t (first (:shot-tracers w'))))) 0.0001)
+        ":t advanced by dt")))
+
+(deftest test-tick-tracers-drops-expired-tracer
+  (let [w  (assoc (new-world open-grid (new-player 3.5 3.5 0.0))
+                  :shot-tracers [{:t 0.9 :dur 1.0}])
+        ;; t+dt = 1.0 = dur, predicate is strict <, so it expires.
+        w' (tick-tracers w 0.1)]
+    (is (= 0 (count (:shot-tracers w'))) "t+dt (1.0) >= dur (1.0) -> tracer dropped")))
+
+(deftest test-tick-tracers-nil-is-noop
+  (let [w (new-world open-grid (new-player 3.5 3.5 0.0))]
+    (is (= w (tick-tracers w 0.1)) "no :shot-tracers key -> world untouched")))
+
+(deftest test-tick-tracers-empty-is-noop
+  (let [w (assoc (new-world open-grid (new-player 3.5 3.5 0.0)) :shot-tracers [])]
+    (is (= w (tick-tracers w 0.1)) "empty :shot-tracers -> world untouched")))

@@ -445,6 +445,78 @@
   ;; identical to the old XY-only hitscan. Guards the regression contract.
   (is (= 1 (shoot-with-pitch 9.5 1.0 nil)) "no scene height => vertical gate off"))
 
+;; The gate has to hold on the MULTI-target combat paths too, not just the
+;; single-scan chaingun: the pistol routes through `pierce-fire` (pierce)
+;; and the shotgun through `spread-fire` (spread-shoot, primary + graze).
+;; These fire the real weapons through `tick-shooting` so the whole
+;; combat path (spec lookup -> svh/pr threading -> enemy gate) is covered.
+
+(defn- fire-weapon-with-pitch
+  ;; Fire `weapon` (with `owned` so its ammo path is valid) once down the
+  ;; corridor at `enemies`, with the player's look `pitch` and scene height
+  ;; `svh`. Returns {:kills N :alive [bools]} after the trigger pull.
+  [weapon owned pitch svh enemies]
+  (let [base (new-world corridor-grid (assoc (new-player 1.5 1.5 0.0) :pitch pitch))
+        w    (assoc base
+                    :scene-rows    svh
+                    :weapon        weapon
+                    :owned-weapons owned
+                    :mag           30
+                    :ammo-reserve  10
+                    :fire-cooldown 0.0
+                    :reload-cooldown 0.0
+                    :jam-secs      0.0
+                    :iframes       0.0
+                    :enemies       enemies)
+        w'   (tick-shooting w true)]
+    {:kills (or (:kills w') 0)
+     :alive (apply vector (map (fn [e] (:alive e)) (:enemies w')))}))
+
+(deftest test-vertical-pierce-level-aim-hits-both
+  ;; Pistol (pierce): two 1-HP enemies in a line at d=2 and d=8. Level aim
+  ;; passes the round through both -> 2 kills, exactly the pre-#243 result.
+  (let [r (fire-weapon-with-pitch :pistol #{:pistol} 0.0 30
+                                  [(new-enemy 3.5 1.5 1) (new-enemy 9.5 1.5 1)])]
+    (is (= 2 (:kills r)) "level pierce drops both")
+    (is (= [false false] (:alive r)) "both enemies dead")))
+
+(deftest test-vertical-pierce-steep-pitch-spares-far
+  ;; Same pistol line at pitch 0.5 (pr=6): the near enemy (d=2, half-rows
+  ;; 8.5) is on the body, the far one (d=8, half-rows 2.0) is above the
+  ;; crosshair -> only the near is pierced, the far survives. The XY-only
+  ;; gate would have killed both.
+  (let [r (fire-weapon-with-pitch :pistol #{:pistol} 0.5 30
+                                  [(new-enemy 3.5 1.5 1) (new-enemy 9.5 1.5 1)])]
+    (is (= 1 (:kills r)) "steep aim pierces only the near enemy")
+    (is (= [false true] (:alive r)) "near dead, far spared by the vertical gate")))
+
+(deftest test-vertical-spread-level-aim-hits-primary-and-graze
+  ;; Shotgun (spread): a near primary on the axis (d=2) plus a graze target
+  ;; in the cone but farther (~d=7, slightly off-axis). Level aim drops the
+  ;; primary AND the graze -> 2 kills.
+  (let [r (fire-weapon-with-pitch :shotgun #{:shotgun} 0.0 30
+                                  [(new-enemy 3.5 1.5 1) (new-enemy 8.5 1.9 1)])]
+    (is (= 2 (:kills r)) "level shotgun drops primary + graze")
+    (is (= [false false] (:alive r)) "both enemies dead")))
+
+(deftest test-vertical-spread-steep-pitch-drops-graze-target
+  ;; Same shotgun shot at pitch 0.5 (pr=6): the near primary (d=2, half-rows
+  ;; 8.5) stays on the body, but the far graze target (~d=7, half-rows 2.5)
+  ;; slips under the crosshair, so the graze whiffs -> 1 kill. Proves the
+  ;; gate applies to graze targets, not just the primary.
+  (let [r (fire-weapon-with-pitch :shotgun #{:shotgun} 0.5 30
+                                  [(new-enemy 3.5 1.5 1) (new-enemy 8.5 1.9 1)])]
+    (is (= 1 (:kills r)) "steep aim drops only the primary, graze whiffs")
+    (is (= [false true] (:alive r)) "primary dead, far graze target spared")))
+
+(deftest test-vertical-spread-aim-down-also-drops-graze
+  ;; Symmetric (|pr|): looking DOWN at the floor (pitch -0.5, pr=-6) clears
+  ;; the far graze target the same way looking up does.
+  (let [r (fire-weapon-with-pitch :shotgun #{:shotgun} -0.5 30
+                                  [(new-enemy 3.5 1.5 1) (new-enemy 8.5 1.9 1)])]
+    (is (= 1 (:kills r)) "aiming down also whiffs the far graze")
+    (is (= [false true] (:alive r)) "primary dead, graze target spared")))
+
 (deftest test-tick-shooting-empty-mag-skip-when-jammed
   ;; Jam already has its own visual cue (paint-door-face / fire-anim).
   ;; Suppress the click so we don't double up.

@@ -1,6 +1,6 @@
 (ns phel-doom-tests.io.frame-math-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.io.render.frame-math :refer [floor-offset-rows])
+  (:require phel-doom.io.render.frame-math :refer [floor-offset-rows scene-rows collect-enemy-projs layout])
   (:require phel-doom.core.engine :refer [proj-dist]))
 
 ;; ---------------------------------------------------------------------
@@ -23,3 +23,63 @@
              (floor-offset-rows proj-dist 0.5 4.0))
       "near platform lifts more than far")
   (is (php/>= (floor-offset-rows proj-dist 0.5 4.0) 0) "far lift stays non-negative"))
+
+;; ---------------------------------------------------------------------
+;; scene-rows (#243): the full-detail viewport height the renderer uses
+;; for the vertical hitscan gate. It MUST equal the `:vh` `layout`
+;; derives so a billboard is projected against the exact height the
+;; player sees. Debug-on reserves one extra HUD row (the F3 perf row),
+;; so the scene shrinks by one.
+;; ---------------------------------------------------------------------
+
+(deftest test-scene-rows-reserves-one-hud-row-by-default
+  (is (= 29 (scene-rows 30 {})) "rows-1 with the debug overlay off")
+  (is (= 23 (scene-rows 24 {})) "holds for an 80x24 terminal too"))
+
+(deftest test-scene-rows-reserves-two-rows-with-debug
+  (is (= 28 (scene-rows 30 {:debug? true})) "rows-2: F3 adds a perf row")
+  (is (= 22 (scene-rows 24 {:debug? true})) "holds for an 80x24 terminal too"))
+
+(deftest test-scene-rows-matches-layout-vh
+  ;; The locked contract: whatever height the loop stamps for the
+  ;; hitscan gate is the same `:vh` the renderer paints into, for both
+  ;; debug states. layout takes (cols rows grid-w stats).
+  (let [cols 120 rows 30 grid-w 32]
+    (is (= (scene-rows rows {})
+           (:vh (layout cols rows grid-w {})))
+        "debug off: scene height == viewport height")
+    (is (= (scene-rows rows {:debug? true})
+           (:vh (layout cols rows grid-w {:debug? true})))
+        "debug on: scene height == viewport height")))
+
+;; ---------------------------------------------------------------------
+;; collect-enemy-projs: projects every alive, in-front enemy and returns
+;; them sorted by :dist DESCENDING so the painter draws back-to-front
+;; (closer sprites overwrite farther ones). Dead enemies and enemies
+;; behind the camera are excluded.
+;; ---------------------------------------------------------------------
+
+;; Player at (5,5) facing +x (angle 0). Enemies due east are dead ahead
+;; (cos-rel ~1); enemies due west are behind the camera (culled).
+(def fixture-player {:x 5.0 :y 5.0 :angle 0.0})
+
+(def fixture-enemies
+  [{:x 7.0  :y 5.0 :alive true  :type :imp}    ;; near, ahead  -> dist ~2
+   {:x 10.0 :y 5.0 :alive true  :type :imp}    ;; far, ahead   -> dist ~5
+   {:x 8.0  :y 5.0 :alive false :type :imp}    ;; dead, ahead  -> excluded
+   {:x 3.0  :y 5.0 :alive true  :type :imp}])  ;; behind camera -> excluded
+
+(deftest test-collect-enemy-projs-excludes-dead-and-behind
+  (let [projs (collect-enemy-projs fixture-enemies fixture-player 120)]
+    (is (= 2 (count projs))
+        "only the two alive, in-front enemies are projected")))
+
+(deftest test-collect-enemy-projs-sorted-back-to-front
+  (let [projs (collect-enemy-projs fixture-enemies fixture-player 120)
+        d0    (:dist (get projs 0))
+        d1    (:dist (get projs 1))]
+    ;; Descending: the farther sprite paints first, the near one last.
+    (is (php/> d0 d1) "first projection is the farther enemy (painted first)")
+    ;; The near enemy sits at (7,5), dist ~2; the far at (10,5), dist ~5.
+    (is (php/> d0 4.0) "farther sprite is ~5 world-units away")
+    (is (php/< d1 3.0) "nearer sprite is ~2 world-units away")))

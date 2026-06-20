@@ -57,9 +57,17 @@ Drops push into `:hearts` / `:armors` / `:ammo-boxes` vectors (same as level spa
 Two-step scan per shot:
 
 1. **Wall ray** along player facing via `cast-ray`, returns distance to first wall.
-2. **Enemy scan**: project each alive enemy onto heading (dot product). Nearest one in front, closer than wall, within max-range, within hit-radius perpendicular = hit. Flip `:alive false`, arm respawn timer (3-6s uniform).
+2. **Enemy scan**: project each alive enemy onto heading (dot product). Nearest one in front, closer than wall, within max-range, within hit-radius perpendicular, AND vertically on the sprite (see below) = hit. Flip `:alive false`, arm respawn timer (3-6s uniform).
 
 On hit: `play-shot-sfx` emits weapon report + kill cue (distance-attenuated). `on-shot-hit` bumps `:kills`, chains streak, pushes blood splatter, arms hit-stop if tough enemy dies, and stamps the crosshair hit-marker (see below).
+
+### Vertical aim gate (look up/down)
+
+With camera pitch (issue #243) the XY cylinder test alone is not enough: a shot would otherwise hit any enemy in the horizontal cone even while the crosshair points at the floor or sky. So each candidate hit is additionally gated on the crosshair being on the enemy's **drawn** billboard.
+
+The crosshair is fixed at screen-centre (`svh/2`). An enemy at distance `d` projects to a sprite of half-height `projection/sprite-half-rows(svh, d, scale)` rows, centred on `svh/2 + pr` where `pr = projection/pitch-rows((:pitch player), svh)` is the pitch shear in scene rows. The crosshair lands on the sprite iff `|pr| <= sprite-half-rows`. The gate (`enemy/vertical-hit?`) wraps the existing perp test in `shoot`, `pierce`, and `spread-shoot` (primary + graze). `sprite-half-rows` mirrors the renderer's billboard height (`min(svh, scale * proj-dist / (max(0.5, d) * char-aspect))`, halved), so the check is screen-space exact: closer enemies (taller sprites) are more forgiving, distant ones demand near-level aim, and the cyberdemon's 2x sprite (`scale`) is correspondingly easier to keep on.
+
+`svh` (scene rows) is supplied by the game loop, which stamps `:scene-rows` on the world from `render/scene-rows` (the same `rows - hud-rows` height the renderer draws). Combat stays pure: `svh`/`pr` are plain ints in. A world without `:scene-rows` (headless / legacy tests) disables the gate, which is identical to level aim (`pr = 0`, `|0| <= half-rows` always), so pitch-0 behaviour is byte-for-byte unchanged. The BFG path (`bfg-fire`) is splash-around-an-impact, not a crosshair hitscan, so it is not gated.
 
 ### Hit-marker (crosshair feedback)
 

@@ -104,6 +104,50 @@
   (let [[_ hit?] (shoot [(new-enemy 1.5 4.0)] 1.5 1.5 0.0 10.0 0.5 12.0)]
     (is (= false hit?))))
 
+;; Vertical aim gate (issue #243): the 11-arity `shoot` (and the
+;; matching `pierce` / `spread-shoot` arities) take `svh` (scene rows) +
+;; `pr` (horizon shear in scene rows). A hit must land on the enemy's
+;; drawn billboard. svh=30, pr=6 mimics looking up ~0.5: a far enemy
+;; (d=8, sprite half-rows 2.0) is cleared, a near one (d=2, half-rows
+;; 8.5) is still on the body. pr=0 leaves both hittable.
+
+(deftest test-shoot-vertical-gate-level-aim-hits
+  ;; pr=0: the gate is a no-op, both near and far enemies on the axis hit.
+  (let [[_ near?] (shoot [(new-enemy 3.5 1.5)] 1.5 1.5 0.0 10.0 0.5 12.0 1 nil 30 0)
+        [_ far?]  (shoot [(new-enemy 9.5 1.5)] 1.5 1.5 0.0 10.0 0.5 12.0 1 nil 30 0)]
+    (is (= true near?) "near body hit at level aim")
+    (is (= true far?) "far body hit at level aim")))
+
+(deftest test-shoot-vertical-gate-pitch-misses-far
+  ;; pr=6 (look up): the distant enemy's short sprite slips under the
+  ;; crosshair -> miss, while the close enemy's tall sprite still catches.
+  (let [[_ far?]  (shoot [(new-enemy 9.5 1.5)] 1.5 1.5 0.0 10.0 0.5 12.0 1 nil 30 6)
+        [_ near?] (shoot [(new-enemy 3.5 1.5)] 1.5 1.5 0.0 10.0 0.5 12.0 1 nil 30 6)]
+    (is (= false far?) "distant enemy missed when aiming up")
+    (is (= true near?) "close enemy still hit at the same pitch")))
+
+(deftest test-pierce-vertical-gate-skips-off-aim-enemy
+  ;; A pierce shot at pr=6 down a line of two enemies: the near one is on
+  ;; the body (killed), the far one is above the crosshair (untouched), so
+  ;; only one kill instead of the two a level shot would rack up.
+  (let [enemies          [(new-enemy 3.5 1.5 1) (new-enemy 9.5 1.5 1)]
+        [_ killed-level] (pierce enemies 1.5 1.5 0.0 12.0 0.5 12.0 1 nil 30 0)
+        [es' killed-up]  (pierce enemies 1.5 1.5 0.0 12.0 0.5 12.0 1 nil 30 6)]
+    (is (= 2 killed-level) "level aim pierces both")
+    (is (= 1 killed-up) "steep aim only drops the near enemy")
+    (is (= false (:alive (get es' 0))) "near enemy killed")
+    (is (= true (:alive (get es' 1))) "far enemy spared by the vertical gate")))
+
+(deftest test-spread-shoot-vertical-gate-whiffs-far-cone
+  ;; The shotgun cone at pr=6 onto a far enemy (d=8): it is in the cone
+  ;; but under the crosshair vertically, so the cone whiffs (0 kills),
+  ;; whereas a level shot drops it.
+  (let [enemies          [(new-enemy 9.5 1.5 1)]
+        [_ killed-level] (spread-shoot enemies 1.5 1.5 0.0 12.0 0.30 12.0 3 1 3 nil 30 0)
+        [_ killed-up]    (spread-shoot enemies 1.5 1.5 0.0 12.0 0.30 12.0 3 1 3 nil 30 6)]
+    (is (= 1 killed-level) "level shotgun blast hits the far enemy")
+    (is (= 0 killed-up) "aiming up whiffs the whole cone on a distant enemy")))
+
 (deftest test-shoot-empty-list-returns-miss
   (let [[es' hit? hit-pos idx] (shoot [] 1.5 1.5 0.0 10.0 0.5 12.0)]
     (is (= false hit?))

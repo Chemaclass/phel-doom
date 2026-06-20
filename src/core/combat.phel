@@ -1,7 +1,8 @@
 (ns phel-doom.core.combat
   (:require phel-doom.core.rng :as rng)
-  (:require phel-doom.core.engine   :refer [cast-ray])
-  (:require phel-doom.core.enemy    :refer [push-back-enemy shoot beam-impact splash pierce spread-shoot])
+  (:require phel-doom.core.engine     :refer [cast-ray])
+  (:require phel-doom.core.projection :refer [pitch-rows])
+  (:require phel-doom.core.enemy      :refer [push-back-enemy shoot beam-impact splash pierce spread-shoot])
   (:require phel-doom.core.enemy-ai :refer [attacks? noise-wake])
   (:require phel-doom.core.physics  :refer [try-move])
   (:require phel-doom.core.state    :refer [max-lives])
@@ -548,16 +549,38 @@
   (let [p (:player world)]
     (cast-ray (:pgrid world) (:x p) (:y p) (:angle p))))
 
+(defn- aim-svh
+  "Scene viewport height (rows) the hit gate projects against. The game
+   loop stamps `:scene-rows` each frame from the SAME terminal-derived
+   height the renderer uses, so a hitscan agrees with the drawn sprite.
+   nil when absent (tests / headless callers that never set it), which
+   disables the vertical gate downstream - identical to looking level."
+  [world]
+  (:scene-rows world))
+
+(defn- aim-pr
+  "Camera pitch shear in scene rows for the hit gate: `pitch-rows` of the
+   player's `:pitch` at the scene height `svh`. The fixed screen-centre
+   crosshair sits `pr` rows off the sprite centre, so combat compares
+   `|pr|` against `sprite-half-rows`. 0 when `svh` is nil (no scene to
+   project against) or the player has no pitch - the level-aim default."
+  [world svh]
+  (if (nil? svh)
+    0
+    (pitch-rows (or (:pitch (:player world)) 0.0) svh)))
+
 (defn- resolve-shot [world]
   (let [p         (:player world)
         spec      (w-spec world)
         base-dmg  (or (:damage spec) 1)
         dmg-type  (:damage-type spec)
         dmg       (if (berserk? world) (php/* base-dmg (berserk-mul-for dmg-type)) base-dmg)
-        max-range (or (:max-range spec) shot-max-range)]
+        max-range (or (:max-range spec) shot-max-range)
+        svh       (aim-svh world)]
     (shoot (:enemies world) (:x p) (:y p) (:angle p)
            (cast-wall-dist world)
-           shot-hit-radius max-range dmg dmg-type)))
+           shot-hit-radius max-range dmg dmg-type
+           svh (aim-pr world svh))))
 
 (defn- push-blood-fx
   "Append a blood/death fx at `hit-pos`. On a kill the caller passes the
@@ -979,8 +1002,10 @@
         dmg                        (if (berserk? world) (php/* base (berserk-mul-for dtype)) base)
         max-r                      (or (:max-range spec) shot-max-range)
         wall-d                     (cast-wall-dist world)
+        svh                        (aim-svh world)
         [es' killed hit-pos tough] (pierce (:enemies world) (:x p) (:y p) (:angle p)
-                                           wall-d shot-hit-radius max-r dmg dtype)]
+                                           wall-d shot-hit-radius max-r dmg dtype
+                                           svh (aim-pr world svh))]
     (finish-multikill world es' killed hit-pos tough)))
 
 (defn- spread-fire
@@ -1001,8 +1026,10 @@
         half                       (or (:spread-half-angle spec) shotgun-spread-half-angle)
         max-r                      (or (:max-range spec) shot-max-range)
         wall-d                     (cast-wall-dist world)
+        svh                        (aim-svh world)
         [es' killed hit-pos tough] (spread-shoot (:enemies world) (:x p) (:y p) (:angle p)
-                                                 wall-d half max-r prim graze targets dtype)]
+                                                 wall-d half max-r prim graze targets dtype
+                                                 svh (aim-pr world svh))]
     (finish-multikill world es' killed hit-pos tough)))
 
 (defn- single-hitscan-fire

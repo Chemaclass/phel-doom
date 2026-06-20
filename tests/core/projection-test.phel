@@ -1,6 +1,6 @@
 (ns phel-doom-tests.core.projection-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.projection :refer [wall-px project-height pitch-rows pitch-cap]))
+  (:require phel-doom.core.projection :refer [wall-px project-height pitch-rows pitch-cap sprite-half-rows]))
 
 ;; ---------------------------------------------------------------------
 ;; wall-px: the shared projection kernel. num / ((max 0.3 dist) * 2.0).
@@ -104,3 +104,54 @@
   ;; index gradient arrays / add to integer wall tops cleanly.
   (is (php/is_int (pitch-rows 0.37 30)))
   (is (php/is_int (pitch-rows -0.81 44))))
+
+;; ---------------------------------------------------------------------
+;; sprite-half-rows: half the on-screen billboard height (rows) the
+;; vertical hitscan gate (issue #243) compares against |pitch-rows|.
+;; Mirrors the renderer's sprite height exactly:
+;;   h = min(svh, intval(scale * proj-dist / (max(0.5, dist) * char-aspect)))
+;; with proj-dist = 70, char-aspect = 2; the helper returns h / 2.
+;; ---------------------------------------------------------------------
+
+(deftest sprite-half-rows-clamped-near
+  ;; Very close (dist below the 0.5 floor): raw height
+  ;; 70 / (0.5 * 2) = 70, clamped to svh=30, halved => 15.0.
+  (is (= 15.0 (sprite-half-rows 30 0.25 1.0))))
+
+(deftest sprite-half-rows-distant-shrinks
+  ;; Far enemy: 70 / (10 * 2) = 3.5 -> intval 3 -> /2 = 1.5. A distant
+  ;; sprite leaves the crosshair almost no vertical slack.
+  (is (= 1.5 (sprite-half-rows 30 10.0 1.0))))
+
+(deftest sprite-half-rows-closer-is-more-forgiving
+  ;; Monotonic: a nearer enemy always projects at least as many rows as a
+  ;; farther one, so the gate is strictly more forgiving up close.
+  (is (php/>= (sprite-half-rows 30 2.0 1.0)
+              (sprite-half-rows 30 8.0 1.0))))
+
+(deftest sprite-half-rows-boss-scale-bigger
+  ;; The 2x boss billboard is taller than a standard enemy at the same
+  ;; depth, so its half-height (hence its vertical slack) is larger.
+  (is (php/> (sprite-half-rows 30 10.0 2.0)
+             (sprite-half-rows 30 10.0 1.0))))
+
+(deftest sprite-half-rows-boss-far-value
+  ;; 2 * 70 / (10 * 2) = 7 -> intval 7 -> /2 = 3.5.
+  (is (= 3.5 (sprite-half-rows 30 10.0 2.0))))
+
+(deftest sprite-half-rows-capped-by-svh
+  ;; The height never exceeds svh, so the half-rows never exceeds svh/2
+  ;; even at point-blank range with the boss scale.
+  (is (= 7.5 (sprite-half-rows 15 0.5 2.0))))
+
+(deftest sprite-half-rows-full-pitch-still-on-near-sprite
+  ;; svh 30: full look-up shears the horizon 12 rows; a point-blank
+  ;; sprite (half-rows 15) still spans the crosshair (|12| <= 15).
+  (is (php/<= (php/abs (pitch-rows 1.0 30))
+              (sprite-half-rows 30 0.5 1.0))))
+
+(deftest sprite-half-rows-full-pitch-misses-far-sprite
+  ;; Same full pitch (12 rows) overshoots a distant sprite (half-rows
+  ;; 1.5): the crosshair points at the floor/sky, not the body.
+  (is (php/> (php/abs (pitch-rows 1.0 30))
+             (sprite-half-rows 30 10.0 1.0))))

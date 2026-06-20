@@ -50,11 +50,17 @@
 
    `sc` is the render pixel scale: `vw`/`vh`/`dists`/`edists` live in
    SCENE cells, so the emitted terminal coordinates multiply by `sc`
-   (1 = full detail, identity; 2 = pixel-doubled scene)."
-  [parts world stats vw vh dists edists face-phase ^int sc]
+   (1 = full detail, identity; 2 = pixel-doubled scene).
+
+   `pr` (scene rows, default 0) is the look up/down horizon shear: the
+   sprite body shifts by `pr` in the base frame, so the face glyph adds
+   the same `pr` to stay pinned to the head. pr=0 keeps the overlay
+   exactly where it was."
+  [parts world stats vw vh dists edists face-phase ^int sc & [pr-arg]]
   ;; Reduced-motion: drop the one-shot jump-scare glyph swap (a sudden
   ;; flash); the resting / attack faces still animate on their own beat.
-  (let [scare? (and (php/> (or (get stats :scare-secs) 0.0) 0.0)
+  (let [pr     (or pr-arg 0)
+        scare? (and (php/> (or (get stats :scare-secs) 0.0) 0.0)
                     (not (get stats :reduced-motion?)))]
     (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
       (let [col         (:col proj)
@@ -73,7 +79,7 @@
                    (php/< col vw)
                    (enemy-front-visible-at? d col dists edists))
           (let [h        (sprite-h vh d 1.0)
-                face-row (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 6))]
+                face-row (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 6) pr)]
             (when (and (php/>= face-row 1) (php/<= face-row vh))
               (buf-push parts
                         (str "\e[" (php/* sc face-row) ";"
@@ -873,9 +879,11 @@
    enemies and 1-HP enemies (where any hit is a kill anyway, so the
    number would always be 0 the moment it appeared). Bright yellow
    on a dark BG so the digit reads against any sprite zone behind
-   it."
-  [parts world vw vh]
-  (let [player (:player world)]
+   it. `pr` (rows, default 0) is the look up/down horizon shear at full
+   resolution, added so the digit tracks the pitched sprite head."
+  [parts world vw vh & [pr-arg]]
+  (let [pr     (or pr-arg 0)
+        player (:player world)]
     (doseq [e (:enemies world)]
       (when (and e
                  (:alive e)
@@ -887,7 +895,7 @@
             (let [col (:col proj)
                   d   (:dist proj)
                   h   (sprite-h vh d 1.0)
-                  row (php/max 1 (php/- (php/intdiv (php/- vh h) 2) 1))]
+                  row (php/max 1 (php/+ (php/- (php/intdiv (php/- vh h) 2) 1) pr))]
               (when (and (php/>= col 1) (php/<= col vw))
                 (buf-push parts
                           (str "\e[" row ";" col "H\e[40;38;5;226;1m"

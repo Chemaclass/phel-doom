@@ -54,6 +54,48 @@
   (is (= "959148793da9868ff84b9fb4158db77a" (php/md5 (frame->string world (assoc stats :px2? true) 120 30)))))
 
 ;; ---------------------------------------------------------------------
+;; Camera pitch (look up/down, issue #231): a vertical horizon shear.
+;; pitch=0 must reproduce the unpitched frame byte-for-byte; positive
+;; pitch (look up) shears the wall/floor band DOWN the screen so the top
+;; rows show more (RLE-friendly) sky, and negative pitch (look down)
+;; pulls the textured floor up into the top rows.
+;; ---------------------------------------------------------------------
+
+(defn- pitched [^float p]
+  (frame->string (assoc-in world [:player :pitch] p) stats 120 30))
+
+(defn- top-row-segments
+  "ANSI-segment count across the top 12 scene rows as a horizon-position
+   proxy: sky rows coalesce into a couple of runs (few segments); wall /
+   textured-floor rows carry many. Fewer => more sky on top."
+  [^float p]
+  (let [rows (php/explode "\n" (pitched p))]
+    (loop [i 0 c 0]
+      (if (php/< i 12)
+        (recur (php/+ i 1)
+               (php/+ c (php/- (php/count (php/explode "\e[" (php/aget rows i))) 1)))
+        c))))
+
+(deftest test-pitch-zero-matches-unpitched-frame
+  ;; The byte-identical contract at the frame level: an explicit
+  ;; :pitch 0.0 renders exactly like the world with no pitch shear.
+  (is (= (frame->string world stats 120 30) (pitched 0.0))))
+
+(deftest test-pitch-changes-the-frame
+  (is (not= (pitched 0.0) (pitched 0.8)))
+  (is (not= (pitched 0.0) (pitched -0.8))))
+
+(deftest test-look-up-shears-horizon-down
+  ;; Looking UP (positive pitch) slides the wall band DOWN, so the top
+  ;; rows are more sky than at level gaze, which is in turn more sky than
+  ;; looking DOWN (where the floor is pulled up into view). Directional
+  ;; proof that wall tops / the sky-floor split move with +pitch.
+  (is (php/< (top-row-segments 0.8) (top-row-segments 0.0))
+      "look up => more sky on top than level")
+  (is (php/< (top-row-segments 0.0) (top-row-segments -0.8))
+      "look down => less sky on top than level"))
+
+;; ---------------------------------------------------------------------
 ;; Half-block sub-pixel cell cache (halfblock). Two distinct codes pack
 ;; into a ▀ with top fg / bottom bg; equal codes collapse to a single-
 ;; colour BG cell (fewer bytes, RLE-friendly). The memo must return a

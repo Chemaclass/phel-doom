@@ -1,6 +1,6 @@
 (ns phel-doom.core.physics
   (:require phel-doom.core.rng :as rng)
-  (:require phel-doom.core.state   :refer [max-stamina move-player turn-player])
+  (:require phel-doom.core.state   :refer [max-stamina move-player turn-player clamp-pitch])
   (:require phel-doom.core.map     :refer [missing-key-for passable? wall?])
   (:require phel-doom.core.weapons :refer [weapon-spec]))
 
@@ -31,6 +31,13 @@
 (def turn-speed
   "Radians per second of sustained rotation."
   2.0)
+
+(def pitch-speed
+  "Look up/down fraction per second of sustained pitch. `:pitch` lives
+   in [-1, 1] (clamp-pitch), so at 1.2/s a held look-up key travels from
+   level to full-up in just under a second - brisk enough to feel
+   responsive without overshooting the clamp on a single key blip."
+  1.2)
 
 (def sprint-multiplier
   "Speed multiplier applied to longitudinal + lateral motion while the
@@ -136,6 +143,12 @@
   (php/- (contribution moves :turn-right turn-speed dt)
          (contribution moves :turn-left  turn-speed dt)))
 
+(defn- pitch-delta [moves ^float dt]
+  ;; Look UP adds to `:pitch` (horizon shears down); look down subtracts.
+  ;; Same `contribution` helper the yaw path uses, just on the pitch slots.
+  (php/- (contribution moves :pitch-up   pitch-speed dt)
+         (contribution moves :pitch-down pitch-speed dt)))
+
 (defn- longitudinal-delta [world ^float dt]
   (let [moves (:moves world)
         sf    (sprint-factor world)
@@ -156,6 +169,12 @@
   (if (php/=== turn-by 0.0)
     world
     (turn-player world turn-by)))
+
+(defn- apply-pitch [world ^float pitch-by]
+  (if (php/=== pitch-by 0.0)
+    world
+    (update-in world [:player :pitch]
+               (fn [p] (clamp-pitch (php/+ (or p 0.0) pitch-by))))))
 
 (defn- apply-translation [world ^float long-d ^float lat-d]
   (if (and (php/=== long-d 0.0) (php/=== lat-d 0.0))
@@ -183,7 +202,9 @@
             :strafe-right (decay-counter (:strafe-right m))
             :turn-left    (decay-counter (:turn-left m))
             :turn-right   (decay-counter (:turn-right m))
-            :sprint       (decay-counter (or (:sprint m) 0))})))
+            :sprint       (decay-counter (or (:sprint m) 0))
+            :pitch-up     (decay-counter (or (:pitch-up m) 0))
+            :pitch-down   (decay-counter (or (:pitch-down m) 0))})))
 
 (defn- any-movement-on? [world]
   (let [m (:moves world)]
@@ -193,16 +214,19 @@
         (counter-on? m :strafe-right))))
 
 (defn apply-physics
-  "Per-frame: rotate, then translate using the new heading, then
-   decay every counter by one frame. Translation deltas read both
-   `:moves` AND the sprint state (via sprint-factor) so sprint
-   intent x stamina > 0 x not-blocked yields a 1.6x boost."
+  "Per-frame: rotate, shear the look up/down pitch, then translate using
+   the new heading, then decay every counter by one frame. Translation
+   deltas read both `:moves` AND the sprint state (via sprint-factor) so
+   sprint intent x stamina > 0 x not-blocked yields a 1.6x boost. Pitch
+   is a pure camera shear (no effect on translation), clamped by
+   `clamp-pitch`."
   [world ^float dt]
-  (let [moves  (:moves world)
-        turned (apply-rotation world (turn-delta moves dt))
-        walked (apply-translation turned
-                                  (longitudinal-delta turned dt)
-                                  (lateral-delta turned dt))]
+  (let [moves   (:moves world)
+        turned  (apply-rotation world (turn-delta moves dt))
+        pitched (apply-pitch turned (pitch-delta moves dt))
+        walked  (apply-translation pitched
+                                   (longitudinal-delta pitched dt)
+                                   (lateral-delta pitched dt))]
     (decay-move-counters walked)))
 
 (defn tick-stamina

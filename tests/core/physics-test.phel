@@ -152,6 +152,49 @@
     (is (= (:y p0) (:y p1)))
     (is (= (:angle p0) (:angle p1)))))
 
+;; ---------------------------------------------------------------------
+;; apply-pitch (via apply-physics): :pitch-up / :pitch-down counters
+;; shear the look up/down fraction, clamped, with no effect on position.
+;; ---------------------------------------------------------------------
+
+(deftest test-apply-physics-look-up-raises-pitch
+  ;; Look-up adds to :pitch (positive); the counter decays one frame.
+  (let [w0 (assoc-in empty-world [:moves :pitch-up] 3)
+        w1 (apply-physics w0 0.1)]
+    (is (php/> (:pitch (:player w1)) 0.0))
+    (is (= 2 (:pitch-up (:moves w1))))))
+
+(deftest test-apply-physics-look-down-lowers-pitch
+  (let [w0 (assoc-in empty-world [:moves :pitch-down] 3)
+        w1 (apply-physics w0 0.1)]
+    (is (php/< (:pitch (:player w1)) 0.0))
+    (is (= 2 (:pitch-down (:moves w1))))))
+
+(deftest test-apply-physics-pitch-clamps-and-does-not-wrap
+  ;; Hold look-up across many frames: pitch saturates at +1.0, never
+  ;; exceeds the cap or flips sign.
+  (let [w0 (assoc-in empty-world [:moves :pitch-up] 1)
+        wn (loop [w w0 i 0]
+             (if (php/< i 200)
+               (recur (apply-physics (assoc-in w [:moves :pitch-up] 1) 0.1)
+                      (php/+ i 1))
+               w))]
+    (is (= 1.0 (:pitch (:player wn))))))
+
+(deftest test-apply-physics-pitch-does-not-move-player
+  ;; Pitch is a pure camera shear: looking up/down leaves x/y/angle put.
+  (let [p0 (:player empty-world)
+        w1 (apply-physics (assoc-in empty-world [:moves :pitch-up] 3) 0.1)
+        p1 (:player w1)]
+    (is (= (:x p0) (:x p1)))
+    (is (= (:y p0) (:y p1)))
+    (is (= (:angle p0) (:angle p1)))))
+
+(deftest test-apply-physics-no-pitch-counter-leaves-pitch-level
+  ;; Default (no pitch keys held): pitch stays 0.0 - the byte-identical
+  ;; render contract.
+  (is (= 0.0 (:pitch (:player (apply-physics empty-world 0.1))))))
+
 (deftest test-apply-physics-wall-blocks-but-counter-still-decays
   ;; dt large enough that the requested move overshoots the open cell
   ;; (1,1) into the wall at (2,1). Player stays put, counter still

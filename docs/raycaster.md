@@ -84,11 +84,27 @@ Edge rays travel further than central rays to reach the same wall plane. Multipl
                                    ; surface at distance dist
 (project-height pd vh dist eye-z z); screen row (float) where world height
                                    ; z lands
+(pitch-rows pitch vh)              ; integer horizon shear (scene rows) for
+                                   ; a look up/down fraction
 ```
 
 - `wall-px num dist` = `num / ((max 0.3 dist) * char-aspect)`. `num` is `proj-dist` for a one-unit wall, or `n * proj-dist` for an n-sub-row half-block slice. The 0.3 floor stops a surface in the player's own cell projecting to an infinite slice. Both the cell-resolution wall path (`compute-wall-shades`) and the half-block sub-pixel path (`build-wall-sub-bounds`) call it, so they agree to the last bit.
-- `project-height pd vh dist eye-z z` = `vh/2 - (z - eye-z) * (wall-px pd dist)`. The horizon (z = eye-z) sits at `vh/2`; points above the eye rise, below sink. Today's flat wall is the special case `eye-z = 0.5` with `z = 1` (top) and `z = 0` (bottom). Variable heights pass other `z`; look up/down and jump/crouch pass other `eye-z`.
+- `project-height pd vh dist eye-z z` = `vh/2 - (z - eye-z) * (wall-px pd dist)`. The horizon (z = eye-z) sits at `vh/2`; points above the eye rise, below sink. Today's flat wall is the special case `eye-z = 0.5` with `z = 1` (top) and `z = 0` (bottom). Variable heights pass other `z`; jump/crouch pass other `eye-z`.
 - `char-aspect` (2.0) lives here too, as the canonical projection constant alongside `proj-dist`, so the kernel stays pure `core/` with no `io/` dependency.
+
+## Look up/down (pitch): horizon shear
+
+Looking up/down is a pure **vertical shear of the horizon**, not a re-projection: it costs no extra rays. The player carries `:pitch`, a fraction in `[-1, 1]` (1 = full up, -1 = full down, clamped by `state/clamp-pitch`, no wrap). `pitch-rows pitch vh` = `round(pitch * pitch-cap * vh)` turns it into an **integer scene-row offset** `pr`, where `pitch-cap` = 0.4, so the horizon travels at most +/-0.4 of the viewport height. Positive pitch (look up) yields positive `pr`, sliding the horizon DOWN the screen (more sky), negative slides it up.
+
+`frame->string` computes `pr` once and adds it to every site that centres on `vh/2`, so the whole scene shears as one rigid band:
+
+- wall tops in `compute-wall-shades` (`top = (vh - wall-h)/2 + pr`; `bot` derives from `top`)
+- the sub-row seam bounds in `build-wall-sub-bounds` (`+ pr*n`, n sub-rows per scene cell)
+- the floor-cast distance tables `build-floor-dperp` / `build-floor-dperp-sub` (horizon `vh/2 + pr`, sub-row `vh + 2*pr`)
+- the sky/floor gradients and their code twins in `frame-math` (each gradient builder takes an optional `horizon-offset`; the gradient cache keys on `(vh, pr)`)
+- enemy sprite anchors (the billboard top + the face / HP-flash overlays add the same `pr` so sprites stay pinned to their feet)
+
+The crosshair stays fixed (it is a weapon sight, not part of the world). Because every offset is **additive and 0 at `pitch = 0`**, a level gaze renders byte-for-byte identically to the no-pitch path (pinned by `render-cache-test/test-frame-bytes-pinned`).
 
 ## Performance
 

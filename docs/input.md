@@ -28,9 +28,13 @@ Arrows arrive as 3-byte CSI: `\e[A` up, `\e[B` down, `\e[C` right, `\e[D` left. 
 
 ## Movement slots
 
-`key->slot` maps: `w`/`^` to `:fwd`, `s`/`_` to `:back`, `a` to `:strafe-left`, `d` to `:strafe-right`, arrows to turn, `x` to `:sprint`.
+`key->slot` maps: `w`/`^` to `:fwd`, `s`/`_` to `:back`, `a` to `:strafe-left`, `d` to `:strafe-right`, arrows to turn, `x` to `:sprint`, `t` to `:pitch-up`, `g` to `:pitch-down`.
 
 Each byte refreshes its slot's counter on `world[:moves]`. Physics only reads the counters. See [state.md](state.md).
+
+## Look up/down (pitch)
+
+Hold **`t`** to look up, **`g`** to look down. Picked off the WASD home cluster and otherwise unbound (no collision with move/turn/sprint, weapons 1-7, or the one-shot action keys). They refresh the `:pitch-up` / `:pitch-down` move slots; physics shears the player's `:pitch` fraction (clamped to [-1, 1], no wrap) via the same counter path as turning. `pitch-hold-frames` = 3 (~50ms), so the camera halts quickly on release like turning rather than gliding. Under kitty the keys arrive as codepoints 116 (`t`) / 103 (`g`) and work the same. The shear is a pure render offset (see [raycaster.md](raycaster.md)); a level gaze (`:pitch` 0) renders identically to no pitch at all.
 
 ## Sprint
 
@@ -49,6 +53,7 @@ Per byte, counter is set to its hold value; each frame physics decrements by 1. 
 
 - `move-hold-frames` = 18 (~300ms at 60 fps): bridges OS initial-key-repeat delay (250-500ms). Avoids stutter on press. Trade-off: ~300ms post-release glide on non-kitty terminals. Kitty release events (event type 3) override with instant clear.
 - `turn-hold-frames` = 3 (~50ms at 60 fps): quick halt for aiming.
+- `pitch-hold-frames` = 3 (~50ms at 60 fps): same quick halt for look up/down (`t`/`g`), so the camera stops on release instead of drifting.
 
 ## Kitty keyboard protocol
 

@@ -41,19 +41,29 @@
    release, which the HUD bar exposes as a phantom drain."
   3)
 
+(def pitch-hold-frames
+  "Frames a look up/down direction (T / G) stays active after each input
+   byte. Short, like turn-hold-frames, so the camera pitch halts within
+   ~50ms of releasing the key (no terminal key-release on the legacy
+   path) instead of drifting on for the full move-hold bridge."
+  3)
+
 (def key->slot
   "Map a single-byte input to the direction-counter slot it activates.
    Arrow-key escape sequences are normalised to ^ _ < > before lookup
    so they slot in alongside WASD. `x` arms the sprint slot — the
    legacy / non-kitty fallback for terminals that don't expose SHIFT
-   modifier bits via CSI-u."
+   modifier bits via CSI-u. `t` / `g` shear the camera look up / down
+   (pitch) — picked off the WASD home cluster and otherwise unbound."
   {"^" :fwd    "w" :fwd
    "_" :back   "s" :back
    "<" :turn-left
    ">" :turn-right
    "a" :strafe-left
    "d" :strafe-right
-   "x" :sprint})
+   "x" :sprint
+   "t" :pitch-up
+   "g" :pitch-down})
 
 (def shift-key->slot
   "Capital-letter equivalents of `key->slot` movement keys. In cooked
@@ -71,11 +81,17 @@
   "Slots that use turn-hold-frames instead of move-hold-frames."
   #{:turn-left :turn-right})
 
+(def pitch-slots
+  "Slots that use pitch-hold-frames (look up/down) instead of
+   move-hold-frames."
+  #{:pitch-up :pitch-down})
+
 (defn- hold-frames-for [slot]
   (cond
-    (turn-slots slot) turn-hold-frames
-    (= slot :sprint)  sprint-hold-frames
-    :else             move-hold-frames))
+    (turn-slots slot)  turn-hold-frames
+    (pitch-slots slot) pitch-hold-frames
+    (= slot :sprint)   sprint-hold-frames
+    :else              move-hold-frames))
 
 (defn refresh-move
   "If `byte` maps to a direction slot, refresh that slot's counter on
@@ -136,14 +152,16 @@
 
 (def ascii->slot
   "ASCII codepoint -> direction-counter slot. WASD movement, ←→ turn
-   (kitty reports left-arrow as 57351, right as 57349), and 'x' (120)
-   as the legacy sprint key — works under kitty too without needing
-   the SHIFT modifier bit."
+   (kitty reports left-arrow as 57351, right as 57349), 'x' (120) as the
+   legacy sprint key, and 't' (116) / 'g' (103) as look up / down (pitch)
+   — all work under kitty too without needing the SHIFT modifier bit."
   {119 :fwd
    115 :back
    97 :strafe-left
    100 :strafe-right
    120 :sprint
+   116 :pitch-up
+   103 :pitch-down
    57351 :turn-left
    57349 :turn-right})
 

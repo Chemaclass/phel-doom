@@ -314,8 +314,19 @@
    When `step-dists` is absent or its entry is nil, the returned
    `:step-bots`/`:step-tops`/`:step-cap-tops` are sentinels (vh / vh+1)
    so every riser/cap branch in the cell loops is dead and the frame is
+   byte-identical to the flat renderer.
+
+   Further tail (#235 per-cell ceiling heights), the mirror of the floor
+   riser but hanging from the TOP:
+   `ceil-dists`   per-col fish-eye distance to the first ceiling drop, or nil.
+   `ceil-czs`     per-col dropped ceiling height (world z, < viewer ceiling).
+   `ceil-sides`   per-col 0/1 crossed-face for the drop's EW shading.
+   When `ceil-dists` is absent or its entry is nil, the returned
+   `:ceil-from`/`:ceil-bots`/`:ceil-tops` are sentinels (vh / vh / vh+1)
+   so every hanging-ceiling branch in the cell loops is dead (no on-screen
+   row 0..vh-1 satisfies `row >= ceil-from = vh`) and the frame is
    byte-identical to the flat renderer."
-  [vw vh haze-shift cast palette blood-cols ^float pd & [pr-arg step-dists step-fzs step-sides eye-z-arg]]
+  [vw vh haze-shift cast palette blood-cols ^float pd & [pr-arg step-dists step-fzs step-sides eye-z-arg ceil-dists ceil-czs ceil-sides]]
   (let [{:keys [dists hits sides wallxs]}                              cast
         {:keys [stbl ctbl sky-c floor-c door-shade-now door-code-now
                 door-tex-boost
@@ -359,6 +370,21 @@
         step-tops                                                      (buf-mk)
         step-face                                                      (buf-mk)
         step-cap                                                       (buf-mk)
+        ;; Per-cell ceiling-height hanging bands (#235), the mirror of
+        ;; the floor riser but anchored at the TOP. ceil-from = top row of
+        ;; the hanging face (viewer-ceiling plane at the drop distance),
+        ;; ceil-bots = first row past the band (exclusive, clamped to the
+        ;; main wall TOP - the wall wins below), ceil-tops = boundary row:
+        ;; rows above it are the vertical hanging face, at/below it is the
+        ;; flat cap (the underside of the hanging ceiling). ceil-face /
+        ;; ceil-cap hold the shaded cell strings. Sentinels (vh / vh / vh+1)
+        ;; when the column has no drop -> the cell-loop range test never
+        ;; matches (no on-screen row satisfies row >= ceil-from = vh).
+        ceil-from                                                      (buf-mk)
+        ceil-bots                                                      (buf-mk)
+        ceil-tops                                                      (buf-mk)
+        ceil-face                                                      (buf-mk)
+        ceil-cap                                                       (buf-mk)
         eye-z                                                          (or eye-z-arg 0.5)]
     (loop [col 0]
       (when (php/< col vw)
@@ -496,13 +522,69 @@
                 (buf-set step-tops col s-top)
                 (buf-set step-face col (buf-get stbl-l s-idx))
                 (buf-set step-cap  col (buf-get stbl-l cap-idx)))))
+          ;; Per-cell ceiling-height hanging ceiling + cap (#235), the
+          ;; mirror of the floor riser but anchored at the TOP. Runs once
+          ;; per COLUMN (the closure tax is a per-CELL concern). nil ceil
+          ;; distance -> sentinel band (vh / vh / vh+1) that the cell range
+          ;; test never enters -> byte-identical flat path.
+          (let [c-d (if (php/=== nil ceil-dists) nil (buf-get ceil-dists col))]
+            (if (php/=== nil c-d)
+              ;; No drop: empty band so `row >= ceil-from (vh)` is false
+              ;; for every on-screen row (0..vh-1) -> clause dead.
+              (do (buf-set ceil-from col vh)
+                  (buf-set ceil-bots col vh)
+                  (buf-set ceil-tops col (php/+ vh 1))
+                  (buf-set ceil-face col "")
+                  (buf-set ceil-cap  col ""))
+              (let [c-cz      (buf-get ceil-czs col)
+                    c-side    (if (php/=== nil ceil-sides) 0 (buf-get ceil-sides col))
+                    ;; Hanging-face top = viewer-ceiling plane (z 1.0, the
+                    ;; flat-ceiling constant the cast gates drops against)
+                    ;; at the drop distance (where it meets the normal
+                    ;; ceiling line); bottom = dropped-ceiling plane at the
+                    ;; same distance; cap far edge = dropped-ceiling plane at
+                    ;; the MAIN wall distance (where the underside recedes to
+                    ;; the wall top). project-height already folds in
+                    ;; char-aspect + the wall-px falloff; a higher z projects
+                    ;; to a SMALLER row, so the dropped ceiling (z < 1.0)
+                    ;; sits below the normal ceiling line, hanging into view.
+                    ;; Mirrors the floor riser hard-coding z 0.0 for its
+                    ;; bottom plane.
+                    c-top     (php/+ (php/intval (php/round (project-height pd vh c-d eye-z 1.0))) pr)
+                    c-bot     (php/+ (php/intval (php/round (project-height pd vh c-d eye-z c-cz))) pr)
+                    c-cap-bot (php/+ (php/intval (php/round (project-height pd vh dist eye-z c-cz))) pr)
+                    ;; Occlusion window: the hanging ceiling only fills the
+                    ;; ceiling band ABOVE the main wall (the nearer wall
+                    ;; wins for its own rows). Start at the face top, clamped
+                    ;; on screen; end at min(cap far edge, wall top), so the
+                    ;; wall occludes anything below its top.
+                    c-from    (php/max 0 (php/min vh c-top))
+                    c-to      (php/max 0 (php/min vh (php/min c-cap-bot top)))
+                    ;; Same gamma distance fog + EW side shading as a wall,
+                    ;; minus the near-death haze, sampled at the drop
+                    ;; distance. The cap (underside, horizontal) is shaded a
+                    ;; touch darker so it reads distinct from the vertical
+                    ;; hanging face.
+                    c-idx-raw (php/max 0
+                                       (php/min 23
+                                                (php/+ (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// c-d max-depth))) 0.6) 23))
+                                                       (if (php/=== c-side 0) 3 0))))
+                    c-idx     (php/max 0 (php/- c-idx-raw haze-shift))
+                    c-cap-idx (php/max 0 (php/- c-idx 2))]
+                (buf-set ceil-from col c-from)
+                (buf-set ceil-bots col c-to)
+                (buf-set ceil-tops col c-bot)
+                (buf-set ceil-face col (buf-get stbl-l c-idx))
+                (buf-set ceil-cap  col (buf-get stbl-l c-cap-idx)))))
           (recur (php/+ col 1)))))
     {:tops tops :bots bots :normal normal
      :top-edge top-edge :bot-edge bot-edge
      :top-shadow top-shadow :bot-shadow bot-shadow
      :tex-u tex-u :tex-level tex-level :tex-px tex-px
      :step-from step-from :step-bots step-bots :step-tops step-tops
-     :step-face step-face :step-cap step-cap}))
+     :step-face step-face :step-cap step-cap
+     :ceil-from ceil-from :ceil-bots ceil-bots :ceil-tops ceil-tops
+     :ceil-face ceil-face :ceil-cap ceil-cap}))
 ;; =====================================================================
 ;; § Pulse cadences + near-death haze
 ;; =====================================================================
@@ -793,6 +875,14 @@
         step-dists                         (:step-dists cast-result)
         step-fzs                           (:step-fzs cast-result)
         step-sides                         (:step-sides cast-result)
+        ;; Per-cell ceiling-height drop arrays (#235), the mirror of the
+        ;; floor riser arrays. Present only on the full-detail cast;
+        ;; compact-cast-2 (px2) drops them, so they read nil there ->
+        ;; compute-wall-shades emits sentinel bands -> px2 stays
+        ;; byte-identical (the hanging ceiling is a px1-only feature).
+        ceil-dists                         (:ceil-dists cast-result)
+        ceil-czs                           (:ceil-czs cast-result)
+        ceil-sides                         (:ceil-sides cast-result)
         scene-pd                           (if px2? (php/* 0.5 proj-dist) proj-dist)
         tex-on?                            (wall-textures-enabled?)
         floor-tex-on?                      (and tex-on? (floor-textures-enabled?))
@@ -925,7 +1015,12 @@
          :step-bots         shades-step-bots
          :step-tops         shades-step-tops
          :step-face         shades-step-face
-         :step-cap          shades-step-cap}
+         :step-cap          shades-step-cap
+         :ceil-from         shades-ceil-from
+         :ceil-bots         shades-ceil-bots
+         :ceil-tops         shades-ceil-tops
+         :ceil-face         shades-ceil-face
+         :ceil-cap          shades-ceil-cap}
         (compute-wall-shades svw svh haze-shift
                              {:dists dists :hits hits :sides sides :wallxs wallxs}
                              {:stbl stbl :ctbl ctbl
@@ -947,7 +1042,10 @@
                              ;; stands on (default 0.5 on the flat ground,
                              ;; so a grounded world stays byte-identical).
                              step-dists step-fzs step-sides
-                             (or (:eye-z (:player world)) 0.5))
+                             (or (:eye-z (:player world)) 0.5)
+                             ;; #235 ceiling-drop arrays (nil in px2 ->
+                             ;; sentinels; flat all-1.0 ceiling -> nil).
+                             ceil-dists ceil-czs ceil-sides)
         ;; Enemy sprite zone boundaries (head/body/legs). For each
         ;; column carrying an enemy:
         ;;   row in [tops, mids)   -> head
@@ -1856,6 +1954,24 @@
                           (if (php/< row (buf-get shades-step-tops col))
                             (php/aset cell-reg 0 (buf-get shades-step-cap col))
                             (php/aset cell-reg 0 (buf-get shades-step-face col)))
+                          ;; Per-cell ceiling-height hanging ceiling + cap
+                          ;; (#235), the mirror of the floor riser above.
+                          ;; Claims the ceiling-band rows a dropped ceiling
+                          ;; occupies, BEFORE the sky clause can paint them
+                          ;; (occlusion). ceil-from .. ceil-bots is the
+                          ;; on-screen band (already clamped above the main
+                          ;; wall top); rows above ceil-tops are the vertical
+                          ;; hanging face, at/below it the flat cap (the
+                          ;; ceiling underside). On a flat ceiling
+                          ;; ceil-from = vh, so this test never fires and the
+                          ;; frame is byte-identical. The band lives at low
+                          ;; rows (above the wall), so it precedes sky.
+                          (if (php/>= row (buf-get shades-ceil-from col))
+                            (php/< row (buf-get shades-ceil-bots col))
+                            false)
+                          (if (php/< row (buf-get shades-ceil-tops col))
+                            (php/aset cell-reg 0 (buf-get shades-ceil-face col))
+                            (php/aset cell-reg 0 (buf-get shades-ceil-cap col)))
                           ;; Half-block sky stacks two gradient sub-rows
                           ;; per cell (2× vertical). Blood columns keep
                           ;; the flat red wash.

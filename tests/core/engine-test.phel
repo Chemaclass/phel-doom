@@ -266,6 +266,95 @@
     (is (= 0.8 (php/aget (:step-fzs c) 0)))))
 
 ;; ---------------------------------------------------------------------
+;; Per-cell ceiling heights (#235): do-cast accumulates the FIRST cell
+;; whose ceiling DROPS below the viewer's ceiling (1.0) into the additive
+;; :ceil-* arrays. A flat ceiling (all 1.0) leaves every entry nil;
+;; lowering a cell's ceiling surfaces a :ceil-dists entry nearer than the
+;; wall :dists at the columns whose ray crosses it. Mirror of the floor
+;; tests above; fixtures lower a cell with a direct php/aset on
+;; :ceil-pgrid.
+;; ---------------------------------------------------------------------
+
+(defn- lower-ceil [world x y h]
+  ;; Stamp one cell's ceiling height via the PHP float[][] twin (the same
+  ;; path apply-ceil-heights uses), returning the mutated world. The row
+  ;; is bound first: a php/aset onto a chained (php/aget ...) temporary is
+  ;; a write-to-temporary the compiler rejects.
+  (let [cpg (:ceil-pgrid world)
+        row (php/aget cpg y)]
+    (php/aset row x (php/* 1.0 h))
+    (php/aset cpg y row)
+    (assoc world :ceil-pgrid cpg)))
+
+(deftest test-cast-frame-flat-ceiling-ceil-dists-all-nil
+  ;; No lowered cells -> the ceiling accumulator never fires -> every
+  ;; :ceil-dists entry is nil (the sentinel the renderer keys off to skip
+  ;; all hanging-ceiling paint, preserving byte-identity).
+  (let [w  (new-world chamber-grid (new-player 2.5 2.5 0.0))
+        c  (cast-frame w 16 1)
+        cd (:ceil-dists c)]
+    (is (= 16 (php/count cd)))
+    (loop [i 0]
+      (when (php/< i 16)
+        (is (php/=== nil (php/aget cd i)) "flat ceiling: no drop crossed")
+        (recur (php/+ i 1))))))
+
+(deftest test-cast-frame-ceil-arrays-are-parallel-and-additive
+  ;; The 3 new arrays size to width like the rest, and none of the
+  ;; pre-existing keys vanished (additive contract).
+  (let [w (lower-ceil (new-world chamber-grid (new-player 2.5 2.5 0.0)) 3 2 0.6)
+        c (cast-frame w 8 1)]
+    (is (= 8 (php/count (:ceil-dists c))))
+    (is (= 8 (php/count (:ceil-czs c))))
+    (is (= 8 (php/count (:ceil-sides c))))
+    ;; floor side-channel + pre-existing keys still present + parallel
+    (is (= 8 (php/count (:step-dists c))))
+    (is (= 8 (php/count (:dists c))))))
+
+(deftest test-cast-frame-lowered-ceiling-yields-drop-nearer-than-wall
+  ;; Centre column faces east from (2.5, 2.5); the wall is at x=4
+  ;; (dist 1.5). Lowering the ceiling of cell (3, 2) - crossed at the x=3
+  ;; grid line, dist ~0.5 - makes the centre column report a ceiling drop
+  ;; with ceil-d < dists and the cell's ceiling height in :ceil-czs.
+  (let [w   (lower-ceil (new-world chamber-grid (new-player 2.5 2.5 0.0)) 3 2 0.6)
+        c   (cast-frame w 1 1)
+        cd  (php/aget (:ceil-dists c) 0)
+        ccz (php/aget (:ceil-czs c) 0)
+        d   (php/aget (:dists c) 0)]
+    (is (php/!== nil cd) "centre column crosses the ceiling drop")
+    (is (php/< cd d) "ceiling drop is nearer than the wall behind it")
+    (is (= 0.6 ccz) "drop carries the lowered ceiling height")
+    ;; The x=3 boundary sits ~1.0 ahead of the wall: dist ~0.5 vs 1.5.
+    (is (php/< (php/abs (php/- cd 0.5)) 0.05) "ceiling-drop distance ~0.5")))
+
+(deftest test-cast-frame-ceil-side-records-crossed-face
+  ;; Facing east, the drop boundary is an x-line -> side 0 (vertical
+  ;; face), matching the EW shading convention used for walls + risers.
+  (let [w (lower-ceil (new-world chamber-grid (new-player 2.5 2.5 0.0)) 3 2 0.6)
+        c (cast-frame w 1 1)]
+    (is (= 0 (php/aget (:ceil-sides c) 0)))))
+
+(deftest test-cast-frame-raised-ceiling-does-not-drop
+  ;; A ceiling LIFTED above 1.0 (a tall atrium) is NOT a drop, so the
+  ;; accumulator must stay nil - it only fires when the ceiling sinks
+  ;; below the viewer's. (The atrium reads as extra headroom, which a
+  ;; column with no hanging edge simply renders as the normal sky band.)
+  (let [w (lower-ceil (new-world chamber-grid (new-player 2.5 2.5 0.0)) 3 2 1.5)
+        c (cast-frame w 1 1)]
+    (is (php/=== nil (php/aget (:ceil-dists c) 0)) "a raised ceiling is no drop")))
+
+(deftest test-cast-frame-flat-world-still-all-nil-with-floor-and-ceiling
+  ;; Belt-and-braces: an untouched world has BOTH side-channels nil, so
+  ;; nothing in cast forces a non-flat render path.
+  (let [w (new-world chamber-grid (new-player 2.5 2.5 0.0))
+        c (cast-frame w 4 1)]
+    (loop [i 0]
+      (when (php/< i 4)
+        (is (php/=== nil (php/aget (:step-dists c) i)))
+        (is (php/=== nil (php/aget (:ceil-dists c) i)))
+        (recur (php/+ i 1))))))
+
+;; ---------------------------------------------------------------------
 ;; Paused-frame cast cache: while `:paused` is truthy AND the player
 ;; hasn't moved, the most recent cast result is reused verbatim.
 ;; ---------------------------------------------------------------------

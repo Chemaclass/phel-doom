@@ -10,6 +10,7 @@ Pure data shapes that every other module operates on. `src/core/state.phel`.
 {:grid       <vector of vectors of cell ints>
  :pgrid      <PHP nested array, fast-path twin of :grid>
  :floor-pgrid <PHP float[][], per-cell floor heights (#232); same shape as :pgrid, all 0.0 by default>
+ :ceil-pgrid <PHP float[][], per-cell ceiling heights (#235); same shape as :pgrid, all 1.0 by default>
  :width      <int>
  :height     <int>
  :player     <player map>
@@ -96,6 +97,14 @@ A third PHP-native grid, a `float[][]` of the SAME shape as `:pgrid`, holding th
 `rebuild-pgrid` carries `:floor-pgrid` along (preserving an existing grid, or building a fresh all-zero one sized to `:grid` when absent, e.g. a loaded savegame) so a wall mutation can't leave it stale. Note PHP's value semantics: a stamp reads the inner row, writes the cell, then writes the row back into the grid (the closure array-copy gotcha) - a chained two-level `php/aset` would land on a copy.
 
 All-zero `:floor-pgrid` is byte-identical to the pre-#232 renderer.
+
+## :ceil-pgrid (per-cell ceiling heights, #235)
+
+The mirror of `:floor-pgrid` on the ceiling axis: a `float[][]` of the SAME shape as `:pgrid`, holding the world `z` each cell's ceiling sits at. `new-world` builds it all-`1.0` (the flat ceiling at the top of a one-unit wall, exactly where the renderer baked it before); `state/apply-ceil-heights` stamps a `{[x y] height}` map into it, and `level/build-world` calls that with the level config's optional `:ceil-heights` (absent on every current level, so the default is flat). A height above 1.0 lifts the ceiling (a tall atrium); below 1.0 drops it (a low tunnel / hanging ceiling). The raycaster reads it to accumulate the first ceiling that drops below the viewer's (see [raycaster.md](raycaster.md)); the renderer paints that hanging face + its underside cap from the top of the view.
+
+`rebuild-pgrid` carries `:ceil-pgrid` along the same way (preserving an existing grid, or building a fresh all-1.0 one sized to `:grid` when absent) so a wall mutation can't leave it stale, with the same PHP value-semantics stamp (read row, write cell, write row back).
+
+All-1.0 `:ceil-pgrid` is byte-identical to the pre-#235 renderer.
 
 ## The player
 

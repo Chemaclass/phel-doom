@@ -1,0 +1,63 @@
+(ns phel-doom-tests.core.projection-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.projection :refer [wall-px project-height]))
+
+;; ---------------------------------------------------------------------
+;; wall-px: the shared projection kernel. num / ((max 0.3 dist) * 2.0).
+;; ---------------------------------------------------------------------
+
+(deftest wall-px-unit-distance
+  ;; 70 / (1.0 * 2.0) = 35
+  (is (= 35.0 (wall-px 70.0 1.0))))
+
+(deftest wall-px-distance-floor
+  ;; dist below 0.3 clamps to 0.3, so a surface in the player's own cell
+  ;; can't blow up to an infinite slice.
+  (is (= (wall-px 70.0 0.3) (wall-px 70.0 0.05)))
+  (is (= (wall-px 70.0 0.3) (wall-px 70.0 0.0))))
+
+(deftest wall-px-monotonic-in-distance
+  ;; Farther away looks shorter.
+  (is (php/> (wall-px 70.0 1.0) (wall-px 70.0 2.0)))
+  (is (php/> (wall-px 70.0 2.0) (wall-px 70.0 4.0))))
+
+;; ---------------------------------------------------------------------
+;; project-height: world height -> screen row.
+;; ---------------------------------------------------------------------
+
+(deftest project-height-horizon-at-eye
+  ;; z == eye-z lands exactly on the horizon (vh/2) at any distance.
+  (is (= 15.0 (project-height 70.0 30 1.0 0.5 0.5)))
+  (is (= 15.0 (project-height 70.0 30 9.9 0.5 0.5))))
+
+(deftest project-height-wall-centred-on-horizon
+  ;; A one-unit wall (z=1 top, z=0 bottom) straddles the horizon
+  ;; symmetrically: midpoint is exactly vh/2.
+  (let [top (project-height 70.0 30 2.0 0.5 1.0)
+        bot (project-height 70.0 30 2.0 0.5 0.0)]
+    (is (= 15.0 (php// (php/+ top bot) 2.0)) "midpoint on horizon")
+    (is (php/< top 15.0) "top above horizon")
+    (is (php/> bot 15.0) "bottom below horizon")))
+
+(deftest project-height-nearer-is-taller
+  ;; Closer wall top projects higher up the screen (smaller row).
+  (is (php/< (project-height 70.0 30 1.0 0.5 1.0)
+             (project-height 70.0 30 4.0 0.5 1.0))))
+
+(deftest project-height-raising-eye-sinks-world-point
+  ;; Looking from a higher eye pushes a fixed world height DOWN the
+  ;; screen (larger row) - the basis for stepping onto a platform.
+  (is (php/> (project-height 70.0 30 2.0 0.8 1.0)
+             (project-height 70.0 30 2.0 0.3 1.0))))
+
+(deftest project-height-reconciles-with-wall-pipeline
+  ;; Contract: project-height at z=1 / z=0 (eye 0.5) agrees with the
+  ;; integer top/bot the renderer derives from wall-px, on an even-gap
+  ;; case (dist 2.5 -> wall-h 14, gap 16). Confirms both the cell-res
+  ;; wall path and the general primitive share one kernel.
+  (let [pd     70.0 vh     30 dist   2.5
+        wall-h (php/min vh (php/intval (wall-px pd dist)))
+        top    (php/intdiv (php/- vh wall-h) 2)
+        bot    (php/+ top wall-h)]
+    (is (= top (php/intval (php/round (project-height pd vh dist 0.5 1.0)))))
+    (is (= bot (php/intval (php/round (project-height pd vh dist 0.5 0.0)))))))

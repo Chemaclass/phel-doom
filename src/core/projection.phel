@@ -1,0 +1,49 @@
+(ns phel-doom.core.projection)
+
+;; ---------------------------------------------------------------------
+;; Pure vertical-projection kernel. Maps a world height + perpendicular
+;; distance to a screen row. Today's flat world only ever projects a
+;; one-unit wall (floor z=0, ceiling z=1) centred on the horizon, but the
+;; general form below is what variable floor / ceiling heights, pitch,
+;; and eye-height build on (see docs/raycaster.md).
+;;
+;; Lives in core/ (not io/render) so the math is pure + unit-testable and
+;; the renderer, sprite projection, and future height-aware casting all
+;; share ONE definition of "how tall does this look".
+;; ---------------------------------------------------------------------
+
+(def char-aspect
+  "Character cell aspect ratio: a terminal cell is ~twice as tall as it
+   is wide, so every vertical projection divides by this to stop walls /
+   sprites stretching. Canonical projection constant, sibling of
+   engine/proj-dist. (Relocated here from io/render/palette so the pure
+   primitives below need no io dependency.)"
+  2.0)
+
+(defn wall-px
+  "Projected pixel height of a `num`-unit-tall surface at perpendicular
+   distance `dist`. `num` is the height numerator: `proj-dist` for a
+   one-unit wall, or `n * proj-dist` for an n-sub-row slice. Distance is
+   floored at 0.3 so a surface in the player's own cell can't project to
+   infinity. This is the shared kernel behind the cell-resolution wall
+   path, the half-block sub-pixel path, and (later) variable-height
+   casting, so all three agree to the last bit."
+  [^float num ^float dist]
+  (php// num (php/* (php/max 0.3 dist) char-aspect)))
+
+(defn project-height
+  "Screen row (float, 0 = top of viewport) where world height `z`
+   projects, given the wall-height numerator `pd`, viewport height `vh`,
+   perpendicular distance `dist`, and camera eye height `eye-z`. The
+   horizon (z = eye-z) sits at vh/2; points above the eye rise toward row
+   0, points below sink, and apparent displacement falls off with
+   distance via `wall-px`.
+
+   Today's flat-world wall is the special case eye-z=0.5 with z=1 (top of
+   a one-unit wall) and z=0 (bottom):
+     (project-height pd vh dist 0.5 1.0) ; => wall top row
+     (project-height pd vh dist 0.5 0.0) ; => wall bottom row
+   Variable floor / ceiling heights and look up/down pass other z / eye-z."
+  [^float pd ^int vh ^float dist ^float eye-z ^float z]
+  (php/- (php// vh 2.0)
+         (php/* (php/- z eye-z) (wall-px pd dist))))

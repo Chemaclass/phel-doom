@@ -1,7 +1,7 @@
 (ns phel-doom-tests.core.state-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.state :refer [new-player new-world move-player turn-player
-                                         rebuild-pgrid
+                                         rebuild-pgrid apply-floor-heights
                                          toggle-map toggle-pause toggle-debug with-enemies
                                          advance-game-time at-backpack-cap?
                                          backpack-level gain-armor-shard gain-backpack
@@ -113,6 +113,56 @@
         post (php/aget (php/aget (:pgrid w2) 1) 1)]
     (is (= 0 pre))
     (is (= 1 post))))
+
+;; ---------------------------------------------------------------------
+;; Per-cell floor heights (#232): :floor-pgrid is a PHP float[][] twin
+;; of :pgrid, all 0.0 by default; apply-floor-heights stamps a
+;; {[x y] height} map into it; rebuild-pgrid carries it along.
+;; ---------------------------------------------------------------------
+
+(deftest test-new-world-floor-pgrid-matches-grid-shape-all-zero
+  (let [w   (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
+        fpg (:floor-pgrid w)]
+    ;; Same shape as :pgrid (3 rows, 3 cols) ...
+    (is (= 3 (php/count fpg)))
+    (is (= 3 (php/count (php/aget fpg 0))))
+    ;; ... every cell 0.0 (flat world).
+    (is (= 0.0 (php/aget (php/aget fpg 1) 1)))
+    (is (= 0.0 (php/aget (php/aget fpg 0) 2)))))
+
+(deftest test-apply-floor-heights-stamps-cells
+  (let [w  (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
+        w' (apply-floor-heights w {[1 1] 0.5 [2 0] 1.0})]
+    (is (= 0.5 (php/aget (php/aget (:floor-pgrid w') 1) 1)))
+    (is (= 1.0 (php/aget (php/aget (:floor-pgrid w') 0) 2)))
+    ;; Untouched cell stays flat.
+    (is (= 0.0 (php/aget (php/aget (:floor-pgrid w') 0) 0)))))
+
+(deftest test-apply-floor-heights-empty-map-is-noop
+  ;; The flat-world contract: nil / empty leaves the all-zero grid so the
+  ;; renderer stays byte-identical.
+  (let [w  (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
+        w0 (apply-floor-heights w nil)
+        w1 (apply-floor-heights w {})]
+    (is (= 0.0 (php/aget (php/aget (:floor-pgrid w0) 1) 1)))
+    (is (= 0.0 (php/aget (php/aget (:floor-pgrid w1) 1) 1)))))
+
+(deftest test-rebuild-pgrid-carries-floor-pgrid
+  ;; Wall mutation (switch/secret) must not lose seeded floor heights.
+  (let [w0 (apply-floor-heights
+            (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
+            {[1 1] 0.5})
+        w1 (rebuild-pgrid (assoc w0 :grid (assoc-in (:grid w0) [1 1] 1)))]
+    (is (= 0.5 (php/aget (php/aget (:floor-pgrid w1) 1) 1)))))
+
+(deftest test-rebuild-pgrid-builds-zero-floor-when-absent
+  ;; A world without :floor-pgrid (loaded savegame) gets a fresh all-zero
+  ;; grid sized to :grid, never nil.
+  (let [w0 (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
+        w1 (rebuild-pgrid (dissoc w0 :floor-pgrid))]
+    (is (php/!== nil (:floor-pgrid w1)))
+    (is (= 3 (php/count (:floor-pgrid w1))))
+    (is (= 0.0 (php/aget (php/aget (:floor-pgrid w1) 1) 1)))))
 
 ;; ---------------------------------------------------------------------
 ;; Soulsphere (issue #68): pickup pushes lives over max-lives toward

@@ -56,16 +56,27 @@
    `pr` (scene rows, default 0) is the look up/down horizon shear: the
    sprite body shifts by `pr` in the base frame, so the face glyph adds
    the same `pr` to stay pinned to the head. pr=0 keeps the overlay
-   exactly where it was."
+   exactly where it was.
+
+   The face also tracks the sprite's cell-floor lift (#234): the
+   projection's `:floor-offset` (from the world's `:floor-pgrid`) is
+   subtracted from the face row so a monster on a platform keeps its
+   face on its head. 0 on flat ground, so this changes nothing there."
   [parts world stats vw vh dists edists face-phase ^int sc & [pr-arg]]
   ;; Reduced-motion: drop the one-shot jump-scare glyph swap (a sudden
   ;; flash); the resting / attack faces still animate on their own beat.
   (let [pr     (or pr-arg 0)
         scare? (and (php/> (or (get stats :scare-secs) 0.0) 0.0)
                     (not (get stats :reduced-motion?)))]
-    (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
+    (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw
+                                      (:floor-pgrid world))]
       (let [col         (:col proj)
             d           (:dist proj)
+            ;; #234: lift the face by the sprite's cell-floor offset (rows
+            ;; at full proj-dist; the overlay paints at full vw/vh and
+            ;; scales the emitted row by `sc`, so no px2 halving here). 0
+            ;; on flat ground -> face stays horizon-centred as before.
+            floor-off   (or (:floor-offset proj) 0)
             visuals     (visuals-for-type (:type proj) stats)
             face        (get visuals :face)
             face-alt    (or (get visuals :face-alt) face)
@@ -80,7 +91,8 @@
                    (php/< col vw)
                    (enemy-front-visible-at? d col dists edists))
           (let [h        (sprite-h vh d 1.0)
-                face-row (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 6) pr)]
+                face-row (php/- (php/+ (php/intdiv (php/- vh h) 2) (php/intdiv h 6) pr)
+                                floor-off)]
             (when (and (php/>= face-row 1) (php/<= face-row vh))
               (buf-push parts
                         (str "\e[" (php/* sc face-row) ";"
@@ -881,7 +893,12 @@
    number would always be 0 the moment it appeared). Bright yellow
    on a dark BG so the digit reads against any sprite zone behind
    it. `pr` (rows, default 0) is the look up/down horizon shear at full
-   resolution, added so the digit tracks the pitched sprite head."
+   resolution, added so the digit tracks the pitched sprite head.
+
+   The digit also tracks the sprite's cell-floor lift (#234): the
+   projection's `:floor-offset` (from the world's `:floor-pgrid`) is
+   subtracted from the row so the HP floats above the head wherever the
+   monster stands. 0 on flat ground, so this changes nothing there."
   [parts world vw vh & [pr-arg]]
   (let [pr     (or pr-arg 0)
         player (:player world)]
@@ -891,12 +908,14 @@
                  (php/> (or (:lives e) 0) 0)
                  (php/> (or (:max-lives e) 1) 1)
                  (php/> (or (:hit-flash-secs e) 0.0) 0.0))
-        (let [proj (project-enemy e player vw)]
+        (let [proj (project-enemy e player vw (:floor-pgrid world))]
           (when proj
-            (let [col (:col proj)
-                  d   (:dist proj)
-                  h   (sprite-h vh d 1.0)
-                  row (php/max 1 (php/+ (php/- (php/intdiv (php/- vh h) 2) 1) pr))]
+            (let [col       (:col proj)
+                  d         (:dist proj)
+                  floor-off (or (:floor-offset proj) 0)
+                  h         (sprite-h vh d 1.0)
+                  row       (php/max 1 (php/- (php/+ (php/- (php/intdiv (php/- vh h) 2) 1) pr)
+                                              floor-off))]
               (when (and (php/>= col 1) (php/<= col vw))
                 (buf-push parts
                           (str "\e[" row ";" col "H\e[40;38;5;226;1m"

@@ -140,6 +140,8 @@ L10 boss death: call 7-arity `advance` with `revive? false` to freeze all timers
 
 Column split: 3 zones (head / body+glyph / legs). Face overlays centre column at head-mid. Walls occlude.
 
+**Floor anchoring (#234)**: A sprite is normally centred on the (pitched) horizon. Each projection also carries a `:floor-offset` (rows) read from the world's `:floor-pgrid` (#232) at the enemy's cell `(floor y, floor x)`: `floor-offset = intval(fz * wall-px(pd, dist))`, the screen projection of that cell's floor height. The enemy zone pass and the grounding shadow SUBTRACT it from their top/bottom rows, so a monster on a raised platform rises to stand on it (and one in a pit sinks). It is linear in floor height and falls off with distance. The flat world keeps every cell at `fz = 0`, so `floor-offset = 0` and the render stays byte-identical to the pre-#234 horizon anchoring. The face glyph and the floating HP digit subtract the same offset so they track the lifted head (see `floor-offset-rows` / `project-enemy` in `render/frame-math`).
+
 **Distance fade**: `t = min(0.65, (dist/max-depth)²)`. RGB cube (16-231) scaled (1-t); grayscale (232-255) pulled to 232. Squared curve: close vivid, mid-range fade, 0.65 cap so a monster at max range stays at least 35% lit. For the textured sprite path the `sfade` LUT index uses half-strength fog: `(1 - t*0.5) * 23`, so sprite texels receive ~15-30% darkening at mid/far range rather than the full wall-fog amount. This keeps baked shading bands visible on dark-toned sprites. Wound tint (damage ratio * 0.35, also capped at 0.65) is NOT halved so health-state readability is preserved.
 
 **Idle animation**: Two glyphs per type (`:face` + `:face-alt`). Sin wave 3 rad/s (~2s cycle). All of a type pulse in sync.

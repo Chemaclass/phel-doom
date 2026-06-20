@@ -121,7 +121,9 @@ All three passes run once at load; zero per-frame cost. m1 is unchanged. The zon
 
 **Glyph mode (`PHEL_DOOM_NO_SPRITES=1`):** the legacy path. Per enemy: fade `t = (dist/max-depth)²` capped at 0.85, then shade head/body/legs via `fade-256` on color codes. Body glyph (e.g. `▒`) varies per type. Writes `eheads/ebodys/elegss` + overwrites `tops/bots/mids/lowers` for per-row zone selection. Cyberdemon uses `boss-col-paint` to carve a silhouette (sprite mode samples the real cyber sprite instead). Pickups fall back to coloured glow+glyph in this mode.
 
-`project-enemy` scale factor (1.0 default, 2.0 for `:cyber`): multiplies half-width and height proportionally. Centred vertically with feet at horizon.
+`project-enemy` scale factor (1.0 default, 2.0 for `:cyber`): multiplies half-width and height proportionally. Centred vertically on the horizon, then lifted by the cell-floor anchor below.
+
+**Floor anchoring (#234).** `project-enemy` reads the enemy's cell floor height from the world's `:floor-pgrid` (#232) and returns a `:floor-offset` (rows) = `intval(fz * wall-px(pd, dist))` - the screen projection of that floor height. The enemy zone pass and the grounding shadow SUBTRACT it from `e-top` / `e-bot` (halved in pixel-doubled mode, the same way `:col` / `:half-width` are), so a monster on a raised platform stands on it and one in a pit sinks; the head/body/legs sub-zones cascade off `e-top` and so move together. Flat ground keeps every cell at `fz = 0`, so the offset is exactly 0 and the frame is byte-identical to the pre-#234 renderer (the golden hashes in `render-cache-test/test-frame-bytes-pinned` pin this). The shift is linear in floor height and falls off with distance through `wall-px`. See `floor-offset-rows` in `render/frame-math`.
 
 Aggro blink at distance < 1.8 units (glyph mode).
 
@@ -129,7 +131,7 @@ Aggro blink at distance < 1.8 units (glyph mode).
 
 ## Face overlay (post-pass)
 
-Per-enemy face glyph (`:enemy-face` or `:enemy-face-alt` on sin wave) at centre column, upper-third row. Depth-culled: paint only if enemy dist < wall dist.
+Per-enemy face glyph (`:enemy-face` or `:enemy-face-alt` on sin wave) at centre column, upper-third row. Depth-culled: paint only if enemy dist < wall dist. The face row subtracts the projection's `:floor-offset` (#234) so it tracks a sprite lifted onto a raised cell; `paint-enemy-hp-flashes` (the floating HP digit) subtracts the same. 0 on flat ground.
 
 ## Floating item sprites
 

@@ -53,7 +53,8 @@ Returns raw (uncorrected) distance. Detailed tuple `[dist side hx hy]` is comput
 ```phel
 (defn cast-frame [world ^int width ^int scale]
   ...returns {:dists :hits :sides :hxs :hys :wallxs :floordxs :floordys
-              :step-dists :step-fzs :step-sides :step-hxs :step-hys})
+              :step-dists :step-fzs :step-sides :step-hxs :step-hys
+              :ceil-dists :ceil-czs :ceil-sides})
 ```
 
 Cast `width / scale` rays; return the parallel PHP arrays (one per output column).
@@ -64,6 +65,7 @@ Cast `width / scale` rays; return the parallel PHP arrays (one per output column
 - `wallxs`: wall-hit fraction in [0, 1) - the texture U coordinate (frac of world-y on a vertical face, world-x on a horizontal face, from the raw perpendicular distance)
 - `floordxs, floordys`: floor-cast basis = ray direction / cos(offset). A floor cell at per-row perpendicular distance `dperp` sits at world `player + dperp * (floordx, floordy)`, so the renderer needs no per-cell trig (two mul-adds + a frac for the texture sample)
 - `step-dists, step-fzs, step-sides, step-hxs, step-hys`: per-cell floor-height riser side-channel (#232, see below). Each entry is nil per column when the ray crossed no raised floor, so a flat world leaves them all-nil (additive contract).
+- `ceil-dists, ceil-czs, ceil-sides`: per-cell ceiling-height drop side-channel (#235, see below). Each entry is nil per column when the ray crossed no ceiling that drops below the viewer's ceiling, so a flat (all-1.0) ceiling leaves them all-nil (additive contract).
 
 ## Per-cell floor heights (#232)
 
@@ -79,6 +81,20 @@ A second per-cell grid, `:floor-pgrid` (a PHP `float[][]` twin of `:pgrid`, same
 The accumulator is computed as nested `if` in the loop's tail position (never `and`, never a `let`-binding statement-form), so it compiles closure-free and the flat all-zero floor never trips the `fh > player-floor-z` test - the cast stays allocation-equivalent to the pre-#232 path (verified by diffing the compiled `out/` do-cast: still 5 closures, none new in the DDA loop).
 
 The renderer (`compute-wall-shades` + the px1 cell loop, see [rendering.md](rendering.md)) turns each riser into a vertical **riser face** plus a flat-shaded **cap** (the step top surface), painted into the floor band below the main wall (the nearer wall always wins its own rows). The cap rows are claimed before the floor-cast clause so the ground texture does not also paint them. A flat world leaves every `:step-*` entry nil, so the riser/cap branches are dead and the frame is byte-identical (pinned by `render-cache-test/test-frame-bytes-pinned`). Z physics (stepping up onto the riser) is deferred to #233; textured caps to #236.
+
+## Per-cell ceiling heights (#235)
+
+The exact mirror of the floor riser, on the ceiling axis. A third per-cell grid, `:ceil-pgrid` (a PHP `float[][]` twin of `:pgrid`, same shape, all `1.0` by default - the ceiling at the top of a one-unit wall), gives each cell the world `z` its ceiling sits at. The DDA march carries a SECOND accumulator alongside `step-acc`, `ceil-acc`: scanning outward it records the FIRST ceiling cell it crosses whose height DROPS below the viewer's own ceiling (`viewer-ceil-z`, today always 1.0). A height above 1.0 lifts the ceiling (a tall atrium - just extra headroom, no hanging edge, so the accumulator does NOT fire); a height below 1.0 drops it (a low tunnel / hanging ceiling). That first drop is pinned (the nearest one occludes farther ones) and surfaced as the additive `:ceil-*` arrays:
+
+| Field | Meaning |
+|---|---|
+| `ceil-dists` | fish-eye corrected distance to the ceiling drop (or nil) |
+| `ceil-czs`   | the dropped cell's ceiling height (world z, < viewer ceiling) |
+| `ceil-sides` | 0/1 face of the crossed boundary (EW shading, like walls) |
+
+Like `step-acc`, the ceiling accumulator is computed as nested `if` in the loop's tail position (never `and`, never a `let`-binding statement-form), reading the cell's ceiling height through the same `let` already present for the floor height, so it compiles closure-free and the flat all-1.0 ceiling never trips the `ch < viewer-ceil-z` test - the cast stays allocation-equivalent to the pre-#235 path (verified by diffing the compiled `out/` `engine.php`: identical `function`-token count to HEAD, no new closure in the DDA loop).
+
+The renderer (`compute-wall-shades` + the px1 cell loop, see [rendering.md](rendering.md)) turns each drop into a vertical **hanging face** plus a flat-shaded **cap** (the ceiling underside), hanging from the top of the view: the face top is the viewer-ceiling plane (z 1.0) projected at the drop distance, the boundary row is the dropped-ceiling plane at the same distance, and the cap recedes back to the main wall top. It is painted into the ceiling band above the main wall (the nearer wall always wins its own rows), claimed before the sky-cast clause so the sky does not also paint it. A flat ceiling leaves every `:ceil-*` entry nil, so the hanging-ceiling branches are dead and the frame is byte-identical (pinned by `render-cache-test/test-frame-bytes-pinned`). Levels opt in via an optional `:ceil-heights` map; none ship yet, so the world stays flat-ceilinged. Textured ceiling caps follow with the floor caps in #236.
 
 ## Two key details
 

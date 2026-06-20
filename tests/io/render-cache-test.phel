@@ -256,3 +256,55 @@
   (let [flat   (frame->string (step-world) stats 120 30)
         hidden (frame->string (raise-floor (step-world) 1 1 0.5) stats 120 30)]
     (is (= flat hidden) "a step inside a wall cell is not visible")))
+
+;; ---------------------------------------------------------------------
+;; Per-cell ceiling heights (#235): lowering a cell's ceiling in front of
+;; the player draws a hanging ceiling + cap, so the frame differs from the
+;; flat-ceiling world at the same pose. A flat ceiling (all 1.0) is
+;; unchanged (re-asserted at the frame level here for the controlled
+;; chamber, mirroring the floor riser tests). Reuses step-chamber /
+;; step-world from above.
+;; ---------------------------------------------------------------------
+
+(defn- lower-ceil-cell [world x y h]
+  ;; Stamp one cell's ceiling height through the PHP float[][] twin,
+  ;; writing the row back (PHP nested-array value semantics) and
+  ;; re-assoc'ing so the mutated grid is carried on the returned world.
+  (let [cpg (:ceil-pgrid world)
+        row (php/aget cpg y)]
+    (php/aset row x (php/* 1.0 h))
+    (php/aset cpg y row)
+    (assoc world :ceil-pgrid cpg)))
+
+(deftest test-lowered-ceiling-changes-the-frame
+  ;; Lowering the ceiling of a cell in the player's forward path draws a
+  ;; hanging ceiling + cap, so the bytes differ from the flat-ceiling
+  ;; chamber at the same pose. (Exact bytes intentionally NOT pinned -
+  ;; geometry may be tuned; the contract is 'a low ceiling is rendered'.)
+  (let [flat    (frame->string (step-world) stats 120 30)
+        lowered (frame->string (lower-ceil-cell (step-world) 5 4 0.6) stats 120 30)]
+    (is (not= flat lowered) "a lowered ceiling cell renders differently than flat")))
+
+(deftest test-flat-ceiling-chamber-byte-identical
+  ;; The byte-identity contract at the frame level: a chamber with every
+  ;; ceiling left at the default 1.0 renders exactly like itself (the flat
+  ;; path), so the hanging-ceiling clause is dead with no drops.
+  (is (= (frame->string (step-world) stats 120 30)
+         (frame->string (step-world) stats 120 30))))
+
+(deftest test-raised-ceiling-does-not-change-the-frame
+  ;; Lifting a ceiling above 1.0 (a tall atrium) is NOT a drop, so the
+  ;; accumulator never fires and the frame equals the flat chamber: a
+  ;; taller ceiling just leaves the existing sky band where it was.
+  (let [flat   (frame->string (step-world) stats 120 30)
+        atrium (frame->string (lower-ceil-cell (step-world) 5 4 1.6) stats 120 30)]
+    (is (= flat atrium) "a raised ceiling (atrium) leaves the flat frame unchanged")))
+
+(deftest test-lowered-ceiling-flat-elsewhere-still-identical
+  ;; Lowering a cell the forward rays never cross (a wall corner the
+  ;; centre sweep never sees the ceiling of) must leave the flat-world
+  ;; frame untouched - the hanging ceiling only appears where a ray
+  ;; actually crosses it. Cell (1,1) is a wall corner.
+  (let [flat   (frame->string (step-world) stats 120 30)
+        hidden (frame->string (lower-ceil-cell (step-world) 1 1 0.6) stats 120 30)]
+    (is (= flat hidden) "a low ceiling inside a wall cell is not visible")))

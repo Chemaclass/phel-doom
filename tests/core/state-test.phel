@@ -1,7 +1,7 @@
 (ns phel-doom-tests.core.state-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.state :refer [new-player new-world move-player turn-player
-                                         rebuild-pgrid apply-floor-heights
+                                         rebuild-pgrid apply-floor-heights apply-ceil-heights
                                          toggle-map toggle-pause toggle-debug with-enemies
                                          advance-game-time at-backpack-cap?
                                          backpack-level gain-armor-shard gain-backpack
@@ -191,6 +191,57 @@
     (is (php/!== nil (:floor-pgrid w1)))
     (is (= 3 (php/count (:floor-pgrid w1))))
     (is (= 0.0 (php/aget (php/aget (:floor-pgrid w1) 1) 1)))))
+
+;; ---------------------------------------------------------------------
+;; Per-cell ceiling heights (#235): :ceil-pgrid is a PHP float[][] twin
+;; of :pgrid, all 1.0 by default (the flat ceiling at the top of a unit
+;; wall); apply-ceil-heights stamps a {[x y] height} map into it;
+;; rebuild-pgrid carries it along. Mirror of the floor-pgrid tests.
+;; ---------------------------------------------------------------------
+
+(deftest test-new-world-ceil-pgrid-matches-grid-shape-all-one
+  (let [w   (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
+        cpg (:ceil-pgrid w)]
+    ;; Same shape as :pgrid (3 rows, 3 cols) ...
+    (is (= 3 (php/count cpg)))
+    (is (= 3 (php/count (php/aget cpg 0))))
+    ;; ... every cell 1.0 (flat ceiling).
+    (is (= 1.0 (php/aget (php/aget cpg 1) 1)))
+    (is (= 1.0 (php/aget (php/aget cpg 0) 2)))))
+
+(deftest test-apply-ceil-heights-stamps-cells
+  (let [w  (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
+        w' (apply-ceil-heights w {[1 1] 0.6 [2 0] 1.5})]
+    (is (= 0.6 (php/aget (php/aget (:ceil-pgrid w') 1) 1)))
+    (is (= 1.5 (php/aget (php/aget (:ceil-pgrid w') 0) 2)))
+    ;; Untouched cell stays at the flat 1.0.
+    (is (= 1.0 (php/aget (php/aget (:ceil-pgrid w') 0) 0)))))
+
+(deftest test-apply-ceil-heights-empty-map-is-noop
+  ;; The flat-world contract: nil / empty leaves the all-1.0 grid so the
+  ;; renderer stays byte-identical.
+  (let [w  (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
+        w0 (apply-ceil-heights w nil)
+        w1 (apply-ceil-heights w {})]
+    (is (= 1.0 (php/aget (php/aget (:ceil-pgrid w0) 1) 1)))
+    (is (= 1.0 (php/aget (php/aget (:ceil-pgrid w1) 1) 1)))))
+
+(deftest test-rebuild-pgrid-carries-ceil-pgrid
+  ;; Wall mutation (switch/secret) must not lose seeded ceiling heights.
+  (let [w0 (apply-ceil-heights
+            (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
+            {[1 1] 0.6})
+        w1 (rebuild-pgrid (assoc w0 :grid (assoc-in (:grid w0) [1 1] 1)))]
+    (is (= 0.6 (php/aget (php/aget (:ceil-pgrid w1) 1) 1)))))
+
+(deftest test-rebuild-pgrid-builds-unit-ceil-when-absent
+  ;; A world without :ceil-pgrid (loaded savegame) gets a fresh all-1.0
+  ;; grid sized to :grid, never nil.
+  (let [w0 (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
+        w1 (rebuild-pgrid (dissoc w0 :ceil-pgrid))]
+    (is (php/!== nil (:ceil-pgrid w1)))
+    (is (= 3 (php/count (:ceil-pgrid w1))))
+    (is (= 1.0 (php/aget (php/aget (:ceil-pgrid w1) 1) 1)))))
 
 ;; ---------------------------------------------------------------------
 ;; Soulsphere (issue #68): pickup pushes lives over max-lives toward

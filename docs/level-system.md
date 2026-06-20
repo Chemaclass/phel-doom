@@ -59,6 +59,7 @@ Optional:
 | `:door-lock`   | `:blue` / `:red` / `:yellow` - adds a matching keycard pickup and locks the exit |
 | `:layout`      | Hand-authored ASCII grid (vector of strings) - bypasses `random-grid` |
 | `:floor-heights` | `{[x y] height}` map of per-cell floor `z` (#232) - raised cells render a step riser + cap. Omitted on every current level (flat floor, byte-identical render); the showcase level lands in #237 |
+| `:ceil-heights` | `{[x y] height}` map of per-cell ceiling `z` (#235, default 1.0) - cells with `z < 1.0` render a hanging ceiling + cap (a low tunnel); `z > 1.0` lifts the ceiling (a tall atrium). Omitted on every current level (flat ceiling, byte-identical render); the showcase level lands in #237 |
 
 ### Mixed-monster rooms
 

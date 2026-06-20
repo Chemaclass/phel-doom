@@ -59,6 +59,28 @@
   (let [s (crosshair-str {:fire-anim 0.0 :crosshair :off :hit-fx {:kill? true :ttl 0.1}})]
     (is (php/str_contains s "✗") "kill marker shows even with reticle off")))
 
+;; FPS-aim guarantee (#246): the centre crosshair IS the mouse aim point
+;; (the OS pointer stays hidden), so when mouselook is ON the :off style
+;; must still draw a minimal centre dot - the player is never left with
+;; no aim indicator while mouse-aiming. Mouse OFF keeps :off hidden.
+
+(deftest test-crosshair-off-with-mouse-on-shows-aim-dot
+  (let [s (crosshair-str {:fire-anim 0.0 :crosshair :off :mouse true})]
+    (is (php/str_contains s "·") "mouse-on forces a centre aim dot even when crosshair is off")
+    (is (not (php/str_contains s "+")) "no plus - the dot is the minimal aim point")))
+
+(deftest test-crosshair-off-with-mouse-off-stays-hidden
+  ;; Backward-compat: with the mouse off, :off keeps hiding the idle
+  ;; reticle exactly as before.
+  (let [s (crosshair-str {:fire-anim 0.0 :crosshair :off :mouse false})]
+    (is (= "" s) "mouse-off leaves :off hidden")))
+
+(deftest test-crosshair-non-off-style-ignores-mouse-flag
+  ;; The mouse flag only rescues the :off case; an explicit style is
+  ;; unchanged whether or not the mouse is on.
+  (let [s (crosshair-str {:fire-anim 0.0 :crosshair :cross :mouse true})]
+    (is (php/str_contains s "+") "explicit cross stays a plus with the mouse on")))
+
 ;; Run-timer setting (issue #203): elapsed run time appended to the
 ;; row-2 game-info strip only when :run-timer? is on.
 

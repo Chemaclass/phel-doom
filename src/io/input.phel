@@ -1,5 +1,33 @@
 (ns phel-doom.io.input)
 
+(def mouse-enable
+  "Escapes that turn ON xterm mouse reporting for FPS-style mouselook
+   (issue #246): `\\e[?1003h` requests ANY-MOTION tracking (the terminal
+   reports the pointer even with no button held) and `\\e[?1006h`
+   switches the reports to the SGR-extended encoding
+   (`\\e[<b;x;y(M|m)`) that controls/mouse-look parses. Emitted only when
+   the Mouse setting is on, so a player or terminal that dislikes mouse
+   capture opts out and the keyboard path is untouched."
+  "\e[?1003h\e[?1006h")
+
+(def mouse-disable
+  "Reverse of `mouse-enable`: disable any-motion tracking + SGR mode so
+   the terminal stops capturing the pointer on teardown. Always emitted
+   on restore! (idempotent / harmless even if the mouse was never
+   enabled this session)."
+  "\e[?1003l\e[?1006l")
+
+(defn init-escapes
+  "Pure: the terminal-setup escape string init-input! emits. Alt screen
+   (`\\e[?1049h`) + hide cursor (`\\e[?25l`) + no autowrap (`\\e[?7l`) +
+   clear/home (`\\e[2J\\e[H`) + kitty keyboard opt-in (`\\e[>3u`), then
+   the xterm mouse-reporting escapes (`mouse-enable`) appended ONLY when
+   `mouse?` is true (#246). Split out from the side-effecting init-input!
+   so the mouse gating is unit-testable without touching the terminal."
+  [mouse?]
+  (str "\e[?1049h\e[?25l\e[?7l\e[2J\e[H\e[>3u"
+       (if mouse? mouse-enable "")))
+
 (defn init-input!
   "Put the terminal in non-blocking raw mode so we can read single keys
    without waiting for Enter. Switch to the alternate screen buffer and
@@ -11,11 +39,16 @@
    press / repeat / release events for keys, which controls.phel
    parses to clear movement slots instantly on release. Non-supporting
    terminals ignore the opt-in and we fall back to the legacy byte
-   stream + hold-frames bridge."
-  []
+   stream + hold-frames bridge.
+
+   `mouse?` (default true) gates the xterm mouse-reporting escapes
+   (`mouse-enable`) for FPS-style mouselook (issue #246). When the Mouse
+   setting is off the caller passes false and no mouse escapes are sent,
+   so the terminal never captures the pointer."
+  [& [mouse?]]
   (php/exec "stty -icanon -echo min 0 time 0")
   (php/stream_set_blocking php/STDIN false)
-  (print "\e[?1049h\e[?25l\e[?7l\e[2J\e[H\e[>3u"))
+  (print (init-escapes (if (nil? mouse?) true mouse?))))
 
 (defn- drain-stdin!
   "Read and discard pending STDIN bytes for up to `ms` milliseconds.
@@ -30,23 +63,43 @@
       (when (php/< (php/microtime true) deadline)
         (recur)))))
 
+(def restore-prelude
+  "Pure: the first escape burst restore! emits - pop the kitty keyboard
+   flags (`\\e[<u`) AND disable mouse reporting (`mouse-disable`) so the
+   terminal stops emitting key / pointer reports before the teardown
+   drain. mouse-disable is always sent (harmless if mouse was never
+   enabled). Split out so the teardown contract is unit-testable."
+  (str "\e[<u" mouse-disable))
+
 (defn restore!
-  "Pop any kitty keyboard flags this session pushed, restore cooked
-   terminal mode and leave the alternate screen buffer."
+  "Pop any kitty keyboard flags this session pushed, disable mouse
+   reporting, restore cooked terminal mode and leave the alternate
+   screen buffer."
   []
-  ;; Pop the kitty protocol first so the terminal stops emitting key
-  ;; reports, then swallow the trailing release event for the quit key
-  ;; before cooked mode (echo on) would print it to the shell.
-  (print "\e[<u")
+  ;; Pop the kitty protocol + mouse reporting first so the terminal
+  ;; stops emitting key / pointer reports, then swallow the trailing
+  ;; release event for the quit key before cooked mode (echo on) would
+  ;; print it to the shell.
+  (print restore-prelude)
   (php/flush)
   (drain-stdin! 120)
   (print "\e[?25h\e[?7h\e[?1049l")
   (php/exec "stty sane"))
+
+(def drain-bytes
+  "Per-frame STDIN read budget. Sized to hold a frame's worth of input
+   without truncating a multi-byte sequence mid-escape: a fast mouse
+   drag under any-motion tracking (#246) floods many ~12-byte SGR
+   reports, and the SGR parser silently drops a half-read trailing
+   report, so a generous buffer keeps the look delta smooth. Held keys
+   still apply their motion multiple times per frame instead of being
+   throttled by the loop's read-one-key cadence."
+  512)
 
 (defn drain-keys
   "Drain all pending input bytes as a raw string (possibly empty). Lets
    a held key apply its motion multiple times per frame instead of being
    throttled by the loop's read-one-key cadence."
   []
-  (let [s (php/fread php/STDIN 64)]
+  (let [s (php/fread php/STDIN drain-bytes)]
     (if (= s false) "" s)))

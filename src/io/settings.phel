@@ -16,9 +16,17 @@
 (defn- settings-path []
   (str (or (php/getenv "HOME") ".") "/.phel-doom-settings.json"))
 
-(defn- read-from [arr key fallback]
-  (let [v (php/aget arr key)]
-    (if (or (nil? v) (php/=== v false)) fallback v)))
+(defn- read-from
+  "Read `key` from the decoded JSON array, falling back to `fallback`
+   when the key is ABSENT. A present `false` is preserved (not treated as
+   missing): the Mouse field (#246) defaults to true, so a persisted
+   `false` must survive the round-trip - hence the array_key_exists check
+   rather than a bare `=== false` fallback that would heal `false` back
+   to the default-on. coerce-settings still validates the result."
+  [arr key fallback]
+  (if (php/array_key_exists key arr)
+    (php/aget arr key)
+    fallback))
 
 (defn load-settings
   "Read the persisted settings file, returning the coerced defaults
@@ -41,6 +49,8 @@
                 :difficulty     (keyword (read-from data "difficulty"     "normal"))
                 :crosshair      (keyword (read-from data "crosshair"      "cross"))
                 :timer          (read-from data "timer"          (:timer default-settings))
+                :mouse          (read-from data "mouse"          (:mouse default-settings))
+                :sensitivity    (read-from data "sensitivity"    (:sensitivity default-settings))
                 :reduced-motion (read-from data "reduced-motion" (:reduced-motion default-settings))
                 :high-contrast  (read-from data "high-contrast"  (:high-contrast default-settings))
                 :colorblind     (keyword (read-from data "colorblind"     "none"))})
@@ -63,6 +73,8 @@
     (php/aset arr "difficulty"     (name (:difficulty s)))
     (php/aset arr "crosshair"      (name (:crosshair s)))
     (php/aset arr "timer"          (:timer s))
+    (php/aset arr "mouse"          (:mouse s))
+    (php/aset arr "sensitivity"    (:sensitivity s))
     (php/aset arr "reduced-motion" (:reduced-motion s))
     (php/aset arr "high-contrast"  (:high-contrast s))
     (php/aset arr "colorblind"     (name (:colorblind s)))

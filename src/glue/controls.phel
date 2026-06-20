@@ -290,14 +290,30 @@
                          (press-slot w1 :sprint)
                          w1))))))))))
 
+(def mouse-report-re
+  "SGR-extended mouse report (issue #246): ESC [ < b ; Cx ; Cy (M|m).
+   Stripped from the drain string before the movement byte-walk so the
+   `<` (turn-left) / `>` (turn-right) / digit bytes inside a report can
+   never be mistaken for keyboard movement. controls/mouse-look reads the
+   same reports separately for the look delta."
+  "/\\x1b\\[<\\d+;\\d+;\\d+[Mm]/")
+
+(defn- strip-mouse-reports
+  "Remove every SGR mouse report from `keys` so the movement / edge
+   parsers below see only keyboard bytes. Pure string scrub."
+  [keys]
+  (php/preg_replace mouse-report-re "" keys))
+
 (defn refresh-from-keys
-  "Fold every input byte into `world`. Three-stage parse: kitty CSI-u
-   events (WASD with press/repeat/release) → kitty enhanced arrows
+  "Fold every input byte into `world`. Four-stage parse: strip SGR mouse
+   reports (#246, handled separately by mouse-look) → kitty CSI-u events
+   (WASD with press/repeat/release) → kitty enhanced arrows
    (\\e[1;m:eD with same events) → legacy normalise + single-byte
    refresh. Terminals supporting any subset of kitty fall through
    gracefully to the legacy path."
   [world keys]
-  (let [[w1 leftover1] (apply-kitty-events world keys)
+  (let [no-mouse       (strip-mouse-reports keys)
+        [w1 leftover1] (apply-kitty-events world no-mouse)
         [w2 leftover2] (apply-kitty-arrow-events w1 leftover1)]
     (let [normalised (normalise-arrows leftover2)
           n          (php/strlen normalised)]
@@ -306,6 +322,173 @@
           w
           (recur (php/+ i 1)
                  (refresh-move w (php/substr normalised i 1))))))))
+
+;; =====================================================================
+;; § Mouse look (issue #246)
+;;
+;; init-input! (io) enables xterm SGR-extended mouse reporting
+;; (`\e[?1006h`) + any-motion tracking (`\e[?1003h`). The terminal then
+;; reports pointer events as:
+;;     ESC [ < b ; Cx ; Cy ( M | m )
+;; where M = button press / motion, m = button release, (Cx, Cy) are
+;; 1-based ABSOLUTE cell coordinates, and `b` is a bit-packed button +
+;; modifier code:
+;;     bits 0-1 : button (0 = left, 1 = middle, 2 = right)
+;;     bit  2   : SHIFT      bit 3 : META/ALT     bit 4 : CTRL
+;;     bit  5   : motion (a drag / bare-move report, `b & 32`)
+;;     bit  6   : wheel      (`b & 64`)
+;;
+;; Mouselook caveat: a terminal can only report ABSOLUTE cell coords and
+;; offers no pointer lock / warp, so we derive yaw + pitch from the DELTA
+;; between consecutive position reports, summed across the frame. The
+;; pointer saturates at the screen edges (coords clamp to 1..cols /
+;; 1..rows), so a continuous drag into an edge yields a zero delta there
+;; - the terminal equivalent of running the mouse off the pad. This is a
+;; best-effort approximation of true mouselook, not a perfect one.
+;;
+;; This stays PURE: it consumes the drained byte string + the previous
+;; pointer position and returns the per-frame angular delta + fire
+;; intent; io/input owns the escape emission + STDIN read.
+;; =====================================================================
+
+(def mouse-yaw-scale
+  "Radians of yaw per one cell of horizontal pointer travel, before the
+   player's sensitivity multiplier. Sized so a brisk flick across a
+   ~120-column terminal sweeps roughly a half turn at sensitivity 1.0."
+  0.012)
+
+(def mouse-pitch-scale
+  "Look up/down `:pitch` fraction per one cell of vertical pointer
+   travel, before sensitivity. Smaller than the yaw scale: the pitch
+   axis is a clamped fraction in [-1, 1] (state/clamp-pitch), so a few
+   cells of vertical travel already covers a useful slice of the range."
+  0.02)
+
+(def mouse-motion-bit
+  "Bit 5 of the SGR button code: set on a motion (drag / bare-move)
+   report, clear on a discrete press / release."
+  32)
+
+(def mouse-wheel-bit
+  "Bit 6 of the SGR button code: set on a scroll-wheel report. Wheel
+   events carry no useful look delta, so they are skipped."
+  64)
+
+(defn- mouse-button
+  "Low two bits of the SGR button code = which button (0 = left)."
+  [b]
+  (php/% b 4))
+
+(defn- bit-set?
+  "True when the bit of weight `weight` (a power of two) is set in `b`.
+   Phel/PHP has no portable bitwise-and helper handy here, so extract the
+   bit via integer divide + mod 2 instead of `b & weight`."
+  [b weight]
+  (php/=== 1 (php/% (php/intval (php// b weight)) 2)))
+
+(defn- mouse-motion? [b]
+  (bit-set? b mouse-motion-bit))
+
+(defn- mouse-wheel? [b]
+  (bit-set? b mouse-wheel-bit))
+
+(defn- left-press?
+  "True for a left-button (button 0) PRESS report: `final` is the M
+   terminator (m = release) and the code is neither a wheel tick nor a
+   pure motion report."
+  [b final]
+  (and (= final "M")
+       (php/=== 0 (mouse-button b))
+       (not (mouse-wheel? b))
+       (not (mouse-motion? b))))
+
+(defn- left-down?
+  "True while the left button is engaged this report: either a left
+   press OR a left-button drag (motion bit set with button 0). Used for
+   held-fire on auto-fire weapons - the closest a terminal gets to a
+   continuously-held trigger, since it only emits drag reports while the
+   button stays down during motion."
+  [b final]
+  (and (= final "M")
+       (php/=== 0 (mouse-button b))
+       (not (mouse-wheel? b))))
+
+(defn- fold-mouse-event
+  "Fold one parsed SGR event [b x y final] into the running accumulator
+   `{:dx :dy :fire? :held? :pos}`. Position reports advance the summed
+   pointer delta against the last-seen position; a fresh left press sets
+   :fire?; a left press / drag sets :held?. `:pos` always trails the most
+   recent coordinate so the next frame measures from where the pointer
+   actually is. Two no-delta cases:
+   - `:pos` nil (no prior report yet - first ever mouse byte of the
+     session): the event only ESTABLISHES the baseline, so the pointer's
+     initial absolute position can't be misread as one giant jump.
+   - a scroll-WHEEL tick (`mouse-wheel?`): it carries no look intent, so
+     its coordinate must not feed the yaw/pitch delta - but `:pos` still
+     advances to it so the next real motion measures from the true spot."
+  [acc b x y final]
+  (let [prev    (:pos acc)
+        [dx dy] (if (or (nil? prev) (mouse-wheel? b))
+                  [0 0]
+                  [(php/- x (get prev 0)) (php/- y (get prev 1))])]
+    {:dx    (php/+ (:dx acc) dx)
+     :dy    (php/+ (:dy acc) dy)
+     :fire? (or (:fire? acc) (left-press? b final))
+     :held? (or (:held? acc) (left-down? b final))
+     :pos   [x y]}))
+
+(defn mouse-look
+  "Pure SGR-mouse reader for FPS-style mouselook (issue #246). Parses the
+   drained byte string `keys` for xterm SGR mouse reports, measures
+   pointer travel against `prev-pos` (`[x y]`, the last position the
+   previous frame ended on) and returns:
+
+     {:yaw        signed radians to add to the player's :angle this frame
+      :pitch      signed fraction to add to the player's :pitch (look up
+                  is +, look down is -; clamp via state/clamp-pitch)
+      :fire?      true on a fresh left-button press (rising edge - a press
+                  report arrives once, so this maps onto the space-fire
+                  path directly)
+      :fire-held? true while the left button is held / dragged (feeds
+                  auto-fire weapons like the :fire-held space path)
+      :pos        the pointer position to thread into the next frame}
+
+   `sensitivity` is a positive scalar (1.0 = neutral) multiplied into
+   both axes. Motion RIGHT yields +yaw (turn right), motion UP yields
+   +pitch (look up) - note terminal rows grow DOWNWARD, so up is a
+   DECREASING y, hence the negated dy. No mouse bytes (or a malformed /
+   non-mouse sequence such as a kitty CSI-u key event, arrow or F-key)
+   produce a zero delta and carry `prev-pos` forward unchanged, so the
+   keyboard path is never disturbed.
+
+   Caveat: terminals report ABSOLUTE clamped cell coords with no pointer
+   lock, so the delta saturates to zero at the screen edges (see the
+   section header). This approximates mouselook within that limit."
+  [keys prev-pos ^float sensitivity]
+  (let [matches (php/array)
+        ;; ESC [ < b ; Cx ; Cy (M|m) — SGR-extended (1006) mouse report.
+        re      "/\\x1b\\[<(\\d+);(\\d+);(\\d+)([Mm])/"]
+    (php/preg_match_all re keys matches)
+    (let [bs     (php/aget matches 1)
+          xs     (php/aget matches 2)
+          ys     (php/aget matches 3)
+          finals (php/aget matches 4)
+          n      (php/count bs)]
+      (loop [i 0 acc {:dx 0 :dy 0 :fire? false :held? false :pos prev-pos}]
+        (if (php/>= i n)
+          {:yaw        (php/* (php/* (:dx acc) mouse-yaw-scale) sensitivity)
+           ;; Negate dy: screen y grows downward, so an UPWARD flick
+           ;; (decreasing y) must read as a positive (look-up) pitch.
+           :pitch      (php/* (php/* (php/- 0 (:dy acc)) mouse-pitch-scale) sensitivity)
+           :fire?      (:fire? acc)
+           :fire-held? (:held? acc)
+           :pos        (:pos acc)}
+          (recur (php/+ i 1)
+                 (fold-mouse-event acc
+                                   (php/intval (php/aget bs i))
+                                   (php/intval (php/aget xs i))
+                                   (php/intval (php/aget ys i))
+                                   (php/aget finals i))))))))
 
 ;; =====================================================================
 ;; § Edge detection (one-shot actions)

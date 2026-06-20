@@ -18,9 +18,12 @@
   "Out-of-the-box options. Music sits under the sfx by default (the OST
    is a bed, not a lead). Minimap starts hidden; difficulty normal.
    Reduced motion off (accessibility opt-in: gates the strobing horror
-   beats - see io/render/paint)."
+   beats - see io/render/paint). Mouse on by default (FPS-style
+   mouselook, #246), sensitivity 50% (the neutral 1.0x multiplier - see
+   `mouse-sensitivity`)."
   {:music 60 :sfx 90 :minimap false :difficulty :normal :reduced-motion false
-   :crosshair :cross :timer false :high-contrast false :colorblind :none})
+   :crosshair :cross :timer false :high-contrast false :colorblind :none
+   :mouse true :sensitivity 50})
 
 (def difficulty-choices
   "Difficulty keywords the enum field cycles through, easiest first.
@@ -61,6 +64,8 @@
    {:key :difficulty     :label "Difficulty"     :kind :enum :choices difficulty-choices}
    {:key :crosshair      :label "Crosshair"      :kind :enum :choices crosshair-choices}
    {:key :timer          :label "Run timer"      :kind :bool}
+   {:key :mouse          :label "Mouse"          :kind :bool}
+   {:key :sensitivity    :label "Sensitivity"    :kind :pct}
    {:key :reduced-motion :label "Reduced motion" :kind :bool}
    {:key :high-contrast  :label "High contrast"  :kind :bool}
    {:key :colorblind     :label "Colorblind"     :kind :enum :choices colorblind-choices}])
@@ -94,11 +99,12 @@
 
 (defn coerce-settings
   "Normalise a loaded (or partial) settings map against the defaults:
-   clamp volumes into 0..100, force the bool fields (minimap, run timer,
-   reduced motion) to booleans, and fall back to a valid choice for the
-   enums (:normal difficulty, :cross crosshair) when the saved value is
-   unrecognised. Always returns a complete, valid map, so callers
-   downstream never have to re-validate."
+   clamp the percent fields (volumes + mouse sensitivity) into 0..100,
+   force the bool fields (minimap, run timer, mouse, reduced motion) to
+   booleans, and fall back to a valid choice for the enums (:normal
+   difficulty, :cross crosshair) when the saved value is unrecognised.
+   Always returns a complete, valid map, so callers downstream never
+   have to re-validate."
   [raw]
   (let [m (or raw {})
         d (get m :difficulty (:difficulty default-settings))
@@ -110,6 +116,8 @@
      :difficulty     (if (valid-difficulty? d) d :normal)
      :crosshair      (if (php/>= (index-of x crosshair-choices) 0) x :cross)
      :timer          (boolean (get m :timer (:timer default-settings)))
+     :mouse          (boolean (get m :mouse (:mouse default-settings)))
+     :sensitivity    (clamp-pct (get m :sensitivity (:sensitivity default-settings)))
      :reduced-motion (boolean (get m :reduced-motion (:reduced-motion default-settings)))
      :high-contrast  (boolean (get m :high-contrast (:high-contrast default-settings)))
      :colorblind     (if (php/>= (index-of c colorblind-choices) 0) c :none)}))
@@ -224,3 +232,18 @@
    io/sound multiplies each effect's volume by this."
   [settings]
   (php// (php/intval (:sfx settings)) 100.0))
+
+(def mouse-sensitivity-neutral
+  "The Sensitivity percent that maps to the neutral 1.0x mouselook
+   multiplier (the default). Picked at the slider midpoint so the player
+   has equal headroom to slow the look down or speed it up."
+  50)
+
+(defn mouse-sensitivity
+  "Mouselook speed multiplier (#246) for the current Sensitivity percent.
+   The midpoint (`mouse-sensitivity-neutral`, the default) is the neutral
+   1.0x; 0% slows to 0 (mouselook effectively off) and 100% doubles the
+   per-cell yaw/pitch. controls/mouse-look multiplies the raw pointer
+   delta by this."
+  [settings]
+  (php// (php/intval (:sensitivity settings)) (php/* 1.0 mouse-sensitivity-neutral)))

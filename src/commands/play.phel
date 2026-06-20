@@ -2,13 +2,13 @@
   (:require phel.cli :as cli)
   (:require phel.string :as str)
   (:require phel-doom.core.state    :refer [advance-game-time at-backpack-cap? backpack-level
-                                            decay-soul-overcap gain-armor-shard gain-backpack
+                                            clamp-pitch decay-soul-overcap gain-armor-shard gain-backpack
                                             gain-life gain-soulsphere
-                                            max-armor max-lives max-stamina
+                                            max-armor max-lives max-stamina turn-player
                                             rebuild-pgrid toggle-debug toggle-map toggle-pause toggle-sound])
   (:require phel-doom.core.map      :refer [door? reveal-secret secret? switch? toggle-switch])
   (:require phel-doom.glue.controls :refer [refresh-from-keys key-states rising-edges
-                                            initial-key-snapshot nav-deltas])
+                                            initial-key-snapshot nav-deltas mouse-look])
   (:require phel-doom.core.physics  :refer [apply-physics tick-heartbeat tick-flicker tick-blood-drops tick-door-face tick-stamina])
   (:require phel-doom.core.engine   :refer [mark-visible-cells])
   (:require phel-doom.core.combat   :refer [ammo-per-box arm-berserk berserk-seconds damage-step fire-anim-seconds invuln-seconds max-reserve push-sfx reload reloading? reload-cooldown-seconds tick-armory tick-shooting])
@@ -17,7 +17,7 @@
   (:require phel-doom.core.weapons  :refer [effective-reserve-cap give-weapon switch-weapon weapon-spec weapon-order weapons])
   (:require phel-doom.io.sound    :refer [play-sfx! mute-for! set-sfx-scalar!])
   (:require phel-doom.io.music    :as music)
-  (:require phel-doom.core.settings :refer [navigate music-volume sfx-scalar valid-difficulty? pause-menu-move pause-menu-action])
+  (:require phel-doom.core.settings :refer [navigate music-volume sfx-scalar mouse-sensitivity valid-difficulty? pause-menu-move pause-menu-action])
   (:require phel-doom.io.settings :refer [load-settings save-settings!])
   (:require phel-doom.io.savegame :refer [save-game! load-game])
   (:require phel-doom.io.demo     :as demo)
@@ -89,6 +89,23 @@
    edge on the `e` key in the game loop."
   [world]
   (update-in world [:player :angle] (fn [a] (php/+ a php/M_PI))))
+
+(defn apply-mouse-look
+  "Apply one frame's mouselook delta (issue #246) to the player. `look`
+   is the `controls/mouse-look` result; `:yaw` rotates `:angle` (same
+   path as a keyboard turn) and `:pitch` shears `:pitch` clamped to
+   [-1, 1] via `clamp-pitch` (same saturation as the ↑/↓ keys). A zero
+   delta (no mouse motion) is a no-op so the keyboard look is untouched.
+   Pure; the game loop calls it only on an unpaused frame so the camera
+   can't drift while a menu is up."
+  [world look]
+  (let [yaw   (or (:yaw look) 0.0)
+        pitch (or (:pitch look) 0.0)
+        w1    (if (php/=== yaw 0.0) world (turn-player world yaw))]
+    (if (php/=== pitch 0.0)
+      w1
+      (update-in w1 [:player :pitch]
+                 (fn [p] (clamp-pitch (php/+ (or p 0.0) pitch)))))))
 
 (defn- handle-toggles
   "Apply rising-edge toggle keys (pause / minimap / sound / debug /
@@ -971,7 +988,12 @@
            fps       0
            prev-keys initial-key-snapshot
            dims      [0 0]
-           cal       {:px nil :n 0 :best 1.0e9 :tdims [0 0]}]
+           cal       {:px nil :n 0 :best 1.0e9 :tdims [0 0]}
+           ;; Last pointer position mouselook (#246) measured against;
+           ;; nil until the first SGR report so the pointer's opening
+           ;; absolute position can't read as one giant jump. Threaded
+           ;; like prev-keys.
+           prev-mpos nil]
       ;; Manual --max-cols/--max-rows still inset-cap the render area;
       ;; auto mode always fills the terminal (cap-dims with -1 = no-op)
       ;; and varies pixel detail instead.
@@ -995,7 +1017,19 @@
                 keys      (or (:keys frame) "")
                 ms        (or (:ms frame) live-ms)
                 now-keys  (key-states keys)
-                edges     (rising-edges now-keys prev-keys)]
+                edges0    (rising-edges now-keys prev-keys)
+                ;; Mouselook (#246): parse the same drained byte string for
+                ;; SGR mouse reports. `:yaw`/`:pitch` move the camera (applied
+                ;; to the world below, before the tick, so the frame renders +
+                ;; aims with the new heading); a left click ORs into the
+                ;; existing space-fire edges so a mouse click shoots exactly
+                ;; like space (held button feeds auto-fire weapons). `:pos`
+                ;; threads forward as the next frame's delta baseline.
+                look      (mouse-look keys prev-mpos
+                                      (mouse-sensitivity (:settings world)))
+                edges     (assoc edges0
+                                 :fire      (or (:fire edges0) (:fire? look))
+                                 :fire-held (or (:fire-held edges0) (:fire-held? look)))]
             (cond
             ;; Quitting straight from the pause/settings page still
             ;; persists edits (q never hits the resume transition).
@@ -1009,7 +1043,13 @@
               ;; enemy billboard against the exact rows the player sees.
               ;; Same `:debug?`-aware HUD reservation as draw-frame's
               ;; frame-stats, so the hit check and the draw agree.
-              (let [aimed   (assoc world :scene-rows (scene-rows rows {:debug? (:debug? world)}))
+              (let [scened  (assoc world :scene-rows (scene-rows rows {:debug? (:debug? world)}))
+                    ;; Apply the mouselook yaw/pitch to the camera BEFORE the
+                    ;; tick so this frame's hitscan + render use the new
+                    ;; heading. Gated on not-paused so the camera can't drift
+                    ;; while a menu is up (tick-world freezes gameplay anyway,
+                    ;; but the look delta is outside that short-circuit).
+                    aimed   (if (:paused world) scened (apply-mouse-look scened look))
                     ticked0 (tick-world aimed keys (php// ms 1000.0) edges)
                   ;; Pause overlay (#203): while paused (and not in the H
                   ;; info panel) the navigable pause MENU is up. up/down move
@@ -1064,7 +1104,8 @@
                                                              (fps-from-ms ms)
                                                              now-keys
                                                              [rows cols]
-                                                             cal'))))))))))
+                                                             cal'
+                                                             (:pos look)))))))))))
 
 ;; =====================================================================
 ;; § End screens (death / victory)
@@ -1388,7 +1429,6 @@
     (php/max 0 (php/intval raw))))
 
 (defn- run-play [ctx]
-  (init-input!)
   (let [diff-raw    (cli/opt ctx "difficulty")
         god?        (cli/opt ctx "god")
         armory?     (cli/opt ctx "armory")
@@ -1421,6 +1461,11 @@
         ;; Apply the volumes up front so the start menu + OST loop
         ;; honour them before the first frame.
         settings0   (load-settings)]
+    ;; init-input! after loading settings so the Mouse setting (#246)
+    ;; gates the xterm mouse-reporting escapes: off = the terminal never
+    ;; captures the pointer. load-settings is plain file IO, so it is
+    ;; safe to run before raw mode is set.
+    (init-input! (:mouse settings0))
     (apply-audio-settings! settings0)
     (cond
       replay  (demo/start-replay! (:seed replay) (:frames replay))
@@ -1459,7 +1504,9 @@
    start menu and record/replay are skipped. `ctx` drives the closing
    success line. Returns the process exit code."
   [ctx phase]
-  (init-input!)
+  ;; Mouse reporting off for the menu-less showcase (#246): a tech-talk
+  ;; screencast shouldn't have the terminal capturing the pointer.
+  (init-input! false)
   (let [settings0 (load-settings)
         ;; Audio only once enemies are in play (phase 3+); the
         ;; raycaster / weapon reveals stay silent. Mirrors the

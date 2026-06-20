@@ -1,8 +1,9 @@
 (ns phel-doom.core.enemy
   (:require phel-doom.core.rng :as rng)
-  (:require phel-doom.core.map      :refer [random-spawn wall?])
-  (:require phel-doom.core.enemies  :refer [resists? default-lives-for])
-  (:require phel-doom.core.enemy-ai :refer [apply-pain maybe-start-attack moves? observe start-wander target-pos tick-attack tick-pain tick-wander]))
+  (:require phel-doom.core.map        :refer [random-spawn wall?])
+  (:require phel-doom.core.enemies    :refer [resists? default-lives-for])
+  (:require phel-doom.core.projection :refer [sprite-half-rows])
+  (:require phel-doom.core.enemy-ai   :refer [apply-pain maybe-start-attack moves? observe start-wander target-pos tick-attack tick-pain tick-wander]))
 
 ;; ---------------------------------------------------------------------
 ;; Enemy BODY: state, lifecycle, and physics. This module owns spawning
@@ -144,6 +145,37 @@
           (assoc enemy :x (first hit) :y (second hit))
           enemy)))))
 
+(def boss-sprite-scale
+  "Vertical billboard scale for the cyberdemon: it towers 2× taller than
+   the standard catalog (matches `frame-math/project-enemy-pd`). The
+   vertical hit gate reads this so a far boss's bigger sprite is the
+   harder-to-miss target the player sees. Everything else renders at
+   native 1× height."
+  2.0)
+
+(defn- sprite-scale-for
+  "Billboard vertical scale of `enemy` for the hit gate: `boss-sprite-scale`
+   for the cyberdemon, else 1.0. Mirrors the renderer's per-type scale so
+   the vertical hitscan check agrees with the drawn sprite (issue #243)."
+  [enemy]
+  (if (php/=== (:type enemy) :cyber) boss-sprite-scale 1.0))
+
+(defn- vertical-hit?
+  "True when the screen-centre crosshair is vertically ON the enemy's
+   billboard. `pr` is the camera's pitch shear in scene rows
+   (`projection/pitch-rows`); the fixed crosshair at `svh/2` lands inside
+   the sprite (centred on `svh/2 + pr`) iff `|pr| <= sprite-half-rows`.
+
+   `svh` nil disables the gate (legacy / test callers that pre-date
+   vertical aim): with no scene height there is nothing to project
+   against, so the call behaves exactly like the old XY-only hitscan -
+   which is also the pitch=0 result (pr=0 => |0| <= half-rows always),
+   keeping every existing combat/enemy test green."
+  [enemy ^float dist svh ^int pr]
+  (or (nil? svh)
+      (php/<= (php/abs pr)
+              (sprite-half-rows svh dist (sprite-scale-for enemy)))))
+
 (defn shoot
   "Fire a hitscan from the player along their facing. Returns
    `[new-enemies hit? hit-pos idx]`: the nearest alive enemy in
@@ -151,10 +183,19 @@
    flips to false once `:lives` hits zero, so a 1-damage pistol
    round just wounds a 3-HP cacodemon while a 3-damage shotgun
    shell drops it. `damage` defaults to 1 for callers that don't
-   carry a weapon spec (older tests, etc)."
-  ([enemies ^float px ^float py ^float angle ^float wall-dist ^float hit-radius ^float max-range]
-   (shoot enemies px py angle wall-dist hit-radius max-range 1 nil))
-  ([es' ^float x' ^float y' ^float a' ^float wd' ^float hr ^float max-r ^int damage damage-type]
+   carry a weapon spec (older tests, etc).
+
+   `svh` (scene rows) + `pr` (`projection/pitch-rows` of the camera
+   pitch, scene rows) add the vertical aim gate (issue #243): a hit must
+   land on the enemy's drawn billboard, not just its XY column, so aiming
+   at the floor / sky misses. `svh` nil (the short arities) disables the
+   gate, which is identical to looking level (pr=0) - so legacy callers
+   and pitch=0 stay byte-for-byte unchanged."
+  ([es0 ^float px0 ^float py0 ^float a0 ^float wd0 ^float hr0 ^float mr0]
+   (shoot es0 px0 py0 a0 wd0 hr0 mr0 1 nil nil 0))
+  ([es1 ^float px1 ^float py1 ^float a1 ^float wd1 ^float hr1 ^float mr1 ^int dmg1 dtype1]
+   (shoot es1 px1 py1 a1 wd1 hr1 mr1 dmg1 dtype1 nil 0))
+  ([es' ^float x' ^float y' ^float a' ^float wd' ^float hr ^float max-r ^int damage damage-type svh ^int pr]
    (let [cos-a (php/cos a')
          sin-a (php/sin a')]
      (let [best (loop [i      0
@@ -169,7 +210,8 @@
                                           dy (php/- (:y e) y')]
                                       (let [proj (php/+ (php/* dx cos-a) (php/* dy sin-a))]
                                         (when (and (php/> proj 0.0) (php/< proj best-d)
-                                                   (php/< proj wd'))
+                                                   (php/< proj wd')
+                                                   (vertical-hit? e proj svh pr))
                                           (let [perp-x (php/- dx (php/* proj cos-a))
                                                 perp-y (php/- dy (php/* proj sin-a))]
                                             (let [perp2 (php/+ (php/* perp-x perp-x) (php/* perp-y perp-y))]
@@ -284,43 +326,51 @@
    and `kill-toughness` is the largest `:max-lives` among enemies killed
    this shot (0 if none) so the caller can size hit-stop per the meatiest
    kill. Survivors wake (`:aware`) + take a hit-flash; no pain roll
-   (mirrors `splash`). Pure."
-  [enemies ^float px ^float py ^float angle ^float wall-dist ^float hit-radius ^float max-range ^int damage damage-type]
-  (let [cos-a (php/cos angle)
-        sin-a (php/sin angle)
-        cap   (php/min wall-dist max-range)
-        hr2   (php/* hit-radius hit-radius)]
-    (loop [i 0 acc [] killed 0 best-d cap hit-pos nil tough 0]
-      (if (php/>= i (count enemies))
-        [acc killed hit-pos tough]
-        (let [e     (get enemies i)
-              dx    (php/- (:x e) px)
-              dy    (php/- (:y e) py)
-              proj  (php/+ (php/* dx cos-a) (php/* dy sin-a))
-              perpx (php/- dx (php/* proj cos-a))
-              perpy (php/- dy (php/* proj sin-a))
-              in?   (and (:alive e)
-                         (php/> proj 0.0)
-                         (php/< proj cap)
-                         (php/<= (php/+ (php/* perpx perpx) (php/* perpy perpy)) hr2))]
-          (if (not in?)
-            (recur (php/+ i 1) (conj acc e) killed best-d hit-pos tough)
-            (let [eff     (if (resists? (:type e) damage-type) 0 damage)
-                  lives   (php/max 0 (php/- (or (:lives e) 1) eff))
-                  woke    (assoc e :state :aware :lives lives)
-                  closer? (php/< proj best-d)
-                  hp'     (if closer? {:x (:x e) :y (:y e)} hit-pos)
-                  bd'     (if closer? proj best-d)]
-              (if (php/<= lives 0)
-                (recur (php/+ i 1)
-                       (conj acc (assoc woke
-                                        :alive false
-                                        :respawn-after (respawn-delay-for e)))
-                       (php/+ killed 1) bd' hp'
-                       (php/max tough (or (:max-lives e) 1)))
-                (recur (php/+ i 1)
-                       (conj acc (assoc woke :hit-flash-secs hit-flash-seconds))
-                       killed bd' hp' tough)))))))))
+   (mirrors `splash`). Pure.
+
+   `svh` + `pr` add the same vertical aim gate as `shoot` (issue #243):
+   only enemies whose drawn billboard the screen-centre crosshair sits on
+   are pierced. `svh` nil (the 9-arity form) disables the gate, matching
+   the old XY-only behaviour and the pitch=0 result."
+  ([es0 ^float px0 ^float py0 ^float a0 ^float wd0 ^float hr0 ^float mr0 ^int dmg0 dtype0]
+   (pierce es0 px0 py0 a0 wd0 hr0 mr0 dmg0 dtype0 nil 0))
+  ([enemies ^float px ^float py ^float angle ^float wall-dist ^float hit-radius ^float max-range ^int damage damage-type svh ^int pr]
+   (let [cos-a (php/cos angle)
+         sin-a (php/sin angle)
+         cap   (php/min wall-dist max-range)
+         hr2   (php/* hit-radius hit-radius)]
+     (loop [i 0 acc [] killed 0 best-d cap hit-pos nil tough 0]
+       (if (php/>= i (count enemies))
+         [acc killed hit-pos tough]
+         (let [e     (get enemies i)
+               dx    (php/- (:x e) px)
+               dy    (php/- (:y e) py)
+               proj  (php/+ (php/* dx cos-a) (php/* dy sin-a))
+               perpx (php/- dx (php/* proj cos-a))
+               perpy (php/- dy (php/* proj sin-a))
+               in?   (and (:alive e)
+                          (php/> proj 0.0)
+                          (php/< proj cap)
+                          (vertical-hit? e proj svh pr)
+                          (php/<= (php/+ (php/* perpx perpx) (php/* perpy perpy)) hr2))]
+           (if (not in?)
+             (recur (php/+ i 1) (conj acc e) killed best-d hit-pos tough)
+             (let [eff     (if (resists? (:type e) damage-type) 0 damage)
+                   lives   (php/max 0 (php/- (or (:lives e) 1) eff))
+                   woke    (assoc e :state :aware :lives lives)
+                   closer? (php/< proj best-d)
+                   hp'     (if closer? {:x (:x e) :y (:y e)} hit-pos)
+                   bd'     (if closer? proj best-d)]
+               (if (php/<= lives 0)
+                 (recur (php/+ i 1)
+                        (conj acc (assoc woke
+                                         :alive false
+                                         :respawn-after (respawn-delay-for e)))
+                        (php/+ killed 1) bd' hp'
+                        (php/max tough (or (:max-lives e) 1)))
+                 (recur (php/+ i 1)
+                        (conj acc (assoc woke :hit-flash-secs hit-flash-seconds))
+                        killed bd' hp' tough))))))))))
 
 (defn- in-cone?
   "True when the enemy offset `(dx, dy)` lies in front of the player
@@ -341,56 +391,71 @@
    are grazed for the smaller `graze-dmg`. Distinct from the single big
    hit of `shoot` - the shotgun becomes a crowd weapon. Returns
    `[new-enemies killed-count hit-pos kill-toughness]` like `pierce`,
-   where `hit-pos` is the primary target (blood + sfx)."
-  [enemies ^float px ^float py ^float angle ^float wall-dist ^float half-angle ^float max-range ^int primary-dmg ^int graze-dmg ^int max-targets damage-type]
-  (let [cos-a    (php/cos angle)
-        sin-a    (php/sin angle)
-        cos-half (php/cos half-angle)
-        cap      (php/min wall-dist max-range)
-        primary  (loop [i 0 best -1 best-d cap]
-                   (if (php/>= i (count enemies))
-                     best
-                     (let [e (get enemies i)]
-                       (if (not (:alive e))
-                         (recur (php/+ i 1) best best-d)
-                         (let [dx   (php/- (:x e) px)
-                               dy   (php/- (:y e) py)
-                               proj (php/+ (php/* dx cos-a) (php/* dy sin-a))]
-                           (if (and (php/< proj best-d)
-                                    (in-cone? dx dy cos-a sin-a cos-half cap))
-                             (recur (php/+ i 1) i proj)
-                             (recur (php/+ i 1) best best-d)))))))]
-    (if (php/< primary 0)
-      [enemies 0 nil 0]
-      (loop [i 0 acc [] killed 0 tough 0 grazed 0 hit-pos nil]
-        (if (php/>= i (count enemies))
-          [acc killed hit-pos tough]
-          (let [e (get enemies i)]
-            (if (not (:alive e))
-              (recur (php/+ i 1) (conj acc e) killed tough grazed hit-pos)
-              (let [dx       (php/- (:x e) px)
-                    dy       (php/- (:y e) py)
-                    primary? (php/=== i primary)
-                    graze?   (and (not primary?)
-                                  (php/< grazed (php/- max-targets 1))
-                                  (in-cone? dx dy cos-a sin-a cos-half cap))
-                    dmg      (cond primary? primary-dmg graze? graze-dmg :else 0)]
-                (if (php/<= dmg 0)
-                  (recur (php/+ i 1) (conj acc e) killed tough grazed hit-pos)
-                  (let [eff     (if (resists? (:type e) damage-type) 0 dmg)
-                        lives   (php/max 0 (php/- (or (:lives e) 1) eff))
-                        woke    (assoc e :state :aware :lives lives)
-                        hp'     (if primary? {:x (:x e) :y (:y e)} hit-pos)
-                        grazed' (if graze? (php/+ grazed 1) grazed)]
-                    (if (php/<= lives 0)
-                      (recur (php/+ i 1)
-                             (conj acc (assoc woke
-                                              :alive false
-                                              :respawn-after (respawn-delay-for e)))
-                             (php/+ killed 1) (php/max tough (or (:max-lives e) 1)) grazed' hp')
-                      (recur (php/+ i 1)
-                             (conj acc (assoc woke :hit-flash-secs hit-flash-seconds))
-                             killed tough grazed' hp'))))))))))))
+   where `hit-pos` is the primary target (blood + sfx).
+
+   `svh` + `pr` add the same vertical aim gate as `shoot` (issue #243):
+   an enemy must be drawn under the screen-centre crosshair to be the
+   primary OR a graze, so a shot fired at the floor / sky whiffs the
+   whole cone. `svh` nil (the 12-arity form) disables the gate, matching
+   the old cone-only behaviour and the pitch=0 result."
+  ([es0 ^float px0 ^float py0 ^float a0 ^float wd0 ^float ha0 ^float mr0 ^int pdmg0 ^int gdmg0 ^int mt0 dtype0]
+   (spread-shoot es0 px0 py0 a0 wd0 ha0 mr0 pdmg0 gdmg0 mt0 dtype0 nil 0))
+  ([enemies ^float px ^float py ^float angle ^float wall-dist ^float half-angle ^float max-range ^int primary-dmg ^int graze-dmg ^int max-targets damage-type svh ^int pr]
+   (let [cos-a    (php/cos angle)
+         sin-a    (php/sin angle)
+         cos-half (php/cos half-angle)
+         cap      (php/min wall-dist max-range)
+         ;; In-cone AND vertically on the billboard. `proj` is the forward
+         ;; (perpendicular) distance, which is the depth the sprite path
+         ;; projects against, so it doubles as the gate's `dist`.
+         in-shot? (fn [e ^float dx ^float dy ^float proj]
+                    (and (in-cone? dx dy cos-a sin-a cos-half cap)
+                         (vertical-hit? e proj svh pr)))
+         primary  (loop [i 0 best -1 best-d cap]
+                    (if (php/>= i (count enemies))
+                      best
+                      (let [e (get enemies i)]
+                        (if (not (:alive e))
+                          (recur (php/+ i 1) best best-d)
+                          (let [dx   (php/- (:x e) px)
+                                dy   (php/- (:y e) py)
+                                proj (php/+ (php/* dx cos-a) (php/* dy sin-a))]
+                            (if (and (php/< proj best-d)
+                                     (in-shot? e dx dy proj))
+                              (recur (php/+ i 1) i proj)
+                              (recur (php/+ i 1) best best-d)))))))]
+     (if (php/< primary 0)
+       [enemies 0 nil 0]
+       (loop [i 0 acc [] killed 0 tough 0 grazed 0 hit-pos nil]
+         (if (php/>= i (count enemies))
+           [acc killed hit-pos tough]
+           (let [e (get enemies i)]
+             (if (not (:alive e))
+               (recur (php/+ i 1) (conj acc e) killed tough grazed hit-pos)
+               (let [dx       (php/- (:x e) px)
+                     dy       (php/- (:y e) py)
+                     proj     (php/+ (php/* dx cos-a) (php/* dy sin-a))
+                     primary? (php/=== i primary)
+                     graze?   (and (not primary?)
+                                   (php/< grazed (php/- max-targets 1))
+                                   (in-shot? e dx dy proj))
+                     dmg      (cond primary? primary-dmg graze? graze-dmg :else 0)]
+                 (if (php/<= dmg 0)
+                   (recur (php/+ i 1) (conj acc e) killed tough grazed hit-pos)
+                   (let [eff     (if (resists? (:type e) damage-type) 0 dmg)
+                         lives   (php/max 0 (php/- (or (:lives e) 1) eff))
+                         woke    (assoc e :state :aware :lives lives)
+                         hp'     (if primary? {:x (:x e) :y (:y e)} hit-pos)
+                         grazed' (if graze? (php/+ grazed 1) grazed)]
+                     (if (php/<= lives 0)
+                       (recur (php/+ i 1)
+                              (conj acc (assoc woke
+                                               :alive false
+                                               :respawn-after (respawn-delay-for e)))
+                              (php/+ killed 1) (php/max tough (or (:max-lives e) 1)) grazed' hp')
+                       (recur (php/+ i 1)
+                              (conj acc (assoc woke :hit-flash-secs hit-flash-seconds))
+                              killed tough grazed' hp')))))))))))))
 
 (defn push-back-enemy
   "Shove the enemy at `idx` along `(cos-a, sin-a)` by `dist` world

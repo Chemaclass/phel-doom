@@ -1,4 +1,5 @@
-(ns phel-doom.core.projection)
+(ns phel-doom.core.projection
+  (:require phel-doom.core.engine :refer [proj-dist]))
 
 ;; ---------------------------------------------------------------------
 ;; Pure vertical-projection kernel. Maps a world height + perpendicular
@@ -73,3 +74,27 @@
      (pitch-rows -1.0 30); => -12 (full look-down, horizon up 12 rows)"
   [^float pitch ^int vh]
   (php/intval (php/round (php/* pitch (php/* pitch-cap vh)))))
+
+(defn sprite-half-rows
+  {:doc "Half the on-screen height (rows) of an enemy billboard at
+         perpendicular distance `dist` in a scene `svh` rows tall, scaled
+         by `scale` (1.0 for standard enemies, 2.0 for the cyberdemon
+         boss). This is HALF the rendered sprite extent, centred on the
+         horizon, so it answers 'how far up/down can the screen-centre
+         crosshair stray and still be on the body'.
+
+         Mirrors the renderer's billboard height exactly:
+         `h = min(svh, intval(scale * proj-dist / (max(0.5, dist) *
+         char-aspect)))`, then `h/2`. The 0.5 distance floor and the
+         `svh` clamp match the sprite path so the vertical hit gate in
+         combat agrees with the pixels drawn (issue #243). Returned as a
+         float so the gate compares `|pitch-rows|` against it without an
+         off-by-one truncation."
+   :see-also ["pitch-rows" "wall-px"]
+   :example "(sprite-half-rows 30 4.0 1.0) ; => 4.0 (proj-dist 70 / (4*2) = 8.75 -> 8 -> /2)"}
+  [^int svh ^float dist ^float scale]
+  (php// (php/min svh
+                  (php/intval (php/* scale
+                                     (php// proj-dist
+                                            (php/* (php/max 0.5 dist) char-aspect)))))
+         2.0))

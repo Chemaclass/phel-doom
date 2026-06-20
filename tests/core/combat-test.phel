@@ -382,6 +382,69 @@
     (is (php/< (:ttl (:hit-fx w1)) 0.1) "ttl decays")
     (is (nil? (:hit-fx w2)) "cleared once ttl runs out")))
 
+;; ---------------------------------------------------------------------
+;; Vertical-aware hitscan (issue #243): a shot must land on the enemy's
+;; drawn billboard, not just its XY column. The loop stamps `:scene-rows`
+;; (scene height) so the gate projects the sprite; the screen-centre
+;; crosshair is `projection/pitch-rows((:pitch player) svh)` rows off the
+;; sprite centre. Closer enemies project a taller sprite, so the same
+;; pitch is more forgiving up close.
+;; ---------------------------------------------------------------------
+
+(defn- shoot-with-pitch
+  ;; Fire the chaingun (single-target hitscan path) once down the corridor
+  ;; at a 1-HP enemy `enemy-x` cells along the axis, with the player's look
+  ;; `pitch` and the renderer-supplied scene height `svh`. Returns the
+  ;; resulting :kills (1 = the gate let the shot land and dropped it,
+  ;; 0 = the crosshair was off the sprite).
+  [enemy-x pitch svh]
+  (let [base (new-world corridor-grid (assoc (new-player 1.5 1.5 0.0) :pitch pitch))
+        w    (assoc base
+                    :scene-rows    svh
+                    :weapon        :chaingun
+                    :owned-weapons #{:chaingun}
+                    :mag           30
+                    :ammo-reserve  10
+                    :fire-cooldown 0.0
+                    :reload-cooldown 0.0
+                    :jam-secs      0.0
+                    :iframes       0.0
+                    :enemies       [(new-enemy enemy-x 1.5 1)])]
+    (or (:kills (tick-shooting w true)) 0)))
+
+(deftest test-vertical-hitscan-level-aim-hits
+  ;; Pitch 0 (crosshair on the horizon): both a near and a far enemy on
+  ;; the axis are hit, exactly like the pre-#243 XY-only hitscan.
+  (is (= 1 (shoot-with-pitch 3.5 0.0 30)) "near body hit at level aim")
+  (is (= 1 (shoot-with-pitch 9.5 0.0 30)) "far body hit at level aim"))
+
+(deftest test-vertical-hitscan-pitch-misses-far-but-hits-near
+  ;; Look up by 0.5 (pr = round(0.5 * 0.4 * 30) = 6 scene rows). The far
+  ;; enemy (d=8) projects a short sprite (half-rows 2.0) so the crosshair
+  ;; clears its head -> miss; the near enemy (d=2) projects a tall sprite
+  ;; (half-rows 8.5) the crosshair still sits on -> hit.
+  (is (= 0 (shoot-with-pitch 9.5 0.5 30)) "distant enemy missed when aiming up")
+  (is (= 1 (shoot-with-pitch 3.5 0.5 30)) "close enemy still hit at the same pitch"))
+
+(deftest test-vertical-hitscan-closer-is-more-forgiving
+  ;; Steeper look-up (pitch 0.7, pr = round(0.7 * 0.4 * 30) = 8). A point-
+  ;; blank enemy (d=1, half-rows 17.5) is still on the body; a mid enemy
+  ;; (d=4, half-rows ~4) is already off it. Closer = harder to miss.
+  (is (= 1 (shoot-with-pitch 2.5 0.7 30)) "point-blank enemy hit even at a steep pitch")
+  (is (= 0 (shoot-with-pitch 5.5 0.7 30)) "mid-range enemy missed at the same steep pitch"))
+
+(deftest test-vertical-hitscan-aim-down-also-misses
+  ;; Symmetric: looking DOWN at the floor (pitch -0.5, pr = -6) overshoots
+  ;; the far enemy the same way looking up does. The gate uses |pr|.
+  (is (= 0 (shoot-with-pitch 9.5 -0.5 30)) "distant enemy missed when aiming at the floor")
+  (is (= 1 (shoot-with-pitch 3.5 -0.5 30)) "close enemy still hit aiming down"))
+
+(deftest test-vertical-hitscan-no-scene-rows-keeps-xy-only
+  ;; A world without :scene-rows (headless / pre-#243 caller) disables the
+  ;; gate: a steep pitch that WOULD miss with a scene height still lands,
+  ;; identical to the old XY-only hitscan. Guards the regression contract.
+  (is (= 1 (shoot-with-pitch 9.5 1.0 nil)) "no scene height => vertical gate off"))
+
 (deftest test-tick-shooting-empty-mag-skip-when-jammed
   ;; Jam already has its own visual cue (paint-door-face / fire-anim).
   ;; Suppress the click so we don't double up.

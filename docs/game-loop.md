@@ -66,7 +66,7 @@ The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself; the g
 | `switch-weapon` (1-8) | Key-edge swap active weapon (no-op while reloading) | `core/weapons` |
 | `try-reveal-secret` / `try-toggle-switch` | F-key adjacent: secret reveal OR switch toggle + targets | `commands/play` |
 | `mark-visible-cells` | Stamp LOS cells onto `:visited` (fog-of-war reveal) | `core/engine` |
-| `tick-stamina` + `apply-physics` | Drain sprint pool; rotate + translate + decay counters | `core/physics` |
+| `tick-stamina` + `apply-physics` | Drain sprint pool; rotate + translate (with Z step/fall) + ease pending fall + decay counters | `core/physics` |
 | `pickup-*` (x9) | Hearts, armor, armor-shards, ammo, berserk, invuln, soulsphere, backpack, weapon | `commands/play` |
 | `tick-enemies` | Step alive enemies; tick respawn + AI + hit-flash | `core/enemy`, `core/enemy_ai` |
 | `tick-projectiles` | Spawn bolts from released casters; march + cull; resolve player impacts | `core/projectile` |
@@ -79,6 +79,15 @@ The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself; the g
 | `advance-game-time` | Add `dt` to pause-aware `:game-time` (render pulses) | `core/state` |
 
 `tick-world` calls no IO. Every cue (pickups, combat, secret reveal, switch) enqueues `{:name :vol}` on `:sfx` via `push-sfx`. Queue reset at tick top, drained + emitted by game-loop after tick, gated on `:sound-on`. Keeps tick pure so tests run full frame sequences without side effects. See [audio.md](audio.md).
+
+## Z traversal: step-up + fall (#233)
+
+`apply-physics` translates, then settles the player's vertical position, all pure (no RNG, no IO):
+
+1. **Step decision (in `try-move`)** - after the move clears the wall / locked-door check, the destination cell's floor height is read from `:floor-pgrid` (`physics/floor-z-at`, nil-safe to 0.0). A riser at most `step-up-max` (0.4) above the floor underfoot is **climbed** instantly (`:floor-z` snaps onto the step via `state/set-floor-z`); a taller riser **blocks** the move exactly like a wall (the player keeps their x/y AND `:floor-z`); a **lower** floor is walked onto but `:floor-z` is left high for now.
+2. **Fall easing (`tick-fall`, after the move)** - sinks `:floor-z` toward the floor under the player's current cell at `fall-speed` (6.0 z/s), clamped so the eye lands exactly on the floor without dipping below. This is what turns a step-down or pit into a smooth descent over a few frames instead of an instant snap. Grounded players (target == current) are a no-op.
+
+`:eye-z` (`:floor-z + state/eye-height`) follows automatically because `set-floor-z` is the only writer. On the flat all-zero world the destination floor always equals the current floor, so neither field ever leaves its default and the renderer stays byte-identical (the pinned-bytes golden in `tests/io/render-cache-test.phel` still holds). See [state.md](state.md) for the field contract.
 
 ## Frame timing + adaptive FPS
 

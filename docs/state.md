@@ -100,12 +100,21 @@ All-zero `:floor-pgrid` is byte-identical to the pre-#232 renderer.
 ## The player
 
 ```phel
-{:x     <float world units>
- :y     <float>
- :angle <float radians>}
+{:x       <float world units>
+ :y       <float>
+ :angle   <float radians>
+ :pitch   <float look up/down fraction in [-1, 1], 0 = level>
+ :floor-z <float world z of the floor underfoot (#233), 0.0 on the ground>
+ :eye-z   <float camera height = floor-z + eye-height (0.5 grounded)>}
 ```
 
-`new-player x y angle` creates. `move-player` does delta translation (no collision); `turn-player` does delta angle. Collision handled at `physics/try-move`.
+`new-player x y angle` creates (spawning grounded: `:floor-z 0.0`, `:eye-z 0.5`). `move-player` does delta translation (no collision); `turn-player` does delta angle. Collision + the Z step/fall decision are handled at `physics/try-move`.
+
+### :floor-z / :eye-z (Z physics, #233)
+
+The player tracks the world `z` of the floor under their feet (`:floor-z`) and a derived camera height `:eye-z = floor-z + state/eye-height` (`eye-height` = 0.5). `state/set-floor-z` is the single writer for the pair, so `:eye-z` can never drift from `:floor-z`. The raycaster reads `:floor-z` as the riser threshold (`do-cast`) and the renderer reads `:eye-z` for the vertical projection, so the view rises and sinks with the floor.
+
+Movement applies the Z decision in `physics/try-move`: a destination cell whose floor is at most `physics/step-up-max` (0.4) above the current floor is climbed instantly; a taller riser blocks the move like a wall; a lower floor is walked onto and then eased down by `physics/tick-fall` at `physics/fall-speed` (a deterministic, RNG-free gravity). On the flat all-zero world the destination floor always equals the current floor, so `:floor-z` / `:eye-z` never leave their defaults and the render stays byte-identical. See [game-loop.md](game-loop.md) for the per-frame ordering.
 
 ## Movement counters (`:moves`)
 

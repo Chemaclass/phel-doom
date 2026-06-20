@@ -8,9 +8,37 @@
                                          gain-life gain-soulsphere decay-soul-overcap
                                          max-armor max-backpacks max-lives
                                          armor-shard-cap soul-overcap-decay-secs
-                                         soulsphere-cap clamp-pitch max-pitch]))
+                                         soulsphere-cap clamp-pitch max-pitch
+                                         eye-height set-floor-z]))
 
 (def grid [[1 1 1] [1 0 1] [1 1 1]])
+
+(deftest test-new-player-starts-grounded-with-eye-half-unit-up
+  ;; #233: fresh players spawn on the flat floor; eye sits eye-height
+  ;; above it so the default view matches the pre-Z-physics 0.5 constant.
+  (let [p (new-player 1.0 2.0 0.0)]
+    (is (= 0.0 (:floor-z p)))
+    (is (= 0.5 (:eye-z p)))
+    (is (= 0.5 eye-height))
+    (is (< (php/abs (- (:eye-z p) (php/+ (:floor-z p) eye-height))) 1.0e-9))))
+
+(deftest test-set-floor-z-rederives-eye-z
+  ;; set-floor-z is the single writer for the Z pair: writing :floor-z
+  ;; re-derives :eye-z = floor-z + eye-height so the two never drift.
+  (let [w  (new-world grid (new-player 1.5 1.5 0.0))
+        w' (set-floor-z w 1.25)
+        p  (:player w')]
+    (is (= 1.25 (:floor-z p)))
+    (is (< (php/abs (- (:eye-z p) 1.75)) 1.0e-9))))
+
+(deftest test-set-floor-z-back-to-ground-restores-defaults
+  ;; Returning to the ground restores the byte-identity defaults exactly.
+  (let [w (-> (new-world grid (new-player 1.5 1.5 0.0))
+              (set-floor-z 2.0)
+              (set-floor-z 0.0))
+        p (:player w)]
+    (is (= 0.0 (:floor-z p)))
+    (is (= 0.5 (:eye-z p)))))
 
 (deftest test-new-player-records-position-and-angle
   (let [p (new-player 1.0 2.0 0.5)]

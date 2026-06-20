@@ -1,0 +1,64 @@
+(ns phel-doom-tests.io.calm-view-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.io.render.buffer :refer [buf-mk])
+  (:require phel-doom.io.render.paint :refer [paint-heartbeat-vignette paint-berserk-tint paint-low-ammo paint-rear-warning paint-berserk-badge]))
+
+;; ---------------------------------------------------------------------
+;; Calm 3D view: the decorative blinks/strobes are gone for EVERYONE
+;; (no per-setting gating). The flicker overlay + blinking door-eye were
+;; removed entirely; the heartbeat + berserk edge cues and the HUD labels
+;; are held STEADY (always-on while their state is live, no on/off pulse).
+;; ---------------------------------------------------------------------
+
+(defn- s [parts] (php/implode "" parts))
+
+;; --- paint-heartbeat-vignette: steady dim-red, no phase pulse --------
+
+(deftest heartbeat-steady-low-health
+  ;; A steady dim-red edge whenever in the last ~2 hearts, regardless of
+  ;; any heartbeat phase (the old phase-driven throb is gone).
+  (let [out (s (paint-heartbeat-vignette (buf-mk) {:lives 2 :heartbeat-phase 0.9} 80 24))]
+    (is (php/str_contains out "\e[48;5;52m") "steady dim-red edge present at low health")))
+
+(deftest heartbeat-stays-off-at-full-health
+  (let [out (s (paint-heartbeat-vignette (buf-mk) {:lives 8 :heartbeat-phase 0.0} 80 24))]
+    (is (= "" out) "no edge above the 2-heart threshold")))
+
+(deftest heartbeat-off-at-death
+  (let [out (s (paint-heartbeat-vignette (buf-mk) {:lives 0 :heartbeat-phase 0.0} 80 24))]
+    (is (= "" out) "no edge when dead")))
+
+;; --- paint-berserk-tint: steady deep-crimson border, never bright ----
+
+(defn- berserk-tint-out [t]
+  (s (paint-berserk-tint (buf-mk) t {:berserk-secs 5.0 :iframes 0.0} 80 24)))
+
+(deftest berserk-tint-steady
+  ;; Deep crimson (88) at every sample time; the old bright pulse frame
+  ;; (124) never appears.
+  (let [a (berserk-tint-out 0.0)
+        b (berserk-tint-out 0.18)]
+    (is (php/str_contains a "\e[48;5;88m") "steady deep crimson present")
+    (is (not (php/str_contains a "\e[48;5;124m")) "no bright pulse at t=0")
+    (is (not (php/str_contains b "\e[48;5;124m")) "no bright pulse at t=0.18")))
+
+;; --- HUD label cues: steady (present at every sample time) -----------
+
+(deftest low-ammo-steady
+  ;; Steady = present at BOTH sample times (a pulsing label would gap).
+  (let [a (s (paint-low-ammo (buf-mk) 0.0  {:mag 1 :ammo-reserve 0} 80))
+        b (s (paint-low-ammo (buf-mk) 0.18 {:mag 1 :ammo-reserve 0} 80))]
+    (is (php/str_contains a "LOW AMMO") "low-ammo shown at t=0")
+    (is (php/str_contains b "LOW AMMO") "low-ammo shown at t=0.18 (steady)")))
+
+(deftest rear-warning-steady
+  (let [a (s (paint-rear-warning (buf-mk) 0.0  {:rear-warning? true} 80))
+        b (s (paint-rear-warning (buf-mk) 0.18 {:rear-warning? true} 80))]
+    (is (php/str_contains a "behind") "rear cue shown at t=0")
+    (is (php/str_contains b "behind") "rear cue shown at t=0.18 (steady)")))
+
+(deftest berserk-badge-steady
+  (let [a (s (paint-berserk-badge (buf-mk) 0.0  {:berserk-secs 5.0} 80))
+        b (s (paint-berserk-badge (buf-mk) 0.18 {:berserk-secs 5.0} 80))]
+    (is (php/str_contains a "BERSERK") "badge shown at t=0")
+    (is (php/str_contains b "BERSERK") "badge shown at t=0.18 (steady)")))

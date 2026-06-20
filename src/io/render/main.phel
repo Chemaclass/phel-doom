@@ -6,8 +6,8 @@
   (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table bg-cell-cache halfblock build-sky-halfblock build-sky-codes-sub seam-darken-16 seam-darken-8 seam-darken-5 collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.wall-texture-data :refer [wall-tex])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type-lod sprite-fade sprite-fade-index sprite-col-x sprite-subcol-x enemy-sprite-cell enemy-sprite-quad])
-  (:require phel-doom.io.render.hud :refer [minimap-door minimap-door-pulse minimap-rows minimap-frame hud-debug-line hud-line-str help-menu-string settings-menu-string pause-menu-string])
-  (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-door-face paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-reload-ready paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-flicker paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-weapon-hud paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols])
+  (:require phel-doom.io.render.hud :refer [minimap-door-pulse minimap-rows minimap-frame hud-debug-line hud-line-str help-menu-string settings-menu-string pause-menu-string])
+  (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-reload-ready paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-weapon-hud paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
   (:require phel-doom.core.projection :refer [char-aspect wall-px pitch-rows project-height])
   (:require phel-doom.core.perf :refer [render-scale])
@@ -621,12 +621,11 @@
 ;; Pickup pulse cadences (rad/s). Each interactive pickup throbs on a
 ;; distinct frequency so co-spawned items read as separate beats instead
 ;; of syncing into one flash. Tuned by feel; frame->string's pulse
-;; bindings below pair each cadence with the glyph it drives.
-(def pulse-freq-door          4.0)
-(def pulse-freq-boss-door     5.0)
+;; bindings below pair each cadence with the glyph it drives. (Doors and
+;; the aggro head no longer pulse - held steady-bright for a calmer 3D
+;; view - so their cadences were dropped.)
 (def pulse-freq-heart         6.0)
 (def pulse-freq-armor         5.0)
-(def pulse-freq-aggro         5.0)
 (def pulse-freq-ammo          7.0)
 (def pulse-freq-berserk       9.0)
 (def pulse-freq-invuln        8.0)
@@ -943,29 +942,27 @@
         sky-c                              sky-code
         floor-c                            floor-code
         ctbl                               shade-code-table
-        ;; Subtle pulse on interactive pickups so the eye picks them
-        ;; out of the wall colours: doors and hearts cycle between
-        ;; two shades on a sin wave. Wall clock so the rhythm stays
-        ;; the same regardless of fps. Frequencies differ (4 vs 6
-        ;; rad/s) so the two pulses don't lock together.
-        door-bright?                       (pulse t pulse-freq-door)
-        door-shade-now                     (if door-bright? "\e[48;5;130;38;5;226m▌" door-shade)
-        door-code-now                      (if door-bright? "130" door-code)
-        ;; Boss door pulses on a faster, alarm-ish beat (5 rad/s) so
-        ;; the L10 exit reads as 'kill the boss to open' even at the
-        ;; far end of the arena.
-        boss-door-bright?                  (pulse t pulse-freq-boss-door)
-        boss-door-shade-now                (if boss-door-bright? "\e[48;5;124;38;5;226;1m▌" boss-door-shade)
-        boss-door-code-now                 (if boss-door-bright? "124" boss-door-code)
+        ;; Calmer 3D view: doors and the aggro head are held STEADY on
+        ;; their bright frame instead of pulsing between two shades. The
+        ;; door already reads as a door from its glyph + full-brightness
+        ;; shade (and stays findable down the arena); the aggro head reads
+        ;; as 'in striking range' from its bright head colour. The old
+        ;; sin-wave throb was visual noise, not information.
+        door-shade-now                     "\e[48;5;130;38;5;226m▌"
+        door-code-now                      "130"
+        boss-door-shade-now                "\e[48;5;124;38;5;226;1m▌"
+        boss-door-code-now                 "124"
         ;; Pickup pulse: systole/diastole BG + matching centre glyph
-        ;; both swap on the same beat so the icon throbs in tempo.
+        ;; both swap on the same beat so the icon throbs in tempo. Kept:
+        ;; a gentle two-shade glow that draws the eye to interactables,
+        ;; NOT an on/off blink. (See docs/rendering.md, calm-view note.)
         heart-bright?                      (pulse t pulse-freq-heart)
         heart-shade-now                    (if heart-bright? heart-shade-bright heart-shade)
         heart-glyph-now                    (if heart-bright? heart-glyph-bright heart-glyph)
         armor-bright?                      (pulse t pulse-freq-armor)
-        ;; Aggro head pulse: same code-driven swap so a monster in
-        ;; striking range throbs without relying on terminal blink.
-        aggro-bright?                      (pulse t pulse-freq-aggro)
+        ;; Aggro head held steady-bright (calm 3D view): a monster in
+        ;; striking range shows its full head colour, no throb.
+        aggro-bright?                      true
         armor-shade-now                    (if armor-bright? armor-shade-bright armor-shade)
         armor-glyph-now                    (if armor-bright? armor-glyph-bright armor-glyph)
         ;; Ammo-box pulse: warm-brown crate to yellow flare at 7 rad/s
@@ -1061,7 +1058,10 @@
                               :sky-c sky-c :floor-c floor-c
                               :door-shade-now door-shade-now
                               :door-code-now  door-code-now
-                              :door-tex-boost (if door-bright? 3 0)
+                              ;; Steady door brightness (calm 3D view): the
+                              ;; door always rides the fog +3 levels brighter,
+                              ;; no sin-wave swap between boosted and base.
+                              :door-tex-boost 3
                               :boss-door-shade-now boss-door-shade-now
                               :boss-door-code-now  boss-door-code-now
                               :sky-code-grad         sky-code-gradient
@@ -1136,10 +1136,10 @@
         ;; zone pass lifts the sprite by it).
         enemy-projs                        (collect-enemy-projs (:enemies world) (:player world) vw
                                                                 (:floor-pgrid world))
-        ;; Pulse the minimap door glyph on the same beat as the 3D
+        ;; Steady-bright minimap door glyph, matching the now-steady 3D
         ;; door shade so the exit catches the eye both in first-person
-        ;; and on the overhead map.
-        mini-door                          (if door-bright? minimap-door-pulse minimap-door)
+        ;; and on the overhead map (calmer 3D view: no blink).
+        mini-door                          minimap-door-pulse
         mrows                              (if (:show-map world)
                                              (minimap-rows world mini-door map-step)
                                              (buf-mk))
@@ -2260,12 +2260,10 @@
             ;; Freedoom sprites already show a face, so skip it in sprite mode.
             p1          (if sprites-on parts
                             (paint-face-overlay parts world stats svw svh dists edists face-phase px-sc pr))
-            p3          (paint-door-face          p1 stats svw svh hits tops bots px-sc)
-            p4          (paint-crosshair          p3 stats vw vh center-bg)
+            p4          (paint-crosshair          p1 stats vw vh center-bg)
             p5          (paint-intro-splash       p4 stats vw vh)
             p6          (paint-blood-drops        p5 stats vw vh)
-            p7          (paint-flicker            p6 stats vw vh)
-            p8          (paint-heartbeat-vignette p7 stats vw vh)
+            p8          (paint-heartbeat-vignette p6 stats vw vh)
             p9          (paint-hit-vignette       p8 stats bloody? vw vh)
             p9b         (paint-berserk-tint       p9 t stats vw vh)
             p10         (paint-heat-bar           p9b t stats vw vh)

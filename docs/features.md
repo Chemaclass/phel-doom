@@ -70,19 +70,19 @@ See [monsters.md](monsters.md), [combat.md](combat.md).
 
 Triggered on life drop or enemy proximity:
 
-- Heartbeat (last 2 hearts, <=4 HP): red edge vignette + low thump every 0.90s, accelerating to 0.55s in the last heart.
-- Lights flicker: brief scanline darken every 20-30s (calm), 6-12s in the last 2 hearts.
-- Jump-scare (enemy 3.5 units): magenta wide-eyed skull on face for 600ms.
+- Heartbeat (last 2 hearts, <=4 HP): steady dim-red edge vignette + low thump every 0.90s, accelerating to 0.55s in the last heart. (The edge no longer throbs - calm 3D view; the thump audio still pulses.)
 - Sudden silence (enemy 1.5 units): all sfx muted 400ms.
 - Wall haze (last 3 hearts, <=6 HP): wall shades darken as health drops, doors stay bright (nav cue).
 - Blood drops (last 3 hearts, <=6 HP): random red trails from ceiling.
-- Door eye: blinking red o flashes on every visible door every 8-18s for 500ms.
-- Behind: dim red blinker below compass when alive enemy in rear 90° wedge, 10 units.
+- Behind: steady dim-red `‹ behind ›` cue below compass when alive enemy in rear 90° wedge, 10 units.
+
+The decorative lights-flicker, the jump-scare face flash, and the blinking door-eye were removed for a calmer 3D view (see [Accessibility](#accessibility) and [rendering.md](rendering.md#calm-3d-view-no-decorative-blinks)).
 
 ## Accessibility
 
 - High contrast (Settings toggle, default off): un-dims the dim/grey HUD elements (compass non-facing letters, empty heart pips, healthy ammo reserve) to bold white so the HUD reads on washed-out / low-quality terminals. Pure overlay branch, no frame-speed cost.
-- Reduced motion (Settings toggle, default off; `PHEL_DOOM_REDUCED_MOTION=1` to force on): photosensitivity-safe mode that gates the strobing horror beats. Lights-flicker scanlines are dropped; the low-health heartbeat edge and the berserk border hold steady instead of pulsing; the jump-scare face flash is suppressed; the door-eye drops its terminal hardware blink (SGR 5) for a static eye; and the pulsing HUD labels (low-ammo, behind-you) and powerup banners hold steady. Essential single-shot feedback (directional hit-vignette, kill flash) is kept. Pure overlay branch, no frame-speed cost.
+- Calm 3D view (default for everyone): the gameplay view carries no decorative blinks or strobes. The lights-flicker overlay, the jump-scare face flash and the blinking door-eye are removed entirely (decoration, no info); the low-health heartbeat edge, the berserk border, the low-ammo / behind-you / reload HUD labels, the powerup banners, the JAMMED chip and the low-health hearts strip are held steady (info kept, on/off pulse dropped); doors and aggro heads stay steady-bright. There is no `\e[5` terminal hardware-blink anywhere in the renderer. Essential single-shot feedback (directional hit-vignette, kill flash, CLICK prompt, crosshair hit-marker) and the gentle interactive-pickup glow are kept. Pure overlay branch, no frame-speed cost. See [rendering.md](rendering.md#calm-3d-view-no-decorative-blinks).
+- Reduced motion (Settings toggle, default off; `PHEL_DOOM_REDUCED_MOTION=1` to force on): retained for back-compat. Since the calm 3D view above is now unconditional, this toggle no longer changes the render; it still persists and shows in the menu.
 
 ## Audio
 

@@ -25,6 +25,99 @@
    the first frame isn't an ambush."
   3.0)
 
+;; ---------------------------------------------------------------------
+;; Stair / platform / pit showcase (issue #237). Turns the dormant
+;; variable-height feature (#232 floor / #235 ceiling / #233 Z physics)
+;; ON for players. Geometry is authored as a flat `:layout` room plus a
+;; `:floor-heights` map so every raised cell lands on a known floor cell
+;; (a procgen room could drop a step onto a wall). Lives on L2 so the
+;; player meets verticality right after the flat L1 tutorial; L1 itself
+;; stays flat (it is the golden-frame render fixture).
+;; ---------------------------------------------------------------------
+
+(def showcase-step-rise
+  "Per-step floor rise on the showcase staircase, in world z. Kept at or
+   below `physics/step-up-max` (0.4) so each step auto-climbs when the
+   player walks into it instead of blocking like a wall."
+  0.3)
+
+(def showcase-pit-depth
+  "How far the showcase pit floor sits below the surrounding ground, in
+   world z (a negative floor). Set to one step-up so the player drops in
+   under gravity and can still walk back out (the 0.4 rise back to ground
+   is exactly `physics/step-up-max`)."
+  -0.4)
+
+(defn- rect-heights
+  "Build a `{[x y] h}` floor/ceiling-height map covering the inclusive
+   cell rectangle `[x0..x1] x [y0..y1]`, every cell set to height `h`.
+   Pure data helper for composing showcase geometry; the per-cell maps
+   `apply-floor-heights` / `apply-ceil-heights` consume have exactly this
+   `[x y] -> height` shape."
+  [^int x0 ^int y0 ^int x1 ^int y1 ^float h]
+  (loop [y   y0
+         acc {}]
+    (if (php/> y y1)
+      acc
+      (recur (php/+ y 1)
+             (loop [x x0 row-acc acc]
+               (if (php/> x x1)
+                 row-acc
+                 (recur (php/+ x 1) (assoc row-acc [x y] h))))))))
+
+(def showcase-floor-heights
+  "Per-cell floor `z` for the L2 showcase (#237): a four-step staircase
+   rising north (rows 8->5, cols 8-13) onto a raised platform plateau
+   (rows 2-4, same cols) that serves as a vantage, plus a sunken pit in
+   the south-west (rows 12-13, cols 4-7). Each stair is one
+   `showcase-step-rise`; the plateau holds the top stair height so the
+   step-top and platform read as one continuous walkable surface."
+  (merge
+   ;; Staircase: four ascending steps (south high-y -> north low-y).
+   (rect-heights 8 8 13 8 (* 1.0 showcase-step-rise))             ; z 0.3
+   (rect-heights 8 7 13 7 (* 2.0 showcase-step-rise))             ; z 0.6
+   (rect-heights 8 6 13 6 (* 3.0 showcase-step-rise))             ; z 0.9
+   (rect-heights 8 5 13 5 (* 4.0 showcase-step-rise))             ; z 1.2
+   ;; Platform plateau at the top-stair height (a raised vantage).
+   (rect-heights 8 2 13 4 (* 4.0 showcase-step-rise))             ; z 1.2
+   ;; Sunken pit (negative floor) the player drops into and climbs out of.
+   (rect-heights 4 12 7 13 showcase-pit-depth)))                  ; z -0.4
+
+(def showcase-ceil-heights
+  "Per-cell ceiling `z` for the L2 showcase (#237): a low lintel (z 0.7,
+   below the default 1.0) hanging over the landing row at the foot of the
+   staircase (row 9, cols 8-13), so the climb opens out of a low passage
+   onto the platform. Only ceilings BELOW 1.0 render (a hanging ceiling);
+   a higher value would be invisible, so the accent is a drop, not a lift."
+  (rect-heights 8 9 13 9 0.7))
+
+(def showcase-layout
+  "Flat 24x18 chamber for the L2 verticality showcase (#237). The walls +
+   spawn live here; the staircase / platform / pit are NOT layout chars -
+   they are stamped separately from `showcase-floor-heights` so each
+   raised cell lands on a known floor cell. Spawn `@` is south-of-centre
+   (cell 11, row 15 -> centre 11.5, 15.5), looking out across the room
+   toward the staircase to the north. `showcase-floor-heights` /
+   `showcase-ceil-heights` index these same cells."
+  ["########################"
+   "#......................#"
+   "#......................#"
+   "#......................#"
+   "#......................#"
+   "#......................#"
+   "#......................#"
+   "#......................#"
+   "#......................#"
+   "#......................#"
+   "#......................#"
+   "#......................#"
+   "#......................#"
+   "#......................#"
+   "#......................#"
+   "#..........@...........#"
+   "#......................#"
+   "########################"])
+
 (def levels
   "Per-level configuration. Each entry is intentionally tiny — visuals
    live in `enemies.phel` so a new level needs only disposition data
@@ -57,9 +150,22 @@
   ;; where you learn move + shoot against the simplest foe before any
   ;; mixing starts.
   [{:size [22 16] :walls 12 :enemy :imp   :enemies 4 :chase 0.8 :name "imps"}
-   {:size [28 20] :walls 22 :enemy :demon :chase 1.0 :name "demons"
+   ;; L2 — the verticality showcase (issue #237). Hand-authored so the
+   ;; floor heights land on known cells: a flat south entrance, a
+   ;; four-step staircase climbing north onto a raised platform plateau
+   ;; (a vantage over the room), and a sunken pit in the south-west the
+   ;; player drops into and walks back out of. A low lintel hangs over
+   ;; the stair foot. Demons + an imp escort patrol the floor; one
+   ;; standing on the platform rises to stand on it (#234 enemy
+   ;; floor-anchor). Keeps the L2 identity (name, demon+imp mix, chase
+   ;; 1.0, shotgun drop) so progression + balance are unchanged - only
+   ;; the geometry is now authored verticality instead of procgen.
+   {:enemy :demon :chase 1.0 :name "demons"
     :enemies [{:type :demon :count 5}
-              {:type :imp   :count 2}]}
+              {:type :imp   :count 2}]
+    :layout        showcase-layout
+    :floor-heights showcase-floor-heights
+    :ceil-heights  showcase-ceil-heights}
    ;; L3 introduces the cacodemon shooter; a 50/50 melee mix (demon +
    ;; imp callback) pressures the player up close while they learn to
    ;; strafe the bolts.

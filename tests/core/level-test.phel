@@ -305,3 +305,101 @@
   (let [w (build-world 1 1 0 :nightmare)]
     (is (= 5 (count (:armor-shards w))) "nightmare seeds 5 shards")
     (is (= 2 (count (:hearts w))) "nightmare seeds 2 hearts")))
+
+;; ---------------------------------------------------------------------
+;; L2 verticality showcase (issue #237): the level that turns the
+;; variable-height feature ON for players. build-world stamps the
+;; staircase / platform / pit heights from the level config's
+;; :floor-heights onto :floor-pgrid, and the low lintel from
+;; :ceil-heights onto :ceil-pgrid. The L2 progression identity (name,
+;; demon+imp mix) is preserved so the rest of the run is unchanged.
+;; ---------------------------------------------------------------------
+
+(defn- floor-h
+  "Floor z stamped at cell (x, y) on a built world's :floor-pgrid."
+  [world x y]
+  (php/aget (php/aget (:floor-pgrid world) y) x))
+
+(defn- ceil-h
+  "Ceiling z stamped at cell (x, y) on a built world's :ceil-pgrid."
+  [world x y]
+  (php/aget (php/aget (:ceil-pgrid world) y) x))
+
+(deftest test-showcase-level-loads-and-keeps-l2-identity
+  ;; The showcase rides on L2: it must still be the "demons" room (name,
+  ;; primary enemy, chase) and a demon + imp mix so the difficulty curve
+  ;; and weapon-drop progression are untouched - only the geometry is now
+  ;; hand-authored verticality.
+  (let [w     (build-world 2 5)
+        types (set (map :type (:enemies w)))]
+    (is (= "demons" (:level-name w)))
+    (is (= :demon   (:enemy w)))
+    (is (= 1.0      (:chase-speed w)))
+    (is (contains? types :demon) "demons present")
+    (is (contains? types :imp)   "imp escort present")
+    ;; Hand-authored layout parsed (not random-grid): 24x18 with the
+    ;; south spawn @ at cell centre (11.5, 15.5).
+    (is (= 24  (count (first (:grid w)))))
+    (is (= 18  (count (:grid w))))
+    (is (= 11.5 (:x (:player w))))
+    (is (= 15.5 (:y (:player w))))))
+
+(deftest test-showcase-staircase-rises-one-step-per-cell
+  ;; The four stair cells (col 10, rows 8->5) climb by 0.3 each, every
+  ;; rise <= step-up-max (0.4) so the whole flight is walkable.
+  (let [w (build-world 2 5)]
+    (is (< (php/abs (- (floor-h w 10 8) 0.3)) 1.0e-9) "step 1 = 0.3")
+    (is (< (php/abs (- (floor-h w 10 7) 0.6)) 1.0e-9) "step 2 = 0.6")
+    (is (< (php/abs (- (floor-h w 10 6) 0.9)) 1.0e-9) "step 3 = 0.9")
+    (is (< (php/abs (- (floor-h w 10 5) 1.2)) 1.0e-9) "step 4 = 1.2")
+    ;; Every successive rise is one 0.3 step (<= 0.4 step-up-max).
+    (is (< (php/abs (- (- (floor-h w 10 7) (floor-h w 10 8)) 0.3)) 1.0e-9))
+    (is (< (php/abs (- (- (floor-h w 10 6) (floor-h w 10 7)) 0.3)) 1.0e-9))
+    (is (< (php/abs (- (- (floor-h w 10 5) (floor-h w 10 6)) 0.3)) 1.0e-9))))
+
+(deftest test-showcase-platform-is-a-raised-plateau
+  ;; Rows 2-4 (cols 8-13) sit flat at the top-stair height (1.2): a
+  ;; vantage continuous with the stair top, so the cap reads as one
+  ;; surface. Sample the corners + centre of the plateau.
+  (let [w (build-world 2 5)]
+    (is (< (php/abs (- (floor-h w 8 2)  1.2)) 1.0e-9) "plateau NW corner")
+    (is (< (php/abs (- (floor-h w 13 4) 1.2)) 1.0e-9) "plateau SE corner")
+    (is (< (php/abs (- (floor-h w 10 3) 1.2)) 1.0e-9) "plateau centre")
+    ;; Continuous with the top stair (row 5) - no lip between them.
+    (is (< (php/abs (- (floor-h w 10 4) (floor-h w 10 5))) 1.0e-9))))
+
+(deftest test-showcase-pit-is-sunken-below-the-floor
+  ;; The south-west pit (rows 12-13, cols 4-7) sits one step BELOW ground
+  ;; at -0.4, so the player drops in and the 0.4 climb back out is exactly
+  ;; walkable.
+  (let [w (build-world 2 5)]
+    (is (< (php/abs (- (floor-h w 4 12) -0.4)) 1.0e-9) "pit NW corner")
+    (is (< (php/abs (- (floor-h w 7 13) -0.4)) 1.0e-9) "pit SE corner")
+    (is (php/< (floor-h w 5 12) 0.0) "pit floor is below ground")))
+
+(deftest test-showcase-ground-stays-flat-off-the-features
+  ;; The entrance / landing the player spawns on is still flat (0.0) - the
+  ;; heights only touch the authored staircase / platform / pit cells, so
+  ;; the rest of the room walks like the classic floor.
+  (let [w (build-world 2 5)]
+    (is (= 0.0 (floor-h w 11 15)) "spawn cell flat")
+    (is (= 0.0 (floor-h w 10 11)) "landing at the stair foot flat")
+    (is (= 0.0 (floor-h w 18 8))  "east side flat")))
+
+(deftest test-showcase-low-ceiling-lintel-over-the-stair-foot
+  ;; The landing row at the foot of the stairs (row 9, cols 8-13) carries
+  ;; a hanging ceiling at 0.7 (below the default 1.0) so the climb opens
+  ;; out of a low passage; the rest of the ceiling is the flat 1.0.
+  (let [w (build-world 2 5)]
+    (is (< (php/abs (- (ceil-h w 8 9)  0.7)) 1.0e-9) "lintel west end")
+    (is (< (php/abs (- (ceil-h w 13 9) 0.7)) 1.0e-9) "lintel east end")
+    (is (php/< (ceil-h w 10 9) 1.0) "lintel hangs below the default ceiling")
+    (is (= 1.0 (ceil-h w 10 8))  "ceiling above the lintel is flat 1.0")
+    (is (= 1.0 (ceil-h w 11 15)) "ceiling over the spawn is flat 1.0")))
+
+(deftest test-showcase-keeps-the-catalog-at-ten-levels
+  ;; Riding the showcase on L2 (not appending a new level) keeps "the
+  ;; final" boss arena as the last level, so the win condition
+  ;; (reach num-levels) and the out-of-range clamp are unchanged.
+  (is (= 10 num-levels))
+  (is (= "the final" (:name (config-for num-levels)))))

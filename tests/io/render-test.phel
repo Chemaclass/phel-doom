@@ -1,6 +1,7 @@
 (ns phel-doom-tests.io.render-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.engine :refer [proj-dist])
+  (:require phel-doom.core.level :refer [build-world])
   (:require phel-doom.core.projection :refer [wall-px])
   (:require phel-doom.io.render.frame-math :refer [floor-offset-rows project-enemy-pd sprite-h-pd])
   (:require phel-doom.io.render :refer [direction-char project-enemy enemy-front-visible-at? reload-reminder-visible? help-menu-rows]))
@@ -219,6 +220,31 @@
         "enemy on a platform draws higher than on flat ground")
     (is (= (php/intdiv (php/- svh flat-h) 2) (enemy-top-row flat svh))
         "flat-ground top row is the unchanged horizon-centred value")))
+
+;; ---------------------------------------------------------------------
+;; Showcase level enemy anchor (issue #237 x #234): a monster standing on
+;; the L2 platform plateau (cell floor z 1.2) rises to stand ON it, while
+;; one on the flat landing floats at the horizon. Driven on the REAL
+;; built world's :floor-pgrid so the showcase's authored heights are what
+;; anchors the sprite, not a hand-raised fixture.
+;; ---------------------------------------------------------------------
+
+(deftest test-showcase-enemy-on-platform-anchors-up
+  ;; Player stands on the flat landing looking north up the staircase.
+  ;; An enemy on a platform cell (10,3 = z 1.2) carries a POSITIVE
+  ;; :floor-offset (the sprite shifts up onto the plateau); an enemy on a
+  ;; flat landing cell (10,11 = z 0) carries 0 (no shift), proving the
+  ;; anchor only fires where the level actually raised the floor.
+  (let [fpg     (:floor-pgrid (build-world 2 5))
+        player  {:x 10.5 :y 13.5 :angle (php/* 1.5 php/M_PI)} ; face north (-y)
+        on-plat (project-enemy-pd proj-dist {:x 10.5 :y 3.5 :alive true}
+                                  player 80 fpg)
+        on-flat (project-enemy-pd proj-dist {:x 10.5 :y 11.5 :alive true}
+                                  player 80 fpg)]
+    (is (php/> (:floor-offset on-plat) 0)
+        "enemy on the platform plateau rises to stand on it")
+    (is (= 0 (:floor-offset on-flat))
+        "enemy on the flat landing is not shifted")))
 
 ;; ---------------------------------------------------------------------
 ;; enemy-front-visible-at?: per-column "front-most enemy" gate shared by

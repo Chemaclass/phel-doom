@@ -637,3 +637,65 @@
         p      (:player w)]
     (is (< (php/abs (- (:y p) 11.5)) 0.0001) "climbed up out of the pit")
     (is (< (php/abs (- (:floor-z p) 0.0)) 1.0e-9) "back on ground level")))
+
+;; ---------------------------------------------------------------------
+;; Campaign verticality traversal (L3 / L5 / L7): the player walks the
+;; REAL authored geometry each level ships, exercising step-up + gravity
+;; end-to-end on the built world (build-world N) so the floor-heights the
+;; level config stamps are the ones under test. North is -y.
+;; ---------------------------------------------------------------------
+
+(deftest test-l7-player-climbs-the-staircase
+  ;; Start on the flat foot of the L7 staircase (cell 5,13 = z0) and walk
+  ;; north one cell at a time: each of the three steps must be accepted
+  ;; (the player advances a row) AND floor-z must rise by one 0.35 step,
+  ;; ending on the ledge-height top step (1.05). Proves the whole flight is
+  ;; auto-climbable (every rise <= step-up-max).
+  (let [w0 (place-on-cell (build-world 7 5) 5 13)]
+    (let [w1 (try-move w0 0.0 -1.0)
+          p1 (:player w1)]
+      (is (< (php/abs (- (:y p1) 12.5)) 0.0001) "advanced onto step 1")
+      (is (< (php/abs (- (:floor-z p1) 0.35)) 1.0e-9) "climbed to z 0.35")
+      (let [w2 (try-move w1 0.0 -1.0)
+            p2 (:player w2)]
+        (is (< (php/abs (- (:y p2) 11.5)) 0.0001) "advanced onto step 2")
+        (is (< (php/abs (- (:floor-z p2) 0.70)) 1.0e-9) "climbed to z 0.70")
+        (let [w3 (try-move w2 0.0 -1.0)
+              p3 (:player w3)]
+          (is (< (php/abs (- (:y p3) 10.5)) 0.0001) "advanced onto the top step")
+          (is (< (php/abs (- (:floor-z p3) 1.05)) 1.0e-9) "climbed to z 1.05")
+          (is (< (php/abs (- (:eye-z p3) 1.55)) 1.0e-9) "eye = floor + 0.5"))))))
+
+(deftest test-l5-player-climbs-the-dais-ramp
+  ;; Start on the flat ground south of the L5 dais (cell 14,14 = z0) and
+  ;; walk north up the two-step ramp onto the plateau: 0 -> 0.4 -> 0.8 ->
+  ;; 0.8 (flat onto the plateau, no lip). Every rise <= step-up-max.
+  (let [w0 (place-on-cell (build-world 5 5) 14 14)
+        w1 (try-move w0 0.0 -1.0)
+        w2 (try-move w1 0.0 -1.0)
+        w3 (try-move w2 0.0 -1.0)
+        p3 (:player w3)]
+    (is (< (php/abs (- (:floor-z (:player w1)) 0.4)) 1.0e-9) "ramp step 1")
+    (is (< (php/abs (- (:floor-z (:player w2)) 0.8)) 1.0e-9) "ramp step 2")
+    (is (< (php/abs (- (:y p3) 11.5)) 0.0001) "stepped onto the plateau")
+    (is (< (php/abs (- (:floor-z p3) 0.8)) 1.0e-9) "plateau height, no lip")))
+
+(deftest test-l3-player-descends-and-climbs-out-of-the-trench
+  ;; Walk south from the flat ground (cell 13,8 = z0) DOWN into the trench:
+  ;; rim -0.4 then bottom -0.8, each a 0.4 step the player walks off (floor
+  ;; eases down via gravity, the move itself always accepted).
+  (let [edge (place-on-cell (build-world 3 5) 13 8)
+        w1   (try-move edge 0.0 1.0)   ; onto rim (row 9)
+        w2   (try-move w1 0.0 1.0)]    ; onto bottom (row 10)
+    (is (< (php/abs (- (:y (:player w1)) 9.5)) 0.0001) "stepped onto the rim")
+    (is (< (php/abs (- (:y (:player w2)) 10.5)) 0.0001) "stepped onto the bottom")
+    ;; tick-fall settles the eye onto the trench bottom (-0.8) without
+    ;; overshoot, then the player climbs back out one 0.4 tier at a time.
+    (let [landed (tick-fall w2 10.0)]
+      (is (< (php/abs (- (:floor-z (:player landed)) -0.8)) 1.0e-9)
+          "settled on the trench bottom")
+      (let [up1 (try-move (place-on-cell landed 13 10) 0.0 -1.0)   ; bottom -> rim
+            up2 (try-move up1 0.0 -1.0)]                           ; rim -> ground
+        (is (< (php/abs (- (:floor-z (:player up1)) -0.4)) 1.0e-9) "climbed to rim")
+        (is (< (php/abs (- (:floor-z (:player up2)) 0.0)) 1.0e-9) "climbed back to ground")
+        (is (< (php/abs (- (:y (:player up2)) 8.5)) 0.0001) "back on flat ground")))))

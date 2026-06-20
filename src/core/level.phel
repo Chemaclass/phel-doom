@@ -118,6 +118,204 @@
    "#......................#"
    "########################"])
 
+;; ---------------------------------------------------------------------
+;; Campaign verticality beyond the L2 showcase. Each of L3 / L5 / L7
+;; gets a DISTINCT walkable feature, authored the same way the showcase
+;; is: a flat `:layout` room plus a separate `{[x y] z}` height map, so
+;; every raised / lowered cell is guaranteed to land on a known floor
+;; cell (a procgen room could drop a step onto a wall). Every rise the
+;; player climbs is <= `physics/step-up-max` (0.4); pits are one step-up
+;; deep per tier so the player falls in under gravity and walks back out.
+;; The exit door + any keycard reachability is never gated by geometry
+;; (the surrounding ground stays flat and walkable around every feature).
+;; ---------------------------------------------------------------------
+
+(def trench-step-drop
+  "Per-tier floor DROP (negative world z) on the L3 descending trench.
+   Each tier is one `physics/step-up-max` deep, so the player descends a
+   tier at a time and the climb back UP each tier is exactly the 0.4
+   auto-climb ceiling - a stepped pit, walkable both ways."
+  -0.4)
+
+(def l3-layout
+  "Flat 28x24 chamber for the L3 descending-trench feature. A sunken
+   corridor runs east-west across the room's middle: the floor steps DOWN
+   one tier on its rim (rows 9 + 13), then a deeper tier at the bottom
+   (rows 10-12), so the player walks DOWN into the trench and climbs back
+   out the far side. Spawn `@` is south-of-centre (cell 13, row 20 ->
+   centre 13.5, 20.5). The exit `D` is on the east wall at the flat spawn
+   row (row 20, col 27), reachable by skirting the trench along the flat
+   flanking ground. The flanking columns (cols 1-4 + 23-26) stay flat
+   ground so the player can always skirt the trench to reach the exit;
+   `l3-floor-heights` indexes these same cells."
+  ["############################"
+   "#..........................#"
+   "#..........................#"
+   "#..........................#"
+   "#..........................#"
+   "#..........................#"
+   "#..........................#"
+   "#..........................#"
+   "#..........................#"
+   "#..........................#"
+   "#..........................#"
+   "#..........................#"
+   "#..........................#"
+   "#..........................#"
+   "#..........................#"
+   "#..........................#"
+   "#..........................#"
+   "#..........................#"
+   "#..........................#"
+   "#..........................#"
+   "#............@.............D"
+   "#..........................#"
+   "#..........................#"
+   "############################"])
+
+(def l3-floor-heights
+  "Per-cell floor `z` for the L3 descending trench. The trench spans cols
+   5-22; its rim rows (9 + 13) sit one `trench-step-drop` down (-0.4) and
+   the three bottom rows (10-12) one tier deeper (-0.8). Walking south into
+   it: ground 0 -> rim -0.4 -> bottom -0.8, each a 0.4 step (auto-falls);
+   climbing back out reverses it, each 0.4 rise <= step-up-max so it is
+   walkable both directions. The flat flanking ground (cols 1-4, 23-26)
+   carries no entry, so it reads as the classic 0.0 floor a player can
+   skirt the trench on."
+  (merge
+   ;; Upper + lower rim: one tier down.
+   (rect-heights 5 9 22 9 (* 1.0 trench-step-drop))     ; z -0.4
+   (rect-heights 5 13 22 13 (* 1.0 trench-step-drop))   ; z -0.4
+   ;; Trench bottom: a second tier deeper.
+   (rect-heights 5 10 22 12 (* 2.0 trench-step-drop)))) ; z -0.8
+
+(def dais-step-rise
+  "Per-step floor rise on the L5 central dais ramp, in world z. At or
+   below `physics/step-up-max` (0.4) so each step auto-climbs."
+  0.4)
+
+(def l5-layout
+  "Flat 30x26 chamber for the L5 raised-dais feature. A raised square
+   platform sits dead-centre (a vantage in the cyberdemon arena) reached
+   by a short two-step ramp on its south face; the rest of the floor is
+   flat ground that rings the dais, so the red-locked exit is always
+   reachable around it. Spawn `@` is south (cell 14, row 22 -> centre
+   14.5, 22.5), facing the dais. The red-locked exit `R` is on the east
+   wall at the flat spawn row (row 22, col 29), reachable along the ground
+   ring without ever climbing the dais. `l5-floor-heights` indexes these
+   cells."
+  ["##############################"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#.............@..............R"
+   "#............................#"
+   "#............................#"
+   "##############################"])
+
+(def l5-floor-heights
+  "Per-cell floor `z` for the L5 central dais: a 6x4 raised plateau (cols
+   12-17, rows 8-11) standing two `dais-step-rise` (0.8) above the ground,
+   reached by a two-step ramp on its south face (row 13 at z 0.4, row 12
+   at z 0.8) directly in front of the spawn. Ground 0 -> ramp 0.4 ->
+   ramp-top / plateau 0.8: each rise is one 0.4 step (<= step-up-max), and
+   the plateau cap is continuous with the ramp top (no lip). The
+   surrounding flat ground rings the dais so the exit + red keycard stay
+   reachable without ever climbing it."
+  (merge
+   ;; Two-step ramp up the dais south face (cols 13-16).
+   (rect-heights 13 13 16 13 (* 1.0 dais-step-rise))  ; z 0.4
+   (rect-heights 13 12 16 12 (* 2.0 dais-step-rise))  ; z 0.8
+   ;; Raised plateau (the dais top) at the ramp-top height.
+   (rect-heights 12 8 17 11 (* 2.0 dais-step-rise))))  ; z 0.8
+
+(def l7-step-rise
+  "Per-step floor rise on the L7 staircase, in world z. At or below
+   `physics/step-up-max` (0.4) so each step auto-climbs."
+  0.35)
+
+(def l7-layout
+  "Flat 30x26 chamber for the L7 staircase + ledge + low-ceiling tunnel.
+   A three-step staircase on the room's west climbs north onto a raised
+   ledge running along the north wall; a low-ceiling tunnel hangs over the
+   staircase approach so the climb threads a cramped passage onto the
+   vantage. The east half stays open flat ground so the yellow-locked exit
+   is reachable without the climb. Spawn `@` is south-east (cell 22, row
+   22 -> centre 22.5, 22.5). The yellow-locked exit `Y` is on the east
+   wall at the flat spawn row (row 22, col 29), reachable across the open
+   east half without the climb. `l7-floor-heights` / `l7-ceil-heights`
+   index these cells."
+  ["##############################"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#............................#"
+   "#.....................@......Y"
+   "#............................#"
+   "#............................#"
+   "##############################"])
+
+(def l7-floor-heights
+  "Per-cell floor `z` for the L7 staircase + ledge. A three-step flight on
+   the west (cols 3-7) climbs north (rows 12 -> 10) by one `l7-step-rise`
+   (0.35) each, onto a ledge plateau (cols 3-11, rows 2-9) at the
+   top-step height. Ground 0 -> 0.35 -> 0.70 -> 1.05: each rise <=
+   step-up-max (0.4), so the flight auto-climbs; the ledge cap is
+   continuous with the top step. The east half stays flat ground (no
+   entry) so the exit stays reachable off the climb."
+  (merge
+   ;; Three ascending steps (south high-row -> north low-row), cols 3-7.
+   (rect-heights 3 12 7 12 (* 1.0 l7-step-rise))  ; z 0.35
+   (rect-heights 3 11 7 11 (* 2.0 l7-step-rise))  ; z 0.70
+   (rect-heights 3 10 7 10 (* 3.0 l7-step-rise))  ; z 1.05
+   ;; Ledge plateau at the top-step height (a raised vantage).
+   (rect-heights 3 2 11 9 (* 3.0 l7-step-rise)))) ; z 1.05
+
+(def l7-ceil-heights
+  "Per-cell ceiling `z` for the L7 low tunnel: a hanging ceiling (z 0.6,
+   below the default 1.0) over the two rows just south of the staircase
+   foot (rows 13-14, cols 3-7), so the climb threads a low passage before
+   it opens onto the ledge. Only ceilings BELOW 1.0 render, so this reads
+   as a drop (a cramped tunnel), not a lift."
+  (merge
+   (rect-heights 3 13 7 13 0.6)
+   (rect-heights 3 14 7 14 0.6)))
+
 (def levels
   "Per-level configuration. Each entry is intentionally tiny — visuals
    live in `enemies.phel` so a new level needs only disposition data
@@ -168,17 +366,31 @@
     :ceil-heights  showcase-ceil-heights}
    ;; L3 introduces the cacodemon shooter; a 50/50 melee mix (demon +
    ;; imp callback) pressures the player up close while they learn to
-   ;; strafe the bolts.
-   {:size [36 24] :walls 38 :enemy :caco :chase 1.2 :name "cacodemons"
+   ;; strafe the bolts. Hand-authored verticality (a descending trench
+   ;; corridor): the floor steps DOWN two tiers across the room's middle,
+   ;; so the player walks into a sunken corridor and climbs back out. Keeps
+   ;; the L3 identity (name, caco+demon+imp mix, chase 1.2, chaingun drop);
+   ;; only the geometry is now authored instead of procgen.
+   {:enemy :caco :chase 1.2 :name "cacodemons"
     :enemies [{:type :caco  :count 4}
               {:type :demon :count 2}
-              {:type :imp   :count 2}]}
+              {:type :imp   :count 2}]
+    :layout        l3-layout
+    :floor-heights l3-floor-heights}
    {:size [44 28] :walls 55 :enemy :baron :chase 1.4 :name "barons" :door-lock :blue
     :enemies [{:type :baron :count 3}
               {:type :demon :count 3}]}
-   {:size [52 32] :walls 75 :enemy :cyber :chase 1.6 :name "cyberdemons" :door-lock :red
+   ;; L5 — the cyberdemon arena. Hand-authored verticality (a raised
+   ;; central dais): a square plateau stands at the room centre, reached by
+   ;; a two-step ramp on its south face - a vantage in the open arena. The
+   ;; red-locked exit + keycard stay reachable on the flat ground ringing
+   ;; the dais. Keeps the L5 identity (name, cyber+imp mix, chase 1.6, red
+   ;; lock, rocket drop); only the geometry is now authored.
+   {:enemy :cyber :chase 1.6 :name "cyberdemons" :door-lock :red
     :enemies [{:type :cyber :count 5}
-              {:type :imp   :count 2}]}
+              {:type :imp   :count 2}]
+    :layout        l5-layout
+    :floor-heights l5-floor-heights}
 
    ;; --- L6-L10 ----------------------------------------------------
    ;; Progressive mixed-monster rooms; L10 hand-authored boss arena.
@@ -200,15 +412,22 @@
 
    ;; L7 — revenants (HP 4) leading a small demon escort, with a lone
    ;; baron lobbing fireballs to keep a ranged threat in the room.
-   {:size    [46 28]
-    :walls   66
-    :enemy   :revenant
+   ;; Hand-authored verticality (a staircase onto a ledge through a low
+   ;; tunnel): a three-step flight on the west climbs onto a raised ledge
+   ;; along the north wall, threading a low-ceiling tunnel on the way up -
+   ;; a cramped vantage. The yellow-locked exit stays reachable on the open
+   ;; flat east half. Keeps the L7 identity (name, revenant+demon+baron
+   ;; mix, chase 1.8, yellow lock, BFG drop); only the geometry is authored.
+   {:enemy   :revenant
     :chase   1.8
     :name    "revenants"
     :door-lock :yellow
     :enemies [{:type :revenant :count 4}
               {:type :demon    :count 2}
-              {:type :baron    :count 1}]}
+              {:type :baron    :count 1}]
+    :layout        l7-layout
+    :floor-heights l7-floor-heights
+    :ceil-heights  l7-ceil-heights}
 
    ;; L8 — archvile court: two casters backed by mixed mid-tier mass.
    {:size    [50 30]

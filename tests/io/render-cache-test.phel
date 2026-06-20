@@ -1,6 +1,7 @@
 (ns phel-doom-tests.io.render-cache-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.level :refer [build-world])
+  (:require phel-doom.core.rng :as rng)
   (:require phel-doom.core.state :refer [new-world new-player])
   (:require phel-doom.core.engine :refer [mark-visible-cells])
   (:require phel-doom.io.render.frame-math :refer [halfblock build-sky-halfblock])
@@ -361,3 +362,20 @@
   (let [flat   (frame->string (step-world) stats 120 30)
         hidden (frame->string (lower-ceil-cell (step-world) 1 1 0.6) stats 120 30)]
     (is (= flat hidden) "a low ceiling inside a wall cell is not visible")))
+
+;; ---------------------------------------------------------------------
+;; Campaign verticality smoke (L3 / L5 / L7): each modified level builds
+;; and renders one frame without error, deterministically (same render
+;; twice => same bytes). /play can't run headless, so this is the
+;; one-frame render check the verticality levels each produce valid ANSI.
+;; ---------------------------------------------------------------------
+
+(deftest test-verticality-levels-build-and-render-one-frame
+  (foreach [n [3 5 7]]
+    (rng/seed! 4242)
+    (let [w   (mark-visible-cells (build-world n 5))
+          out (frame->string w (assoc stats :level n) 120 30)]
+      (is (php/> (php/strlen out) 0) (str "L" n " renders non-empty ANSI"))
+      ;; Deterministic: re-rendering the same built world is byte-stable.
+      (is (= out (frame->string w (assoc stats :level n) 120 30))
+          (str "L" n " render is byte-stable")))))

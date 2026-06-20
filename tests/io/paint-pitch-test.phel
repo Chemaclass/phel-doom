@@ -1,0 +1,80 @@
+(ns phel-doom-tests.io.paint-pitch-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.io.render.buffer :refer [buf-mk buf-get buf-set])
+  (:require phel-doom.io.render.paint :refer [paint-pickups-into paint-projectiles-into])
+  (:require phel-doom.core.projection :refer [pitch-rows])
+  (:require phel-doom.core.engine :refer [proj-dist]))
+
+;; ---------------------------------------------------------------------
+;; Pitch anchoring (#242): world-anchored overlays (pickups, projectiles,
+;; tracers, blood) must shear with the horizon when the player looks
+;; up/down, the same integer row offset (`pitch-rows`) the walls, floor,
+;; sky and enemy sprites already use. Before the fix they stayed pinned
+;; to the level-gaze horizon and floated.
+;; ---------------------------------------------------------------------
+
+(def vw 40)
+(def vh 30)
+(def pickup {:x 7.0 :y 5.0})
+
+(defn- all-visible-dists
+  "Walls far in every column, so a pickup at d~2 is visible everywhere."
+  [^int w]
+  (let [a (buf-mk)]
+    (loop [c 0]
+      (when (php/< c w)
+        (buf-set a c 12.0)
+        (recur (php/+ c 1))))
+    a))
+
+(defn- first-written-row
+  "Lowest screen-row index with any painted cell, or -1 if none."
+  [buf ^int w ^int h]
+  (loop [r 0]
+    (if (php/>= r h)
+      -1
+      (if (loop [c 0]
+            (cond (php/>= c w)                                false
+                  (some? (buf-get buf (php/+ (php/* r w) c))) true
+                  :else                                       (recur (php/+ c 1))))
+        r
+        (recur (php/+ r 1))))))
+
+(defn- player-at [^float pitch]
+  {:x 5.0 :y 5.0 :angle 0.0 :pitch pitch})
+
+(deftest test-pickup-glow-shifts-down-by-pitch-rows
+  ;; Glow path forced via an unknown sprite-key. Looking up (pitch > 0)
+  ;; pushes the pickup DOWN the screen by exactly pitch-rows.
+  (let [dists  (all-visible-dists vw)
+        edists (buf-mk)
+        b0     (paint-pickups-into (buf-mk) [pickup] (player-at 0.0) dists edists vw vh proj-dist "S" "g" :no-sprite)
+        bu     (paint-pickups-into (buf-mk) [pickup] (player-at 0.8) dists edists vw vh proj-dist "S" "g" :no-sprite)
+        r0     (first-written-row b0 vw vh)
+        ru     (first-written-row bu vw vh)
+        pr     (pitch-rows 0.8 vh)]
+    (is (php/> r0 0) "pickup paints at level gaze")
+    (is (php/> pr 0) "pitch 0.8 yields a positive row offset")
+    (is (= (php/+ r0 pr) ru) "look-up shifts the pickup down by exactly pitch-rows")))
+
+(deftest test-pickup-level-gaze-matches-no-pitch
+  ;; pitch 0.0 and an absent :pitch both yield pr 0, so the paint is
+  ;; identical - the regression guard for byte-stable level gaze.
+  (let [dists  (all-visible-dists vw)
+        edists (buf-mk)
+        a      (paint-pickups-into (buf-mk) [pickup] (player-at 0.0) dists edists vw vh proj-dist "S" "g" :no-sprite)
+        b      (paint-pickups-into (buf-mk) [pickup] {:x 5.0 :y 5.0 :angle 0.0} dists edists vw vh proj-dist "S" "g" :no-sprite)]
+    (is (= (first-written-row a vw vh) (first-written-row b vw vh)))))
+
+(deftest test-projectile-responds-to-pitch
+  ;; Projectiles shear with pitch too (billboard path): the painted row
+  ;; moves down under look-up.
+  (let [dists  (all-visible-dists vw)
+        edists (buf-mk)
+        bolt   {:x 7.0 :y 5.0}
+        b0     (paint-projectiles-into (buf-mk) [bolt] (player-at 0.0) dists edists vw vh proj-dist)
+        bu     (paint-projectiles-into (buf-mk) [bolt] (player-at 0.8) dists edists vw vh proj-dist)
+        r0     (first-written-row b0 vw vh)
+        ru     (first-written-row bu vw vh)]
+    (is (php/>= r0 0) "projectile paints at level gaze")
+    (is (php/> ru r0) "look-up pushes the projectile down the screen")))

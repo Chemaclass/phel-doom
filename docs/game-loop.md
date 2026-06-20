@@ -74,7 +74,7 @@ The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself; the g
 | `tick-armory` | `--armory`: refill reserves per frame | `core/combat` |
 | `tick-shooting` | Fire edge: resolve hitscan; empty-mag CLICK prompt | `core/combat` |
 | `damage-step` | Decay iframes + timers; apply contact damage | `core/combat` |
-| `tick-heartbeat` / `tick-flicker` / `tick-scare` / `tick-blood-drops` / `tick-door-face` | Horror anims: heartbeat, light pulse, jumpscare, ceiling drips, door eye | `commands/play` |
+| `tick-heartbeat` / `tick-scare` / `tick-blood-drops` | Horror beats: heartbeat thump + edge, proximity sfx-silence, ceiling drips. (The lights-flicker and door-eye ticks were removed with their decorative visuals; `tick-scare` stays for the `:silence-tick?` audio cue - the jump-scare visual was dropped.) | `commands/play` |
 | `decay-soul-overcap` | Over-cap HP decay (soulsphere timer) | `core/state` |
 | `advance-game-time` | Add `dt` to pause-aware `:game-time` (render pulses) | `core/state` |
 

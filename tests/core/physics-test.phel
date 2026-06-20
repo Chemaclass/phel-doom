@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.level   :refer [build-world])
   (:require phel-doom.core.state   :refer [max-stamina new-world new-player eye-height set-floor-z])
-  (:require phel-doom.core.physics :refer [try-move apply-physics tick-fall floor-z-at step-up-max fall-speed sprint-engage-threshold sprint-multiplier stamina-drain stamina-regen tick-heartbeat tick-flicker tick-stamina tick-blood-drops tick-door-face]))
+  (:require phel-doom.core.physics :refer [try-move apply-physics tick-fall floor-z-at step-up-max fall-speed sprint-engage-threshold sprint-multiplier stamina-drain stamina-regen tick-heartbeat tick-stamina tick-blood-drops]))
 
 ;; Tiny 3x3 grid: walls around the perimeter, open centre.
 (def open-world
@@ -239,41 +239,6 @@
     (is (< (:heartbeat-phase w1) 1.0))
     (is (>= (:heartbeat-phase w1) 0.0))))
 
-;; ---------------------------------------------------------------------
-;; tick-flicker: cooldown counts down then triggers a brief active
-;; window. While active, the active-secs counter is what counts down
-;; — cooldown is held until the flicker ends.
-;; ---------------------------------------------------------------------
-
-(deftest test-tick-flicker-decrements-cooldown-when-idle
-  (let [w  (assoc empty-world :lives 5 :flicker-cooldown 10.0 :flicker-active-secs 0.0)
-        w' (tick-flicker w 0.5)]
-    (is (= 9.5 (:flicker-cooldown w')))
-    (is (= 0.0 (:flicker-active-secs w')))))
-
-(deftest test-tick-flicker-fires-when-cooldown-hits-zero
-  (let [w  (assoc empty-world :lives 10 :flicker-cooldown 0.0 :flicker-active-secs 0.0)
-        w' (tick-flicker w 0.1)]
-    (is (php/> (:flicker-active-secs w') 0.0))
-    ;; Full health (>8 HP) samples into the calm band (20..30s).
-    (is (php/>= (:flicker-cooldown w') 20.0))
-    (is (php/<= (:flicker-cooldown w') 30.0))))
-
-(deftest test-tick-flicker-decrements-active-secs-while-active
-  (let [w  (assoc empty-world :lives 5 :flicker-cooldown 12.0 :flicker-active-secs 0.15)
-        w' (tick-flicker w 0.05)]
-    (is (< (php/abs (- (:flicker-active-secs w') 0.10)) 0.0001))
-    ;; Cooldown is frozen while active so the next gap restarts cleanly.
-    (is (= 12.0 (:flicker-cooldown w')))))
-
-(deftest test-tick-flicker-low-life-resamples-into-faster-band
-  ;; When the flicker fires at 1 life, the new cooldown should be in
-  ;; the haunted-band (6..12), shorter than the calm 20..30 band.
-  (let [w  (assoc empty-world :lives 1 :flicker-cooldown 0.0 :flicker-active-secs 0.0)
-        w' (tick-flicker w 0.1)]
-    (is (php/>= (:flicker-cooldown w') 6.0))
-    (is (php/<= (:flicker-cooldown w') 12.0))))
-
 (deftest test-tick-heartbeat-faster-in-last-heart-than-second-last
   ;; Same dt, same start phase - the last-heart band (<=2 HP, 0.55s) runs
   ;; faster than the second-last band (<=4 HP, 0.85s), so it accumulates
@@ -323,31 +288,6 @@
         w-low  (tick-blood-drops (assoc empty-world :lives 6 :blood-drops []) 10.0)]
     (is (= 0 (count (:blood-drops w-high))))
     (is (= 1 (count (:blood-drops w-low))))))
-
-;; ---------------------------------------------------------------------
-;; tick-door-face: cooldown counts down; once it hits zero a fresh
-;; active window opens and the cooldown resamples for the next gap.
-;; ---------------------------------------------------------------------
-
-(deftest test-tick-door-face-decrements-cooldown-when-idle
-  (let [w  (assoc empty-world :door-face-cooldown 10.0 :door-face-active-secs 0.0)
-        w' (tick-door-face w 0.5)]
-    (is (= 9.5 (:door-face-cooldown w')))
-    (is (= 0.0 (:door-face-active-secs w')))))
-
-(deftest test-tick-door-face-fires-when-cooldown-hits-zero
-  (let [w  (assoc empty-world :door-face-cooldown 0.0 :door-face-active-secs 0.0)
-        w' (tick-door-face w 0.1)]
-    (is (php/> (:door-face-active-secs w') 0.0))
-    (is (php/>= (:door-face-cooldown w') 8.0))
-    (is (php/<= (:door-face-cooldown w') 18.0))))
-
-(deftest test-tick-door-face-decrements-active-while-on
-  (let [w  (assoc empty-world :door-face-cooldown 10.0 :door-face-active-secs 0.5)
-        w' (tick-door-face w 0.1)]
-    (is (< (php/abs (- (:door-face-active-secs w') 0.4)) 0.0001))
-    ;; Cooldown frozen while active.
-    (is (= 10.0 (:door-face-cooldown w')))))
 
 ;; ---------------------------------------------------------------------
 ;; Sprint + stamina. Hold SHIFT (kitty) or 'x' (any term) refreshes the

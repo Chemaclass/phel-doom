@@ -29,21 +29,17 @@
 ;; § Enemy overlays (face, lights)
 ;; =====================================================================
 
-(def scare-face-glyph
-  "Universal jump-scare face — bright magenta BG, blink white skull.
-   Picked outside the existing red/yellow face-attack palette so the
-   colour shift itself reads as 'this is different' even at small
-   sprite sizes. Painted on every visible alive enemy during the
-   scare-secs window."
-  "\e[5;48;5;201;38;5;231;1m☠\e[0m")
-
 (defn paint-face-overlay
   "At each visible alive enemy's centre column paint that enemy's
-   catalog face glyph at the upper-third of the sprite. Three modes:
-     - scare-secs active  → wide-eyed scare glyph (one-shot beat)
+   catalog face glyph at the upper-third of the sprite. Two modes:
      - d < aggro-distance → :face-attack telegraph
      - else               → resting :face (alternates with :face-alt
                             on the global face-phase beat)
+
+   The decorative jump-scare glyph swap (a hardware-blink SGR-5 skull
+   painted during the `:scare-secs` window) was removed for a calmer
+   3D view: it carried no information the resting / attack faces don't
+   already, and the blink read as a random strobe.
 
    `edists` (nearest enemy depth per column, built during the zone
    pass) gates the glyph so a face behind a closer sprite doesn't bleed
@@ -63,11 +59,7 @@
    subtracted from the face row so a monster on a platform keeps its
    face on its head. 0 on flat ground, so this changes nothing there."
   [parts world stats vw vh dists edists face-phase ^int sc & [pr-arg]]
-  ;; Reduced-motion: drop the one-shot jump-scare glyph swap (a sudden
-  ;; flash); the resting / attack faces still animate on their own beat.
-  (let [pr     (or pr-arg 0)
-        scare? (and (php/> (or (get stats :scare-secs) 0.0) 0.0)
-                    (not (get stats :reduced-motion?)))]
+  (let [pr (or pr-arg 0)]
     (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw
                                       (:floor-pgrid world))]
       (let [col         (:col proj)
@@ -83,7 +75,6 @@
             face-attack (get visuals :face-attack)
             idle        (if (php/> face-phase 0.0) face face-alt)
             glyph       (cond
-                          scare?                                     scare-face-glyph
                           (and face-attack (php/< d aggro-distance)) face-attack
                           :else                                      idle)]
         (when (and glyph
@@ -208,7 +199,7 @@
   parts)
 
 (defn paint-locked-bump
-  "Pulse 'NEED <COLOUR> KEY' over the upper third of the 3D view
+  "Show 'NEED <COLOUR> KEY' steady over the upper third of the 3D view
    while :locked-door-bump-secs is ticking down. Re-fires every
    bump because try-move resets the timer to locked-bump-secs each
    collision — so leaning into a locked door keeps the cue alive."
@@ -233,33 +224,6 @@
                                      (php/intdiv (php/mb_strlen label) 2)))]
         (buf-push parts
                   (str "\e[" row ";" col0 "H" sgr label "\e[0m")))))
-  parts)
-
-(defn paint-door-face
-  "Disembodied red eye blinks at the upper third of every visible
-   door column during the door-face active window. Re-uses the
-   hits/tops/bots buffers from compute-wall-shades so we don't have
-   to re-cast rays. `sc` is the render pixel scale: the buffers live in
-   SCENE cells, so emitted terminal coordinates multiply by `sc`."
-  [parts stats vw vh hits tops bots ^int sc]
-  (when (php/> (or (get stats :door-face-active-secs) 0.0) 0.0)
-    ;; Reduced-motion: SGR 5 is terminal HARDWARE blink (~1-3 Hz), outside
-    ;; the code-driven `pulse` gating, so it must be stripped here - drop
-    ;; the `5;` for a static red eye that still marks the door without
-    ;; strobing.
-    (let [glyph (if (get stats :reduced-motion?)
-                  "\e[48;5;232;38;5;196;1mʘ\e[0m"
-                  "\e[5;48;5;232;38;5;196;1mʘ\e[0m")]
-      (loop [col 0]
-        (when (php/< col vw)
-          (when (let [h (buf-get hits col)] (or (php/=== 2 h) (php/=== 3 h) (php/=== 4 h)))
-            (let [t (buf-get tops col)
-                  b (buf-get bots col)
-                  r (php/+ t (php/intdiv (php/max 1 (php/- b t)) 3))]
-              (when (and (php/>= r 1) (php/<= r vh))
-                (buf-push parts (str "\e[" (php/* sc r) ";"
-                                     (php/+ (php/* sc col) 1) "H" glyph)))))
-          (recur (php/+ col 1))))))
   parts)
 
 (def blood-drop-codes
@@ -288,21 +252,23 @@
   parts)
 
 (defn paint-rear-warning
-  "Tiny blinking '‹ behind ›' label below the compass when at least
+  "Tiny steady '‹ behind ›' label below the compass when at least
    one alive enemy is in the rear arc + within audible range. Dim
    red on the dark HUD strip so it reads as 'something off' without
-   stealing focus from the 3D view. Blink is code-driven off
-   game-time so it freezes on pause — terminal SGR 5 would keep
-   ticking against the wall clock."
+   stealing focus from the 3D view. Held steady while the rear threat
+   is live (calmer 3D view): the cue keeps its meaning without the old
+   on/off blink reading as a random strobe.
+
+   `t` is retained for signature stability with the other paint cues."
   [parts ^float t stats vw]
-  (when (and (get stats :rear-warning?) (or (get stats :reduced-motion?) (pulse t 3.0)))
+  (when (get stats :rear-warning?)
     (let [label "\e[40;38;5;160;1m‹ behind ›\e[0m"
           col   (php/max 1 (php/- (php/intdiv vw 2) 5))]
       (buf-push parts (str "\e[2;" col "H" label))))
   parts)
 
 (defn paint-low-ammo
-  "Top-row pulsing 'LOW AMMO N' label when total firepower
+  "Top-row steady 'LOW AMMO N' label when total firepower
    (mag + reserve) drops to 3 or fewer rounds — i.e. the player is
    3/2/1 shots away from being defenceless. Right-anchored on row 1
    so it sits next to the centre compass without overdrawing it,
@@ -311,12 +277,15 @@
    Row 1 layout the player sees:
      [hearts/armor at col 1]  ... [compass at vw/2 ± 5]  ... [LOW AMMO right]
 
-   Amber at 3, bright red at 1. Suppressed at 0 because the ammo
-   HUD cell already flashes red when both mag and reserve hit zero."
+   Amber at 3, bright red at 1. Held steady while low (calmer 3D view):
+   the colour carries the urgency, no on/off blink needed. Suppressed at
+   0 because the ammo HUD cell already turns red when both pools hit zero.
+
+   `t` is retained for signature stability with the other paint cues."
   [parts ^float t stats vw]
   (let [total (php/+ (or (get stats :mag) 0)
                      (or (get stats :ammo-reserve) 0))]
-    (when (and (php/> total 0) (php/<= total 3) (or (get stats :reduced-motion?) (pulse t 4.0)))
+    (when (and (php/> total 0) (php/<= total 3))
       (let [colour (cond (php/<= total 1) "38;5;196"
                          :else            "38;5;214")
             label  (str "\e[40;" colour ";1m! LOW AMMO " total " !\e[0m")
@@ -332,30 +301,23 @@
    both nag at 'nearly empty' rather than a shared absolute count."
   0.3)
 
-(defn- reload-reminder-interval
-  "Seconds between reminder blinks, scaled by urgency from the
-   remaining-mag fraction: an empty mag (frac 0) pulses fastest, a
-   merely-low mag slower. Weapon-size agnostic."
-  [^float frac]
-  (cond
-    (php/<= frac 0.0) 1.0
-    (php/<= frac 0.1) 3.0
-    :else             5.0))
-
 (defn reload-reminder-visible?
-  {:doc "True when the periodic 'press R to RELOAD' nag should be on
-         screen this frame, given ammo state + the game clock. Pure so
-         the threshold + cadence rules are unit-testable independent of
-         the ANSI paint.
+  {:doc "True when the 'press R to RELOAD' nag should be on screen this
+         frame, given ammo state. Pure so the threshold rules are
+         unit-testable independent of the ANSI paint.
 
-         Armed only when the mag fraction is at or below
-         `reload-reminder-frac` AND there is reserve to draw from.
-         Suppressed: while reloading (`reload-cd` > 0), during the
-         dry-fire CLICK (so prompts don't stack), and on tiny viewports
-         (`vh` < 9). Single-round mags (BFG, chainsaw: mag-size <= 1)
-         reload every shot by design, so the nag is pure noise and is
-         skipped entirely."
-   :see-also ["reload-reminder-interval" "paint-reload-reminder"]
+         Armed (and held STEADY, for a calmer 3D view) when the mag
+         fraction is at or below `reload-reminder-frac` AND there is
+         reserve to draw from. The old game-time on/off blink cadence was
+         dropped: a near-empty mag is a steady danger state, not a
+         flashing one. Suppressed: while reloading (`reload-cd` > 0),
+         during the dry-fire CLICK (so prompts don't stack), and on tiny
+         viewports (`vh` < 9). Single-round mags (BFG, chainsaw: mag-size
+         <= 1) reload every shot by design, so the nag is pure noise and
+         is skipped entirely.
+
+         `game-time` is accepted but unused (signature stability)."
+   :see-also ["paint-reload-reminder"]
    :example "(reload-reminder-visible? 2 10 30 0.0 0.0 0.0 30) ; => true"}
   [^int mag ^int mag-size ^int reserve ^float reload-cd ^float click-secs ^float game-time ^int vh]
   (and (php/> mag-size 1)
@@ -363,15 +325,13 @@
        (php/<= reload-cd 0.0)
        (php/<= click-secs 0.0)
        (php/>= vh 9)
-       (let [frac (php// mag mag-size)]
-         (and (php/<= frac reload-reminder-frac)
-              (php/< (php/fmod game-time (reload-reminder-interval frac)) 0.5)))))
+       (php/<= (php// mag mag-size) reload-reminder-frac)))
 
 (defn paint-reload-reminder
-  "Periodic 'press R to RELOAD' nag above the gun when the player is
-   sitting on a near-empty mag with reserve to spare. Visibility +
-   cadence are decided by the pure `reload-reminder-visible?`; this fn
-   only positions and paints the chip."
+  "Steady 'press R to RELOAD' nag above the gun when the player is
+   sitting on a near-empty mag with reserve to spare. Visibility is
+   decided by the pure `reload-reminder-visible?` (held steady while
+   armed, no blink); this fn only positions and paints the chip."
   [parts stats vw vh]
   (let [mag      (or (get stats :mag) 0)
         mag-size (or (get stats :mag-size) 10)
@@ -543,13 +503,16 @@
 (defn- paint-timed-badge
   "Centred top-of-screen powerup banner while the `secs-key` timer is
    ticking. `label` is the word, `sgr` the colour run, `row` the
-   terminal row, `freq` the pulse rate. Shared by the berserk + invuln
-   banners; row decides their stacking order when both fire at once."
+   terminal row. Shared by the berserk + invuln banners; row decides
+   their stacking order when both fire at once. Held STEADY (always
+   visible while the timer ticks) for a calmer 3D view - the badge +
+   its live countdown carry the state, no on/off pulse needed.
+
+   `t` and `freq` are retained for signature stability with the
+   per-badge callers."
   [parts ^float t stats vw secs-key label sgr ^int row ^float freq]
   (let [secs (or (get stats secs-key) 0.0)]
-    ;; Reduced-motion: hold the badge steady (always visible while the
-    ;; timer ticks) instead of pulsing it on/off.
-    (when (and (php/> secs 0.0) (or (get stats :reduced-motion?) (pulse t freq)))
+    (when (php/> secs 0.0)
       (let [text (str " " label " " (php/intval (php/ceil secs)) "s ")
             col  (php/max 1 (php/- (php/intdiv vw 2)
                                    (php/intdiv (php/strlen text) 2)))]
@@ -558,9 +521,9 @@
 
 (defn paint-berserk-badge
   "Centred top-of-screen `BERSERK Ns` banner while :berserk-secs is
-   ticking. Pulses red so the rage state is unmistakeable. Sits on
-   row 3 (under the row-2 game-info strip) so it doesn't fight the
-   compass / hearts."
+   ticking. Steady red so the rage state is unmistakeable without a
+   strobe. Sits on row 3 (under the row-2 game-info strip) so it
+   doesn't fight the compass / hearts."
   [parts ^float t stats vw]
   (paint-timed-badge parts t stats vw :berserk-secs "BERSERK"
                      "\e[48;5;52;38;5;226;1m" 3 6.0))
@@ -574,9 +537,10 @@
                      "\e[48;5;19;38;5;51;1m" 4 5.0))
 
 (defn paint-empty-click
-  "Trigger pulled on an empty mag: blink a centred prompt above the
+  "Trigger pulled on an empty mag: show a centred prompt above the
    pistol for `empty-click-seconds` so the player sees WHY the shot
-   didn't fire. Wording flips based on whether reserve has rounds
+   didn't fire. Single-shot acknowledgement (held steady for its brief
+   ttl, no blink). Wording flips based on whether reserve has rounds
    left — `R to reload` is actionable; `OUT OF AMMO` is the
    acknowledgement when both pools are dry. Label is centred from
    its measured visible length so the two variants line up even when
@@ -596,56 +560,17 @@
         (buf-push parts (str "\e[" row ";" col "H" label))))
     parts))
 
-(defn paint-flicker
-  "Lights-flickering overlay: paint full-width dark scanlines on every
-   other row while :flicker-active-secs is positive. The eye reads the
-   half-mesh as a strobing dim, but the unpainted rows keep the colours
-   underneath so the picture isn't blacked out. Skips the bottom 6
-   rows so the pistol + HUD stays readable through the flicker."
-  [parts stats vw vh]
-  ;; Reduced-motion (accessibility): the flicker is a pure strobe with no
-  ;; gameplay information, so it is dropped entirely rather than calmed.
-  (when (and (php/> (or (get stats :flicker-active-secs) 0.0) 0.0)
-             (not (get stats :reduced-motion?)))
-    (let [line   (php/str_repeat " " vw)
-          dark   "\e[48;5;232m"
-          bottom (php/max 1 (php/- vh 6))]
-      (loop [r 1]
-        (when (php/<= r bottom)
-          (when (php/=== (mod r 2) 1)
-            (buf-push parts (str "\e[" r ";1H" dark line "\e[0m")))
-          (recur (php/+ r 1))))))
-  parts)
-
-(defn- heartbeat-bg
-  "Map heartbeat phase to a red BG ansi for the edge bar. Phase 0 is
-   the strongest thump, fading by ~0.35. Returns nil when the pulse
-   isn't visible this frame so the caller can skip painting."
-  [^float phase ^int lives]
-  (cond
-    ;; HP is a half-heart pool (2 HP/heart): pulse only in the last ~2
-    ;; hearts (<= 4 HP), off above that and at death.
-    (php/>= lives 5)   nil
-    (php/<= lives 0)   nil
-    (php/< phase 0.10) "\e[48;5;160m"
-    (php/< phase 0.22) "\e[48;5;124m"
-    (php/< phase 0.32) "\e[48;5;52m"
-    :else              nil))
-
 (defn paint-heartbeat-vignette
-  "Pulsing red bar down both screen edges, intensity driven by the
-   heartbeat phase. Active only in the last ~2 hearts (<= 4 HP), off
-   otherwise. Painted AFTER the hit-vignette so a fresh hit still
-   dominates."
+  "Steady dim-red bar down both screen edges while in the last ~2 hearts
+   (<= 4 HP), off otherwise. Keeps the low-health danger cue but holds it
+   steady (calmer 3D view): the old heartbeat-phase pulse made the edges
+   throb, which read as a strobe. Painted AFTER the hit-vignette so a
+   fresh hit still dominates."
   [parts stats vw vh]
   (let [lives (or (get stats :lives) 0)
-        phase (or (get stats :heartbeat-phase) 0.0)
-        ;; Reduced-motion: keep the low-health danger cue but freeze it -
-        ;; a steady dim-red edge whenever in the last ~2 hearts, with no
-        ;; per-frame phase pulse.
-        bg    (if (get stats :reduced-motion?)
-                (if (and (php/< lives 5) (php/> lives 0)) "\e[48;5;52m" nil)
-                (heartbeat-bg phase lives))]
+        ;; Steady dim-red (52) edge whenever in the last ~2 hearts, with
+        ;; no per-frame phase pulse. nil above 4 HP and at death.
+        bg    (if (and (php/< lives 5) (php/> lives 0)) "\e[48;5;52m" nil)]
     (when bg
       (let [left-c0  1
             right-c0 (php/max 1 (php/- vw 1))
@@ -715,20 +640,20 @@
    Distinct from the iframe `paint-hit-vignette` red band so the player
    can read the two states at once (berserk while taking damage shows
    both): the iframe band is bright (code 160) on one edge only;
-   berserk paints code 88 (deep crimson) on all four edges, pulsed in
-   sync with the badge. Skipped when iframes are also active so the
-   shouty hit-vignette wins; the berserk badge already covers
-   readability for that overlap case."
+   berserk paints code 88 (deep crimson) on all four edges, held STEADY
+   (calmer 3D view) instead of the old bright/dim sync pulse. Skipped
+   when iframes are also active so the shouty hit-vignette wins; the
+   berserk badge already covers readability for that overlap case.
+
+   `t` is retained for signature stability with the other paint cues."
   [parts ^float t stats vw vh]
   (let [secs    (or (get stats :berserk-secs) 0.0)
         bloody? (php/> (or (get stats :iframes) 0.0) 0.0)]
     (when (and (php/> secs 0.0) (not bloody?))
-      ;; Reduced-motion: hold the border on the steady deep-crimson (88)
-      ;; instead of swapping to the bright pulse frame (124).
-      (let [bright? (and (pulse t 9.0) (not (get stats :reduced-motion?)))
-            bg      (if bright? "\e[48;5;124m" "\e[48;5;88m")
-            top     (str bg (php/str_repeat " " vw) "\e[0m")
-            edge    (str bg " \e[0m")]
+      ;; Steady deep-crimson (88) border; no bright (124) pulse frame.
+      (let [bg   "\e[48;5;88m"
+            top  (str bg (php/str_repeat " " vw) "\e[0m")
+            edge (str bg " \e[0m")]
         (buf-push parts (str "\e[1;1H" top))
         (buf-push parts (str "\e[" vh ";1H" top))
         (loop [r 2]
@@ -742,9 +667,11 @@
 ;; =====================================================================
 
 (defn paint-heat-bar
-  "10-cell heat bar under the pistol sprite. Replaced by blinking
-   'JAMMED' when :jam-secs > 0. Blink is code-driven off game-time
-   so the warning freezes when the game is paused."
+  "10-cell heat bar under the pistol sprite. Replaced by a steady bright-red
+   'JAMMED' when :jam-secs > 0 (calmer 3D view): the word + its position
+   carry the state, no on/off blink needed.
+
+   `t` is retained for signature stability with the other paint cues."
   [parts ^float t stats vw vh]
   (let [heat (or (get stats :heat) 0.0)
         jam  (or (get stats :jam-secs) 0.0)
@@ -753,9 +680,8 @@
     (when (or (php/> heat 0.0) (php/> jam 0.0))
       (cond
         (php/> jam 0.0)
-        (let [sgr (if (pulse t 6.0) "\e[91;1m" "\e[2;91m")]
-          (buf-push parts
-                    (str "\e[" row ";" (php/- cc 3) "H" sgr "JAMMED\e[0m")))
+        (buf-push parts
+                  (str "\e[" row ";" (php/- cc 3) "H\e[91;1mJAMMED\e[0m"))
         :else
         (let [filled (php/intval (php/* heat 10.0))
               empty  (php/- 10 filled)
@@ -923,11 +849,15 @@
   parts)
 
 (defn paint-hearts-hud
-  "Top-left lives + armor count. Hearts pulse while bloody — code-
-   driven off game-time so the blink freezes on pause (issue #7).
-   Every glyph carries an explicit dark BG (`\\e[40m`) so the strip
-   stays readable on terminals whose default BG is light or
-   transparent."
+  "Top-left lives + armor count. Hearts are held steady bright (calmer 3D
+   view): the old dim/bright pulse while bloody read as a strobe, and the
+   low-health danger is already carried by the steady heartbeat-vignette
+   edge bar. Every glyph carries an explicit dark BG (`\\e[40m`) so the
+   strip stays readable on terminals whose default BG is light or
+   transparent.
+
+   `t` and `bloody?` are retained for signature stability with the
+   caller."
   [parts ^float t stats bloody?]
   (let [hp        (or (get stats :lives) 0)
         cap       (or (get stats :max-lives) 10)
@@ -946,12 +876,9 @@
         god?      (:god? stats)
         ;; High-contrast (#200): empty heart pips in plain white instead
         ;; of the dim grey (90) that disappears on washed-out terminals.
-        empty-sgr (if (get stats :high-contrast?) "\e[40;97m" "\e[40;90m")
-        ;; Dim only during the off-phase of the pulse while bloody; bright
-        ;; otherwise (healthy, or the on-phase of a bloody pulse).
-        blink     (if (and bloody? (not (pulse t 8.0))) "\e[2m" "\e[1m")]
+        empty-sgr (if (get stats :high-contrast?) "\e[40;97m" "\e[40;90m")]
     (buf-push parts
-              (str "\e[1;1H\e[40m" blink "\e[91m"
+              (str "\e[1;1H\e[40m\e[1m\e[91m"
                    (php/str_repeat "♥ " full)
                    (if half? "◖ " "")
                    empty-sgr

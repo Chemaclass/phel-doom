@@ -75,6 +75,21 @@ FOV is clamped at `fov-max-deg` (100°, the widescreen sweet spot - roomy withou
 
 Edge rays travel further than central rays to reach the same wall plane. Multiply by `cos(offset)` to project onto the player's forward axis. One multiply per column; without it: barrel distortion.
 
+## Projection primitive
+
+`src/core/projection.phel` holds the pure vertical-projection kernel shared by the wall paths (and, ahead, variable floor/ceiling heights, pitch, eye-height):
+
+```phel
+(wall-px num dist)                 ; projected pixel height of a num-unit
+                                   ; surface at distance dist
+(project-height pd vh dist eye-z z); screen row (float) where world height
+                                   ; z lands
+```
+
+- `wall-px num dist` = `num / ((max 0.3 dist) * char-aspect)`. `num` is `proj-dist` for a one-unit wall, or `n * proj-dist` for an n-sub-row half-block slice. The 0.3 floor stops a surface in the player's own cell projecting to an infinite slice. Both the cell-resolution wall path (`compute-wall-shades`) and the half-block sub-pixel path (`build-wall-sub-bounds`) call it, so they agree to the last bit.
+- `project-height pd vh dist eye-z z` = `vh/2 - (z - eye-z) * (wall-px pd dist)`. The horizon (z = eye-z) sits at `vh/2`; points above the eye rise, below sink. Today's flat wall is the special case `eye-z = 0.5` with `z = 1` (top) and `z = 0` (bottom). Variable heights pass other `z`; look up/down and jump/crouch pass other `eye-z`.
+- `char-aspect` (2.0) lives here too, as the canonical projection constant alongside `proj-dist`, so the kernel stays pure `core/` with no `io/` dependency.
+
 ## Performance
 
 DDA averages ~5-8 cell crossings per ray instead of ~35 fixed steps. Hot loop uses direct PHP ops (`php/+`, `php/<`) and `:pgrid` (nested PHP array).

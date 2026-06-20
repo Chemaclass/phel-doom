@@ -1,6 +1,6 @@
 # Settings
 
-Player options: music volume, SFX volume, minimap default, difficulty default. Persisted to `$HOME/.phel-doom-settings.json` (plain JSON, editable by hand) so choices survive restarts.
+Player options across audio, gameplay defaults, input, and accessibility (the full set is the Fields table below). Persisted to `$HOME/.phel-doom-settings.json` (plain JSON, editable by hand) so choices survive restarts.
 
 ## Architecture
 
@@ -16,7 +16,9 @@ Player options: music volume, SFX volume, minimap default, difficulty default. P
 | SFX | pct | 0-100 (step 10) | Global multiplier on `play-sfx!` events. 0% mutes without affecting N toggle. |
 | Minimap | bool | on / off | Default `:show-map` state. Live edits apply immediately. |
 | Difficulty | enum | easy / normal / hard / nightmare | Default for next run. CLI `--difficulty` overrides. Baked at level build time. |
-| Crosshair | enum | cross / dot / open / off | Idle reticle glyph (`+` / `·` / `○` / hidden). `off` hides the idle reticle; the hit-marker still flashes on a hit. |
+| Crosshair | enum | cross / dot / open / off | Idle reticle glyph (`+` / `·` / `○` / hidden). `off` hides the idle reticle; the hit-marker still flashes on a hit. When mouselook is on, `off` still draws a minimal centre dot so the aim point is never lost. |
+| Mouse | bool | on / off | FPS-style mouselook (issue #246), **on by default**. Move the mouse to turn + look up/down, left-click to fire. Off omits the xterm mouse-tracking escapes entirely, so a terminal that dislikes pointer capture opts out cleanly. The keyboard path is unchanged either way. See [input.md](input.md#mouse-look-issue-246). |
+| Sensitivity | pct | 0-100 (step 10) | Mouselook speed multiplier. The midpoint **50% = the neutral 1.0x**; 0% disables the look (delta scaled to 0), 100% doubles the per-cell yaw/pitch. Raise for a faster flick, lower for fine tracking. Mapped through `core/settings.mouse-sensitivity`. |
 | Run timer | bool | on / off | Append the elapsed run time (`M:SS`) to the row-2 HUD strip. |
 | High contrast | bool | on / off | Accessibility. Un-dims the dim/grey HUD elements - compass non-facing letters, empty heart pips, and a healthy ammo-reserve count render bold white instead of SGR-dim/grey so the HUD reads on washed-out or low-quality terminals. |
 | Reduced motion | bool | on / off | Accessibility / photosensitivity. The 3D view is now calm by default for everyone (no decorative blinks or strobes - lights-flicker and the blinking door-eye removed; jump-scare face flash removed; heartbeat edge, berserk border, low-ammo / behind-you / reload labels, powerup banners, JAMMED chip and low-health hearts all held steady; doors and aggro heads steady-bright), so this toggle no longer changes the render. It persists and is shown in the menu for back-compat; `PHEL_DOOM_REDUCED_MOTION=1` still sets it. See [rendering.md](rendering.md#calm-3d-view-no-decorative-blinks). |

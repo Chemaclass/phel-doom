@@ -275,6 +275,35 @@
         (recur (php/+ s 1))))
     arr))
 
+(defn- floor-cap-px
+  "Textured + fogged cap cell for a raised floor step whose top sits at
+   world height `fz`, sampled at the screen row whose z=0 GROUND
+   perpendicular distance is `dp0`. The cap plane is higher than the
+   ground, so the same screen row hits it nearer the eye: its perp
+   distance is the ground distance scaled by `(eye-z - fz)/eye-z` (a
+   half-unit eye over a fz=0 floor recovers the plain ground distance;
+   a fz=eye-z surface at eye level pushes to the horizon). Samples the
+   SAME `floor-tex-px` and gamma + `floor-darken` fog as the flat floor,
+   so a step top reads as continuous shaded stone rather than a flat
+   patch. `fdx`/`fdy` are the column's floor-cast basis; `pfx`/`pfy` the
+   player position. Returns a ready `bg-cell-cache` cell string.
+
+   Only called from the per-cell cap branch on raised (`fz>0`) columns
+   with the floor texture on; fz=0 / flat columns keep the single-plane
+   fast path, so this never runs on a flat frame (byte-identity holds)."
+  [^float dp0 ^float fz ^float eye-z ^float fdx ^float fdy ^float pfx ^float pfy]
+  (let [dp  (php/* dp0 (php// (php/- eye-z fz) eye-z))
+        fx  (php/+ pfx (php/* dp fdx))
+        fy  (php/+ pfy (php/* dp fdy))
+        tx  (php/intval (php/* (php/- fx (php/floor fx)) 64))
+        ty  (php/intval (php/* (php/- fy (php/floor fy)) 64))
+        tc  (php/aget floor-tex-px (php/+ (php/* ty 64) tx))
+        lvl (php/max 0
+                     (php/min 23
+                              (php/- (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// dp max-depth))) 0.6) 23))
+                                     floor-darken)))]
+    (php/aget bg-cell-cache (php/aget (php/aget tex-fade-table lvl) tc))))
+
 ;; =====================================================================
 ;; § Per-column wall shading
 ;; =====================================================================
@@ -875,6 +904,11 @@
         step-dists                         (:step-dists cast-result)
         step-fzs                           (:step-fzs cast-result)
         step-sides                         (:step-sides cast-result)
+        ;; Camera eye height (default 0.5 on flat ground). Threaded into
+        ;; the riser projection AND the textured cap floor-cast (#236):
+        ;; the cap plane at world height fz is sampled at the ground
+        ;; perp-distance scaled by (eye-z - fz)/eye-z.
+        eye-z                              (or (:eye-z (:player world)) 0.5)
         ;; Per-cell ceiling-height drop arrays (#235), the mirror of the
         ;; floor riser arrays. Present only on the full-detail cast;
         ;; compact-cast-2 (px2) drops them, so they read nil there ->
@@ -1042,7 +1076,7 @@
                              ;; stands on (default 0.5 on the flat ground,
                              ;; so a grounded world stays byte-identical).
                              step-dists step-fzs step-sides
-                             (or (:eye-z (:player world)) 0.5)
+                             eye-z
                              ;; #235 ceiling-drop arrays (nil in px2 ->
                              ;; sentinels; flat all-1.0 ceiling -> nil).
                              ceil-dists ceil-czs ceil-sides)
@@ -1952,7 +1986,29 @@
                             (php/< row (buf-get shades-step-bots col))
                             false)
                           (if (php/< row (buf-get shades-step-tops col))
-                            (php/aset cell-reg 0 (buf-get shades-step-cap col))
+                            ;; Cap (step top surface). #236: texture + fog it
+                            ;; like the ground floor instead of a flat shade.
+                            ;; The cap plane at world height fz is the SAME
+                            ;; stone the flat floor casts, sampled at the
+                            ;; row's ground perp-distance (dp-cell) scaled by
+                            ;; the height (floor-cap-px). fz=0 columns (none
+                            ;; here — a riser only exists for fz>0) or the
+                            ;; flat-floor flag fall back to the flat cap
+                            ;; shade, so the single-plane path is untouched.
+                            ;; Guard fz<eye-z too: a cap at/above the eye
+                            ;; projects past the horizon (not a floor you look
+                            ;; down on) and would scale to a negative
+                            ;; distance, so it keeps the flat shade.
+                            (if (if floor-tex-on?
+                                  (if (php/> (buf-get step-fzs col) 0.0)
+                                    (php/< (buf-get step-fzs col) eye-z)
+                                    false)
+                                  false)
+                              (php/aset cell-reg 0
+                                        (floor-cap-px dp-cell (buf-get step-fzs col) eye-z
+                                                      (buf-get floordxs col) (buf-get floordys col)
+                                                      pfx pfy))
+                              (php/aset cell-reg 0 (buf-get shades-step-cap col)))
                             (php/aset cell-reg 0 (buf-get shades-step-face col)))
                           ;; Per-cell ceiling-height hanging ceiling + cap
                           ;; (#235), the mirror of the floor riser above.

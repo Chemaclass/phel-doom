@@ -52,16 +52,33 @@ Returns raw (uncorrected) distance. Detailed tuple `[dist side hx hy]` is comput
 
 ```phel
 (defn cast-frame [world ^int width ^int scale]
-  ...returns {:dists :hits :sides :hxs :hys})
+  ...returns {:dists :hits :sides :hxs :hys :wallxs :floordxs :floordys
+              :step-dists :step-fzs :step-sides :step-hxs :step-hys})
 ```
 
-Cast `width / scale` rays; return 8 parallel PHP arrays (one per output column).
+Cast `width / scale` rays; return the parallel PHP arrays (one per output column).
 - `dists`: fish-eye corrected wall distance
 - `hits`: cell value at hit (0 if escaped to max-depth)
 - `sides`: 0 = vertical, 1 = horizontal (side-shading)
 - `hxs, hys`: hit cell coordinates
 - `wallxs`: wall-hit fraction in [0, 1) - the texture U coordinate (frac of world-y on a vertical face, world-x on a horizontal face, from the raw perpendicular distance)
 - `floordxs, floordys`: floor-cast basis = ray direction / cos(offset). A floor cell at per-row perpendicular distance `dperp` sits at world `player + dperp * (floordx, floordy)`, so the renderer needs no per-cell trig (two mul-adds + a frac for the texture sample)
+- `step-dists, step-fzs, step-sides, step-hxs, step-hys`: per-cell floor-height riser side-channel (#232, see below). Each entry is nil per column when the ray crossed no raised floor, so a flat world leaves them all-nil (additive contract).
+
+## Per-cell floor heights (#232)
+
+A second per-cell grid, `:floor-pgrid` (a PHP `float[][]` twin of `:pgrid`, same shape, all `0.0` by default), gives each cell the world `z` its floor sits at. The DDA march carries one extra accumulator, `step-acc`: scanning outward it records the FIRST floor cell it crosses whose height rises above the player's own floor (`:floor-z`, today always 0). That first riser is pinned (the nearest one occludes farther steps) and surfaced as the additive `:step-*` arrays:
+
+| Field | Meaning |
+|---|---|
+| `step-dists` | fish-eye corrected distance to the riser (or nil) |
+| `step-fzs`   | the riser cell's floor height (world z) |
+| `step-sides` | 0/1 face of the crossed boundary (EW shading, like walls) |
+| `step-hxs, step-hys` | integer coords of the riser cell |
+
+The accumulator is computed as nested `if` in the loop's tail position (never `and`, never a `let`-binding statement-form), so it compiles closure-free and the flat all-zero floor never trips the `fh > player-floor-z` test - the cast stays allocation-equivalent to the pre-#232 path (verified by diffing the compiled `out/` do-cast: still 5 closures, none new in the DDA loop).
+
+The renderer (`compute-wall-shades` + the px1 cell loop, see [rendering.md](rendering.md)) turns each riser into a vertical **riser face** plus a flat-shaded **cap** (the step top surface), painted into the floor band below the main wall (the nearer wall always wins its own rows). The cap rows are claimed before the floor-cast clause so the ground texture does not also paint them. A flat world leaves every `:step-*` entry nil, so the riser/cap branches are dead and the frame is byte-identical (pinned by `render-cache-test/test-frame-bytes-pinned`). Z physics (stepping up onto the riser) is deferred to #233; textured caps to #236.
 
 ## Two key details
 

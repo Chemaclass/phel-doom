@@ -1,6 +1,6 @@
 (ns phel-doom.core.level
   (:require phel-doom.core.rng :as rng)
-  (:require phel-doom.core.state      :refer [max-backpacks max-lives new-player new-world with-enemies])
+  (:require phel-doom.core.state      :refer [apply-floor-heights max-backpacks max-lives new-player new-world with-enemies])
   (:require phel-doom.core.map        :refer [cell-door cell-door-blue cell-door-red cell-door-yellow count-secrets parse-layout random-grid random-spawn seed-doors seed-secrets])
   (:require phel-doom.core.enemy      :refer [default-wander-fraction promote-wanderers spawn-enemies spawn-enemies-mixed])
   (:require phel-doom.core.enemy-ai   :refer [aggression-for])
@@ -530,8 +530,14 @@
                        (:grid built))
          [px py]     spawn
          specs       (normalise-enemies cfg)
-         world       (new-world grid (new-player px py (php/* (rng/int! 360)
-                                                              (php// php/M_PI 180.0))))
+         ;; Seed per-cell floor heights (#232) from the level config's
+         ;; optional `:floor-heights` map (`{[x y] height}`). Absent on
+         ;; every current level -> all-zero flat floor -> render
+         ;; byte-identical to pre-#232.
+         world       (apply-floor-heights
+                      (new-world grid (new-player px py (php/* (rng/int! 360)
+                                                               (php// php/M_PI 180.0))))
+                      (:floor-heights cfg))
          spawned     (spawn-enemies-mixed grid specs
                                           enemy-min-spawn-dist px py)
          ;; Nightmare: stamp every spawned enemy so respawn picks the

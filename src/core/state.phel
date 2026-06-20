@@ -88,15 +88,57 @@
    cooldown) while not."
   100.0)
 
+(defn- zero-floor-pgrid
+  "Build a PHP float[][] of the same shape as `grid`, every cell 0.0.
+   The parallel floor-height grid (#232): cell (x, y) holds the world
+   z its floor sits at; all-zero is the classic flat world. Sized off
+   `:grid` so it always matches `:pgrid`'s shape."
+  [grid]
+  (to-php-array (map (fn [row] (to-php-array (map (fn [_] 0.0) row))) grid)))
+
+(defn apply-floor-heights
+  "Stamp per-cell floor heights from a `{[x y] height}` map onto the
+   world's `:floor-pgrid` (#232). Pure on the world map (returns a new
+   world), but mutates the PHP float[][] in place via `php/aset` - safe
+   because `:floor-pgrid` is freshly built by `new-world` and not shared.
+   Out-of-bounds cells are skipped. An empty / nil map is a no-op, so
+   levels without `:floor-heights` keep the all-zero flat floor and the
+   render stays byte-identical."
+  [world floor-map]
+  (if (or (nil? floor-map) (empty? floor-map))
+    world
+    (let [fpg (:floor-pgrid world)]
+      (foreach [xy h floor-map]
+        (let [x   (first xy)
+              y   (second xy)
+              row (php/aget fpg y)]
+          (when (php/!== row nil)
+            ;; PHP nested arrays are value types: `(php/aget fpg y)`
+            ;; COPIES the row, so the in-cell write must be assigned back
+            ;; into fpg at y to take effect (the closure array-copy
+            ;; gotcha, statement position). `(php/* 1.0 h)` coerces an
+            ;; int config height to float so the grid stays float[][].
+            (php/aset row x (php/* 1.0 h))
+            (php/aset fpg y row))))
+      (assoc world :floor-pgrid fpg))))
+
 (defn rebuild-pgrid
   "Re-derive `:pgrid` from `:grid`. Call after any in-game mutation
    of the grid (secret reveal, switch toggle, door open) so the
    raycaster's hot-path PHP-array view stays in sync with the
    persistent Phel vector. Without this the 3D view paints the
    pre-mutation cell (player walks through a wall that still
-   visually looks solid)."
+   visually looks solid).
+
+   Carries `:floor-pgrid` along (#232) so the parallel float floor grid
+   can't go stale relative to `:grid`: cell wall-mutations (door/secret/
+   switch) never move floor heights, so an existing grid is preserved
+   verbatim; a world without one (e.g. a loaded savegame) gets a fresh
+   all-zero grid sized to the current `:grid`."
   [world]
-  (assoc world :pgrid (to-php-array (map to-php-array (:grid world)))))
+  (assoc world
+         :pgrid       (to-php-array (map to-php-array (:grid world)))
+         :floor-pgrid (or (:floor-pgrid world) (zero-floor-pgrid (:grid world)))))
 
 (defn new-world
   {:doc "Bundle map grid and player into the world state. Stores a PHP-native
@@ -107,6 +149,14 @@
   [grid player]
   {:grid      grid
    :pgrid     (to-php-array (map to-php-array grid))
+   ;; Parallel per-cell floor heights (#232): a PHP float[][] of the
+   ;; SAME shape as :pgrid, all 0.0 by default (flat world). Cell (x, y)
+   ;; holds the world z its floor sits at; the raycaster reads it to
+   ;; accumulate the first step riser a column crosses, the renderer
+   ;; paints that riser + its cap. apply-floor-heights / build-world seed
+   ;; non-zero heights from the level config; all-zero is byte-identical
+   ;; to the pre-#232 flat renderer.
+   :floor-pgrid (zero-floor-pgrid grid)
    :width     (count (first grid))
    :height    (count grid)
    :player    player

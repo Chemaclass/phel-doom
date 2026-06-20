@@ -1,6 +1,7 @@
 (ns phel-doom-tests.io.render-cache-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.level :refer [build-world])
+  (:require phel-doom.core.state :refer [new-world new-player])
   (:require phel-doom.core.engine :refer [mark-visible-cells])
   (:require phel-doom.io.render.frame-math :refer [halfblock build-sky-halfblock])
   (:require phel-doom.io.render.palette :refer [shade-code-table])
@@ -192,3 +193,66 @@
 (deftest test-px2-differs-from-full-detail
   (is (not= (frame->string world (assoc stats :px2? true) 120 30)
             (frame->string world stats 120 30))))
+
+;; ---------------------------------------------------------------------
+;; Per-cell floor heights (#232): a raised floor cell in front of the
+;; player draws a riser + cap, so the frame differs from the flat world
+;; at the same pose. A flat world is unchanged (the byte-identity guard
+;; is already pinned by test-frame-bytes-pinned; here we re-assert it at
+;; the frame level for a controlled chamber, and that raising a cell is
+;; what makes the difference).
+;; ---------------------------------------------------------------------
+
+;; A roomy 9x9 chamber so the east-facing player sees floor in front of
+;; the wall (room to project a step).
+(def step-chamber
+  [[1 1 1 1 1 1 1 1 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 1 1 1 1 1 1 1 1]])
+
+(defn- step-world []
+  ;; Player near the west wall facing east (angle 0): a long floor run
+  ;; ahead, then the east wall at x=8.
+  (mark-visible-cells (new-world step-chamber (new-player 1.5 4.5 0.0))))
+
+(defn- raise-floor [world x y h]
+  ;; Stamp one cell's floor height through the PHP float[][] twin, writing
+  ;; the row back (PHP nested-array value semantics) and re-assoc'ing so
+  ;; the mutated grid is the one carried on the returned world.
+  (let [fpg (:floor-pgrid world)
+        row (php/aget fpg y)]
+    (php/aset row x (php/* 1.0 h))
+    (php/aset fpg y row)
+    (assoc world :floor-pgrid fpg)))
+
+(deftest test-flat-step-chamber-is-stable
+  ;; Sanity: with no raised cells the controlled chamber renders
+  ;; deterministically (the flat path).
+  (is (= (frame->string (step-world) stats 120 30)
+         (frame->string (step-world) stats 120 30))))
+
+(deftest test-raised-floor-changes-the-frame
+  ;; Raising the floor of a cell in the player's forward path draws a
+  ;; riser + cap, so the bytes differ from the flat chamber at the same
+  ;; pose. (Exact bytes intentionally NOT pinned - geometry may be tuned;
+  ;; the contract is 'a step is visibly rendered'.)
+  (let [flat   (frame->string (step-world) stats 120 30)
+        raised (frame->string (raise-floor (step-world) 5 4 0.5) stats 120 30)]
+    (is (not= flat raised) "a raised floor cell renders differently than flat")))
+
+(deftest test-raised-floor-flat-elsewhere-still-identical
+  ;; Raising a cell the forward rays never cross (behind the player /
+  ;; outside the room interior the centre sweep sees) must leave the
+  ;; flat-world frame untouched - the riser only appears where a ray
+  ;; actually climbs it. Cell (1,1) is a wall corner; raising its floor
+  ;; height is invisible (walls occlude their own floor), so the frame
+  ;; equals the flat chamber.
+  (let [flat   (frame->string (step-world) stats 120 30)
+        hidden (frame->string (raise-floor (step-world) 1 1 0.5) stats 120 30)]
+    (is (= flat hidden) "a step inside a wall cell is not visible")))

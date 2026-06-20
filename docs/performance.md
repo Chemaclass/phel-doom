@@ -193,6 +193,21 @@ Effect on `cast-frame` (2000-iter bench, `default-grid`):
 
 Cast scales linearly with column count. Live perf is available in-game via **F3** (cast/render split, bytes emitted, PHP memory, RLE compression).
 
+### Per-cell floor heights (#232)
+
+The riser side-channel adds 5 parallel `:step-*` arrays to `cast-frame` (one extra DDA recur accumulator + 5 `php/aset` per output column). On a FLAT world (`build-world 1`, no `:floor-heights`) at the three viewports, no-JIT `phel run` absolutes (trust deltas, not ms):
+
+| Viewport | metric | main | #232 | Δ% | verdict |
+|---|---|---|---|---|---|
+| 80x24  | cast   | 0.157 | 0.192 | +22% | structural (5 asets/col) |
+| 80x24  | render | 4.62  | 4.74  | +2.6% | noise |
+| 120x30 | cast   | 0.227 | 0.278 | +22% | structural |
+| 120x30 | render | 6.26  | 6.43  | +2.7% | noise |
+| 180x40 | cast   | 0.338 | 0.410 | +21% | structural |
+| 180x40 | render | 9.35  | 9.73  | +4% | noise-ish |
+
+The cast delta is a fixed +0.03 to +0.07 ms (the 5 array writes), on a base that is ~25x smaller than render, so it is a rounding error against the 5 ms cast+render budget. The render path is unchanged on a flat world (the riser/cap branches are dead when `step-from = vh`), consistent with the byte-identical golden hashes. The compiled `do-cast` keeps its 5 closures (none new in the DDA loop) and the per-cell render loops keep their closure count, so the closure-tax invariant holds. Frame output is byte-identical with all floors 0 (`render-cache-test/test-frame-bytes-pinned`, hashes unchanged).
+
 Half-block sub-pixel rendering (`frame->string`, 200-iter mean, measured BEFORE the closure-tax fix - the ratios still hold, the absolutes are ~5-10x today's):
 
 | Viewport | half-block | flat (`NO_SUBPIXEL`) | Δ CPU | bytes Δ |

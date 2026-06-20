@@ -11,6 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+- Per-cell floor heights (issue #232): cells can carry a floor height, and the raycaster + renderer draw a DOOM-style step (a shaded vertical riser plus a flat cap for the step top) where a ray climbs onto a raised floor. The foundation for steps, platforms and pits; levels opt in via an optional `:floor-heights` map (none ship yet, so the world stays flat). With every floor at 0 the frame is byte-for-byte identical to before. Stepping up onto the floor (Z physics) and textured step caps follow in later issues.
 - Look up/down camera pitch (issues #231, #240): the ↑ / ↓ arrow keys tilt the view up / down (hold to keep pitching, clamps at the extremes - no wrap). It is a pure vertical shear of the horizon (no extra rays): walls, the sky/floor split, floor-cast and enemy sprites all slide together by an integer row offset capped at +/-0.4 of the viewport height. `:pitch` is stored on the player as a fraction in [-1, 1]; a level gaze renders byte-for-byte identically to before.
 - Vertical-aware hitscan (issue #243): a shot now has to land on the enemy's drawn sprite, not just its horizontal column, so aiming up at the sky or down at the floor misses. The check is screen-space exact (the fixed crosshair must sit within the billboard the renderer projects at that distance), so closer enemies with taller sprites are more forgiving than distant ones. Aiming level (pitch 0) is unchanged.
 

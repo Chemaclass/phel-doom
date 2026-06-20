@@ -58,6 +58,7 @@ Optional:
 | `:enemy-lives` | Override the catalog's `:default-lives` (single-type entries only) |
 | `:door-lock`   | `:blue` / `:red` / `:yellow` - adds a matching keycard pickup and locks the exit |
 | `:layout`      | Hand-authored ASCII grid (vector of strings) - bypasses `random-grid` |
+| `:floor-heights` | `{[x y] height}` map of per-cell floor `z` (#232) - raised cells render a step riser + cap. Omitted on every current level (flat floor, byte-identical render); the showcase level lands in #237 |
 
 ### Mixed-monster rooms
 

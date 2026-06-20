@@ -9,6 +9,7 @@ Pure data shapes that every other module operates on. `src/core/state.phel`.
 ```phel
 {:grid       <vector of vectors of cell ints>
  :pgrid      <PHP nested array, fast-path twin of :grid>
+ :floor-pgrid <PHP float[][], per-cell floor heights (#232); same shape as :pgrid, all 0.0 by default>
  :width      <int>
  :height     <int>
  :player     <player map>
@@ -87,6 +88,14 @@ After `build-world` from `core/level.phel` stamps level metadata, the world also
 ```
 
 On grid mutation (door turning into floor, etc.) **both** must update. See `pickup-hearts` and door logic in `commands/play.phel`.
+
+## :floor-pgrid (per-cell floor heights, #232)
+
+A third PHP-native grid, a `float[][]` of the SAME shape as `:pgrid`, holding the world `z` each cell's floor sits at. `new-world` builds it all-`0.0` (the classic flat world); `state/apply-floor-heights` stamps a `{[x y] height}` map into it, and `level/build-world` calls that with the level config's optional `:floor-heights` (absent on every current level, so the default is flat). The raycaster reads it to accumulate the first riser a column crosses (see [raycaster.md](raycaster.md)); the renderer paints that riser + its cap.
+
+`rebuild-pgrid` carries `:floor-pgrid` along (preserving an existing grid, or building a fresh all-zero one sized to `:grid` when absent, e.g. a loaded savegame) so a wall mutation can't leave it stale. Note PHP's value semantics: a stamp reads the inner row, writes the cell, then writes the row back into the grid (the closure array-copy gotcha) - a chained two-level `php/aset` would land on a copy.
+
+All-zero `:floor-pgrid` is byte-identical to the pre-#232 renderer.
 
 ## The player
 

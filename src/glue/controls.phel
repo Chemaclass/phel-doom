@@ -13,7 +13,7 @@
 ;; =====================================================================
 
 (def move-hold-frames
-  "Frames a movement direction (W/S/A/D + ↑/↓ arrows) stays active
+  "Frames a movement direction (W/S/A/D) stays active
    after each input byte. Sized to bridge the OS initial-key-repeat
    delay (~250-500ms on macOS/Linux): without this, the first byte
    arrives, motion runs for a few frames, then stops dead until the
@@ -42,28 +42,28 @@
   3)
 
 (def pitch-hold-frames
-  "Frames a look up/down direction (T / G) stays active after each input
-   byte. Short, like turn-hold-frames, so the camera pitch halts within
-   ~50ms of releasing the key (no terminal key-release on the legacy
-   path) instead of drifting on for the full move-hold bridge."
+  "Frames a look up/down direction (↑/↓ arrows) stays active after each
+   input byte. Short, like turn-hold-frames, so the camera pitch halts
+   within ~50ms of releasing the key (no terminal key-release on the
+   legacy path) instead of drifting on for the full move-hold bridge."
   3)
 
 (def key->slot
   "Map a single-byte input to the direction-counter slot it activates.
-   Arrow-key escape sequences are normalised to ^ _ < > before lookup
-   so they slot in alongside WASD. `x` arms the sprint slot — the
-   legacy / non-kitty fallback for terminals that don't expose SHIFT
-   modifier bits via CSI-u. `t` / `g` shear the camera look up / down
-   (pitch) — picked off the WASD home cluster and otherwise unbound."
-  {"^" :fwd    "w" :fwd
-   "_" :back   "s" :back
+   Arrow-key escape sequences are normalised to ^ _ < > before lookup:
+   ↑/↓ (^/_) shear the camera look up/down (pitch), ←/→ (</>) turn, and
+   forward/back are WASD's w/s. `x` arms the sprint slot — the legacy /
+   non-kitty fallback for terminals that don't expose SHIFT modifier
+   bits via CSI-u."
+  {"w" :fwd
+   "s" :back
+   "^" :pitch-up
+   "_" :pitch-down
    "<" :turn-left
    ">" :turn-right
    "a" :strafe-left
    "d" :strafe-right
-   "x" :sprint
-   "t" :pitch-up
-   "g" :pitch-down})
+   "x" :sprint})
 
 (def shift-key->slot
   "Capital-letter equivalents of `key->slot` movement keys. In cooked
@@ -153,15 +153,14 @@
 (def ascii->slot
   "ASCII codepoint -> direction-counter slot. WASD movement, ←→ turn
    (kitty reports left-arrow as 57351, right as 57349), 'x' (120) as the
-   legacy sprint key, and 't' (116) / 'g' (103) as look up / down (pitch)
-   — all work under kitty too without needing the SHIFT modifier bit."
+   legacy sprint key — all work under kitty too without needing the SHIFT
+   modifier bit. Look up/down (pitch) rides the ↑/↓ arrows via
+   `arrow-letter->slot`, not a CSI-u codepoint here."
   {119 :fwd
    115 :back
    97 :strafe-left
    100 :strafe-right
    120 :sprint
-   116 :pitch-up
-   103 :pitch-down
    57351 :turn-left
    57349 :turn-right})
 
@@ -250,9 +249,10 @@
 (def arrow-letter->slot
   "Kitty-enhanced arrow CSI sequences (`\\e[1;<mods>(:<event>)?<letter>`)
    keep the legacy letter suffix instead of becoming CSI-u tokens.
-   Letter codes: A=up B=down C=right D=left."
-  {"A" :fwd
-   "B" :back
+   Letter codes: A=up B=down C=right D=left — ↑/↓ look up/down (pitch),
+   ←/→ turn."
+  {"A" :pitch-up
+   "B" :pitch-down
    "D" :turn-left
    "C" :turn-right})
 

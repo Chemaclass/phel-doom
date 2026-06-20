@@ -47,7 +47,8 @@ Override tag: `DOCKER_IMG=mytag make docker-build`. Host PHP is the inner loop; 
 
 | Key            | Action                  |
 |---|---|
-| `w` `a` `s` `d` / arrows | Move / turn    |
+| `w` `a` `s` `d`         | Move / strafe           |
+| `←` `→` / `↑` `↓`       | Turn / look up, down    |
 | `SHIFT`        | Sprint                  |
 | `space` / `r`  | Fire / reload           |
 | `1`...`8`      | Switch weapon           |

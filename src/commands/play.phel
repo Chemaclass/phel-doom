@@ -11,10 +11,10 @@
                                             initial-key-snapshot nav-deltas mouse-look])
   (:require phel-doom.core.physics  :refer [apply-physics tick-heartbeat tick-flicker tick-blood-drops tick-door-face tick-stamina])
   (:require phel-doom.core.engine   :refer [mark-visible-cells])
-  (:require phel-doom.core.combat   :refer [ammo-per-box arm-berserk berserk-seconds damage-step fire-anim-seconds invuln-seconds max-reserve push-sfx reload reloading? reload-cooldown-seconds tick-armory tick-shooting])
+  (:require phel-doom.core.combat   :refer [ammo-per-box arm-berserk damage-step fire-anim-seconds invuln-seconds push-sfx reload reloading? reload-cooldown-seconds tick-armory tick-shooting])
   (:require phel-doom.core.enemy    :refer [advance tick-scare rear-attacker?])
   (:require phel-doom.core.projectile :refer [tick-projectiles tick-tracers])
-  (:require phel-doom.core.weapons  :refer [effective-reserve-cap give-weapon switch-weapon weapon-spec weapon-order weapons])
+  (:require phel-doom.core.weapons  :refer [give-weapon switch-weapon weapon-spec weapon-order weapons])
   (:require phel-doom.io.sound    :refer [play-sfx! mute-for! set-sfx-scalar!])
   (:require phel-doom.io.music    :as music)
   (:require phel-doom.core.settings :refer [navigate music-volume sfx-scalar mouse-sensitivity valid-difficulty? pause-menu-move pause-menu-action])
@@ -226,30 +226,26 @@
             (or (:chase-speed world) 0.75)
             (not (boss-down? world)))))
 
-(defn- heart-at-cell? [h px py]
-  (and (= (php/intval (:x h)) px)
-       (= (php/intval (:y h)) py)))
-
-(defn- hearts-not-at [hearts px py]
+(defn- entities-not-at
+  "All entities in `coll` whose integer cell is NOT (px, py). Shared by
+   every step-on pickup to drop the consumed entity from its vector.
+   nil-safe: a missing collection reads as empty."
+  [coll px py]
   (apply vector
-         (filter (fn [h] (not (heart-at-cell? h px py))) hearts)))
+         (filter (fn [e]
+                   (not (and (= (php/intval (:x e)) px)
+                             (= (php/intval (:y e)) py))))
+                 (or coll []))))
 
 (defn- pickup-hearts
   "If the player stands on a heart cell, consume it and gain a life."
   [world]
-  (let [kept (hearts-not-at (:hearts world)
-                            (php/intval (:x (:player world)))
-                            (php/intval (:y (:player world))))]
-    (if (= (count kept) (count (:hearts world)))
+  (let [kept (entities-not-at (:hearts world)
+                              (php/intval (:x (:player world)))
+                              (php/intval (:y (:player world))))]
+    (if (= (count kept) (count (or (:hearts world) [])))
       world
       (push-sfx (gain-life (assoc world :hearts kept)) :door 1.0))))
-
-(defn- armors-not-at [armors px py]
-  (apply vector
-         (filter (fn [a]
-                   (not (and (= (php/intval (:x a)) px)
-                             (= (php/intval (:y a)) py))))
-                 (or armors []))))
 
 (defn- pickup-armors
   "Step-on triggers an armor pickup: bumps :armor by 1, capped at
@@ -258,9 +254,9 @@
    instead of a life (see combat/take-damage). Pickup is always
    consumed even at cap to match the heart / gain-life pattern."
   [world]
-  (let [kept (armors-not-at (:armors world)
-                            (php/intval (:x (:player world)))
-                            (php/intval (:y (:player world))))]
+  (let [kept (entities-not-at (:armors world)
+                              (php/intval (:x (:player world)))
+                              (php/intval (:y (:player world))))]
     (if (= (count kept) (count (or (:armors world) [])))
       world
       (let [shielded (assoc world :armors kept)]
@@ -268,27 +264,21 @@
          (update shielded :armor (fn [a] (php/min max-armor (php/+ (or a 0) 1))))
          :door 1.0)))))
 
-(defn- ammo-boxes-not-at [boxes px py]
-  (apply vector
-         (filter (fn [b]
-                   (not (and (= (php/intval (:x b)) px)
-                             (= (php/intval (:y b)) py))))
-                 (or boxes []))))
-
-(defn- ammo-box-at
-  "Pick the first ammo box at cell (px, py) so the caller can read
-   its optional `:weapon` tag. nil when no box on cell."
-  [boxes px py]
-  (loop [bs boxes]
+(defn- entity-at
+  "Pick the first entity in `coll` at cell (px, py) so the caller can
+   read its optional tags (e.g. an ammo box's `:weapon`). nil when no
+   entity sits on the cell."
+  [coll px py]
+  (loop [es coll]
     (cond
-      (nil? bs)          nil
-      (zero? (count bs)) nil
+      (nil? es)          nil
+      (zero? (count es)) nil
       :else
-      (let [b (first bs)]
-        (if (and (= (php/intval (:x b)) px)
-                 (= (php/intval (:y b)) py))
-          b
-          (recur (next bs)))))))
+      (let [e (first es)]
+        (if (and (= (php/intval (:x e)) px)
+                 (= (php/intval (:y e)) py))
+          e
+          (recur (next es)))))))
 
 (defn- pickup-ammos
   "Step-on triggers an ammo-box pickup. Two flavours:
@@ -306,8 +296,8 @@
   (let [px     (php/intval (:x (:player world)))
         py     (php/intval (:y (:player world)))
         all    (or (:ammo-boxes world) [])
-        on-box (ammo-box-at all px py)
-        kept   (ammo-boxes-not-at all px py)]
+        on-box (entity-at all px py)
+        kept   (entities-not-at all px py)]
     (if (nil? on-box)
       world
       (let [tagged-w  (:weapon on-box)
@@ -327,13 +317,6 @@
            refilled)
          :door 1.0)))))
 
-(defn- berserks-not-at [bs px py]
-  (apply vector
-         (filter (fn [b]
-                   (not (and (= (php/intval (:x b)) px)
-                             (= (php/intval (:y b)) py))))
-                 (or bs []))))
-
 (defn- pickup-berserks
   "Step-on consumes the berserk sphere + arms `:berserk-secs` for the
    2x-damage rage window. Stepping on a second sphere while still
@@ -341,27 +324,20 @@
    rather than adding to it. Distinct `:berserk` sfx so the pickup is
    audibly different from a generic door/key tink."
   [world]
-  (let [kept (berserks-not-at (:berserks world)
+  (let [kept (entities-not-at (:berserks world)
                               (php/intval (:x (:player world)))
                               (php/intval (:y (:player world))))]
     (if (= (count kept) (count (or (:berserks world) [])))
       world
       (push-sfx (arm-berserk (assoc world :berserks kept)) :berserk 1.0))))
 
-(defn- invulns-not-at [is px py]
-  (apply vector
-         (filter (fn [i]
-                   (not (and (= (php/intval (:x i)) px)
-                             (= (php/intval (:y i)) py))))
-                 (or is []))))
-
 (defn- pickup-invulns
   "Step-on consumes the invulnerability sphere + arms
    `:invuln-secs` of damage immunity. Refresh-not-add on stack."
   [world]
-  (let [kept (invulns-not-at (:invulns world)
-                             (php/intval (:x (:player world)))
-                             (php/intval (:y (:player world))))]
+  (let [kept (entities-not-at (:invulns world)
+                              (php/intval (:x (:player world)))
+                              (php/intval (:y (:player world))))]
     (if (= (count kept) (count (or (:invulns world) [])))
       world
       (push-sfx (assoc world
@@ -369,31 +345,17 @@
                        :invuln-secs invuln-seconds)
                 :door 1.0))))
 
-(defn- soulspheres-not-at [ss px py]
-  (apply vector
-         (filter (fn [s]
-                   (not (and (= (php/intval (:x s)) px)
-                             (= (php/intval (:y s)) py))))
-                 (or ss []))))
-
 (defn- pickup-soulspheres
   "Step-on consumes a soulsphere + bumps `:lives` toward
    `soulsphere-cap` via `gain-soulsphere`. Over-cap lives decay back
    to `max-lives` over time (see `decay-soul-overcap`)."
   [world]
-  (let [kept (soulspheres-not-at (:soulspheres world)
-                                 (php/intval (:x (:player world)))
-                                 (php/intval (:y (:player world))))]
+  (let [kept (entities-not-at (:soulspheres world)
+                              (php/intval (:x (:player world)))
+                              (php/intval (:y (:player world))))]
     (if (= (count kept) (count (or (:soulspheres world) [])))
       world
       (push-sfx (gain-soulsphere (assoc world :soulspheres kept)) :berserk 1.0))))
-
-(defn- armor-shards-not-at [shards px py]
-  (apply vector
-         (filter (fn [s]
-                   (not (and (= (php/intval (:x s)) px)
-                             (= (php/intval (:y s)) py))))
-                 (or shards []))))
 
 (defn- pickup-armor-shards
   "Step-on consumes an armor shard + adds +1 armor via
@@ -402,19 +364,12 @@
    pattern). Common pickup so the door tink reads as routine
    loot rather than a special-event sfx."
   [world]
-  (let [kept (armor-shards-not-at (:armor-shards world)
-                                  (php/intval (:x (:player world)))
-                                  (php/intval (:y (:player world))))]
+  (let [kept (entities-not-at (:armor-shards world)
+                              (php/intval (:x (:player world)))
+                              (php/intval (:y (:player world))))]
     (if (= (count kept) (count (or (:armor-shards world) [])))
       world
       (push-sfx (gain-armor-shard (assoc world :armor-shards kept)) :door 1.0))))
-
-(defn- backpacks-not-at [bs px py]
-  (apply vector
-         (filter (fn [b]
-                   (not (and (= (php/intval (:x b)) px)
-                             (= (php/intval (:y b)) py))))
-                 (or bs []))))
 
 (defn- pickup-backpacks
   "Stacking pickup (#68 part 3): each step-on bumps `:backpack-level`
@@ -425,9 +380,9 @@
    At cap the pickup is silently consumed (cell freed) but the
    level is unchanged."
   [world]
-  (let [kept (backpacks-not-at (:backpacks world)
-                               (php/intval (:x (:player world)))
-                               (php/intval (:y (:player world))))]
+  (let [kept (entities-not-at (:backpacks world)
+                              (php/intval (:x (:player world)))
+                              (php/intval (:y (:player world))))]
     (if (= (count kept) (count (or (:backpacks world) [])))
       world
       (let [picked (assoc world :backpacks kept)]
@@ -437,20 +392,6 @@
            (gain-backpack picked))
          :door 1.0)))))
 
-(defn- keycards-not-at [ks px py]
-  (apply vector
-         (filter (fn [k]
-                   (not (and (= (php/intval (:x k)) px)
-                             (= (php/intval (:y k)) py))))
-                 (or ks []))))
-
-(defn- weapon-pickups-not-at [ws px py]
-  (apply vector
-         (filter (fn [w]
-                   (not (and (= (php/intval (:x w)) px)
-                             (= (php/intval (:y w)) py))))
-                 (or ws []))))
-
 (defn- pickup-weapon-pickups
   "Step-on consumes a weapon pickup, adds it to :owned-weapons, and
    auto-switches to it DOOM-style (mid-fight reload-lockout check is
@@ -458,18 +399,10 @@
   [world]
   (let [px      (php/intval (:x (:player world)))
         py      (php/intval (:y (:player world)))
-        on-pick (loop [ws (:weapon-pickups world)]
-                  (cond
-                    (nil? ws) nil
-                    :else
-                    (let [w (first ws)]
-                      (if (and (= (php/intval (:x w)) px)
-                               (= (php/intval (:y w)) py))
-                        w
-                        (recur (next ws))))))]
+        on-pick (entity-at (:weapon-pickups world) px py)]
     (if (nil? on-pick)
       world
-      (let [kept (weapon-pickups-not-at (:weapon-pickups world) px py)]
+      (let [kept (entities-not-at (:weapon-pickups world) px py)]
         (push-sfx
          (give-weapon (assoc world :weapon-pickups kept) (:weapon on-pick))
          :door 1.0)))))
@@ -480,18 +413,10 @@
   [world]
   (let [px      (php/intval (:x (:player world)))
         py      (php/intval (:y (:player world)))
-        on-card (loop [ks (:keycards world)]
-                  (cond
-                    (nil? ks) nil
-                    :else
-                    (let [k (first ks)]
-                      (if (and (= (php/intval (:x k)) px)
-                               (= (php/intval (:y k)) py))
-                        k
-                        (recur (next ks))))))]
+        on-card (entity-at (:keycards world) px py)]
     (if (nil? on-card)
       world
-      (let [kept (keycards-not-at (:keycards world) px py)]
+      (let [kept (entities-not-at (:keycards world) px py)]
         (push-sfx
          (assoc world
                 :keycards  kept
@@ -830,18 +755,13 @@
    :damage-taken   (or (:damage-taken world) 0)
    :kills-by-weapon (or (:kills-by-weapon world) {})})
 
-(defn- result-game-over [world ^float t-start ^float now]
+(defn- result-end
+  "Terminal per-level result map for a run that has ended. `flag` is
+   the kind tag (`:game-over` or `:victory`) set to true alongside the
+   shared kills / level / survival-time fields + run-stat carry."
+  [flag world ^float t-start ^float now]
   (merge
-   {:game-over  true
-    :kills      (:kills world)
-    :level      (:level world)
-    :level-name (:level-name world)
-    :survived-s (php/intval (php/- now t-start))}
-   (run-stat-fields world)))
-
-(defn- result-victory [world ^float t-start ^float now]
-  (merge
-   {:victory    true
+   {flag        true
     :kills      (:kills world)
     :level      (:level world)
     :level-name (:level-name world)
@@ -891,7 +811,7 @@
   [world ^float t-start ^float now]
   (play-door-sfx world)
   (if (php/>= (:level world) num-levels)
-    (result-victory world t-start now)
+    (result-end :victory world t-start now)
     (result-next-level world t-start now)))
 
 ;; =====================================================================
@@ -1103,7 +1023,7 @@
                   (do (persist-settings! world') :quit)
                   (= (:pause-action world') :restart)
                   (do (persist-settings! world') :restart)
-                  (php/<= (:lives world') 0)          (result-game-over world' t-start now)
+                  (php/<= (:lives world') 0)          (result-end :game-over world' t-start now)
                   (on-door? world')                   (door-result      world' t-start now)
                   :else                               (recur world' now ms
                                                              (fps-from-ms ms)

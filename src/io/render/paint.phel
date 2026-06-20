@@ -1323,20 +1323,41 @@
         (recur (php/+ c 1))))
     buf))
 
-(defn- blit-billboard
-  "blit-sprite-into at full projected enemy height, centred vertically
-   (corpses, fireballs)."
-  [buf sprite ^int col ^float d ^int vw ^int vh ^float pd dists edists]
-  (let [h (sprite-h-pd pd vh d 1.0)]
-    (blit-sprite-into buf sprite col d (php/intdiv (php/- vh h) 2) h vw vh dists edists)))
-
 (defn- blit-billboard-scaled
-  "blit-billboard at `scale` x the projected enemy height, kept centred
+  "blit-sprite-into at `scale` x the projected enemy height, kept centred
    (corpses render a bit smaller than a live enemy). `pr` is the pitch
    row offset so the billboard tracks the sheared horizon."
   [buf sprite ^int col ^float d ^float scale ^int vw ^int vh ^float pd dists edists ^int pr]
   (let [h (php/max 2 (php/intval (php/* (sprite-h-pd pd vh d 1.0) scale)))]
     (blit-sprite-into buf sprite col d (php/+ (php/intdiv (php/- vh h) 2) pr) h vw vh dists edists)))
+
+(defn- blit-glow-into
+  "Coloured glow square + centre glyph for a far / no-sprite billboard
+   (pickup or fireball): the shared body of the two legacy NO_SPRITES
+   paths. `pr` is the pitch offset. Mutates + returns `bp` via
+   statement-position buf-set (caller must rebind, per the closure-array-
+   copy note)."
+  [bp proj ^float pd ^float d ^int col ^int pr shade glyph ^int vw ^int vh dists edists]
+  (let [hw     (php/max 1 (php/intdiv (:half-width proj) 2))
+        c-from (php/max 0 (php/- col hw))
+        c-to   (php/min (php/- vw 1) (php/+ col hw))
+        h      (sprite-h-pd pd vh d 1.0)
+        mid    (php/+ (php/intdiv (php/- vh h) 2) pr (php/intdiv h 2))
+        r-top  (php/max 0 (php/- mid (php/intdiv h 6)))
+        r-bot  (php/min vh (php/+ mid (php/intdiv h 6) 1))]
+    (loop [c c-from]
+      (when (php/<= c c-to)
+        (when (pickup-visible-at? d c dists edists)
+          (loop [r r-top]
+            (when (php/< r r-bot)
+              (buf-set bp (php/+ (php/* r vw) c) shade)
+              (recur (php/+ r 1)))))
+        (recur (php/+ c 1))))
+    (when (and (php/>= col 0) (php/< col vw)
+               (php/>= mid 0) (php/< mid vh)
+               (pickup-visible-at? d col dists edists))
+      (buf-set bp (php/+ (php/* mid vw) col) glyph))
+    bp))
 
 (defn- death-frame
   "Pick the death-animation frame for enemy `type-kw` at remaining
@@ -1471,26 +1492,7 @@
                (let [etop (php/+ (php/intdiv (php/- vh ph) 2) pr)]
                  (blit-sprite-into bp use-spr col d etop ph vw vh dists edists))
                ;; Far / no-sprite: clean coloured glow + centre icon glyph.
-               (let [hw     (php/max 1 (php/intdiv (:half-width proj) 2))
-                     c-from (php/max 0 (php/- col hw))
-                     c-to   (php/min (php/- vw 1) (php/+ col hw))
-                     h      (sprite-h-pd pd vh d 1.0)
-                     mid    (php/+ (php/intdiv (php/- vh h) 2) pr (php/intdiv h 2))
-                     r-top  (php/max 0 (php/- mid (php/intdiv h 6)))
-                     r-bot  (php/min vh (php/+ mid (php/intdiv h 6) 1))]
-                 (loop [c c-from]
-                   (when (php/<= c c-to)
-                     (when (pickup-visible-at? d c dists edists)
-                       (loop [r r-top]
-                         (when (php/< r r-bot)
-                           (buf-set bp (php/+ (php/* r vw) c) shade-now)
-                           (recur (php/+ r 1)))))
-                     (recur (php/+ c 1))))
-                 (when (and (php/>= col 0) (php/< col vw)
-                            (php/>= mid 0) (php/< mid vh)
-                            (pickup-visible-at? d col dists edists))
-                   (buf-set bp (php/+ (php/* mid vw) col) glyph-now))
-                 bp))))))
+               (blit-glow-into bp proj pd d col pr shade-now glyph-now vw vh dists edists))))))
      blood-paint
      (or pickups []))))
 
@@ -1525,26 +1527,7 @@
                      etop (php/+ (php/intdiv (php/- vh fh) 2) pr)]
                  (blit-sprite-into bp fireball col d etop fh vw vh dists edists))
                ;; Legacy orange glow + white-hot core (NO_SPRITES).
-               (let [hw     (php/max 1 (php/intdiv (:half-width proj) 2))
-                     c-from (php/max 0 (php/- col hw))
-                     c-to   (php/min (php/- vw 1) (php/+ col hw))
-                     h      (sprite-h-pd pd vh d 1.0)
-                     mid    (php/+ (php/intdiv (php/- vh h) 2) pr (php/intdiv h 2))
-                     r-top  (php/max 0 (php/- mid (php/intdiv h 6)))
-                     r-bot  (php/min vh (php/+ mid (php/intdiv h 6) 1))]
-                 (loop [c c-from]
-                   (when (php/<= c c-to)
-                     (when (pickup-visible-at? d c dists edists)
-                       (loop [r r-top]
-                         (when (php/< r r-bot)
-                           (buf-set bp (php/+ (php/* r vw) c) fireball-shade)
-                           (recur (php/+ r 1)))))
-                     (recur (php/+ c 1))))
-                 (when (and (php/>= col 0) (php/< col vw)
-                            (php/>= mid 0) (php/< mid vh)
-                            (pickup-visible-at? d col dists edists))
-                   (buf-set bp (php/+ (php/* mid vw) col) fireball-glyph))
-                 bp))))))
+               (blit-glow-into bp proj pd d col pr fireball-shade fireball-glyph vw vh dists edists))))))
      blood-paint
      (or projectiles []))))
 

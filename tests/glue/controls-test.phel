@@ -461,7 +461,7 @@
 ;;   b = 35 -> motion bit set, low bits 3 = bare hover (no button held)
 ;; Deltas are measured against the previous pointer position; motion
 ;; RIGHT (+dx) -> +yaw, motion UP (-dy, rows grow downward) -> +pitch.
-;; Scales: yaw 0.012, pitch 0.02 rad/fraction per cell at sensitivity 1.
+;; Scales: yaw 0.018, pitch 0.02 rad/fraction per cell at sensitivity 1.
 ;; ---------------------------------------------------------------------
 
 ;; Shared baseline so deltas are computed immediately (a non-nil prev-pos
@@ -469,8 +469,8 @@
 (def mouse-origin [10 10])
 
 (defn- approx?
-  "Float compare with a tolerance, so e.g. -6 * 0.012 (which lands on
-   -0.07199999... not the exact literal) still matches -0.072."
+  "Float compare with a tolerance, so e.g. -6 * 0.018 (which lands on
+   -0.10799999... not the exact literal) still matches -0.108."
   [^float a ^float b]
   (php/< (php/abs (php/- a b)) 1.0e-9))
 
@@ -485,19 +485,19 @@
     (is (= mouse-origin (:pos r)) "prev-pos carried forward")))
 
 (deftest test-mouse-look-motion-right-yields-positive-yaw
-  ;; Hover (b=35) from x=10 to x=15: dx=+5 -> yaw = 5 * 0.012 = 0.06.
+  ;; Hover (b=35) from x=10 to x=15: dx=+5 -> yaw = 5 * 0.018 = 0.09.
   ;; No pitch (dy=0), no fire (hover, not a press / drag).
   (let [r (mouse-look "\e[<35;15;10M" mouse-origin 1.0)]
-    (is (approx? 0.06 (:yaw r)) "+dx -> +yaw")
+    (is (approx? 0.09 (:yaw r)) "+dx -> +yaw")
     (is (= 0.0 (:pitch r)))
     (is (= false (:fire? r)))
     (is (= false (:fire-held? r)) "bare hover is not held-fire")
     (is (= [15 10] (:pos r)))))
 
 (deftest test-mouse-look-motion-left-yields-negative-yaw
-  ;; Hover from x=10 to x=4: dx=-6 -> yaw = -6 * 0.012 = -0.072.
+  ;; Hover from x=10 to x=4: dx=-6 -> yaw = -6 * 0.018 = -0.108.
   (let [r (mouse-look "\e[<35;4;10M" mouse-origin 1.0)]
-    (is (approx? -0.072 (:yaw r)) "-dx -> -yaw")
+    (is (approx? -0.108 (:yaw r)) "-dx -> -yaw")
     (is (= 0.0 (:pitch r)))))
 
 (deftest test-mouse-look-motion-up-yields-positive-pitch
@@ -534,25 +534,25 @@
   (let [r (mouse-look "\e[<32;15;10M" mouse-origin 1.0)]
     (is (= false (:fire? r)) "a drag is not a rising-edge press")
     (is (= true (:fire-held? r)) "left held during drag = held-fire")
-    (is (approx? 0.06 (:yaw r)) "drag still turns")))
+    (is (approx? 0.09 (:yaw r)) "drag still turns")))
 
 (deftest test-mouse-look-multiple-events-accumulate
   ;; Two hover reports in one frame: 10->15 (dx+5) then 15->20 (dx+5).
-  ;; Deltas sum: total dx=10 -> yaw = 10 * 0.012 = 0.12; pos ends at 20.
+  ;; Deltas sum: total dx=10 -> yaw = 10 * 0.018 = 0.18; pos ends at 20.
   (let [r (mouse-look "\e[<35;15;10M\e[<35;20;10M" mouse-origin 1.0)]
-    (is (approx? 0.12 (:yaw r)) "deltas across the frame sum")
+    (is (approx? 0.18 (:yaw r)) "deltas across the frame sum")
     (is (= [20 10] (:pos r)) "pos trails the last report")))
 
 (deftest test-mouse-look-press-then-move-fires-and-turns
   ;; A press followed by a hover move in the same frame: fire AND yaw.
   (let [r (mouse-look "\e[<0;10;10M\e[<35;16;10M" mouse-origin 1.0)]
     (is (= true (:fire? r)) "the press still registers")
-    (is (approx? 0.072 (:yaw r)) "the move still turns (dx +6 -> 0.072)")))
+    (is (approx? 0.108 (:yaw r)) "the move still turns (dx +6 -> 0.108)")))
 
 (deftest test-mouse-look-sensitivity-scales-the-delta
   ;; sensitivity 2.0 doubles, 0.0 zeroes the look (mouselook effectively
-  ;; off) while leaving fire untouched.
-  (is (approx? 0.12 (:yaw (mouse-look "\e[<35;15;10M" mouse-origin 2.0))) "2x sensitivity doubles yaw")
+  ;; off) while leaving fire untouched. dx=5 -> 5 * 0.018 * 2.0 = 0.18.
+  (is (approx? 0.18 (:yaw (mouse-look "\e[<35;15;10M" mouse-origin 2.0))) "2x sensitivity doubles yaw")
   (is (= 0.0  (:yaw (mouse-look "\e[<35;15;10M" mouse-origin 0.0))) "0 sensitivity = no look")
   (let [r (mouse-look "\e[<0;10;10M" mouse-origin 0.0)]
     (is (= true (:fire? r)) "0 sensitivity still lets a click fire")))
@@ -578,7 +578,7 @@
     (is (= [30 30] (:pos r)) "but :pos still advances to the wheel cell"))
   ;; Wheel tick then a hover from the wheel's cell: only the hover counts.
   (let [r (mouse-look "\e[<64;30;30M\e[<35;33;30M" mouse-origin 1.0)]
-    (is (approx? 0.036 (:yaw r)) "delta measured from the wheel cell (33-30=3)")))
+    (is (approx? 0.054 (:yaw r)) "delta measured from the wheel cell (33-30=3)")))
 
 (deftest test-mouse-look-malformed-sequence-ignored
   ;; A truncated SGR report (missing the y coord + terminator) does not
@@ -615,7 +615,7 @@
   ;; here (refresh-from-keys handles it elsewhere) but must not corrupt
   ;; the delta.
   (let [r (mouse-look "w\e[<35;15;10Md" mouse-origin 1.0)]
-    (is (approx? 0.06 (:yaw r)) "WASD bytes around the report don't affect yaw")
+    (is (approx? 0.09 (:yaw r)) "WASD bytes around the report don't affect yaw")
     (is (= [15 10] (:pos r)))))
 
 (deftest test-mouse-look-bytes-do-not-leak-into-key-parsing

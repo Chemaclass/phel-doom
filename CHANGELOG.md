@@ -22,6 +22,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Changed
 
+- Native-FPS mouse feel (issue #246): the mouse now aims like a modern shooter. The fixed screen-centre crosshair IS the aim point, so the terminal caret is re-hidden every frame (it can never resurface behind the streaming motion reports or after a resize), and turning the OS pointer setting off no longer leaves you blind: with mouselook on, an `:off` Crosshair still draws a minimal centre aim dot. The default turn speed is snappier (per-cell yaw 0.012 to 0.018, so a full-width flick sweeps ~124 deg instead of ~82 deg at the neutral 1.0x sensitivity); pitch and the Sensitivity slider (default 50% = 1.0x) are unchanged. All keyboard controls stay as-is and the mouse remains on by default.
 - Textured step caps (issue #236): the top surface of a raised floor step (#232) is now textured and fogged with the same stone as the ground floor, projected at the step's height, instead of a single flat shade. A step top reads as continuous stone that gets nearer/lit as it rises and fogs out with distance, matching the floor it joins. Flat floors are untouched: a cell at height 0 never enters the new path, so the frame stays byte-for-byte identical and the flat fast path does not regress (measured < 0.1 ms at 120x30).
 
 ### Fixed

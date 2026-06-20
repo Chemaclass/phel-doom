@@ -1,6 +1,6 @@
 (ns phel-doom.core.physics
   (:require phel-doom.core.rng :as rng)
-  (:require phel-doom.core.state   :refer [max-stamina move-player turn-player clamp-pitch])
+  (:require phel-doom.core.state   :refer [max-stamina move-player turn-player clamp-pitch set-floor-z])
   (:require phel-doom.core.map     :refer [missing-key-for passable? wall?])
   (:require phel-doom.core.weapons :refer [weapon-spec]))
 
@@ -70,14 +70,71 @@
    player can't stutter-sprint at empty."
   20.0)
 
+(def step-up-max
+  "Tallest floor riser (in world z) the player can auto-climb when
+   walking into it (#233). A destination cell whose floor is at most
+   this much above the floor underfoot is stepped up onto; anything
+   taller blocks the move like a wall. ~0.4 lets the player mount a
+   knee-high step without vaulting a full-height ledge."
+  0.4)
+
+(def fall-speed
+  "Downward easing rate (world z per second) when the floor under the
+   player drops below their current `:floor-z` (#233). The eye sinks
+   toward the new lower floor at this constant rate over a few frames -
+   a deterministic, RNG-free 'gravity' so a step-down or pit reads as a
+   smooth descent rather than an instant snap."
+  6.0)
+
+(defn floor-z-at
+  "World z of the floor in cell `(ix, iy)`, read from the world's
+   `:floor-pgrid` (#232 float[][] twin of `:pgrid`). nil-safe at every
+   hop: a world built before floor heights (no `:floor-pgrid`), an
+   out-of-range row, or a missing cell all read as `0.0` (the flat
+   ground), so a level without raised floors behaves exactly as before."
+  [world ^int ix ^int iy]
+  (let [fpg (:floor-pgrid world)
+        row (if (php/=== nil fpg) nil (php/aget fpg iy))
+        fz  (if (php/=== nil row) nil (php/aget row ix))]
+    (if (php/=== nil fz) 0.0 fz)))
+
+(defn- resolve-step
+  "Z-axis gate for a move that already cleared the wall / locked-door
+   check (#233). `cur` is the floor the player stands on now; `dest` is
+   the floor of the cell they are stepping into.
+
+   - same level (`dest == cur`)                    -> `moved` untouched:
+     the flat all-zero world takes this arm on every move, so it never
+     writes the Z pair and the render stays byte-identical.
+   - riser too tall (`dest - cur > step-up-max`)   -> nil (caller BLOCKS
+     the move; the player stays put as if it were a wall).
+   - climbable rise (`0 < dest - cur <= step-up-max`) -> snap `:floor-z`
+     up onto `dest` this frame (the eye rises with the step).
+   - floor drops (`dest < cur`)                    -> keep `:floor-z` at
+     `cur` for now and let `tick-fall` ease it down to `dest` over the
+     next frames (gravity).
+
+   Returns the moved world with the Z decision applied, or nil to signal
+   a block. Pure: only `:floor-z` / `:eye-z` change here, via
+   `set-floor-z`; the fall is a separate per-frame step."
+  [moved ^float cur ^float dest]
+  (cond
+    (php/=== dest cur)                   moved
+    (php/> (php/- dest cur) step-up-max) nil
+    (php/> dest cur)                     (set-floor-z moved dest)
+    :else                                moved))
+
 (defn try-move
   "Translate the player by (dx, dy) unless the destination cell holds
-   a wall OR a locked door without the matching keycard. When a
+   a wall, a locked door without the matching keycard, OR a floor riser
+   taller than `step-up-max` (#233 - a too-tall step blocks like a
+   wall). A climbable riser is stepped up onto (eye rises this frame); a
+   floor that drops is walked off and eased down by `tick-fall`. When a
    bump is caused specifically by a missing keycard, arm
    :locked-door-bump-secs + record the colour so the render layer
    can paint 'NEED <COLOUR> KEY' over the 3D view, and enqueue a
-   muted `:click` deny cue on the :sfx queue. Wall bumps are silent —
-   only the locked-door case is informational."
+   muted `:click` deny cue on the :sfx queue. Wall + tall-step bumps are
+   silent — only the locked-door case is informational."
   [world ^float dx ^float dy]
   (let [{:keys [grid player held-keys]} world
         nx                              (+ (:x player) dx)
@@ -86,7 +143,13 @@
         iy                              (php/intval ny)]
     (cond
       (passable? grid held-keys ix iy)
-      (move-player world dx dy)
+      ;; Wall-clear: now apply the Z gate. A nil from resolve-step means
+      ;; the riser is too tall, so the move is rejected and the player
+      ;; holds position (and floor-z) exactly like a wall bump.
+      (let [cur     (or (:floor-z player) 0.0)
+            dest    (floor-z-at world ix iy)
+            stepped (resolve-step (move-player world dx dy) cur dest)]
+        (if (php/=== nil stepped) world stepped))
 
       :else
       (let [need (missing-key-for grid held-keys ix iy)]
@@ -213,21 +276,44 @@
         (counter-on? m :strafe-left)
         (counter-on? m :strafe-right))))
 
+(defn tick-fall
+  "Ease `:floor-z` (and the derived `:eye-z`) down toward the floor under
+   the player's CURRENT cell when it sits below where they stand (#233).
+   Climbs snap up instantly in `try-move`; a step-down or pit instead
+   leaves `:floor-z` high and this runs each frame to sink it at
+   `fall-speed` (clamped so it lands exactly on the target, never
+   below). A no-op when already grounded - `set-floor-z` is only called
+   while actually falling, so the flat all-zero world (target == current
+   == 0.0) never touches the Z pair and stays byte-identical."
+  [world ^float dt]
+  (let [player (:player world)
+        cur    (or (:floor-z player) 0.0)
+        ix     (php/intval (:x player))
+        iy     (php/intval (:y player))
+        target (floor-z-at world ix iy)]
+    (if (php/> cur target)
+      ;; Descend by at most (cur - target) so the eye settles on the
+      ;; floor without dipping under it on the landing frame.
+      (set-floor-z world (php/max target (php/- cur (php/* fall-speed dt))))
+      world)))
+
 (defn apply-physics
   "Per-frame: rotate, shear the look up/down pitch, then translate using
-   the new heading, then decay every counter by one frame. Translation
-   deltas read both `:moves` AND the sprint state (via sprint-factor) so
-   sprint intent x stamina > 0 x not-blocked yields a 1.6x boost. Pitch
-   is a pure camera shear (no effect on translation), clamped by
-   `clamp-pitch`."
+   the new heading, ease any pending fall, then decay every counter by
+   one frame. Translation deltas read both `:moves` AND the sprint state
+   (via sprint-factor) so sprint intent x stamina > 0 x not-blocked
+   yields a 1.6x boost. Pitch is a pure camera shear (no effect on
+   translation), clamped by `clamp-pitch`. `tick-fall` runs AFTER the
+   move so it sinks toward the floor of the cell just stepped into."
   [world ^float dt]
   (let [moves   (:moves world)
         turned  (apply-rotation world (turn-delta moves dt))
         pitched (apply-pitch turned (pitch-delta moves dt))
         walked  (apply-translation pitched
                                    (longitudinal-delta pitched dt)
-                                   (lateral-delta pitched dt))]
-    (decay-move-counters walked)))
+                                   (lateral-delta pitched dt))
+        fell    (tick-fall walked dt)]
+    (decay-move-counters fell)))
 
 (defn tick-stamina
   "Drain stamina while sprinting + moving, regenerate while not (after

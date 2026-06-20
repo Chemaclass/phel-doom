@@ -1,7 +1,7 @@
 (ns phel-doom-tests.core.physics-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.state   :refer [max-stamina new-world new-player])
-  (:require phel-doom.core.physics :refer [try-move apply-physics sprint-engage-threshold sprint-multiplier stamina-drain stamina-regen tick-heartbeat tick-flicker tick-stamina tick-blood-drops tick-door-face]))
+  (:require phel-doom.core.state   :refer [max-stamina new-world new-player eye-height set-floor-z])
+  (:require phel-doom.core.physics :refer [try-move apply-physics tick-fall floor-z-at step-up-max fall-speed sprint-engage-threshold sprint-multiplier stamina-drain stamina-regen tick-heartbeat tick-flicker tick-stamina tick-blood-drops tick-door-face]))
 
 ;; Tiny 3x3 grid: walls around the perimeter, open centre.
 (def open-world
@@ -479,3 +479,131 @@
                    (assoc :stamina 0.0))
         out    (apply-physics empty- 0.1)]
     (is (< (php/abs (- (:x (:player out)) (:x (:player slow)))) 0.0001))))
+
+;; ---------------------------------------------------------------------
+;; Z physics (#233): the floor under the player drives eye height; small
+;; risers auto-climb, tall ones block, drops fall under gravity. Fixtures
+;; raise a cell with a direct php/aset on :floor-pgrid, the same path
+;; apply-floor-heights uses and the engine test mirrors.
+;; ---------------------------------------------------------------------
+
+(defn- raise-cell [world x y h]
+  ;; Stamp one cell's floor height via the PHP float[][] twin. The row is
+  ;; bound first: a php/aset onto a chained (php/aget ...) temporary is a
+  ;; write-to-temporary the compiler rejects.
+  (let [fpg (:floor-pgrid world)
+        row (php/aget fpg y)]
+    (php/aset row x (php/* 1.0 h))
+    (php/aset fpg y row)
+    (assoc world :floor-pgrid fpg)))
+
+(deftest test-new-player-starts-grounded
+  ;; Fresh player stands on the ground: floor-z 0, eye-z half a unit up.
+  (let [p (:player empty-world)]
+    (is (= 0.0 (:floor-z p)))
+    (is (= 0.5 (:eye-z p)))))
+
+(deftest test-eye-z-is-floor-z-plus-eye-height-after-climb
+  ;; The Z pair invariant: eye-z always trails floor-z by exactly
+  ;; eye-height, however the player got onto the floor.
+  (let [w  (raise-cell empty-world 2 1 0.3)
+        w' (try-move w 1.0 0.0)
+        p  (:player w')]
+    (is (< (php/abs (- (:eye-z p) (php/+ (:floor-z p) eye-height))) 1.0e-9))))
+
+(deftest test-step-up-small-riser-climbs
+  ;; A 0.3 riser (<= step-up-max 0.4) is mounted: the player walks onto
+  ;; cell (2,1) AND floor-z/eye-z rise to the step.
+  (let [w  (raise-cell empty-world 2 1 0.3)
+        w' (try-move w 1.0 0.0)
+        p  (:player w')]
+    (is (< (php/abs (- (:x p) 2.5)) 0.0001) "moved onto the step")
+    (is (< (php/abs (- (:floor-z p) 0.3)) 1.0e-9) "floor-z rose to the step")
+    (is (< (php/abs (- (:eye-z p) 0.8)) 1.0e-9) "eye-z = step + 0.5")))
+
+(deftest test-step-up-at-exactly-max-climbs
+  ;; Boundary: a riser of exactly step-up-max is still climbable (<=).
+  (let [w  (raise-cell empty-world 2 1 step-up-max)
+        w' (try-move w 1.0 0.0)
+        p  (:player w')]
+    (is (< (php/abs (- (:x p) 2.5)) 0.0001))
+    (is (< (php/abs (- (:floor-z p) step-up-max)) 1.0e-9))))
+
+(deftest test-too-tall-riser-blocks
+  ;; A 0.9 riser (> step-up-max) blocks like a wall: x/y AND floor-z stay
+  ;; exactly where they were.
+  (let [w  (raise-cell empty-world 2 1 0.9)
+        w' (try-move w 1.0 0.0)
+        p  (:player w')]
+    (is (= 1.5 (:x p)) "x unchanged - blocked")
+    (is (= 1.5 (:y p)) "y unchanged - blocked")
+    (is (= 0.0 (:floor-z p)) "floor-z unchanged - never stepped up")
+    (is (= 0.5 (:eye-z p)) "eye-z unchanged")))
+
+(deftest test-too-tall-riser-block-is-silent
+  ;; A blocked step is a wall-style bump: no locked-door HUD cue, no sfx.
+  (let [w  (raise-cell empty-world 2 1 0.9)
+        w' (try-move w 1.0 0.0)]
+    (is (= 0.0 (or (:locked-door-bump-secs w') 0.0)))
+    (is (php/=== nil (:locked-door-bump-colour w')))
+    (is (= [] (or (:sfx w') [])))))
+
+(deftest test-floor-z-at-reads-raised-cell
+  ;; floor-z-at surfaces the stamped height; an unstamped cell reads 0.0.
+  (let [w (raise-cell empty-world 2 1 0.6)]
+    (is (< (php/abs (- (floor-z-at w 2 1) 0.6)) 1.0e-9))
+    (is (= 0.0 (floor-z-at w 1 1)))))
+
+(deftest test-floor-z-at-out-of-range-is-zero
+  ;; nil-safe: out-of-grid coords read the flat ground, never crash.
+  (is (= 0.0 (floor-z-at empty-world 99 99))))
+
+(deftest test-step-down-walks-off-and-tick-fall-eases-down
+  ;; Player stands high on a 1.0 floor, then steps DOWN onto the ground
+  ;; (cell 2,1 at 0.0). The move is accepted immediately, but floor-z
+  ;; stays high that frame - it is `tick-fall` that sinks it over frames.
+  (let [;; Start the player elevated via the production single-writer:
+        ;; floor-z 1.0, eye-z 1.5, standing in the open centre cell (1,1)
+        ;; which we also raise so they are genuinely "up" there.
+        high (-> (raise-cell empty-world 1 1 1.0)
+                 (set-floor-z 1.0))
+        ;; Step east onto the un-raised ground cell (2,1) at z 0.0.
+        w'   (try-move high 1.0 0.0)
+        p    (:player w')]
+    (is (< (php/abs (- (:x p) 2.5)) 0.0001) "walked off the ledge")
+    (is (= 1.0 (:floor-z p)) "floor-z still high the move frame")
+    ;; One fall tick eases it toward 0.0 by fall-speed*dt, not snapping.
+    (let [f        (tick-fall w' 0.05)
+          fp       (:player f)
+          expected (php/- 1.0 (php/* fall-speed 0.05))]
+      (is (< (php/abs (- (:floor-z fp) expected)) 1.0e-9) "eased down one step")
+      (is (php/> (:floor-z fp) 0.0) "still mid-fall, hasn't landed")
+      (is (< (php/abs (- (:eye-z fp) (php/+ (:floor-z fp) eye-height))) 1.0e-9)))))
+
+(deftest test-tick-fall-lands-exactly-without-overshoot
+  ;; A big dt can't sink the eye BELOW the target floor: it clamps to the
+  ;; landing height and the eye settles at floor + eye-height.
+  (let [high (set-floor-z empty-world 1.0)
+        ;; player stands in cell (1,1) which is ground (0.0); a huge dt
+        ;; would overshoot without the clamp.
+        f    (tick-fall high 10.0)
+        p    (:player f)]
+    (is (= 0.0 (:floor-z p)) "clamped to the target floor, no undershoot")
+    (is (= 0.5 (:eye-z p)) "eye settles at floor + eye-height")))
+
+(deftest test-tick-fall-grounded-is-noop
+  ;; Already on the floor under them: tick-fall leaves the world untouched
+  ;; (this is what keeps the flat all-zero world byte-identical).
+  (let [w (tick-fall empty-world 0.1)
+        p (:player w)]
+    (is (= 0.0 (:floor-z p)))
+    (is (= 0.5 (:eye-z p)))))
+
+(deftest test-flat-world-move-leaves-z-pair-untouched
+  ;; Walking across the classic flat floor never moves floor-z/eye-z off
+  ;; their defaults - the byte-identity guarantee for the renderer.
+  (let [w  (-> empty-world (assoc-in [:moves :fwd] 5))
+        w' (apply-physics w 0.1)
+        p  (:player w')]
+    (is (= 0.0 (:floor-z p)))
+    (is (= 0.5 (:eye-z p)))))

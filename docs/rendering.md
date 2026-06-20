@@ -166,7 +166,7 @@ Door texels are xterm-256 colour-CUBE codes (not grayscale ramp), which two piec
 - `tex-fade-table` fog already fades cube codes hue-true (toward the neutral grey haze tint via `fade-256-fog`, or toward black under `PHEL_DOOM_FLAT_FOG=1`).
 - The sub-row seam accents darken through `seam-darken-16/-8/-5` LUTs (in `frame_math`) instead of plain `code - n` arithmetic: subtracting from a cube code jumps hue (amber 166 - 16 = green 150). For grayscale-ramp codes the LUTs reproduce the old subtraction exactly.
 
-Door fog is the wall formula with two nav-cue exceptions: the level floors at 8 (a door never fades to black) and ignores the near-death haze. The door pulse rides the fog level (`door-tex-boost`, +3 levels on the 4 rad/s beat) instead of swapping paint strings. Blood-band door columns keep the flat striped `door-shade` (the seam mixer's sky/floor codes are grayscale-only), as do glyph-enemy columns and all-flat fallback modes.
+Door fog is the wall formula with two nav-cue exceptions: the level floors at 8 (a door never fades to black) and ignores the near-death haze. The door rides the fog level steady-brighter (`door-tex-boost`, a constant +3 levels) instead of swapping paint strings. The old 4 rad/s sin-wave throb was dropped for a calmer 3D view (see [Calm 3D view](#calm-3d-view-no-decorative-blinks)); the door stays at its bright frame, which keeps it findable down the arena without the flashing. Blood-band door columns keep the flat striped `door-shade` (the seam mixer's sky/floor codes are grayscale-only), as do glyph-enemy columns and all-flat fallback modes.
 
 ## Textured floor (floor-casting)
 
@@ -206,17 +206,31 @@ Walls/sky/floor/enemies go into one string via the row loop. HUD, minimap, cross
 
 See [performance.md](performance.md).
 
-## Accessibility: reduced motion
+## Calm 3D view (no decorative blinks)
 
-The strobing overlay paints branch on `stats[:reduced-motion?]` (driven by the Settings toggle or `PHEL_DOOM_REDUCED_MOTION=1`). When on:
+The 3D view is deliberately calm: it carries no decorative blinks or strobes. The cues that used to flash are either removed (pure decoration, no info) or held steady (always-on while their state is live, so the information stays without the flicker). This is the default for everyone, not a per-setting toggle.
 
-- `paint-flicker` is skipped (pure strobe, no info).
-- `paint-heartbeat-vignette` and `paint-berserk-tint` hold a steady tint instead of pulsing.
-- the jump-scare glyph swap in `paint-face-overlay` is suppressed.
-- `paint-door-face` drops the `\e[5;` SGR-5 prefix on the door-eye glyph: SGR 5 is terminal HARDWARE blink (~1-3 Hz), outside the code-driven `pulse` gating, so it must be stripped here for a static red eye.
-- the pulsing HUD labels (`paint-low-ammo`, `paint-rear-warning`) and the powerup banners (`paint-timed-badge` -> berserk/invuln) hold steady (always visible while active) instead of blinking on/off.
+Removed entirely (decorative, carried no information):
 
-The single-shot directional `paint-hit-vignette`, the kill flash, and the crosshair hit-marker (`paint-crosshair` swaps the `+` for a `✗`/`×` while `stats[:hit-fx]` is live - see [combat.md](combat.md)) stay - they are feedback, not strobe. All of this is a once-per-frame overlay branch, so the per-cell hot loop is untouched.
+- The lights `paint-flicker` overlay (dark scanlines on alternate rows). Its physics driver `tick-flicker` and the `:flicker-active-secs` / `:flicker-cooldown` state were removed too.
+- The blinking door-eye `paint-door-face` (an SGR-5 hardware-blink red `ʘ` on door columns). Its driver `tick-door-face` and the `:door-face-active-secs` / `:door-face-cooldown` state were removed too. The door is already marked by its steady-bright shade + glyph and the minimap door marker.
+- The jump-scare glyph swap in `paint-face-overlay` (an SGR-5 hardware-blink magenta skull painted on alive enemies during a scare window). The resting / `:face-attack` faces already carry the same information. The `tick-scare` driver stays because its other half (`:silence-tick?`) still gates an audio cue; only the visual skull was dropped.
+
+Held steady (info kept, on/off pulse dropped):
+
+- Doors and the boss door (`door-bright?` / `door-tex-boost`) stay on their bright frame. The aggro-head danger cue (`enemy-aggro-head-string` via `aggro-bright?`) stays on its full-brightness head colour.
+- `paint-heartbeat-vignette` is a steady dim-red edge in the last ~2 hearts (no per-frame heartbeat-phase throb). `paint-berserk-tint` holds the deep-crimson border (no bright/dim swap).
+- The HUD labels `paint-low-ammo`, `paint-rear-warning`, `paint-reload-reminder` (the `reload-reminder-visible?` cadence gate was removed) and the powerup banners `paint-timed-badge` -> berserk/invuln stay visible the whole time their state is active.
+- The `JAMMED` chip in `paint-heat-bar` and the low-health hearts strip in `paint-hearts-hud` are steady bright (no on/off blink).
+
+There is NO `\e[5` terminal hardware-blink SGR anywhere in `src/io/render/` any more.
+
+Kept as-is (deliberate, not a random blink):
+
+- Single-shot feedback - the directional `paint-hit-vignette`, the kill flash, the `paint-empty-click` CLICK prompt, and the crosshair hit-marker (`paint-crosshair` swaps the `+` for a `✗`/`×` while `stats[:hit-fx]` is live, see [combat.md](combat.md)). These are one-shot confirmations of an event, not ambient strobes.
+- Interactive-pickup throb (hearts/ammo/spheres/keycards/etc.) - a gentle two-shade glow that draws the eye to an item, not an on/off blink.
+
+The `:reduced-motion` Settings toggle (and `PHEL_DOOM_REDUCED_MOTION=1`) still persists and is shown in the menu, but no longer needs to gate any render branch - the calm behaviour above is unconditional. All of this is a once-per-frame overlay branch, so the per-cell hot loop is untouched.
 
 ## Accessibility: colorblind palettes
 

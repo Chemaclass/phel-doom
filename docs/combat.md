@@ -71,7 +71,7 @@ The crosshair is fixed at screen-centre (`svh/2`). An enemy at distance `d` proj
 
 ### Hit-marker (crosshair feedback)
 
-Every connecting shot stamps `:hit-fx {:kill? :ttl}` on the world via `stamp-hit-fx`: `:kill?` is true on a killing blow, false on a wound, and `:ttl` starts at `hit-marker-seconds` (0.12 s). `decay-timers` ticks the ttl down each frame and clears the field at 0. All three hit tails set it - `on-shot-hit` (single-target), `finish-multikill` (pierce/spread, one stamp for the aggregate volley), and `bfg-fire` (kill is the hit proxy: splash has no wound-only signal). The render layer reads it through `stats[:hit-fx]`; `paint-crosshair` swaps the `+` reticle for a bold-red `✗` on a kill or a bold-yellow `×` on a wound for the ttl window. It is single-shot feedback (no strobe), so it stays on under reduced motion.
+Every connecting shot stamps `:hit-fx {:kill? :ttl}` on the world via `stamp-hit-fx`: `:kill?` is true on a killing blow, false on a wound, and `:ttl` starts at `hit-marker-seconds` (0.12 s). `decay-timers` ticks the ttl down each frame and clears the field at 0. All three hit tails set it - `on-shot-hit` (single-target), `finish-multikill` (pierce/spread, one stamp for the aggregate volley), and `bfg-fire` (kill is the hit proxy: splash has no wound-only signal). The render layer reads it through `stats[:hit-fx]`; `paint-crosshair` swaps the `+` reticle for a bold-red `✗` on a kill or a bold-yellow `×` on a wound for the ttl window. It is single-shot feedback (no strobe), so it is kept in the calm 3D view (see [rendering.md](rendering.md#calm-3d-view-no-decorative-blinks)).
 
 On miss: weapon report only.
 
@@ -95,7 +95,7 @@ On contact:
 - 0.05s white flash (impact jolt).
 - Knockback away from attacker (try 1.0 / 0.5 / 0.25 units on wall collision).
 - Stamp `:hurt-side` (`:front` / `:back` / `:left` / `:right`, via `attacker-side`) for the 4-way blood-drip edge columns. Front/back use ±30° wedges around facing; everything else routes to left/right.
-- Stamp `:hurt-dir` (octant 0..7, via `attacker-octant`) for the precise 8-way directional damage arc (issue #201): render paints a centred red bar on the matching edge for the four cardinals, or an L at the matching corner for the four diagonals, so the player reads the exact incoming-damage bearing while i-frames are active. Single-shot feedback, kept under reduced motion.
+- Stamp `:hurt-dir` (octant 0..7, via `attacker-octant`) for the precise 8-way directional damage arc (issue #201): render paints a centred red bar on the matching edge for the four cardinals, or an L at the matching corner for the four diagonals, so the player reads the exact incoming-damage bearing while i-frames are active. Single-shot feedback, kept in the calm 3D view.
 
 Both `take-damage` (contact, reads the nearest attacker's `:type`) and `hit-player-at` (projectile, the bolt carries its caster's `:dmg`) share `apply-hit`. `player-immune?` gates both: i-frames, invuln sphere, or dev god mode.
 

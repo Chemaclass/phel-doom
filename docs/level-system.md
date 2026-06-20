@@ -7,7 +7,7 @@
 | # | Name | Type | Enemies |
 |---|---|---|---|
 | 1 | imps | random | 4 imps |
-| 2 | demons | random | 5 demons + 2 imps + shotgun |
+| 2 | demons | hand-authored verticality showcase | 5 demons + 2 imps + shotgun |
 | 3 | cacodemons | random | 4 cacos + 2 demons + 2 imps + chaingun |
 | 4 | barons | random + blue lock | 3 barons + 3 demons |
 | 5 | cyberdemons | random + red lock | 5 cyberdemons + 2 imps |
@@ -19,15 +19,19 @@
 
 ## Catalog
 
-L1: single-type procgen tutorial (imps only). L2-L9: mixed-monster procgen (melee secondary salted per level). L10: hand-authored arena with secrets + switches.
+L1: single-type procgen tutorial (imps only). L2: the hand-authored verticality showcase (staircase + raised platform + sunken pit, see below) - the level that turns the variable-height feature ON. L3-L9: mixed-monster procgen (melee secondary salted per level). L10: hand-authored arena with secrets + switches.
 
 Non-locked procgen levels seed up to 2 secret passages (see [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4, L5, L7) skip seeding to prevent keycard bypass.
 
 ```phel
 (def levels
   [{:size [22 16] :walls 12 :enemy :imp   :enemies 4 :chase 0.8 :name "imps"}
-   {:size [28 20] :walls 22 :enemy :demon :chase 1.0 :name "demons"
-    :enemies [{:type :demon :count 5} {:type :imp :count 2}]}
+   ;; L2: hand-authored verticality showcase (staircase + platform + pit).
+   {:enemy :demon :chase 1.0 :name "demons"
+    :enemies [{:type :demon :count 5} {:type :imp :count 2}]
+    :layout showcase-layout           ; flat 24x18 chamber
+    :floor-heights showcase-floor-heights
+    :ceil-heights  showcase-ceil-heights}
    {:size [36 24] :walls 38 :enemy :caco :chase 1.2 :name "cacodemons"
     :enemies [{:type :caco :count 4} {:type :demon :count 2} {:type :imp :count 2}]}
    {:size [44 28] :walls 55 :enemy :baron :chase 1.4 :name "barons" :door-lock :blue
@@ -58,8 +62,8 @@ Optional:
 | `:enemy-lives` | Override the catalog's `:default-lives` (single-type entries only) |
 | `:door-lock`   | `:blue` / `:red` / `:yellow` - adds a matching keycard pickup and locks the exit |
 | `:layout`      | Hand-authored ASCII grid (vector of strings) - bypasses `random-grid` |
-| `:floor-heights` | `{[x y] height}` map of per-cell floor `z` (#232) - raised cells render a step riser + cap. Omitted on every current level (flat floor, byte-identical render); the showcase level lands in #237 |
-| `:ceil-heights` | `{[x y] height}` map of per-cell ceiling `z` (#235, default 1.0) - cells with `z < 1.0` render a hanging ceiling + cap (a low tunnel); `z > 1.0` lifts the ceiling (a tall atrium). Omitted on every current level (flat ceiling, byte-identical render); the showcase level lands in #237 |
+| `:floor-heights` | `{[x y] height}` map of per-cell floor `z` (#232) - raised cells render a step riser + cap. Used by L2 (the verticality showcase, #237); omitted everywhere else (flat floor, byte-identical render) |
+| `:ceil-heights` | `{[x y] height}` map of per-cell ceiling `z` (#235, default 1.0) - cells with `z < 1.0` render a hanging ceiling + cap (a low tunnel); `z > 1.0` lifts the ceiling (a tall atrium, not drawn). Used by L2's low lintel (#237); omitted everywhere else (flat ceiling, byte-identical render) |
 
 ### Mixed-monster rooms
 
@@ -87,6 +91,23 @@ When `:enemies` is a vector, each spec spawns its own count + HP and the enemy c
 `:layout` supplies all doors + locks directly; skips `random-grid`, `seed-doors`, `lock-the-door`. Enemy spawn still applies.
 
 Switches: `:switches [{:at [cx cy] :targets [[tx ty] ...]}]`. F near `:at` flips targets wall↔floor.
+
+### Verticality showcase (L2, `:floor-heights` / `:ceil-heights`)
+
+L2 (issue #237) is the level that turns the dormant variable-height feature ON for players: floor heights (#232), ceiling heights (#235) and Z physics (#233) all in one walkable room. It is a flat `:layout` (a plain 24x18 chamber) plus a `:floor-heights` map (not special layout chars): heights are a separate `{[x y] z}` map so every raised cell is guaranteed to land on a known floor cell (a procgen room could drop a step onto a wall).
+
+Geometry (built in `level.phel` from `showcase-floor-heights` / `showcase-ceil-heights`):
+
+| Feature | Cells | Height `z` |
+|---|---|---|
+| Staircase (4 steps, climbs north) | cols 8-13, rows 8 -> 5 | 0.3, 0.6, 0.9, 1.2 |
+| Platform plateau (vantage) | cols 8-13, rows 2-4 | 1.2 (top-stair height, continuous) |
+| Sunken pit | cols 4-7, rows 12-13 | -0.4 |
+| Low ceiling lintel (stair foot) | cols 8-13, row 9 | 0.7 (a hanging ceiling) |
+
+Each stair rises by `showcase-step-rise` (0.3), at or below `physics/step-up-max` (0.4), so the whole flight auto-climbs as the player walks into it. The pit is exactly one step-up deep, so the player drops in under gravity (`tick-fall`) and can walk back out. An enemy that stands on the platform rises to stand on it (#234 floor-anchor). Only ceilings `< 1.0` render, so the lintel is a drop, not a lift.
+
+L2 keeps its catalog identity (name `demons`, demon + imp mix, chase 1.0, shotgun drop), so the difficulty curve and progression are unchanged - only the geometry is now authored verticality. L1 stays flat (it is the golden-frame render fixture), and the catalog stays 10 levels with the boss arena last.
 
 ### Adding a new room
 

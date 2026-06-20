@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.glue.controls
             :refer [key-states refresh-from-keys rising-edges initial-key-snapshot
-                    nav-deltas refresh-move]))
+                    nav-deltas refresh-move mouse-look]))
 
 (def blank-moves
   {:fwd          0
@@ -452,3 +452,179 @@
 
 (deftest test-rising-edges-confirm-silent-when-idle
   (is (= false (:confirm (rising-edges {:sp false :enter false} {:sp false :enter false})))))
+
+;; ---------------------------------------------------------------------
+;; Mouse look (issue #246): pure SGR-mouse parse -> per-frame yaw/pitch
+;; delta + fire intent. SGR report shape: ESC [ < b ; Cx ; Cy (M|m).
+;;   b = 0  -> left button press (discrete)
+;;   b = 32 -> motion bit set, button 0 = LEFT DRAG (held during move)
+;;   b = 35 -> motion bit set, low bits 3 = bare hover (no button held)
+;; Deltas are measured against the previous pointer position; motion
+;; RIGHT (+dx) -> +yaw, motion UP (-dy, rows grow downward) -> +pitch.
+;; Scales: yaw 0.012, pitch 0.02 rad/fraction per cell at sensitivity 1.
+;; ---------------------------------------------------------------------
+
+;; Shared baseline so deltas are computed immediately (a non-nil prev-pos
+;; skips the first-report-establishes-baseline rule).
+(def mouse-origin [10 10])
+
+(defn- approx?
+  "Float compare with a tolerance, so e.g. -6 * 0.012 (which lands on
+   -0.07199999... not the exact literal) still matches -0.072."
+  [^float a ^float b]
+  (php/< (php/abs (php/- a b)) 1.0e-9))
+
+(deftest test-mouse-look-no-bytes-is-zero-delta
+  ;; The keyboard path must be untouched: empty input yields no delta and
+  ;; carries prev-pos forward unchanged.
+  (let [r (mouse-look "" mouse-origin 1.0)]
+    (is (= 0.0 (:yaw r)))
+    (is (= 0.0 (:pitch r)))
+    (is (= false (:fire? r)))
+    (is (= false (:fire-held? r)))
+    (is (= mouse-origin (:pos r)) "prev-pos carried forward")))
+
+(deftest test-mouse-look-motion-right-yields-positive-yaw
+  ;; Hover (b=35) from x=10 to x=15: dx=+5 -> yaw = 5 * 0.012 = 0.06.
+  ;; No pitch (dy=0), no fire (hover, not a press / drag).
+  (let [r (mouse-look "\e[<35;15;10M" mouse-origin 1.0)]
+    (is (approx? 0.06 (:yaw r)) "+dx -> +yaw")
+    (is (= 0.0 (:pitch r)))
+    (is (= false (:fire? r)))
+    (is (= false (:fire-held? r)) "bare hover is not held-fire")
+    (is (= [15 10] (:pos r)))))
+
+(deftest test-mouse-look-motion-left-yields-negative-yaw
+  ;; Hover from x=10 to x=4: dx=-6 -> yaw = -6 * 0.012 = -0.072.
+  (let [r (mouse-look "\e[<35;4;10M" mouse-origin 1.0)]
+    (is (approx? -0.072 (:yaw r)) "-dx -> -yaw")
+    (is (= 0.0 (:pitch r)))))
+
+(deftest test-mouse-look-motion-up-yields-positive-pitch
+  ;; Hover from y=10 to y=6: rows grow DOWNWARD so up is dy=-4; the
+  ;; negation makes pitch = -(-4) * 0.02 = +0.08 (look up).
+  (let [r (mouse-look "\e[<35;10;6M" mouse-origin 1.0)]
+    (is (approx? 0.08 (:pitch r)) "moving up -> +pitch")
+    (is (= 0.0 (:yaw r)))))
+
+(deftest test-mouse-look-motion-down-yields-negative-pitch
+  ;; Hover from y=10 to y=14: down is dy=+4 -> pitch = -4 * 0.02 = -0.08.
+  (let [r (mouse-look "\e[<35;10;14M" mouse-origin 1.0)]
+    (is (approx? -0.08 (:pitch r)) "moving down -> -pitch")))
+
+(deftest test-mouse-look-left-press-fires
+  ;; Discrete left press (b=0, final M) at the origin: no delta, but
+  ;; :fire? and :fire-held? both set so a click shoots like space.
+  (let [r (mouse-look "\e[<0;10;10M" mouse-origin 1.0)]
+    (is (= true (:fire? r)) "left press fires")
+    (is (= true (:fire-held? r)) "press counts as held this frame")
+    (is (= 0.0 (:yaw r)) "press at the same cell adds no delta")
+    (is (= 0.0 (:pitch r)))))
+
+(deftest test-mouse-look-left-release-does-not-fire
+  ;; Release (final m) at the origin: NOT a press, button not down.
+  (let [r (mouse-look "\e[<0;10;10m" mouse-origin 1.0)]
+    (is (= false (:fire? r)) "release is not a press")
+    (is (= false (:fire-held? r)) "release is not held")))
+
+(deftest test-mouse-look-left-drag-is-held-fire-and-turns
+  ;; Left DRAG (b=32: motion bit + button 0) from x=10 to x=15: turns
+  ;; (+yaw) AND holds the trigger (auto-fire weapons spray while dragged),
+  ;; but is NOT a fresh press edge.
+  (let [r (mouse-look "\e[<32;15;10M" mouse-origin 1.0)]
+    (is (= false (:fire? r)) "a drag is not a rising-edge press")
+    (is (= true (:fire-held? r)) "left held during drag = held-fire")
+    (is (approx? 0.06 (:yaw r)) "drag still turns")))
+
+(deftest test-mouse-look-multiple-events-accumulate
+  ;; Two hover reports in one frame: 10->15 (dx+5) then 15->20 (dx+5).
+  ;; Deltas sum: total dx=10 -> yaw = 10 * 0.012 = 0.12; pos ends at 20.
+  (let [r (mouse-look "\e[<35;15;10M\e[<35;20;10M" mouse-origin 1.0)]
+    (is (approx? 0.12 (:yaw r)) "deltas across the frame sum")
+    (is (= [20 10] (:pos r)) "pos trails the last report")))
+
+(deftest test-mouse-look-press-then-move-fires-and-turns
+  ;; A press followed by a hover move in the same frame: fire AND yaw.
+  (let [r (mouse-look "\e[<0;10;10M\e[<35;16;10M" mouse-origin 1.0)]
+    (is (= true (:fire? r)) "the press still registers")
+    (is (approx? 0.072 (:yaw r)) "the move still turns (dx +6 -> 0.072)")))
+
+(deftest test-mouse-look-sensitivity-scales-the-delta
+  ;; sensitivity 2.0 doubles, 0.0 zeroes the look (mouselook effectively
+  ;; off) while leaving fire untouched.
+  (is (approx? 0.12 (:yaw (mouse-look "\e[<35;15;10M" mouse-origin 2.0))) "2x sensitivity doubles yaw")
+  (is (= 0.0  (:yaw (mouse-look "\e[<35;15;10M" mouse-origin 0.0))) "0 sensitivity = no look")
+  (let [r (mouse-look "\e[<0;10;10M" mouse-origin 0.0)]
+    (is (= true (:fire? r)) "0 sensitivity still lets a click fire")))
+
+(deftest test-mouse-look-first-report-only-sets-baseline
+  ;; prev-pos nil (no prior report this session): the first position
+  ;; report ESTABLISHES the baseline and contributes NO delta, so the
+  ;; pointer's opening absolute coords can't read as one giant jump.
+  (let [r (mouse-look "\e[<35;40;20M" nil 1.0)]
+    (is (= 0.0 (:yaw r)) "first report = baseline, no yaw")
+    (is (= 0.0 (:pitch r)) "first report = baseline, no pitch")
+    (is (= [40 20] (:pos r)) "baseline recorded for next frame")))
+
+(deftest test-mouse-look-wheel-tick-adds-no-look-delta
+  ;; A scroll-wheel report (bit 6 set: b=64 up / b=65 down) carries no
+  ;; look intent. Even if its reported cell differs from the baseline, it
+  ;; must NOT feed yaw/pitch - but it advances :pos so a following real
+  ;; motion still measures from the true pointer spot.
+  (let [r (mouse-look "\e[<64;30;30M" mouse-origin 1.0)]
+    (is (= 0.0 (:yaw r)) "wheel adds no yaw")
+    (is (= 0.0 (:pitch r)) "wheel adds no pitch")
+    (is (= false (:fire? r)) "wheel is not a fire")
+    (is (= [30 30] (:pos r)) "but :pos still advances to the wheel cell"))
+  ;; Wheel tick then a hover from the wheel's cell: only the hover counts.
+  (let [r (mouse-look "\e[<64;30;30M\e[<35;33;30M" mouse-origin 1.0)]
+    (is (approx? 0.036 (:yaw r)) "delta measured from the wheel cell (33-30=3)")))
+
+(deftest test-mouse-look-malformed-sequence-ignored
+  ;; A truncated SGR report (missing the y coord + terminator) does not
+  ;; match the parser, so it produces no delta and leaves prev-pos as-is.
+  (let [r (mouse-look "\e[<35;15M" mouse-origin 1.0)]
+    (is (= 0.0 (:yaw r)))
+    (is (= 0.0 (:pitch r)))
+    (is (= mouse-origin (:pos r)) "malformed leaves baseline untouched")))
+
+(deftest test-mouse-look-ignores-kitty-key-event
+  ;; REGRESSION: a kitty CSI-u key report (e.g. 'a' press = \e[97;1:1u)
+  ;; shares the ESC-[ prefix but is NOT an SGR mouse report. It must NOT
+  ;; produce a look delta or fire, so the mouse parser can never hijack
+  ;; the keyboard path.
+  (let [r (mouse-look "\e[97;1:1u" mouse-origin 1.0)]
+    (is (= 0.0 (:yaw r)) "kitty key is not mouse motion")
+    (is (= 0.0 (:pitch r)))
+    (is (= false (:fire? r)) "kitty key is not a mouse click")
+    (is (= mouse-origin (:pos r)))))
+
+(deftest test-mouse-look-ignores-arrow-and-fkey
+  ;; REGRESSION: legacy arrow (\e[C) and F-key (\eOR = F3) sequences are
+  ;; not SGR mouse reports either - no delta, no fire.
+  (let [arrow (mouse-look "\e[C" mouse-origin 1.0)
+        fkey  (mouse-look "\eOR" mouse-origin 1.0)]
+    (is (= 0.0 (:yaw arrow)) "arrow is not mouse motion")
+    (is (= false (:fire? arrow)))
+    (is (= 0.0 (:yaw fkey)) "F-key is not mouse motion")
+    (is (= false (:fire? fkey)))))
+
+(deftest test-mouse-look-mixed-keyboard-and-mouse-bytes
+  ;; A frame can carry BOTH a WASD byte and a mouse report (drained
+  ;; together). mouse-look only parses the SGR part; the 'w' is ignored
+  ;; here (refresh-from-keys handles it elsewhere) but must not corrupt
+  ;; the delta.
+  (let [r (mouse-look "w\e[<35;15;10Md" mouse-origin 1.0)]
+    (is (approx? 0.06 (:yaw r)) "WASD bytes around the report don't affect yaw")
+    (is (= [15 10] (:pos r)))))
+
+(deftest test-mouse-look-bytes-do-not-leak-into-key-parsing
+  ;; REGRESSION (the inverse guard): an SGR mouse report fed to the
+  ;; keyboard parsers must not be mistaken for movement / fire. The
+  ;; report's digits ('1', '5', '3', '2') and 'M' must not trip key-states
+  ;; or refresh-move into phantom input.
+  (let [drag "\e[<32;15;10M"
+        st   (key-states drag)
+        w'   (refresh-from-keys blank-world drag)]
+    (is (= false (:sp st)) "no phantom fire from the mouse digits")
+    (is (= blank-moves (:moves w')) "no phantom movement from the report")))

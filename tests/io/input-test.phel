@@ -1,0 +1,45 @@
+(ns phel-doom-tests.io.input-test
+  (:require phel.test :refer [deftest is])
+  (:require phel.string :as str)
+  (:require phel-doom.io.input :refer [mouse-enable mouse-disable
+                                       init-escapes restore-prelude]))
+
+;; ---------------------------------------------------------------------
+;; Mouse reporting escape contract (issue #246). The side-effecting
+;; init-input! / restore! print these strings; the pure builders
+;; (init-escapes / restore-prelude) let us assert the exact bytes without
+;; touching the real terminal (stty / alt-screen flip).
+;; ---------------------------------------------------------------------
+
+(deftest test-mouse-enable-is-sgr-plus-any-motion
+  ;; \e[?1003h = any-motion tracking, \e[?1006h = SGR-extended encoding.
+  (is (= "\e[?1003h\e[?1006h" mouse-enable)))
+
+(deftest test-mouse-disable-reverses-enable
+  ;; Same two private modes, reset (l) instead of set (h).
+  (is (= "\e[?1003l\e[?1006l" mouse-disable)))
+
+(deftest test-init-escapes-include-mouse-enable-when-on
+  (let [s (init-escapes true)]
+    (is (str/contains? s mouse-enable) "mouse enable present when on")
+    (is (str/contains? s "\e[>3u") "kitty opt-in still present")
+    (is (str/contains? s "\e[?1049h") "alt screen still present")
+    ;; The mouse escapes come AFTER the base setup, not before.
+    (is (str/ends-with? s mouse-enable) "mouse enable appended last")))
+
+(deftest test-init-escapes-omit-mouse-enable-when-off
+  (let [s (init-escapes false)]
+    (is (not (str/contains? s mouse-enable)) "no mouse enable when off")
+    (is (not (str/contains? s "\e[?1006h")) "no SGR mode when off")
+    (is (not (str/contains? s "\e[?1003h")) "no any-motion when off")
+    ;; The keyboard / screen setup is untouched by the mouse gate (BC).
+    (is (str/contains? s "\e[>3u") "kitty opt-in still present when mouse off")
+    (is (str/contains? s "\e[?1049h") "alt screen still present when mouse off")
+    (is (str/ends-with? s "\e[>3u") "ends at the kitty opt-in, no mouse tail")))
+
+(deftest test-restore-prelude-pops-kitty-then-disables-mouse
+  ;; Teardown always disables mouse reporting, regardless of whether it
+  ;; was enabled (idempotent).
+  (is (= (str "\e[<u" mouse-disable) restore-prelude))
+  (is (str/contains? restore-prelude "\e[<u") "kitty pop present")
+  (is (str/contains? restore-prelude mouse-disable) "mouse disable present"))

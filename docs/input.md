@@ -13,10 +13,15 @@ Raw stdin to world state.
 - `\e[?7l`: disable autowrap
 - `\e[2J\e[H`: clear + home
 - `\e[>3u`: kitty keyboard protocol opt-in (press/repeat/release events)
+- `\e[?1003h\e[?1006h`: xterm mouse reporting (any-motion + SGR), appended ONLY when the Mouse setting is on (see [Mouse look](#mouse-look-issue-246))
+
+`init-input!` takes a `mouse?` flag (default true) wired to the Mouse setting; when off, the two mouse escapes are omitted and the terminal never captures the pointer. The pure builder `init-escapes` produces the exact string so the gating is unit-tested without touching the terminal.
 
 Kitty-enabled terminals (kitty, WezTerm, Ghostty, Alacritty >= 0.13, iTerm2 >= 3.5) then emit structured escape sequences; others ignore it and fall back to legacy byte stream.
 
-`restore!` reverses: `\e[<u` (pop flags) + `\e[?25h\e[?7h\e[?1049l` + `stty sane`.
+`restore!` reverses: `\e[<u\e[?1003l\e[?1006l` (pop kitty flags + disable mouse reporting; the `restore-prelude` constant) + `\e[?25h\e[?7h\e[?1049l` + `stty sane`. The mouse-disable is always sent (idempotent / harmless even if the mouse was never enabled).
+
+`drain-keys` reads up to `drain-bytes` (512) per frame, sized so a fast mouse drag's burst of ~12-byte SGR reports isn't truncated mid-sequence.
 
 ## Reading input
 
@@ -35,6 +40,53 @@ Each byte refreshes its slot's counter on `world[:moves]`. Physics only reads th
 ## Look up/down (pitch)
 
 Hold **↑** to look up, **↓** to look down. The arrow keys form a camera cluster (←/→ turn, ↑/↓ look) while WASD handles movement. They refresh the `:pitch-up` / `:pitch-down` move slots; physics shears the player's `:pitch` fraction (clamped to [-1, 1], no wrap) via the same counter path as turning. `pitch-hold-frames` = 3 (~50ms), so the camera halts quickly on release like turning rather than gliding. The up/down arrows reach pitch on every encoding: legacy CSI/SS3 (`\e[A`/`\eOA`, normalised to `^`/`_`) and kitty-enhanced (`\e[1;..A`/`B`). The shear is a pure render offset (see [raycaster.md](raycaster.md)); a level gaze (`:pitch` 0) renders identically to no pitch at all. Pitch also drives aim: hitscan is vertical-aware (issue #243), so a shot has to land on the enemy's drawn sprite and aiming at the floor / sky misses (see the vertical aim gate in [combat.md](combat.md)).
+
+## Mouse look (issue #246)
+
+Modern-FPS controls in the terminal: move the mouse to turn (yaw) and look up/down (pitch), left-click to fire. **Additive and backward-compatible** - every keyboard binding is unchanged; the mouse is an extra input path, on by default and toggleable via the Mouse setting.
+
+### Enable / disable
+
+`init-input!` (when the Mouse setting is on) emits two xterm escapes:
+- `\e[?1003h`: ANY-MOTION tracking (the terminal reports the pointer even with no button held).
+- `\e[?1006h`: SGR-extended encoding, so reports arrive as `\e[<b;Cx;Cy(M|m)` (compact, coordinate-safe past column 223).
+
+`restore!` always sends the reverse `\e[?1003l\e[?1006l` (idempotent). With the setting off, `init-input!` is passed `mouse? false` and emits neither escape, so a terminal or player that dislikes mouse capture opts out cleanly.
+
+### SGR report format
+
+`\e[<b;Cx;Cy` then `M` (press / motion) or `m` (release). `(Cx, Cy)` are 1-based **absolute** cell coordinates. `b` is a bit-packed button + modifier code:
+
+| bits | meaning |
+|------|---------|
+| 0-1  | button: 0 left, 1 middle, 2 right |
+| 2 / 3 / 4 | SHIFT / META / CTRL modifier |
+| 5 (`& 32`) | motion (a drag with a button held, or a bare hover under 1003) |
+| 6 (`& 64`) | scroll wheel (skipped: no useful look delta) |
+
+So `b=0` final `M` is a left press, `b=32` is a left drag (button 0 + motion), `b=35` is a bare hover (motion + low-bits 3 = no button).
+
+### The look delta (no pointer lock)
+
+`controls/mouse-look` (pure) parses every report in the drained byte string and returns `{:yaw :pitch :fire? :fire-held? :pos}`:
+- Terminals report **absolute** cell coords with **no pointer lock and no warp**, so yaw/pitch come from the **delta between consecutive position reports**, summed across the frame. This is NOT the discrete hold-counter model the keyboard uses (turn-hold-frames etc.); it is a per-frame angular delta applied directly to `:angle` / `:pitch`.
+- Motion RIGHT (+dx) -> +yaw; motion UP -> +pitch (rows grow DOWNWARD, so up is a decreasing y, hence the dy is negated).
+- **Edge-clamp caveat**: because the coords are absolute and clamp to `1..cols` / `1..rows`, a continuous drag into a screen edge produces a **zero delta** there - the terminal equivalent of running the mouse off the pad. There is no recentering. This approximates true mouselook within the terminal's limits, not perfectly.
+- `:pos` threads forward as the next frame's baseline (in `game-loop`, alongside `prev-keys`). The very first report of a session only establishes the baseline (zero delta), so the pointer's opening absolute position can't read as one giant jump.
+
+`commands/play.apply-mouse-look` folds the delta into the player before the tick (so the frame renders + aims with the new heading), gated on not-paused so the camera can't drift while a menu is up.
+
+### Fire
+
+A left-button **press** (`b=0`, final `M`) sets `:fire?`, which the game loop ORs into the existing `:fire` rising edge - so a click shoots exactly like space. A held / dragged left button (`b=32`) sets `:fire-held?`, ORed into `:fire-held` so auto-fire weapons (pistol, chaingun) spray while the button is down, matching the space `:fire-held` path. Release (`m`) clears both.
+
+### Sensitivity
+
+A `Sensitivity` percent setting (0..100, step 10, default 50) maps through `core/settings.mouse-sensitivity` to a multiplier: the midpoint (50%) is the neutral 1.0x, 0% disables the look (delta scaled to 0), 100% doubles the per-cell yaw/pitch. `mouse-look` multiplies the raw delta by it.
+
+### Backward-compat guard
+
+The SGR reports share the `\e[` prefix with kitty CSI-u key events and arrow sequences, and a report body like `<32;15;10M` contains `<` (the turn-left byte) and digits. `refresh-from-keys` strips every SGR report (`mouse-report-re`) **before** the movement byte-walk, so those bytes can never be misread as a keyboard turn / weapon-select; conversely `mouse-look` only matches the `\e[<...` SGR shape, so a kitty key / arrow / F-key never produces a look delta or a phantom fire. Both directions are regression-tested.
 
 ## Sprint
 

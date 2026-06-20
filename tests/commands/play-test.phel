@@ -4,7 +4,8 @@
   (:require phel-doom.core.enemy  :refer [new-enemy])
   (:require phel-doom.core.level  :refer [build-world])
   (:require phel-doom.core.rng    :as rng)
-  (:require phel-doom.commands.play  :refer [tick-world resumed-pause? step-pause-menu]))
+  (:require phel-doom.commands.play  :refer [tick-world resumed-pause? step-pause-menu
+                                             apply-mouse-look]))
 
 (def open-grid
   (apply vector
@@ -293,3 +294,47 @@
                        "" 0.016 no-edges)]
     (is (= 0.0 (or (:reload-ready-secs w') 0.0))
         "a mid-reload frame does not arm the flash")))
+
+;; ---------------------------------------------------------------------
+;; Mouse look application (issue #246): apply-mouse-look folds the
+;; controls/mouse-look yaw + pitch delta into the player. Fire fields are
+;; NOT applied here (they ride the edges into tick-shooting).
+;; ---------------------------------------------------------------------
+
+(defn- player-at-angle [a pitch]
+  (-> (new-world open-grid (new-player 5.0 5.0 a))
+      (assoc-in [:player :pitch] pitch)))
+
+(deftest test-apply-mouse-look-yaw-rotates-angle
+  (let [w' (apply-mouse-look (player-at-angle 1.0 0.0)
+                             {:yaw 0.25 :pitch 0.0})]
+    (is (= 1.25 (:angle (:player w'))) "yaw adds to :angle")
+    (is (= 0.0 (:pitch (:player w'))) "no pitch change")))
+
+(deftest test-apply-mouse-look-pitch-shears-and-clamps
+  ;; A pitch delta is added then clamped to [-1, 1] (state/clamp-pitch).
+  (let [w' (apply-mouse-look (player-at-angle 0.0 0.2)
+                             {:yaw 0.0 :pitch 0.3})]
+    (is (= 0.5 (:pitch (:player w'))) "pitch adds (0.2 + 0.3)"))
+  (let [clamped (apply-mouse-look (player-at-angle 0.0 0.9)
+                                  {:yaw 0.0 :pitch 0.8})]
+    (is (= 1.0 (:pitch (:player clamped))) "pitch saturates at the cap, no wrap")))
+
+(deftest test-apply-mouse-look-zero-delta-is-noop
+  (let [w  (player-at-angle 1.0 0.3)
+        w' (apply-mouse-look w {:yaw 0.0 :pitch 0.0})]
+    (is (= 1.0 (:angle (:player w'))) "angle untouched")
+    (is (= 0.3 (:pitch (:player w'))) "pitch untouched")))
+
+(deftest test-apply-mouse-look-handles-missing-keys
+  ;; A look map with no :yaw / :pitch (e.g. an all-nil result) is a no-op,
+  ;; not a crash.
+  (let [w  (player-at-angle 2.0 0.1)
+        w' (apply-mouse-look w {})]
+    (is (= 2.0 (:angle (:player w'))))
+    (is (= 0.1 (:pitch (:player w'))))))
+
+(deftest test-apply-mouse-look-negative-yaw-turns-the-other-way
+  (let [w' (apply-mouse-look (player-at-angle 1.0 0.0)
+                             {:yaw -0.4 :pitch 0.0})]
+    (is (php/< (:angle (:player w')) 1.0) "negative yaw decreases the angle")))

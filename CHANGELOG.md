@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Added
+
+- Look up/down camera pitch (issue #231): `t` tilts the view up, `g` tilts it down (hold to keep pitching, clamps at the extremes - no wrap). It is a pure vertical shear of the horizon (no extra rays): walls, the sky/floor split, floor-cast and enemy sprites all slide together by an integer row offset capped at +/-0.4 of the viewport height. `:pitch` is stored on the player as a fraction in [-1, 1]; a level gaze renders byte-for-byte identically to before.
+
 ## [0.15.0] - 2026-06-16
 
 ### Added

@@ -1,6 +1,6 @@
 (ns phel-doom-tests.core.projection-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.projection :refer [wall-px project-height]))
+  (:require phel-doom.core.projection :refer [wall-px project-height pitch-rows pitch-cap]))
 
 ;; ---------------------------------------------------------------------
 ;; wall-px: the shared projection kernel. num / ((max 0.3 dist) * 2.0).
@@ -61,3 +61,46 @@
         bot    (php/+ top wall-h)]
     (is (= top (php/intval (php/round (project-height pd vh dist 0.5 1.0)))))
     (is (= bot (php/intval (php/round (project-height pd vh dist 0.5 0.0)))))))
+
+;; ---------------------------------------------------------------------
+;; pitch-rows: normalised look up/down fraction -> integer horizon shear.
+;; ---------------------------------------------------------------------
+
+(deftest pitch-rows-zero-is-zero
+  ;; The byte-identical contract: no pitch shears the horizon by nothing
+  ;; at every viewport height.
+  (is (= 0 (pitch-rows 0.0 30)))
+  (is (= 0 (pitch-rows 0.0 24)))
+  (is (= 0 (pitch-rows 0.0 44))))
+
+(deftest pitch-rows-positive-looks-up-shears-down
+  ;; POSITIVE pitch (look up) shears the horizon DOWN the screen, i.e.
+  ;; toward larger row numbers, so the offset is positive.
+  (is (php/> (pitch-rows 1.0 30) 0))
+  (is (php/> (pitch-rows 0.5 30) 0)))
+
+(deftest pitch-rows-negative-looks-down-shears-up
+  ;; NEGATIVE pitch (look down) shears the horizon UP (smaller rows).
+  (is (php/< (pitch-rows -1.0 30) 0))
+  (is (php/< (pitch-rows -0.5 30) 0)))
+
+(deftest pitch-rows-sign-is-antisymmetric
+  ;; Equal-and-opposite pitch gives equal-and-opposite shear.
+  (is (= (php/- 0 (pitch-rows 0.7 30)) (pitch-rows -0.7 30))))
+
+(deftest pitch-rows-magnitude-grows-with-pitch
+  ;; Looking further up shears the horizon further down.
+  (is (php/> (pitch-rows 1.0 30) (pitch-rows 0.5 30)))
+  (is (php/> (pitch-rows 0.5 30) (pitch-rows 0.25 30))))
+
+(deftest pitch-rows-caps-at-pitch-cap-fraction
+  ;; Full pitch shears by exactly round(pitch-cap * vh) rows - the
+  ;; documented ceiling (0.4 * 30 = 12).
+  (is (= (php/intval (php/round (php/* pitch-cap 30))) (pitch-rows 1.0 30)))
+  (is (= (php/- 0 (php/intval (php/round (php/* pitch-cap 30)))) (pitch-rows -1.0 30))))
+
+(deftest pitch-rows-returns-int
+  ;; Always an integer scene-row offset (round, not float), so it can
+  ;; index gradient arrays / add to integer wall tops cleanly.
+  (is (php/is_int (pitch-rows 0.37 30)))
+  (is (php/is_int (pitch-rows -0.81 44))))

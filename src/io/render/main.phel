@@ -9,7 +9,7 @@
   (:require phel-doom.io.render.hud :refer [minimap-door minimap-door-pulse minimap-rows minimap-frame hud-debug-line hud-line-str help-menu-string settings-menu-string pause-menu-string])
   (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-door-face paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-reload-ready paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-flicker paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-weapon-hud paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
-  (:require phel-doom.core.projection :refer [char-aspect wall-px])
+  (:require phel-doom.core.projection :refer [char-aspect wall-px pitch-rows])
   (:require phel-doom.core.perf :refer [render-scale])
   (:require phel-doom.core.format :refer [format-duration])
   (:require phel-doom.core.version :refer [version]))
@@ -180,10 +180,14 @@
   "Per-row perpendicular ground distance for floor-casting. Row centres
    below the horizon (`vh/2`) map to `floor-cast-k / (row+0.5 - vh/2)`,
    clamped to `max-depth`. Rows at/above the horizon get `max-depth`
-   (never sampled as floor — walls/sky cover them). One pass over vh."
-  [^int vh]
-  (let [arr    (php/array)
-        center (php/* 0.5 vh)]
+   (never sampled as floor — walls/sky cover them). One pass over vh.
+   `pr` (scene rows, default 0) shears the horizon down/up for look
+   up/down so the floor plane tracks the pitched wall band; pr=0 keeps
+   the table identical."
+  [^int vh & [pr-arg]]
+  (let [pr     (or pr-arg 0)
+        arr    (php/array)
+        center (php/+ (php/* 0.5 vh) pr)]
     (loop [r 0]
       (when (php/< r vh)
         (let [p (php/- (php/+ r 0.5) center)]
@@ -236,11 +240,15 @@
    projection numerator for ONE sub-row of drop (`floor-cast-k-sub`,
    sub-row = half a terminal row). The pixel-doubled renderer passes
    `vh` = 2x its scene height so the table covers its 4-per-scene-row
-   sub-pixel space - the same sub-pixel density as full detail."
-  [^int vh ^float k]
-  (let [arr    (php/array)
+   sub-pixel space - the same sub-pixel density as full detail. `pr`
+   (SCENE rows, default 0) shears the sub-row horizon by `2·pr` for look
+   up/down so the floor tracks the pitched wall sub-bounds; pr=0 keeps
+   the table identical."
+  [^int vh ^float k & [pr-arg]]
+  (let [pr     (or pr-arg 0)
+        arr    (php/array)
         sub    (php/* 2 vh)
-        center (php/* 1.0 vh)]
+        center (php/+ (php/* 1.0 vh) (php/* pr 2))]
     (loop [s 0]
       (when (php/< s sub)
         (let [p (php/- (php/+ s 0.5) center)]
@@ -291,8 +299,12 @@
    `pd`         wall-height projection numerator: `proj-dist` at full
                 detail, half of it in pixel-doubled mode (scene rows are
                 two terminal rows tall, so heights halve to keep the
-                same on-screen wall size)."
-  [vw vh haze-shift cast palette blood-cols ^float pd]
+                same on-screen wall size).
+   `pr`         look up/down horizon shear in scene rows (default 0):
+                added to every wall top so the whole wall band slides
+                down (look up) / up (look down) with the sky/floor
+                split. pr=0 keeps the shading byte-identical."
+  [vw vh haze-shift cast palette blood-cols ^float pd & [pr-arg]]
   (let [{:keys [dists hits sides wallxs]}                              cast
         {:keys [stbl ctbl sky-c floor-c door-shade-now door-code-now
                 door-tex-boost
@@ -316,12 +328,13 @@
         ;; or the amber door texture on door columns.
         tex-u                                                          (buf-mk)
         tex-level                                                      (buf-mk)
-        tex-px                                                         (buf-mk)]
+        tex-px                                                         (buf-mk)
+        pr                                                             (or pr-arg 0)]
     (loop [col 0]
       (when (php/< col vw)
         (let [dist         (buf-get dists col)
               wall-h       (php/min vh (php/intval (wall-px pd dist)))
-              top          (php/intdiv (php/- vh wall-h) 2)
+              top          (php/+ (php/intdiv (php/- vh wall-h) 2) pr)
               blood?       (php/> (buf-get blood-cols col) 0.4)
               stbl-l       (if blood? shade-table-blood stbl)
               ctbl-l       (if blood? shade-code-table-blood ctbl)
@@ -456,7 +469,7 @@
 ;; Input-determined cache — same vh always yields the same arrays — so
 ;; it preserves frame->string's referential transparency, same as the
 ;; engine's offset-cache.
-(def- gradient-cache (atom {:vh -1}))
+(def- gradient-cache (atom {:vh -1 :pr 0}))
 
 (defn- build-wall-sub-bounds
   "Per-column seam data for the sub-row wall mixers, all
@@ -478,20 +491,27 @@
    non-mixing columns. NOTE: the fallbacks copy tops/bots BEFORE the
    enemy zone pass mutates them, so consumers must only trust sky-lim /
    floor-from on mix columns (mix columns are never glyph-enemy
-   columns, whose tops/bots the zone pass rewrites)."
-  [dists tex-levels emask tops bots ^bool sprites-on ^bool tex-on? ^int svw ^int svh ^float pd ^int n]
-  (let [ts  (php/array)
+   columns, whose tops/bots the zone pass rewrites). `pr` (scene rows,
+   default 0) shears the sub-row band by `pr*n` for look up/down so the
+   seam tracks the cell-res tops; pr=0 keeps the bounds identical."
+  [dists tex-levels emask tops bots ^bool sprites-on ^bool tex-on? ^int svw ^int svh ^float pd ^int n & [pr-arg]]
+  (let [pr  (or pr-arg 0)
+        ts  (php/array)
         bs  (php/array)
         mx  (php/array)
         sl  (php/array)
         ff  (php/array)
         nf  (php/* 1.0 n)
-        cap (php/* n svh)]
+        cap (php/* n svh)
+        ;; Look up/down: shear the sub-row wall band by `pr` SCENE rows =
+        ;; `pr*n` sub-rows (n per scene cell), matching the cell-res tops
+        ;; from compute-wall-shades so the half-row seam tracks the band.
+        prn (php/* pr n)]
     (loop [c 0]
       (when (php/< c svw)
         (let [dist (buf-get dists c)
               whs  (php/min cap (php/intval (wall-px (php/* nf pd) dist)))
-              t    (php/intdiv (php/- cap whs) 2)
+              t    (php/+ (php/intdiv (php/- cap whs) 2) prn)
               b    (php/+ t whs)
               mix? (and tex-on?
                         (php/>= (buf-get tex-levels c) 0)
@@ -533,22 +553,28 @@
     {:dists d :hits h :sides s :wallxs w :floordxs fx :floordys fy}))
 
 (defn- frame-gradients
-  "Memoized sky/floor gradient bundle for viewport height `vh`. Returns
-   a map of the 6 gradient arrays (normal + blood, shade + code twins),
-   rebuilding only on a vh change. Blood variants are always built here;
-   the caller still gates their USE on the live `bloody?` flag."
-  [^int vh]
-  (let [c @gradient-cache]
-    (if (php/=== vh (:vh c))
+  "Memoized sky/floor gradient bundle for viewport height `vh` and look
+   up/down shear `pr` (scene rows, default 0). Returns a map of the 6
+   gradient arrays (normal + blood, shade + code twins), rebuilding only
+   when `vh` OR `pr` changes (resize / pitch). Blood variants are always
+   built here; the caller still gates their USE on the live `bloody?`
+   flag. Keying on `pr` keeps the bundle input-determined (same vh + pr
+   => same arrays), preserving frame->string's referential transparency;
+   pr=0 reproduces the pre-pitch bundle byte-for-byte."
+  [^int vh & [pr-arg]]
+  (let [pr (or pr-arg 0)
+        c  @gradient-cache]
+    (if (and (php/=== vh (:vh c)) (php/=== pr (:pr c)))
       c
       (let [bundle {:vh             vh
-                    :sky            (build-horizon-gradient vh shade-table)
-                    :sky-hb         (build-sky-halfblock vh shade-code-table)
-                    :floor          (build-themed-gradient vh 239 true)
-                    :sky-code       (build-horizon-gradient-codes vh shade-code-table)
-                    :floor-code     (build-themed-gradient-codes vh 239 true)
-                    :blood-sky      (build-horizon-gradient vh shade-table-blood)
-                    :blood-sky-code (build-horizon-gradient-codes vh shade-code-table-blood)}]
+                    :pr             pr
+                    :sky            (build-horizon-gradient vh shade-table pr)
+                    :sky-hb         (build-sky-halfblock vh shade-code-table pr)
+                    :floor          (build-themed-gradient vh 239 true pr)
+                    :sky-code       (build-horizon-gradient-codes vh shade-code-table pr)
+                    :floor-code     (build-themed-gradient-codes vh 239 true pr)
+                    :blood-sky      (build-horizon-gradient vh shade-table-blood pr)
+                    :blood-sky-code (build-horizon-gradient-codes vh shade-code-table-blood pr)}]
         (reset! gradient-cache bundle)
         bundle))))
 
@@ -573,6 +599,24 @@
         px-sc                              (if px2? 2 1)
         svw                                (if px2? (php/intdiv (php/+ vw 1) 2) vw)
         svh                                (if px2? (php/intdiv (php/+ vh 1) 2) vh)
+        ;; Look up/down camera pitch -> integer horizon shear in SCENE
+        ;; rows. Computed once; threaded into every horizon=svh/2 site
+        ;; (wall tops, sub-row seam bounds, floor-cast tables, sky/floor
+        ;; gradients, sprite anchors) so the whole scene shears together.
+        ;; pr=0 (default, no pitch) leaves every site at its original
+        ;; centre, so the render is byte-identical to the no-pitch path.
+        ;; POSITIVE pitch (look up) => POSITIVE pr => band slides DOWN.
+        pr                                 (pitch-rows (or (:pitch (:player world)) 0.0) svh)
+        ;; Sub-row twin: the half-block sky / floor-cast tables index at
+        ;; 2 sub-rows per SCENE row at full detail and 2 per PASSED-vh row
+        ;; in px2 (where the table is built at 2·svh). They scale `pr` by
+        ;; 2 internally, so a px2 scene-row shift needs 2·pr handed in to
+        ;; land 4 sub-rows per scene cell - matching the n=4 wall bounds.
+        pr-sub                             (if px2? (php/* 2 pr) pr)
+        ;; Full-resolution pitch shear (rows): the HP-flash overlay floats
+        ;; at terminal resolution (vh, not svh), so it tracks the sprite
+        ;; head using the vh-scaled offset.
+        pr-full                            (pitch-rows (or (:pitch (:player world)) 0.0) vh)
         bloody?                            (php/> (or (get stats :iframes) 0.0) 0.0)
         ;; Walls + sky + floor are ALL pure grayscale: enemy colours
         ;; pop against neutral stonework, and far walls fade toward
@@ -584,7 +628,7 @@
         ;; SCENE height (see frame-gradients); the per-frame rebuild is
         ;; gone. In pixel-doubled mode every scene-side consumer keys off
         ;; svh, so the memo stays single-keyed and stable across frames.
-        grads                              (frame-gradients svh)
+        grads                              (frame-gradients svh pr)
         sky-gradient                       (:sky grads)
         ;; Half-block sky: per-row ▀ cell stacking two sub-rows of the
         ;; horizon gradient (2× vertical smoothness). Row-constant, so it
@@ -597,7 +641,7 @@
         ;; the full-detail seam mixer blends the code at a wall-top
         ;; boundary sub-row into its ▀ cell. Sized to the path's
         ;; sub-row space (4 per scene cell in px2, 2 per cell in px1).
-        sky-sub-codes                      (build-sky-codes-sub (if px2? (php/* 2 svh) svh) shade-code-table)
+        sky-sub-codes                      (build-sky-codes-sub (if px2? (php/* 2 svh) svh) shade-code-table pr-sub)
         ;; Floor: same grey gradient with subtle tile banding (odd
         ;; rows one fade step darker).
         floor-gradient                     (:floor grads)
@@ -671,9 +715,9 @@
         ;; res arrays drive the legacy single-texel floor; the sub arrays
         ;; (2× vertical) drive the half-block floor.
         {:x pfx :y pfy}                    (:player world)
-        floor-dperp                        (build-floor-dperp svh)
+        floor-dperp                        (build-floor-dperp svh pr)
         floor-level                        (build-floor-level floor-dperp svh)
-        floor-dperp-sub                    (build-floor-dperp-sub (if px2? (php/* 2 svh) svh) floor-cast-k-sub)
+        floor-dperp-sub                    (build-floor-dperp-sub (if px2? (php/* 2 svh) svh) floor-cast-k-sub pr-sub)
         floor-level-sub                    (build-floor-level-sub floor-dperp-sub (if px2? (php/* 2 svh) svh))
         _                                  (when debug?
                                              (record-cast-ms!
@@ -800,7 +844,8 @@
                               :blood-sky-code-grad   blood-sky-code-gradient
                               :blood-floor-code-grad blood-floor-code-gradient}
                              blood-cols
-                             scene-pd)
+                             scene-pd
+                             pr)
         ;; Enemy sprite zone boundaries (head/body/legs). For each
         ;; column carrying an enemy:
         ;;   row in [tops, mids)   -> head
@@ -935,7 +980,7 @@
                    ;; darkening) rather than level 8 (65%), keeping its
                    ;; shading bands visible against dark stone.
               sfade     (php/aget sprite-fade (sprite-fade-index body-fade))]
-          (let [e-top (php/intdiv (php/- svh h) 2)]
+          (let [e-top (php/+ (php/intdiv (php/- svh h) 2) pr)]
             (let [e-bot         (php/+ e-top h)
                   e-mid         (php/+ e-top (php/intdiv h 3))
                   e-lower       (php/+ e-top (php/intdiv (php/* h 2) 3))
@@ -1035,7 +1080,7 @@
               h      (php/min svh (php/intval (php/* sc
                                                      (php// scene-pd
                                                             (php/* (php/max 0.5 d) char-aspect)))))
-              e-bot  (php/+ (php/intdiv (php/- svh h) 2) h)
+              e-bot  (php/+ (php/intdiv (php/- svh h) 2) pr h)
               c-from (php/max 0 (php/- col hw))
               c-to   (php/min (php/- svw 1) (php/+ col hw))]
           (when (php/< e-bot svh)
@@ -1181,7 +1226,8 @@
                                                      sprites-on
                                                      (if px2? tex-on? (if subpixel? tex-on? false))
                                                      svw svh scene-pd
-                                                     (if px2? 4 2))
+                                                     (if px2? 4 2)
+                                                     pr)
           wsub-top            (php/aget wsub 0)
           wsub-bot            (php/aget wsub 1)
           wsub-mix            (php/aget wsub 2)
@@ -1908,7 +1954,7 @@
             ;; Face glyph (blinking eyes) is a glyph-era tell; the
             ;; Freedoom sprites already show a face, so skip it in sprite mode.
             p1          (if sprites-on parts
-                            (paint-face-overlay parts world stats svw svh dists edists face-phase px-sc))
+                            (paint-face-overlay parts world stats svw svh dists edists face-phase px-sc pr))
             p3          (paint-door-face          p1 stats svw svh hits tops bots px-sc)
             p4          (paint-crosshair          p3 stats vw vh center-bg)
             p5          (paint-intro-splash       p4 stats vw vh)
@@ -1933,7 +1979,7 @@
             p18         (paint-empty-click        p17 stats vw vh)
             p19         (paint-reload-reminder    p18 stats vw vh)
             p19b        (paint-locked-bump        p19 stats vw vh)
-            p19c        (paint-enemy-hp-flashes   p19b world vw vh)
+            p19c        (paint-enemy-hp-flashes   p19b world vw vh pr-full)
             p20         (paint-save-flash         p19c stats vw vh)
             p20b        (paint-reload-ready       p20 stats vw vh)]
         ;; Pause (P) IS the settings page: freezing the game and the

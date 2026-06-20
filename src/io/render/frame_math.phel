@@ -203,10 +203,16 @@
    pair is row-constant (gradient depends only on the row), so the inner
    loop still RLE-coalesces each sky row into a single run. `ctbl` is the
    shade-code-table (bare numeric code strings); the sub-row index runs
-   over 2·vh with the horizon at vh."
-  [^int vh ctbl]
-  (let [arr     (buf-mk)
-        horizon vh
+   over 2·vh with the horizon at vh. Optional `horizon-offset` (scene
+   rows, default 0) shears the horizon for look up/down: it shifts the
+   sub-row horizon by `2·offset` so the sky tracks the pitched wall band."
+  [^int vh ctbl & [horizon-offset]]
+  (let [pr      (or horizon-offset 0)
+        arr     (buf-mk)
+        ;; Sub-row horizon: vh at level pitch, sheared by pr*2 (two
+        ;; sub-rows per scene row) so the sky band tracks the same
+        ;; pitched horizon as the wall sub-bounds and floor-cast.
+        horizon (php/+ vh (php/* pr 2))
         max-d   (php/max 1 vh)
         code-at (fn [^int s]
                   (let [idx (php/max 0
@@ -228,10 +234,15 @@
    horizon at sub-row vh — the same curve `build-sky-halfblock` packs
    into ▀ cells, left unpacked so the pixel-doubled renderer can paint
    sub-row `2r` on the upper output row and `2r+1` on the lower as two
-   solid cells (full vertical sky smoothness at pixel scale 2)."
-  [^int vh ctbl]
-  (let [arr     (php/array)
-        horizon vh
+   solid cells (full vertical sky smoothness at pixel scale 2). Optional
+   `horizon-offset` (scene rows, default 0) shears the horizon by
+   `2·offset` sub-rows for look up/down."
+  [^int vh ctbl & [horizon-offset]]
+  (let [pr      (or horizon-offset 0)
+        arr     (php/array)
+        ;; Sub-row horizon at vh, sheared by pr*2 (two sub-rows per scene
+        ;; row) - same pitched horizon the half-block sky packs.
+        horizon (php/+ vh (php/* pr 2))
         max-d   (php/max 1 vh)
         sub     (php/* 2 vh)]
     (loop [s 0]
@@ -333,11 +344,18 @@
    height. Maps each row to a shade-table index based on distance
    from the horizon line (vh/2): closer to the horizon = darker
    (atmospheric haze). Used for both sky AND floor since after a
-   distance the eye stops distinguishing them anyway."
-  [^int vh tbl]
-  (let [arr     (buf-mk)
-        horizon (php/intdiv vh 2)
-        max-d   (php/max 1 horizon)]
+   distance the eye stops distinguishing them anyway. Optional
+   `horizon-offset` (scene rows, default 0) shears the horizon for look
+   up/down while keeping the gradient span fixed, so pr=0 is unchanged."
+  [^int vh tbl & [horizon-offset]]
+  (let [pr      (or horizon-offset 0)
+        arr     (buf-mk)
+        ;; Horizon line sheared by `pr` scene rows for look up/down; the
+        ;; normalisation span (max-d) keeps the unshifted half-height so
+        ;; the gradient just translates (pr=0 => identical bytes).
+        base    (php/intdiv vh 2)
+        horizon (php/+ base pr)
+        max-d   (php/max 1 base)]
     (loop [r 0]
       (when (php/< r vh)
         (let [idx (php/max 0
@@ -356,11 +374,15 @@
    toward black at the horizon via fade-256. When `stripe?` is true,
    every other row pulls one extra fade step so floors show subtle
    horizontal banding (tile lines). One pass over vh rows per frame;
-   vh is small (~30-40) so the cost is negligible."
-  [^int vh ^int base-code stripe?]
-  (let [arr     (buf-mk)
-        horizon (php/intdiv vh 2)
-        max-d   (php/max 1 horizon)]
+   vh is small (~30-40) so the cost is negligible. Optional
+   `horizon-offset` (scene rows, default 0) shears the horizon for look
+   up/down; pr=0 leaves output unchanged."
+  [^int vh ^int base-code stripe? & [horizon-offset]]
+  (let [pr      (or horizon-offset 0)
+        arr     (buf-mk)
+        base    (php/intdiv vh 2)
+        horizon (php/+ base pr)
+        max-d   (php/max 1 base)]
     (loop [r 0]
       (when (php/< r vh)
         (let [t     (php// (php/abs (php/- r horizon)) max-d)
@@ -378,11 +400,15 @@
    code strings (e.g. \"240\") instead of full SGR paint cells.
    Used to sample the sky gradient code at a specific row so the ▀
    half-block edge cell can blend the exact sky shade of that row
-   into the top-half FG, eliminating the flat-236 seam artifact."
-  [^int vh ctbl]
-  (let [arr     (buf-mk)
-        horizon (php/intdiv vh 2)
-        max-d   (php/max 1 horizon)]
+   into the top-half FG, eliminating the flat-236 seam artifact.
+   Optional `horizon-offset` (scene rows, default 0) shears the horizon
+   for look up/down; pr=0 leaves output unchanged."
+  [^int vh ctbl & [horizon-offset]]
+  (let [pr      (or horizon-offset 0)
+        arr     (buf-mk)
+        base    (php/intdiv vh 2)
+        horizon (php/+ base pr)
+        max-d   (php/max 1 base)]
     (loop [r 0]
       (when (php/< r vh)
         (let [idx (php/max 0
@@ -400,11 +426,15 @@
    code strings (e.g. \"237\") instead of full SGR paint cells.
    Used to sample the floor gradient code at a specific row so the ▀
    half-block edge cell can blend the exact floor shade of that row
-   into the bottom-half BG, eliminating the flat floor-code seam."
-  [^int vh ^int base-code stripe?]
-  (let [arr     (buf-mk)
-        horizon (php/intdiv vh 2)
-        max-d   (php/max 1 horizon)]
+   into the bottom-half BG, eliminating the flat floor-code seam.
+   Optional `horizon-offset` (scene rows, default 0) shears the horizon
+   for look up/down; pr=0 leaves output unchanged."
+  [^int vh ^int base-code stripe? & [horizon-offset]]
+  (let [pr      (or horizon-offset 0)
+        arr     (buf-mk)
+        base    (php/intdiv vh 2)
+        horizon (php/+ base pr)
+        max-d   (php/max 1 base)]
     (loop [r 0]
       (when (php/< r vh)
         (let [t     (php// (php/abs (php/- r horizon)) max-d)

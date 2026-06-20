@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.glue.controls
             :refer [key-states refresh-from-keys rising-edges initial-key-snapshot
-                    nav-deltas]))
+                    nav-deltas refresh-move]))
 
 (def blank-moves
   {:fwd          0
@@ -11,7 +11,9 @@
    :strafe-right 0
    :turn-left    0
    :turn-right   0
-   :sprint       0})
+   :sprint       0
+   :pitch-up     0
+   :pitch-down   0})
 
 (def blank-world
   {:moves blank-moves})
@@ -280,6 +282,50 @@
   ;; release feels instant.
   (let [w' (refresh-from-keys blank-world "x")]
     (is (php/<= (:sprint (:moves w')) 5))))
+
+;; ---------------------------------------------------------------------
+;; Look up/down (pitch): 't' arms :pitch-up, 'g' arms :pitch-down. Both
+;; legacy single-byte and kitty CSI-u (codepoints 116 / 103) paths.
+;; ---------------------------------------------------------------------
+
+(deftest test-t-byte-refreshes-pitch-up-slot
+  (let [w' (refresh-from-keys blank-world "t")]
+    (is (php/> (:pitch-up   (:moves w')) 0))
+    (is (= 0   (:pitch-down (:moves w'))))))
+
+(deftest test-g-byte-refreshes-pitch-down-slot
+  (let [w' (refresh-from-keys blank-world "g")]
+    (is (php/> (:pitch-down (:moves w')) 0))
+    (is (= 0   (:pitch-up   (:moves w'))))))
+
+(deftest test-refresh-move-maps-t-to-pitch-up
+  ;; Direct slot-map check, mirroring the blank-moves style: the byte
+  ;; lands in exactly the :pitch-up slot, nothing else.
+  (let [w' (refresh-move blank-world "t")]
+    (is (php/> (:pitch-up (:moves w')) 0))
+    (is (= (assoc blank-moves :pitch-up (:pitch-up (:moves w')))
+           (:moves w')))))
+
+(deftest test-refresh-move-maps-g-to-pitch-down
+  (let [w' (refresh-move blank-world "g")]
+    (is (php/> (:pitch-down (:moves w')) 0))
+    (is (= (assoc blank-moves :pitch-down (:pitch-down (:moves w')))
+           (:moves w')))))
+
+(deftest test-t-still-works-under-kitty-as-codepoint-116
+  ;; Under kitty, 't' arrives wrapped as \e[116u. Must still hit :pitch-up.
+  (let [w' (refresh-from-keys blank-world "\e[116u")]
+    (is (php/> (:pitch-up (:moves w')) 0))))
+
+(deftest test-g-still-works-under-kitty-as-codepoint-103
+  (let [w' (refresh-from-keys blank-world "\e[103u")]
+    (is (php/> (:pitch-down (:moves w')) 0))))
+
+(deftest test-pitch-slot-uses-short-hold-frames
+  ;; Pitch halts fast (like turn), not the long move-hold bridge, so the
+  ;; camera doesn't keep drifting after the key is released.
+  (let [w' (refresh-from-keys blank-world "t")]
+    (is (php/<= (:pitch-up (:moves w')) 5))))
 
 ;; ---------------------------------------------------------------------
 ;; Capital WASD: legacy fallback so SHIFT+WASD sprints on terminals

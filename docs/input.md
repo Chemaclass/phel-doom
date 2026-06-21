@@ -13,7 +13,7 @@ Raw stdin to world state.
 - `\e[?7l`: disable autowrap
 - `\e[2J\e[H`: clear + home
 - `\e[>3u`: kitty keyboard protocol opt-in (press/repeat/release events)
-- `\e[?1003h\e[?1006h`: xterm mouse reporting (any-motion + SGR), appended ONLY when the Mouse setting is on (see [Mouse look](#mouse-look-issue-246))
+- `\e[?1003h\e[?1006h\e[>3p`: xterm mouse reporting (any-motion + SGR) plus XTSMPOINTER always-hide of the OS pointer (#295), appended ONLY when the Mouse setting is on (see [Mouse look](#mouse-look-issue-246))
 
 `init-input!` takes a `mouse?` flag (default true) wired to the Mouse setting; when off, the two mouse escapes are omitted and the terminal never captures the pointer. The pure builder `init-escapes` produces the exact string so the gating is unit-tested without touching the terminal.
 
@@ -102,7 +102,8 @@ A left-button **press** (`b=0`, final `M`) sets `:fire?`, which the game loop OR
 
 The aim is the **fixed screen-centre crosshair**, never a moving pointer (the terminal reports motion but offers no pointer warp, so a roaming pointer would not even track the aim). Two things keep that contract:
 
-- **Caret stays hidden.** `init-input!` hides the terminal caret once with `\e[?25l`, and `render!` re-asserts `\e[?25l` every frame. A terminal can resurface the caret on a mode flip, a resize, or when SGR mouse tracking is enabled, which would leave a blinking caret racing the crosshair; the per-frame re-assert (one idempotent escape) keeps it hidden for the whole session. The OS pointer arrow some terminals draw over their own window is outside our control, but the in-terminal caret never reappears.
+- **Caret stays hidden.** `init-input!` hides the terminal caret once with `\e[?25l`, and `render!` re-asserts `\e[?25l` every frame. A terminal can resurface the caret on a mode flip, a resize, or when SGR mouse tracking is enabled, which would leave a blinking caret racing the crosshair; the per-frame re-assert (one idempotent escape) keeps it hidden for the whole session.
+- **OS pointer hidden (issue #295).** The OS mouse pointer (the arrow the terminal draws) is a different cursor from the text caret, so `\e[?25l` never affected it - and enabling any-motion tracking makes xterm's default (XTSMPOINTER 1 = hide only when tracking is off) actually *show* it. `mouse-enable` now also sends XTSMPOINTER `\e[>3p` (always hide the pointer, even leaving / entering the window); `mouse-disable` restores the default with `\e[>1p`. Terminals that do not implement XTSMPOINTER ignore it (the pointer can stay visible there), and since no escape can warp or confine the pointer, this hides but cannot truly *lock* it inside the window - the edge-turn above is what keeps you from ever needing to push it out.
 - **Crosshair is always the aim indicator while mouse-aiming.** `paint-crosshair` reads a `:mouse` flag (the Mouse setting, threaded through `frame-stats`). When mouselook is ON, an `:off` Crosshair style still draws a minimal centre dot `·` so the player is never left with no aim point. With the mouse OFF, `:off` keeps hiding the idle reticle exactly as before. The hit-marker (`✗` kill / `×` wound) overrides regardless of style or mouse state.
 
 ### Sensitivity

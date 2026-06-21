@@ -3,19 +3,26 @@
 (def mouse-enable
   "Escapes that turn ON xterm mouse reporting for FPS-style mouselook
    (issue #246): `\\e[?1003h` requests ANY-MOTION tracking (the terminal
-   reports the pointer even with no button held) and `\\e[?1006h`
-   switches the reports to the SGR-extended encoding
-   (`\\e[<b;x;y(M|m)`) that controls/mouse-look parses. Emitted only when
-   the Mouse setting is on, so a player or terminal that dislikes mouse
-   capture opts out and the keyboard path is untouched."
-  "\e[?1003h\e[?1006h")
+   reports the pointer even with no button held), `\\e[?1006h` switches
+   the reports to the SGR-extended encoding (`\\e[<b;x;y(M|m)`) that
+   controls/mouse-look parses, and `\\e[>3p` (XTSMPOINTER, Ps=3) tells the
+   terminal to ALWAYS hide the OS mouse pointer, even leaving/entering the
+   window. The pointer-hide is load-bearing (#295): enabling tracking
+   makes xterm's default (XTSMPOINTER 1 = hide only when tracking is OFF)
+   SHOW the arrow, and `\\e[?25l` only hides the text caret - so without
+   `\\e[>3p` the pointer stays visible over the 3D view. Emitted only when
+   the Mouse setting is on, so an opted-out player keeps a normal pointer.
+   Terminals without XTSMPOINTER ignore it (harmless); no escape can warp
+   or confine the pointer, so this hides but cannot truly lock it."
+  "\e[?1003h\e[?1006h\e[>3p")
 
 (def mouse-disable
-  "Reverse of `mouse-enable`: disable any-motion tracking + SGR mode so
-   the terminal stops capturing the pointer on teardown. Always emitted
-   on restore! (idempotent / harmless even if the mouse was never
+  "Reverse of `mouse-enable`: disable any-motion tracking + SGR mode and
+   restore the default pointer visibility (`\\e[>1p`, XTSMPOINTER 1) so the
+   terminal stops capturing + force-hiding the pointer on teardown. Always
+   emitted on restore! (idempotent / harmless even if the mouse was never
    enabled this session)."
-  "\e[?1003l\e[?1006l")
+  "\e[?1003l\e[?1006l\e[>1p")
 
 (defn init-escapes
   "Pure: the terminal-setup escape string init-input! emits. Alt screen

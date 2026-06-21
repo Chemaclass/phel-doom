@@ -1202,6 +1202,14 @@
       (= choice :restart)      [:fresh]
       :else                    [:quit])))
 
+(defn restart-show-map?
+  "Initial minimap visibility for a (re)started run: the persisted
+   `:minimap` setting, coerced to a strict boolean. The loop entry and
+   every restart recur seed `show-map?` through this so a restart honors
+   Minimap=off instead of forcing the overlay on (issue #292)."
+  [settings]
+  (boolean (:minimap settings)))
+
 (defn- run-levels
   "Outer loop driving one full run. Each iteration captures a fresh
    PRNG seed before calling build-world so the player can replay the
@@ -1248,7 +1256,7 @@
          weapon      nil
          wstate      nil
          ;; Minimap starts in the settings-page default; sound starts on.
-         show-map?   (boolean (:minimap init-settings))
+         show-map?   (restart-show-map? init-settings)
          sound-on?   true
          ;; Live settings map carried across levels so the options page
          ;; reflects mid-run edits; restarts reset to the loaded value.
@@ -1286,7 +1294,7 @@
         ;; Pause-menu Restart (#203): restart the whole run from L1 with a
         ;; fresh seed, same reset as a fresh end-screen restart.
         (= result :restart)
-        (recur 1 max-lives 0 0 empty-run-stats (rng/fresh-seed) 0 #{:pistol} nil nil true true init-settings)
+        (recur 1 max-lives 0 0 empty-run-stats (rng/fresh-seed) 0 #{:pistol} nil nil (restart-show-map? init-settings) true init-settings)
 
         (and (map? result) (:next-level result))
         ;; Stamina + sprint-cooldown + :sprint-blocked? are deliberately
@@ -1307,8 +1315,8 @@
         (let [[k t stats]     (carry-on carry-kills carry-time carry-stats result)
               [kind new-seed] (handle-end victory-loop k t (run-summary stats) result seed true)]
           (cond
-            (= kind :fresh) (recur 1 max-lives 0 0 empty-run-stats (rng/fresh-seed) 0 #{:pistol} nil nil true true init-settings)
-            (= kind :same)  (recur 1 max-lives 0 0 empty-run-stats new-seed 0 #{:pistol} nil nil true true init-settings)
+            (= kind :fresh) (recur 1 max-lives 0 0 empty-run-stats (rng/fresh-seed) 0 #{:pistol} nil nil (restart-show-map? init-settings) true init-settings)
+            (= kind :same)  (recur 1 max-lives 0 0 empty-run-stats new-seed 0 #{:pistol} nil nil (restart-show-map? init-settings) true init-settings)
             :else           nil))
 
         (and (map? result) (:game-over result))
@@ -1317,10 +1325,10 @@
               died-on         (or (:level result) 1)]
           (cond
             ;; r: try the level you died on again with a fresh map.
-            (= kind :fresh) (recur died-on max-lives 0 0 empty-run-stats (rng/fresh-seed) 0 #{:pistol} nil nil true true init-settings)
+            (= kind :fresh) (recur died-on max-lives 0 0 empty-run-stats (rng/fresh-seed) 0 #{:pistol} nil nil (restart-show-map? init-settings) true init-settings)
             ;; R: replay the exact level you died on (same seed + same
             ;; level number reproduces identical geometry + enemies).
-            (= kind :same)  (recur died-on max-lives 0 0 empty-run-stats new-seed 0 #{:pistol} nil nil true true init-settings)
+            (= kind :same)  (recur died-on max-lives 0 0 empty-run-stats new-seed 0 #{:pistol} nil nil (restart-show-map? init-settings) true init-settings)
             :else           nil))
 
         :else

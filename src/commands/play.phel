@@ -5,10 +5,11 @@
                                             clamp-pitch decay-soul-overcap gain-armor-shard gain-backpack
                                             gain-life gain-soulsphere
                                             max-armor max-lives max-stamina turn-player
-                                            rebuild-pgrid toggle-debug toggle-map toggle-pause toggle-sound])
+                                            rebuild-pgrid reset-reticle set-reticle
+                                            toggle-debug toggle-map toggle-pause toggle-sound])
   (:require phel-doom.core.map      :refer [door? reveal-secret secret? switch? toggle-switch])
   (:require phel-doom.glue.controls :refer [refresh-from-keys key-states rising-edges
-                                            initial-key-snapshot nav-deltas mouse-look])
+                                            initial-key-snapshot nav-deltas mouse-aim])
   (:require phel-doom.core.physics  :refer [apply-physics tick-heartbeat tick-blood-drops tick-stamina])
   (:require phel-doom.core.engine   :refer [mark-visible-cells])
   (:require phel-doom.core.combat   :refer [ammo-per-box arm-berserk damage-step fire-anim-seconds invuln-seconds push-sfx reload reloading? reload-cooldown-seconds tick-armory tick-shooting])
@@ -126,13 +127,14 @@
   (update-in world [:player :angle] (fn [a] (php/+ a php/M_PI))))
 
 (defn apply-mouse-look
-  "Apply one frame's positional mouselook steering (#318) to the player.
-   `look` is the `controls/mouse-look` result; `:yaw` rotates `:angle`
-   (same path as a keyboard turn) and `:pitch` shears `:pitch` clamped to
-   [-1, 1] via `clamp-pitch` (same saturation as the ↑/↓ keys). A zero
-   yaw/pitch (pointer in the centre deadzone) is a no-op so the keyboard
-   look is untouched. Pure; the game loop calls it only on an unpaused
-   frame so the camera can't drift while a menu is up."
+  "Apply one frame's mouse edge-pan (#324, was positional steer #318) to the
+   player. `look` is the `controls/mouse-aim` result; `:yaw` rotates
+   `:angle` (same path as a keyboard turn) and `:pitch` shears `:pitch`
+   clamped to [-1, 1] via `clamp-pitch` (same saturation as the ↑/↓ keys).
+   Both are non-zero only while the reticle sits in the outer edge band, so
+   a reticle in the centre region (zero yaw/pitch) is a no-op and the
+   keyboard look is untouched. Pure; the game loop calls it only on an
+   unpaused frame so the camera can't drift while a menu is up."
   [world look]
   (let [yaw   (or (:yaw look) 0.0)
         pitch (or (:pitch look) 0.0)
@@ -727,11 +729,15 @@
    ;; timer in the HUD strip. Both are pure overlay reads.
    :crosshair            (or (:crosshair (:settings world)) :cross)
    :run-timer?           (boolean (:timer (:settings world)))
-   ;; Mouselook on flag (#246): the screen-centre crosshair IS the mouse
-   ;; aim point (no visible OS pointer), so paint-crosshair forces a
-   ;; minimal centre dot even when the player set Crosshair to :off, so
-   ;; mouse-aiming always has an aim indicator.
+   ;; Mouselook on flag (#246): the crosshair IS the mouse aim point (no
+   ;; visible OS pointer), so paint-crosshair forces a minimal centre dot
+   ;; even when the player set Crosshair to :off, so mouse-aiming always has
+   ;; an aim indicator.
    :mouse                (boolean (:mouse (:settings world)))
+   ;; Movable aim crosshair (#324): the reticle cell the gun aims at, so
+   ;; render draws the `+` there. nil (mouse off / not placed) centres it.
+   :aim-col              (:aim-col world)
+   :aim-row              (:aim-row world)
    ;; Accessibility (issue #200): high-contrast HUD un-dims the dim/grey
    ;; HUD elements (compass, empty hearts, reserve ammo) for low-quality
    ;; terminals.
@@ -999,26 +1005,29 @@
                 ms        (or (:ms frame) live-ms)
                 now-keys  (key-states keys)
                 edges0    (rising-edges now-keys prev-keys)
-                ;; Positional mouselook (#318): parse the same drained byte
-                ;; string for SGR mouse reports. `:yaw`/`:pitch` steer the
-                ;; camera by how far the cached pointer sits from the terminal
-                ;; CENTER (applied below before the tick, so the frame renders
-                ;; + aims with the new heading); a left click ORs into the
+                ;; Movable aim crosshair (#324): parse the same drained byte
+                ;; string for SGR mouse reports. `:aim-col`/`:aim-row` are the
+                ;; reticle cell the gun aims at (stamped on the world below so
+                ;; this frame's off-centre hitscan + crosshair use it);
+                ;; `:yaw`/`:pitch` edge-pan the camera when the reticle is in
+                ;; the outer band (applied before the tick so the frame aims +
+                ;; renders with the new heading). A left click ORs into the
                 ;; existing space-fire edges so a mouse click shoots exactly
                 ;; like space (held button feeds auto-fire weapons). `:pos`
-                ;; threads forward as the next frame's cached pointer. Seed the
-                ;; cached pointer to CENTER at game start (prev-mpos nil) and
-                ;; reset it on a resize: a centered pointer steers zero, so the
-                ;; camera never auto-spins before a real report or when the
-                ;; absolute coords shift meaning under a new terminal size. The
-                ;; live `[rows cols]` gives steer-rate the axis lengths so the
-                ;; pointer keeps turning the camera while held off-center.
+                ;; threads forward as the next frame's cached pointer. Seed it
+                ;; to CENTER at game start (prev-mpos nil) and reset it on a
+                ;; resize: a centred pointer places the reticle dead centre
+                ;; (no edge-pan) so nothing auto-spins before a real report or
+                ;; when the absolute coords shift meaning under a new terminal
+                ;; size. The live `[rows cols]` gives mouse-aim the axis
+                ;; lengths the reticle clamp + edge band need.
+                mouse-on? (boolean (:mouse (:settings world)))
                 mpos      (if (or (nil? prev-mpos) (not= [rows cols] dims))
                             [(php// (php/+ 1 cols) 2.0) (php// (php/+ 1 rows) 2.0)]
                             prev-mpos)
-                look      (mouse-look keys mpos
-                                      (mouse-sensitivity (:settings world))
-                                      [rows cols])
+                look      (mouse-aim keys mpos
+                                     (mouse-sensitivity (:settings world))
+                                     [rows cols])
                 edges     (assoc edges0
                                  :fire      (or (:fire edges0) (:fire? look))
                                  :fire-held (or (:fire-held edges0) (:fire-held? look)))]
@@ -1030,38 +1039,49 @@
                   :quit)
 
               :else
-              ;; Stamp the scene height the renderer will use this frame
-              ;; so the vertical hitscan gate (issue #243) projects an
-              ;; enemy billboard against the exact rows the player sees.
-              ;; Same `:debug?`-aware HUD reservation as draw-frame's
-              ;; frame-stats, so the hit check and the draw agree.
-              (let [scened  (assoc world :scene-rows (scene-rows rows {:debug? (:debug? world)}))
-                    ;; Apply the mouselook yaw/pitch to the camera BEFORE the
-                    ;; tick so this frame's hitscan + render use the new
-                    ;; heading. Gated on not-paused so the camera can't drift
-                    ;; while a menu is up (tick-world freezes gameplay anyway,
-                    ;; but the steering yaw/pitch is outside that short-circuit).
-                    aimed   (if (:paused world) scened (apply-mouse-look scened look))
-                    ticked0 (tick-world aimed keys (php// ms 1000.0) edges)
+              ;; Stamp the scene height AND width the renderer will use this
+              ;; frame so the hitscan gates project against the exact view the
+              ;; player sees: `:scene-rows` for the vertical gate (#243),
+              ;; `:scene-cols` (= the cast width vw) for the off-centre
+              ;; reticle-column aim (#324). Same `:debug?`-aware HUD
+              ;; reservation as draw-frame's frame-stats, so the hit check and
+              ;; the draw agree.
+              (let [scened   (assoc world
+                                    :scene-rows (scene-rows rows {:debug? (:debug? world)})
+                                    :scene-cols cols)
+                    ;; Place the reticle + apply the edge-pan BEFORE the tick
+                    ;; so this frame's hitscan + crosshair use them. With the
+                    ;; mouse ON: stamp the reticle cell from mouse-aim and
+                    ;; (unpaused) edge-pan the camera. With the mouse OFF or
+                    ;; while paused: reset the reticle to centre (nil) so the
+                    ;; hitscan fires dead ahead + the crosshair sits centre,
+                    ;; exactly like keyboard-only play, and skip the edge-pan.
+                    reticled (if mouse-on?
+                               (set-reticle scened (:aim-col look) (:aim-row look))
+                               (reset-reticle scened))
+                    aimed    (if (and mouse-on? (not (:paused world)))
+                               (apply-mouse-look reticled look)
+                               reticled)
+                    ticked0  (tick-world aimed keys (php// ms 1000.0) edges)
                   ;; Pause overlay (#203): while paused (and not in the H
                   ;; info panel) the navigable pause MENU is up. up/down move
                   ;; the cursor, enter/space selects. Selecting Settings drops
                   ;; into the options sub-page (same nav); enter/space backs
                   ;; out to the menu. tick-world already froze gameplay,
                   ;; so this only drives menu/settings state.
-                    ticked  (cond
-                              (not (and (:paused ticked0) (not (:help? ticked0))))
-                              ticked0
-                              (= (:pause-screen ticked0) :settings)
-                              (let [s (step-settings! ticked0 keys)]
-                                (if (:confirm edges) (assoc s :pause-screen :menu) s))
-                              :else
-                              (step-pause-menu ticked0 (:cursor (nav-deltas keys)) (:confirm edges)))
+                    ticked   (cond
+                               (not (and (:paused ticked0) (not (:help? ticked0))))
+                               ticked0
+                               (= (:pause-screen ticked0) :settings)
+                               (let [s (step-settings! ticked0 keys)]
+                                 (if (:confirm edges) (assoc s :pause-screen :menu) s))
+                               :else
+                               (step-pause-menu ticked0 (:cursor (nav-deltas keys)) (:confirm edges)))
                   ;; F5 / F9 quick-save / load run here (file IO),
                   ;; outside the pure tick. Load swaps the whole world;
                   ;; both stamp a brief HUD flash so the player sees it
                   ;; took.
-                    world'  (handle-save-load ticked edges)]
+                    world'   (handle-save-load ticked edges)]
               ;; Resuming out of the pause/settings page persists the
               ;; player's choices (volumes were already applied live).
                 (when (resumed-pause? world world')

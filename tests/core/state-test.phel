@@ -8,7 +8,8 @@
                                          gain-life gain-soulsphere decay-soul-overcap
                                          max-armor max-backpacks max-lives
                                          armor-shard-cap soul-overcap-decay-secs
-                                         soulsphere-cap clamp-pitch max-pitch]))
+                                         soulsphere-cap clamp-pitch max-pitch
+                                         set-reticle reset-reticle]))
 
 (def grid [[1 1 1] [1 0 1] [1 1 1]])
 
@@ -238,3 +239,34 @@
   (is (= false (at-backpack-cap? {:backpack-level 0})))
   (is (= false (at-backpack-cap? {:backpack-level 2})))
   (is (= true  (at-backpack-cap? {:backpack-level 3}))))
+
+;; ---------------------------------------------------------------------
+;; Movable aim crosshair reticle (#324). A fresh world starts centred
+;; (nil = combat fires dead ahead, render draws at screen centre);
+;; set-reticle stamps a concrete viewport cell; reset-reticle re-centres.
+;; ---------------------------------------------------------------------
+
+(deftest test-new-world-reticle-starts-centered
+  (let [w (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))]
+    (is (nil? (:aim-col w)) "fresh world has no reticle column (centred)")
+    (is (nil? (:aim-row w)) "fresh world has no reticle row (centred)")))
+
+(deftest test-set-reticle-stamps-cell
+  (let [w (set-reticle {} 71 12)]
+    (is (= 71 (:aim-col w)) "reticle column stamped")
+    (is (= 12 (:aim-row w)) "reticle row stamped")))
+
+(deftest test-set-reticle-passes-nil-through
+  ;; A mouse-aim result with no dims / no pointer carries nil cells, which
+  ;; centre the reticle - so feeding it straight through keeps the world
+  ;; centred rather than erroring.
+  (let [w (set-reticle {:aim-col 50 :aim-row 9} nil nil)]
+    (is (nil? (:aim-col w)) "nil column re-centres")
+    (is (nil? (:aim-row w)) "nil row re-centres")))
+
+(deftest test-reset-reticle-clears-to-center
+  ;; Mouse-off / resize: the reticle returns to the centred sentinel so the
+  ;; hitscan + crosshair behave exactly like the pre-#324 centre aim.
+  (let [w (reset-reticle {:aim-col 119 :aim-row 0})]
+    (is (nil? (:aim-col w)) "column cleared to centre")
+    (is (nil? (:aim-row w)) "row cleared to centre")))

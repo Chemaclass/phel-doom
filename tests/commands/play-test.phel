@@ -80,6 +80,22 @@
     ;; Blood fx was pushed.
     (is (>= (count (:fx w')) 1))))
 
+(deftest test-tick-world-reticle-column-aims-the-shot
+  ;; Movable aim crosshair end-to-end (#324): an enemy OFF the centre axis
+  ;; (perp ~0.54 > the 0.5 hit radius) is MISSED with the reticle centred
+  ;; but HIT once the world carries the reticle column over it. Proves
+  ;; :aim-col + :scene-cols thread from the world through tick-world's fire
+  ;; path. Player (2,5) facing east; enemy (4.95, 5.54) projects to col ~73
+  ;; on a 120-wide scene. rng seeded - the pistol hit rolls pain (#309).
+  (rng/seed! 1)
+  (let [base    (-> (new-world open-grid (new-player 2.0 5.0 0.0))
+                    (with-enemies [(assoc (new-enemy 4.95 5.54 3 :caco) :lives 1)])
+                    (assoc :scene-cols 120))
+        centred (tick-world (assoc base :aim-col 60) "" 0.016 (assoc no-edges :fire true))
+        aimed   (tick-world (assoc base :aim-col 73) "" 0.016 (assoc no-edges :fire true))]
+    (is (= 0 (:kills centred)) "centred reticle misses the off-axis enemy")
+    (is (= 1 (:kills aimed))   "reticle over the enemy lands the shot")))
+
 (deftest test-tick-world-tough-kill-arms-hit-stop
   ;; Caco (max-lives 3) dropped to 1 HP so one pistol shot kills it.
   ;; A meaty kill must stamp the hit-stop freeze timer.
@@ -298,8 +314,8 @@
         "a mid-reload frame does not arm the flash")))
 
 ;; ---------------------------------------------------------------------
-;; Mouse look application (issue #246): apply-mouse-look folds the
-;; controls/mouse-look yaw + pitch delta into the player. Fire fields are
+;; Mouse edge-pan application (#324, was #246): apply-mouse-look folds the
+;; controls/mouse-aim yaw + pitch edge-pan into the player. Fire fields are
 ;; NOT applied here (they ride the edges into tick-shooting).
 ;; ---------------------------------------------------------------------
 

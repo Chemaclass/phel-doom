@@ -1,6 +1,6 @@
 (ns phel-doom.core.combat
   (:require phel-doom.core.rng :as rng)
-  (:require phel-doom.core.engine     :refer [cast-ray])
+  (:require phel-doom.core.engine     :refer [cast-ray fov-proj-dist])
   (:require phel-doom.core.projection :refer [pitch-rows])
   (:require phel-doom.core.enemy      :refer [push-back-enemy shoot beam-impact splash pierce spread-shoot])
   (:require phel-doom.core.enemy-ai :refer [attacks? noise-wake])
@@ -545,9 +545,43 @@
 ;; § Shooting (one trigger pull → world update)
 ;; =====================================================================
 
-(defn- cast-wall-dist [world]
+(defn aim-angle-offset
+  "Radians to add to the player's facing so a hitscan aims at the movable
+   crosshair (#324). Maps the reticle's screen COLUMN to the per-column FOV
+   ray the renderer casts for that column: `atan((aim-col - center) / pd)`
+   where `center = scene-cols / 2` and `pd = fov-proj-dist(scene-cols)`.
+   Sharing the engine's `fov-proj-dist` keeps the shot's ray identical to
+   the column the player sees the reticle on, so the enemy whose projected
+   sprite the `+` sits over is the one struck.
+
+   Returns 0.0 (fire straight ahead, the centre-aim default) when the
+   reticle is at screen centre, OR when `aim-col` / `scene-cols` is nil
+   (mouse off / headless world): a centred reticle offsets nothing, so the
+   mouse-off render + hitscan stay byte-identical to the pre-#324 game."
+  [aim-col scene-cols]
+  (if (or (nil? aim-col) (nil? scene-cols) (php/<= scene-cols 0))
+    0.0
+    (let [center (php/* 0.5 scene-cols)
+          pd     (fov-proj-dist scene-cols)]
+      (php/atan (php// (php/- aim-col center) pd)))))
+
+(defn- aim-angle
+  "Player facing PLUS the reticle's angular offset (#324) - the direction
+   every hitscan / beam / cone is fired along. A mouse-off world (no
+   `:aim-col`) offsets 0, so this is just `:angle` and the shot fires dead
+   ahead exactly as before."
+  [world]
+  (php/+ (:angle (:player world))
+         (aim-angle-offset (:aim-col world) (:scene-cols world))))
+
+(defn- cast-wall-dist
+  "Distance to the wall along the AIM direction (#324): an off-centre
+   reticle steers the wall probe too, so the shot stops at the wall the
+   reticle points at, not the one dead ahead. Centre / mouse-off aims down
+   `:angle`, identical to the pre-#324 cast."
+  [world]
   (let [p (:player world)]
-    (cast-ray (:pgrid world) (:x p) (:y p) (:angle p))))
+    (cast-ray (:pgrid world) (:x p) (:y p) (aim-angle world))))
 
 (defn- aim-svh
   "Scene viewport height (rows) the hit gate projects against. The game
@@ -577,7 +611,9 @@
         dmg       (if (berserk? world) (php/* base-dmg (berserk-mul-for dmg-type)) base-dmg)
         max-range (or (:max-range spec) shot-max-range)
         svh       (aim-svh world)]
-    (shoot (:enemies world) (:x p) (:y p) (:angle p)
+    ;; Fire along the AIM direction (#324) so the reticle column selects the
+    ;; target enemy; a centred / mouse-off reticle reduces to `:angle`.
+    (shoot (:enemies world) (:x p) (:y p) (aim-angle world)
            (cast-wall-dist world)
            shot-hit-radius max-range dmg dmg-type
            svh (aim-pr world svh))))
@@ -733,12 +769,13 @@
         chain?    (pos? (or (:streak-secs world) 0.0))
         streak'   (if chain? (php/+ (or (:streak world) 0) 1) 1)
         ;; Shot-direction knockback: shove wounded enemies one cell
-        ;; back along the player's facing so heavy targets visibly
-        ;; recoil per hit. Skip on the killing blow so the corpse +
+        ;; back along the SHOT direction (the aim angle, #324) so an
+        ;; off-centre hit recoils away from the muzzle line, not the
+        ;; screen centre. Skip on the killing blow so the corpse +
         ;; loot drop stay on the death cell.
         pushed-es (if killed?
                     enemies-after
-                    (let [a     (:angle (:player world))
+                    (let [a     (aim-angle world)
                           cos-a (php/cos a)
                           sin-a (php/sin a)]
                       (push-back-enemy enemies-after (:grid world)
@@ -901,7 +938,7 @@
         dmg          (if (berserk? world) (php/* base (berserk-mul-for dtype)) base)
         max-r        (or (:max-range spec) shot-max-range)
         wall-d       (cast-wall-dist world)
-        [ix iy]      (beam-impact (:enemies world) (:x p) (:y p) (:angle p)
+        [ix iy]      (beam-impact (:enemies world) (:x p) (:y p) (aim-angle world)
                                   wall-d shot-hit-radius max-r)
         [es' killed] (splash (:enemies world) ix iy radius dmg dtype)
         woken        (noise-wake es' (:grid world) (:x p) (:y p))
@@ -1003,7 +1040,7 @@
         max-r                      (or (:max-range spec) shot-max-range)
         wall-d                     (cast-wall-dist world)
         svh                        (aim-svh world)
-        [es' killed hit-pos tough] (pierce (:enemies world) (:x p) (:y p) (:angle p)
+        [es' killed hit-pos tough] (pierce (:enemies world) (:x p) (:y p) (aim-angle world)
                                            wall-d shot-hit-radius max-r dmg dtype
                                            svh (aim-pr world svh))]
     (finish-multikill world es' killed hit-pos tough)))
@@ -1027,7 +1064,7 @@
         max-r                      (or (:max-range spec) shot-max-range)
         wall-d                     (cast-wall-dist world)
         svh                        (aim-svh world)
-        [es' killed hit-pos tough] (spread-shoot (:enemies world) (:x p) (:y p) (:angle p)
+        [es' killed hit-pos tough] (spread-shoot (:enemies world) (:x p) (:y p) (aim-angle world)
                                                  wall-d half max-r prim graze targets dtype
                                                  svh (aim-pr world svh))]
     (finish-multikill world es' killed hit-pos tough)))

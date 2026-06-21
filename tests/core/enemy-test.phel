@@ -148,6 +148,59 @@
     (is (= 1 killed-level) "level shotgun blast hits the far enemy")
     (is (= 0 killed-up) "aiming up whiffs the whole cone on a distant enemy")))
 
+;; Vertical gate floor-offset (issue #291): the renderer lifts a sprite on
+;; a raised cell UP the screen by `floor-offset-rows`, so the hit gate must
+;; subtract the same shift or it hits empty floor below the enemy and
+;; rejects a shot aimed at the drawn body. Enemy at (9.5, 1.5) is d=8 from
+;; the player at (1.5, 1.5) facing +x: half-rows 2.0. Its cell (cy=1, cx=9)
+;; floor sits at fz=0.8, projecting `floor-offset-rows = 3` at that depth.
+;; So the drawn sprite centre is 3 rows ABOVE the horizon: a level aim
+;; (pr=0) now MISSES (|0-3|=3 > 2.0, the old empty-floor false-hit) while
+;; aiming up to pr=3 lands ON the lifted body (|3-3|=0 <= 2.0).
+(def raised-floor-pgrid
+  "float[][] floor-height twin where only the enemy's cell (cy=1, cx=9) is
+   raised to fz=0.8; every other cell is flat (0.0)."
+  (php/array
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.8)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)))
+
+(deftest test-shoot-raised-floor-level-aim-misses-empty-floor-below
+  ;; pr=0 aims at the horizon, which is now the empty floor BELOW the
+  ;; lifted sprite -> miss. Pre-#291 this false-hit the raised enemy.
+  (let [[_ hit?] (shoot [(new-enemy 9.5 1.5)] 1.5 1.5 0.0 12.0 0.5 12.0
+                        1 nil 30 0 raised-floor-pgrid)]
+    (is (= false hit?) "level aim at a raised enemy hits empty floor below the sprite")))
+
+(deftest test-shoot-raised-floor-aim-up-hits-drawn-sprite
+  ;; pr=3 (look up) puts the crosshair on the drawn, lifted body -> hit.
+  (let [[_ hit?] (shoot [(new-enemy 9.5 1.5)] 1.5 1.5 0.0 12.0 0.5 12.0
+                        1 nil 30 3 raised-floor-pgrid)]
+    (is (= true hit?) "aiming up onto the lifted sprite connects")))
+
+(deftest test-shoot-flat-floor-unchanged-with-grid
+  ;; Same shot but the grid is flat (fz=0 everywhere) -> foff=0, so the
+  ;; level aim still hits exactly like the pre-#291 / no-grid behaviour.
+  (let [flat-pgrid (php/array (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+                              (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+                              (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0))
+        [_ grid?]  (shoot [(new-enemy 9.5 1.5)] 1.5 1.5 0.0 12.0 0.5 12.0
+                          1 nil 30 0 flat-pgrid)
+        [_ none?]  (shoot [(new-enemy 9.5 1.5)] 1.5 1.5 0.0 12.0 0.5 12.0
+                          1 nil 30 0 nil)]
+    (is (= true grid?) "flat-floor grid hits identically at level aim")
+    (is (= true none?) "nil grid (flat default) hits identically at level aim")
+    (is (= grid? none?) "flat grid and nil grid agree")))
+
+(deftest test-pierce-raised-floor-agrees-with-sprite
+  ;; The pierce gate uses the same per-target floor lookup: a raised enemy
+  ;; at pr=0 is spared (empty floor), at pr=3 it is killed.
+  (let [enemies     [(new-enemy 9.5 1.5 1)]
+        [_ k-level] (pierce enemies 1.5 1.5 0.0 12.0 0.5 12.0 1 nil 30 0 raised-floor-pgrid)
+        [_ k-up]    (pierce enemies 1.5 1.5 0.0 12.0 0.5 12.0 1 nil 30 3 raised-floor-pgrid)]
+    (is (= 0 k-level) "level aim pierces the empty floor below a raised enemy")
+    (is (= 1 k-up) "aiming up onto the lifted sprite pierces it")))
+
 (deftest test-shoot-empty-list-returns-miss
   (let [[es' hit? hit-pos idx] (shoot [] 1.5 1.5 0.0 10.0 0.5 12.0)]
     (is (= false hit?))

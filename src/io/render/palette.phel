@@ -478,19 +478,17 @@
         :else           2))
 
 (def- tier-tints
-  ;; Per-tier RGB channel multipliers applied to the grey stone before
-  ;; re-quantizing. Tuned to stay a TINT, not a solid neon: luminance is
-  ;; preserved (the fog ramp + EW side shading still read), only the hue
-  ;; is pushed. Index 0 is unused (tier 0 never tints).
-  ;;   tier 1 = cool steel-blue (pull blue up, red/green down).
-  ;;   tier 2 = magenta-rose (pull red + blue up, CRUSH green).
-  ;; The base stone is warm-grey, so an amber tier-2 would blend into it
-  ;; (a stone code like 94 only shifts to the near-identical 130). Rose is
-  ;; ABSENT from the grey/brown/orange stone band, so a rose riser reads
-  ;; distinct at any distance, and cool-blue + rose form a complementary
-  ;; cold/warm pair so the two tiers never compete in the same hue half.
-  {1 {:r 0.70 :g 0.84 :b 1.30}    ; cool steel-blue (toned from the neon #304)
-   2 {:r 1.30 :g 0.64 :b 1.14}})  ; magenta-rose (toned from the neon #304)
+  ;; Per-tier RGB channel multipliers for the raised-PLATFORM stone (the
+  ;; flat tier floors + the horizontal step caps). Art direction (#322): the
+  ;; platforms are DARK, near-neutral stone - NOT the saturated pink/blue of
+  ;; the first pass. Each multiplier DARKENS the grey ramp (all channels < 1)
+  ;; with only the faintest cool nudge, and the higher tier is darker than
+  ;; the lower, so the two plateaus read as two shades of dark rock that step
+  ;; down as you climb. The orange STAIRS (the riser faces, below) carry the
+  ;; "this is climbable" cue; the platforms stay quiet and dark so the orange
+  ;; pops. Index 0 is unused (tier 0 / flat floor never tints).
+  {1 {:r 0.80 :g 0.83 :b 0.90}    ; lower platform: medium-dark stone, faint cool
+   2 {:r 0.62 :g 0.64 :b 0.72}})  ; higher platform: darker stone, faint cool
 
 (defn- tint-code
   ;; Hue-shift one grey 256-colour `code` by a tier's RGB multipliers,
@@ -518,25 +516,52 @@
     t))
 
 (def shade-table-tier1
-  "Cool steel-blue tint of `shade-table` for the lower raised tier
-   (issue #304). Same 24-level fog ramp, hue pushed cool so a mid-height
-   platform/riser reads as a distinct tier without losing depth shading."
+  "Dark near-neutral stone for the LOWER raised platform (#322 art
+   direction). Same 24-level fog ramp as `shade-table`, darkened a little
+   with the faintest cool nudge so the lower plateau reads as dark rock,
+   not a coloured slab. Used for the platform's flat caps; the stairs that
+   climb to it are orange (see `orange-shade-table`)."
   (tint-shade-table 1))
 
 (def shade-table-tier2
-  "Magenta-rose tint of `shade-table` for the higher raised tier (issue
-   #304). Same 24-level fog ramp, hue pushed to rose - a hue ABSENT from
-   the warm-grey stone palette, so the top tier reads distinct from both
-   the neutral ground and the cool middle tier at any distance."
+  "Darker near-neutral stone for the HIGHER raised platform (#322 art
+   direction). Same fog ramp, darkened more than tier 1 so the top plateau
+   steps down in brightness from the middle one - two shades of dark rock,
+   no pink/blue. Used for the platform's flat caps."
   (tint-shade-table 2))
 
 (def tier-shade-tables
-  "Tier index -> tinted shade table. Index 0 is the neutral grey
-   `shade-table` (no tint), so a `(php/aget tier-shade-tables (floor-tier
-   fz))` lookup is a uniform, branch-free table swap on the riser/cap
-   path. fz=0 cells select the grey table verbatim, keeping flat frames
-   byte-identical."
+  "Tier index -> dark-stone platform shade table. Index 0 is the neutral
+   grey `shade-table` (no tint), so a `(php/aget tier-shade-tables
+   (floor-tier fz))` lookup is a uniform, branch-free table swap on the
+   step-CAP path (the horizontal platform / tread tops). fz=0 cells select
+   the grey table verbatim, keeping flat frames byte-identical. The
+   vertical riser FACES use `orange-shade-table` instead, so the stairs
+   read orange against the dark platforms."
   (php/array shade-table shade-table-tier1 shade-table-tier2))
+
+(def orange-shade-table
+  "24-level fogged ORANGE ramp for the staircase riser FACES + noses (#322
+   art direction: \"draw a stairs alike in orange to distinguish them\").
+   Mirrors `shade-table`'s structure (index = the same 0-23 distance/EW
+   shade level the riser computes) so the riser path is one `aget`, but the
+   stone grey is hue-shifted hard toward orange and re-quantized through
+   `nearest-256`: a near/lit step is a bright amber, a far/shadowed one a
+   deep burnt orange, so the steps still fog with distance while staying
+   unmistakably orange. Orange is ABSENT from the dark-grey platform stone,
+   so an orange riser face pops as \"this is a climbable step\" at any range.
+   Baked once at load."
+  (let [t    (buf-mk)
+        ;; Strong orange push: red high, green ~half, blue near zero. The
+        ;; grey level sets the overall brightness; the multipliers bend the
+        ;; hue to orange. Clamps in tint-code keep a bright level off-white
+        ;; rather than overflowing.
+        mult {:r 1.55 :g 0.78 :b 0.18}]
+    (loop [i 0]
+      (when (php/< i 24)
+        (buf-set t i (str "\e[48;5;" (tint-code (php/+ 232 i) mult) "m "))
+        (recur (php/+ i 1))))
+    t))
 
 (defn- tint-bg-cell-cache
   ;; Build a tinted twin of frame-math's `bg-cell-cache` for `tier`: a

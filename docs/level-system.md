@@ -9,19 +9,19 @@
 | 1 | imps | random | 4 imps |
 | 2 | demons | hand-authored verticality (staircase + platform + pit) | 5 demons + 2 imps + shotgun |
 | 3 | cacodemons | hand-authored verticality (descending trench) | 4 cacos + 2 demons + 2 imps + chaingun |
-| 4 | barons | random + blue lock | 3 barons + 3 demons |
+| 4 | barons | hand-authored verticality (3-tier stronghold, 4 open-sided stairs, outer-flank spines) + blue lock | 3 barons + 3 demons |
 | 5 | cyberdemons | hand-authored verticality (central dais) + red lock | 5 cyberdemons + 2 imps |
-| 6 | spectres | random mix | 4 spectres + 2 imps + 1 caco |
-| 7 | revenants | hand-authored verticality (3-tier room, 4 open-sided stairs) + yellow lock | 4 revenants + 2 demons + 1 baron |
-| 8 | archvile court | random mix | 2 archviles + 3 cacos + 2 mancubi |
+| 6 | spectres | hand-authored verticality (3-tier room, 4 open-sided stairs, east-west axis) | 4 spectres + 2 imps + 1 caco |
+| 7 | revenants | hand-authored verticality (3-tier room, 4 open-sided stairs, north-south axis) + yellow lock | 4 revenants + 2 demons + 1 baron |
+| 8 | archvile court | hand-authored verticality (3-tier court, 4 open-sided stairs, offset runs) | 2 archviles + 3 cacos + 2 mancubi |
 | 9 | the brood | random mix | 3 pinkies + 3 barons + 2 mancubi |
 | 10 | the final | hand-authored boss arena | 1 cyberdemon boss (50 HP) + 2 imps (max 1 alive) |
 
 ## Catalog
 
-L1: single-type procgen tutorial (imps only). L2 / L3 / L5 / L7: hand-authored verticality (see [Verticality levels](#verticality-levels-floor-heights--ceil-heights) below) - L2 the showcase (staircase + raised platform + sunken pit), L3 a descending trench, L5 a central dais, L7 a spacious three-tier room with four open-sided stairs. L4 / L6 / L8 / L9: mixed-monster procgen (melee secondary salted per level). L10: hand-authored arena with secrets + switches.
+L1: single-type procgen tutorial (imps only). L2 / L3 / L4 / L5 / L6 / L7 / L8: hand-authored verticality (see [Verticality levels](#verticality-levels-floor-heights--ceil-heights) below) - L2 the showcase (staircase + raised platform + sunken pit), L3 a descending trench, L4 a blue-locked three-tier stronghold with outer-flank stair spines, L5 a central dais, L6 a spacious three-tier room stacked east-west, L7 a spacious three-tier room stacked north-south, L8 the grand three-tier court with offset stair runs. L9: mixed-monster procgen (melee secondary salted per level). L10: hand-authored arena with secrets + switches.
 
-Non-locked procgen levels seed up to 2 secret passages (see [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4) and hand-authored layouts (L2, L3, L5, L7, L10) skip seeding to prevent keycard bypass and keep the authored geometry explicit.
+Non-locked procgen levels seed up to 2 secret passages (see [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4) and hand-authored layouts (L2, L3, L4, L5, L6, L7, L8, L10) skip seeding to prevent keycard bypass and keep the authored geometry explicit.
 
 ```phel
 (def levels
@@ -121,12 +121,38 @@ Shared rules: every rise the player climbs is at or below `physics/step-up-max` 
 | Trench rim (one tier down) | cols 5-22, rows 9 + 13 | -0.4 |
 | Trench bottom (deeper tier) | cols 5-22, rows 10-12 | -0.8 |
 
+**L4 - three-tier baron stronghold, four open-sided stairs, outer-flank spines (#310)** (`l4-floor-heights`), a flat 44x28 chamber and the ONLY locked multi-tier room. A wide southern hall (the spawn floor) climbs NORTH up to two raised baron heights, split into three stacked tiers by two solid divider rows (rows 11 and 5), each pierced by two stair mouths on the OUTER flanks (twin west + east stair spines hugging the side walls, cols 2-8 + 35-41 on each divider). The barons hold the wide central heights while the player funnels up the edges (a fourth distinct shape alongside L6's east-west room, L7's centre-aligned north-south one and L8's offset court). A tier is reachable ONLY by walking up a run. The blue-locked exit `B` sits on the bottom tier (east wall, row 20), reachable with ZERO climbs; the blue keycard is seeded at a random open cell, and because EVERY floor cell is reachable the key is always fetchable wherever it lands (a key may sit up a stair, the exit never can). It reuses the same binary-exact 0.375 ladder as L7. No railed lips (all four stair flanks are open fall-offs). No `:ceil-heights` (the room is open: flat 1.0 ceiling).
+
+| Feature | Cells | Height `z` |
+|---|---|---|
+| Tier 0 (bottom, spawn floor) | rows 12-26 | 0.0 (default) |
+| Tier 1 (middle plateau) | rows 6-10 | 0.75 |
+| Tier 2 (baron heights) | rows 1-4 | 1.5 |
+| Lower stair A core (climbs north, west) | cols 3-5, rows 11 -> 9 | 0.0, 0.375, 0.75 |
+| Lower stair B core (east) | cols 37-39, rows 11 -> 9 | 0.0, 0.375, 0.75 |
+| Upper stair C core (west) | cols 3-5, rows 5 -> 3 | 0.75, 1.125, 1.5 |
+| Upper stair D core (east) | cols 37-39, rows 5 -> 3 | 0.75, 1.125, 1.5 |
+| Open stair flanks (fall-off sides) | beside each core | drop to the tier below |
+
 **L5 - central dais** (`l5-floor-heights`), a flat 30x26 chamber. A raised square plateau stands dead-centre (a vantage in the cyberdemon arena), reached by a two-step ramp on its south face. The flat ground rings the dais so the red exit `R` + keycard stay reachable without climbing.
 
 | Feature | Cells | Height `z` |
 |---|---|---|
 | Ramp (2 steps, south face) | cols 13-16, rows 13 + 12 | 0.4, 0.8 |
 | Dais plateau (vantage) | cols 12-17, rows 8-11 | 0.8 (ramp-top height, continuous) |
+
+**L6 - three-tier room, four open-sided stairs, east-west axis (#310)** (`l6-floor-heights`), a spacious flat 42x26 chamber. The spectre level gets the same multi-tier treatment as L7 (below) but rotated onto the EAST-WEST axis, so the campaign reads as a varied multi-level space instead of one showcase: where L7 stacks three tiers NORTH (climb up the rows through horizontal divider rows), L6 stacks them WEST (climb left through two vertical divider columns, cols 28 and 13). Each divider is pierced by two stair mouths (rows 5-9 and 16-20), so four three-cell-tall staircases with OPEN flanks connect the tiers: lower stairs A / B climb tier 0 -> tier 1 through the col-28 mouths, upper stairs C / D climb tier 1 -> tier 2 through the col-13 mouths. A tier is reachable ONLY by walking up a run. The bottom (east) tier holds the spawn and the unlocked exit `D` (east wall, row 12), reachable with zero climbs (L6 has no keycard). L6 has no railed lips - all four stair flanks are open fall-offs (a one-tier, 1-life drop). It reuses the same binary-exact 0.375 ladder as L7 (see the note below). No `:ceil-heights` (the room is open: flat 1.0 ceiling).
+
+| Feature | Cells | Height `z` |
+|---|---|---|
+| Tier 0 (east, spawn floor) | cols 29-40 | 0.0 (default) |
+| Tier 1 (middle plateau) | cols 14-27 | 0.75 |
+| Tier 2 (west plateau) | cols 1-12 | 1.5 |
+| Lower stair A core (climbs west) | cols 29 -> 27, rows 6-8 | 0.0, 0.375, 0.75 |
+| Lower stair B core | cols 29 -> 27, rows 17-19 | 0.0, 0.375, 0.75 |
+| Upper stair C core | cols 14 -> 12, rows 6-8 | 0.75, 1.125, 1.5 |
+| Upper stair D core | cols 14 -> 12, rows 17-19 | 0.75, 1.125, 1.5 |
+| Open stair flanks (fall-off sides) | beside each core | drop to the tier below |
 
 **L7 - three-tier room, four open-sided stairs (#298)** (`l7-floor-heights`), a spacious flat 42x26 chamber. One open arena is split into three stacked floor tiers by two solid divider walls (rows 6 and 16), each pierced by two stair mouths. Four three-cell-wide staircases with OPEN flanks (no side walls, so you can fall off a run, #299) connect the tiers: lower stairs A / B climb tier 0 -> tier 1 through the row-16 mouths, upper stairs C / D climb tier 1 -> tier 2 through the row-6 mouths. A tier is reachable ONLY by walking up a run (the dividers are solid wall between the mouths). The yellow exit `Y` sits on the bottom tier so it stays reachable with zero climbs. No `:ceil-heights` (the room is open: flat 1.0 ceiling).
 
@@ -143,6 +169,19 @@ The step rise is `0.375` (= 3/8) rather than `0.4`: it is exactly representable 
 | Upper stair D core | cols 29-31, rows 6 -> 4 | 0.75, 1.125, 1.5 |
 | Open stair flanks (fall-off sides) | beside each core | drop to the tier below |
 | West stair-C plateau lips (railed) | `l7-handrails` (10 edges) | step-off blocked |
+
+**L8 - three-tier archvile court, four open-sided stairs, offset runs (#310)** (`l8-floor-heights`), the largest multi-tier room: a grand flat 50x30 chamber. A wide southern court pit (the spawn floor) climbs NORTH up two galleries to a throne band, split into three stacked tiers by two solid divider rows (rows 11 and 5), each pierced by two stair mouths. Four three-cell-wide staircases with OPEN flanks connect the tiers: lower stairs A / B climb tier 0 -> tier 1 through the row-11 mouths (cols 10-16 + 33-39), upper stairs C / D climb tier 1 -> tier 2 through the row-5 mouths (cols 14-20 + 29-35). Unlike L7's roughly-aligned runs, L8's lower and upper stairs sit at DIFFERENT columns, so reaching the throne means climbing a lower run, crossing the gallery, then climbing an upper run - a longer court ascent. A tier is reachable ONLY by walking up a run. The unlocked exit `D` sits on the court (bottom) tier (east wall, row 20), reachable with zero climbs (L8 has no keycard). It reuses the same binary-exact 0.375 ladder as L7 (see the L7 note above). No railed lips (all four stair flanks are open fall-offs). No `:ceil-heights` (the room is open: flat 1.0 ceiling).
+
+| Feature | Cells | Height `z` |
+|---|---|---|
+| Tier 0 (court, spawn floor) | rows 12-28 | 0.0 (default) |
+| Tier 1 (gallery plateau) | rows 6-10 | 0.75 |
+| Tier 2 (throne plateau) | rows 1-4 | 1.5 |
+| Lower stair A core (climbs north) | cols 11-13, rows 11 -> 9 | 0.0, 0.375, 0.75 |
+| Lower stair B core | cols 34-36, rows 11 -> 9 | 0.0, 0.375, 0.75 |
+| Upper stair C core | cols 15-17, rows 5 -> 3 | 0.75, 1.125, 1.5 |
+| Upper stair D core | cols 30-32, rows 5 -> 3 | 0.75, 1.125, 1.5 |
+| Open stair flanks (fall-off sides) | beside each core | drop to the tier below |
 
 L1 stays flat (it is the golden-frame render fixture), and the catalog stays 10 levels with the boss arena last.
 

@@ -6,7 +6,7 @@
   (:require phel-doom.core.rng    :as rng)
   (:require phel-doom.commands.play  :refer [tick-world resumed-pause? step-pause-menu
                                              apply-mouse-look clamp-frame-ms adopt-loaded-world
-                                             poll-size? resize-poll-frames
+                                             poll-size? resize-poll-frames restart-show-map?
                                              rearm-mouse? rearm-mouse-frames]))
 
 (def open-grid
@@ -414,3 +414,22 @@
   (is (= false (rearm-mouse? 1 false)) "non-cadence, no resize -> skip")
   (is (= false (rearm-mouse? 59 false)) "just before cadence -> skip")
   (is (= false (rearm-mouse? 61 false)) "just after cadence -> skip"))
+
+;; restart-show-map? (#292): every restart recur (pause-Restart, victory
+;; fresh/same, game-over fresh/same) seeds the loop's show-map? through
+;; this helper, so the minimap honors the persisted Minimap setting on a
+;; restart instead of being forced on. Before the fix the recurs hardcoded
+;; `true`, desyncing :show-map (true) from :settings :minimap (false).
+(deftest test-restart-show-map-honors-minimap-on
+  (is (= true (restart-show-map? {:minimap true}))
+      "restart keeps the minimap on when Minimap=on"))
+
+(deftest test-restart-show-map-honors-minimap-off
+  (is (= false (restart-show-map? {:minimap false}))
+      "restart keeps the minimap off when Minimap=off (the #292 bug)"))
+
+(deftest test-restart-show-map-coerces-missing-to-false
+  (is (= false (restart-show-map? {}))
+      "an absent :minimap setting coerces to a strict false")
+  (is (= false (restart-show-map? {:minimap nil}))
+      "a nil :minimap setting coerces to a strict false"))

@@ -23,6 +23,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Textured step caps (issue #236): the top of a raised floor step (#232) is now textured and fogged with the same stone as the ground floor, projected at the step's height, instead of a single flat shade. Flat floors never enter the new path, so the frame stays byte-for-byte identical and the flat fast path does not regress.
 - Heart life-pickup plays the celebratory Hero cue (issue #281): the heart shared the generic loot tink (`:door`) with armor, ammo and doors, so the most valuable pickup had no distinct sound. It now uses the same `:berserk` (Hero) cue as the soulsphere, so both life-gains read alike. Reuses an existing allowlisted sound (no new asset); the render frame is unchanged.
 - Rocket launcher ships with a usable reserve (issue #282): the L5 flagship weapon arrived with a single rocket (`:reserve-start 0`) and auto-switched onto an effectively empty gun in the cyberdemon arena. It now carries 5 in reserve (6 shots with the loaded mag), matching the other single-shot weapon, the BFG, and staying under the 30 reserve cap.
+- Shorter player-damage flash (issue #283): the all-white impact flash on taking a hit held ~3 frames (the constant was 0.05s despite its "one frame" docstring), a full-screen white that briefly masked the gun, enemy and HUD even on armor-absorbed hits. Trimmed to ~2 frames (0.03s); the red i-frame wash and directional hurt-arrow still carry the hit, so the jolt stays but it no longer blanks the attacker.
 
 ### Performance
 

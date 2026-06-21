@@ -628,3 +628,79 @@
         w'   (refresh-from-keys blank-world drag)]
     (is (= false (:sp st)) "no phantom fire from the mouse digits")
     (is (= blank-moves (:moves w')) "no phantom movement from the report")))
+
+(deftest test-mouse-look-right-button-does-not-fire
+  ;; Right-button report (b=2: low bits 2 = button 2, final M). Only the
+  ;; LEFT button maps to fire, so a right click must leave :fire? /
+  ;; :fire-held? clear (and at the same cell adds no look delta).
+  (let [r (mouse-look "\e[<2;10;10M" mouse-origin 1.0)]
+    (is (= false (:fire? r)) "right press is not a fire edge")
+    (is (= false (:fire-held? r)) "right button is not held-fire")
+    (is (= 0.0 (:yaw r)) "right press at the same cell adds no yaw")
+    (is (= 0.0 (:pitch r)))))
+
+(deftest test-mouse-look-middle-button-does-not-fire
+  ;; Middle-button report (b=1: low bits 1 = button 1, final M). Same rule
+  ;; as the right button - only button 0 (left) fires.
+  (let [r (mouse-look "\e[<1;10;10M" mouse-origin 1.0)]
+    (is (= false (:fire? r)) "middle press is not a fire edge")
+    (is (= false (:fire-held? r)) "middle button is not held-fire")
+    (is (= 0.0 (:yaw r)) "middle press at the same cell adds no yaw")))
+
+(deftest test-mouse-look-press-then-release-fires-once
+  ;; A full click in ONE drained frame: left press (M) immediately
+  ;; followed by its release (m), both at the origin. :fire? is OR'd
+  ;; across the events, so the press still latches the single rising-edge
+  ;; fire; the trailing release neither re-fires nor un-fires it. :held?
+  ;; is OR'd too, so the in-frame press keeps it set for this frame even
+  ;; though the button is up by the end (the press itself is held-fire).
+  (let [r (mouse-look "\e[<0;10;10M\e[<0;10;10m" mouse-origin 1.0)]
+    (is (= true (:fire? r)) "press latches one fire even with a trailing release")
+    (is (= true (:fire-held? r)) "the in-frame press counts as held this frame")
+    (is (= 0.0 (:yaw r)) "click in place adds no look delta")
+    (is (= [10 10] (:pos r)) "pos trails the last (release) report"))
+  ;; The NEXT frame, fed only the release tail (button already up), is a
+  ;; clean no-op: no fire, no held, no delta.
+  (let [r (mouse-look "\e[<0;10;10m" mouse-origin 1.0)]
+    (is (= false (:fire? r)) "release-only frame does not fire")
+    (is (= false (:fire-held? r)) "release-only frame is not held")
+    (is (= 0.0 (:yaw r)))))
+
+(deftest test-mouse-look-left-drag-counts-as-held-fire
+  ;; PIN (existing-correct): a left DRAG (b=32, motion bit + button 0) is
+  ;; the terminal's only "trigger still down" signal during motion, so it
+  ;; must read as held-fire (auto-fire weapons spray) without being a fresh
+  ;; press edge. Distinct from the right/middle buttons above, which never
+  ;; fire at all.
+  (let [r (mouse-look "\e[<32;12;10M" mouse-origin 1.0)]
+    (is (= true (:fire-held? r)) "left drag = held-fire")
+    (is (= false (:fire? r)) "but not a rising-edge press")))
+
+(deftest test-mouse-look-wide-flick-yields-proportional-yaw
+  ;; Large-delta saturation: a single wide pointer flick from x=10 to
+  ;; x=110 (a ~100-cell sweep across a wide terminal) yields a yaw that is
+  ;; exactly proportional to the travel: dx=100 -> 100 * 0.018 = 1.8 rad.
+  ;; No clamping inside mouse-look itself - the proportionality is linear
+  ;; right up to wherever the terminal stops reporting.
+  (let [r (mouse-look "\e[<35;110;10M" mouse-origin 1.0)]
+    (is (approx? 1.8 (:yaw r)) "wide flick -> proportional yaw (100 cells)")
+    (is (= 0.0 (:pitch r)) "horizontal flick has no pitch")
+    (is (= [110 10] (:pos r)) "pos trails the flick endpoint")))
+
+(deftest test-mouse-look-edge-clamped-coords-yield-zero-delta
+  ;; PIN the docstring's edge-clamp promise: terminals report ABSOLUTE
+  ;; clamped cell coords with no pointer lock, so once the pointer
+  ;; saturates at a screen edge it reports the SAME clamped cell every
+  ;; frame. Two consecutive reports at the same edge cell therefore carry
+  ;; a zero delta - the terminal equivalent of the mouse running off the
+  ;; pad. Drive the pointer to an edge cell, then hold there: the second
+  ;; report adds no further yaw/pitch.
+  (let [edge [120 1]
+        held (mouse-look "\e[<35;120;1M" edge 1.0)]
+    (is (= 0.0 (:yaw held)) "re-report at the clamped edge cell adds no yaw")
+    (is (= 0.0 (:pitch held)) "and no pitch")
+    (is (= [120 1] (:pos held)) "pos stays pinned at the edge cell"))
+  ;; A flick INTO the edge, then a second report stuck at the edge: only
+  ;; the approach contributes; the saturated tail is a zero delta.
+  (let [r (mouse-look "\e[<35;120;10M\e[<35;120;10M" mouse-origin 1.0)]
+    (is (approx? (php/* 110 0.018) (:yaw r)) "only the approach to the edge turns; the stuck tail adds nothing")))

@@ -1,7 +1,9 @@
 (ns phel-doom-tests.io.fog-lut-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.io.render.palette :refer [code-r code-g code-b nearest-256])
-  (:require phel-doom.io.render.frame-math :refer [tex-fade-table]))
+  (:require phel-doom.io.render.frame-math
+            :refer [tex-fade-table bg-cell-cache
+                    seam-darken-16 seam-darken-8 seam-darken-5]))
 
 ;; ---------------------------------------------------------------------
 ;; Colour-space helpers (palette): 256-colour code <-> RGB round-trip.
@@ -67,3 +69,62 @@
     (is (>= bright-near bright-far) "bright code darkens toward haze with distance")
     (is (<= dim-near dim-far) "dim code lightens toward haze with distance")
     (is (= bright-far dim-far) "bright + dim codes both reach the same haze at the far end")))
+
+;; ---------------------------------------------------------------------
+;; Perf-hoisted seam-darken LUTs (#273). 256-entry per-step darken
+;; tables baked once at load. Grayscale codes (>=232) subtract `steps`
+;; clamped at 232; cube codes (<232) fade hue-true toward black by
+;; steps/24. These pin the bake so a future builder edit fails HERE
+;; (named, readable) rather than only via the opaque golden frame hash.
+;; ---------------------------------------------------------------------
+
+(deftest seam-darken-tables-are-256-wide
+  ;; Indexed straight by 256-colour code, so every code must resolve.
+  (is (= 256 (php/count seam-darken-16)) "seam-darken-16 covers all 256 codes")
+  (is (= 256 (php/count seam-darken-8)) "seam-darken-8 covers all 256 codes")
+  (is (= 256 (php/count seam-darken-5)) "seam-darken-5 covers all 256 codes"))
+
+(deftest seam-darken-grayscale-subtracts-steps
+  ;; Grayscale ramp (>=232): straight `code - steps` (the old seam
+  ;; arithmetic). 255 - 16/8/5 = 239/247/250.
+  (is (= 239 (php/aget seam-darken-16 255)) "gray 255 -16 = 239")
+  (is (= 247 (php/aget seam-darken-8 255)) "gray 255 -8 = 247")
+  (is (= 250 (php/aget seam-darken-5 255)) "gray 255 -5 = 250"))
+
+(deftest seam-darken-grayscale-clamps-at-232
+  ;; Never drops below the darkest grayscale entry (232): a near-floor
+  ;; code minus a big step saturates, and 232 itself is a fixed point.
+  (is (= 232 (php/aget seam-darken-16 240)) "240 -16 clamps to 232, not 224")
+  (is (= 232 (php/aget seam-darken-16 232)) "232 is the grayscale floor"))
+
+(deftest seam-darken-cube-stays-on-the-cube-and-hue-true
+  ;; Cube black (16 = 0,0,0) has no light to remove, so it is a fixed
+  ;; point across every step count.
+  (is (= 16 (php/aget seam-darken-16 16)) "cube black -16 stays black")
+  (is (= 16 (php/aget seam-darken-8 16)) "cube black -8 stays black")
+  ;; Cube white (231 = 5,5,5) fades hue-true toward black via steps/24;
+  ;; more steps = darker. Anchor the exact bake AND the monotonic order.
+  (is (= 102 (php/aget seam-darken-16 231)) "cube white -16 = 102 (hue-true fade)")
+  (is (= 145 (php/aget seam-darken-8 231)) "cube white -8 = 145")
+  (is (= 188 (php/aget seam-darken-5 231)) "cube white -5 = 188")
+  (is (< (php/aget seam-darken-16 231)
+         (php/aget seam-darken-8 231)
+         (php/aget seam-darken-5 231))
+      "more darken steps -> a dimmer cube code"))
+
+;; ---------------------------------------------------------------------
+;; Perf-hoisted bg-cell-cache (#273): 256 pre-baked BG paint cells, one
+;; per 256-colour code, fetched after a `tex-fade-table` lookup so the
+;; hot wall path allocates no per-cell strings. Pin the exact cell shape
+;; (escape + single space) and the full coverage.
+;; ---------------------------------------------------------------------
+
+(deftest bg-cell-cache-is-256-wide
+  (is (= 256 (php/count bg-cell-cache)) "one BG cell per 256-colour code"))
+
+(deftest bg-cell-cache-cell-is-bg-escape-plus-space
+  ;; Each entry paints background colour <code> then emits a single space:
+  ;; ESC [ 48 ; 5 ; <code> m <space>. Pin two anchors so a stray byte in
+  ;; the bake (extra reset, missing space, fg instead of bg) trips here.
+  (is (= "\e[48;5;10m " (php/aget bg-cell-cache 10)) "code 10 BG cell")
+  (is (= "\e[48;5;196m " (php/aget bg-cell-cache 196)) "code 196 BG cell"))

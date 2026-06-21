@@ -11,7 +11,7 @@
 | 3 | cacodemons | hand-authored verticality (descending trench) | 4 cacos + 2 demons + 2 imps + chaingun |
 | 4 | barons | random + blue lock | 3 barons + 3 demons |
 | 5 | cyberdemons | hand-authored verticality (central dais) + red lock | 5 cyberdemons + 2 imps |
-| 6 | spectres | random mix | 4 spectres + 2 imps + 1 caco |
+| 6 | spectres | hand-authored verticality (3-tier room, 4 open-sided stairs, east-west axis) | 4 spectres + 2 imps + 1 caco |
 | 7 | revenants | hand-authored verticality (3-tier room, 4 open-sided stairs) + yellow lock | 4 revenants + 2 demons + 1 baron |
 | 8 | archvile court | random mix | 2 archviles + 3 cacos + 2 mancubi |
 | 9 | the brood | random mix | 3 pinkies + 3 barons + 2 mancubi |
@@ -19,9 +19,9 @@
 
 ## Catalog
 
-L1: single-type procgen tutorial (imps only). L2 / L3 / L5 / L7: hand-authored verticality (see [Verticality levels](#verticality-levels-floor-heights--ceil-heights) below) - L2 the showcase (staircase + raised platform + sunken pit), L3 a descending trench, L5 a central dais, L7 a spacious three-tier room with four open-sided stairs. L4 / L6 / L8 / L9: mixed-monster procgen (melee secondary salted per level). L10: hand-authored arena with secrets + switches.
+L1: single-type procgen tutorial (imps only). L2 / L3 / L5 / L6 / L7: hand-authored verticality (see [Verticality levels](#verticality-levels-floor-heights--ceil-heights) below) - L2 the showcase (staircase + raised platform + sunken pit), L3 a descending trench, L5 a central dais, L6 a spacious three-tier room stacked east-west, L7 a spacious three-tier room stacked north-south. L4 / L8 / L9: mixed-monster procgen (melee secondary salted per level). L10: hand-authored arena with secrets + switches.
 
-Non-locked procgen levels seed up to 2 secret passages (see [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4) and hand-authored layouts (L2, L3, L5, L7, L10) skip seeding to prevent keycard bypass and keep the authored geometry explicit.
+Non-locked procgen levels seed up to 2 secret passages (see [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4) and hand-authored layouts (L2, L3, L5, L6, L7, L10) skip seeding to prevent keycard bypass and keep the authored geometry explicit.
 
 ```phel
 (def levels
@@ -127,6 +127,19 @@ Shared rules: every rise the player climbs is at or below `physics/step-up-max` 
 |---|---|---|
 | Ramp (2 steps, south face) | cols 13-16, rows 13 + 12 | 0.4, 0.8 |
 | Dais plateau (vantage) | cols 12-17, rows 8-11 | 0.8 (ramp-top height, continuous) |
+
+**L6 - three-tier room, four open-sided stairs, east-west axis (#310)** (`l6-floor-heights`), a spacious flat 42x26 chamber. The spectre level gets the same multi-tier treatment as L7 (below) but rotated onto the EAST-WEST axis, so the campaign reads as a varied multi-level space instead of one showcase: where L7 stacks three tiers NORTH (climb up the rows through horizontal divider rows), L6 stacks them WEST (climb left through two vertical divider columns, cols 28 and 13). Each divider is pierced by two stair mouths (rows 5-9 and 16-20), so four three-cell-tall staircases with OPEN flanks connect the tiers: lower stairs A / B climb tier 0 -> tier 1 through the col-28 mouths, upper stairs C / D climb tier 1 -> tier 2 through the col-13 mouths. A tier is reachable ONLY by walking up a run. The bottom (east) tier holds the spawn and the unlocked exit `D` (east wall, row 12), reachable with zero climbs (L6 has no keycard). L6 has no railed lips - all four stair flanks are open fall-offs (a one-tier, 1-life drop). It reuses the same binary-exact 0.375 ladder as L7 (see the note below). No `:ceil-heights` (the room is open: flat 1.0 ceiling).
+
+| Feature | Cells | Height `z` |
+|---|---|---|
+| Tier 0 (east, spawn floor) | cols 29-40 | 0.0 (default) |
+| Tier 1 (middle plateau) | cols 14-27 | 0.75 |
+| Tier 2 (west plateau) | cols 1-12 | 1.5 |
+| Lower stair A core (climbs west) | cols 29 -> 27, rows 6-8 | 0.0, 0.375, 0.75 |
+| Lower stair B core | cols 29 -> 27, rows 17-19 | 0.0, 0.375, 0.75 |
+| Upper stair C core | cols 14 -> 12, rows 6-8 | 0.75, 1.125, 1.5 |
+| Upper stair D core | cols 14 -> 12, rows 17-19 | 0.75, 1.125, 1.5 |
+| Open stair flanks (fall-off sides) | beside each core | drop to the tier below |
 
 **L7 - three-tier room, four open-sided stairs (#298)** (`l7-floor-heights`), a spacious flat 42x26 chamber. One open arena is split into three stacked floor tiers by two solid divider walls (rows 6 and 16), each pierced by two stair mouths. Four three-cell-wide staircases with OPEN flanks (no side walls, so you can fall off a run, #299) connect the tiers: lower stairs A / B climb tier 0 -> tier 1 through the row-16 mouths, upper stairs C / D climb tier 1 -> tier 2 through the row-6 mouths. A tier is reachable ONLY by walking up a run (the dividers are solid wall between the mouths). The yellow exit `Y` sits on the bottom tier so it stays reachable with zero climbs. No `:ceil-heights` (the room is open: flat 1.0 ceiling).
 

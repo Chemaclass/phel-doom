@@ -373,6 +373,107 @@
     [3 4 4 4] [6 4 5 4] [8 4 9 4] [11 4 10 4]
     [3 5 4 5] [11 5 10 5]})
 
+;; ---------------------------------------------------------------------
+;; L6 three-tier stair room (#310). The spectre level gets the same
+;; multi-tier-ROOM treatment as L7, but rotated onto the EAST->WEST axis
+;; so the campaign reads as a varied multi-level space, not a repeated
+;; showcase: where L7 stacks three tiers NORTH (climb up the rows through
+;; horizontal divider rows), L6 stacks them WEST (climb left through two
+;; vertical divider COLUMNS). The bottom spawn tier is the EAST third, and
+;; four open-sided runs climb west up to the middle then top tiers. Reuses
+;; the canonical 0.375 ladder (`l7-step-rise` / `l7-tier1-z` / `l7-tier2-z`)
+;; so the binary-exact tier z's (0.0 / 0.75 / 1.5) are a single source of
+;; truth - every run stays auto-climbable with no float drift.
+;; ---------------------------------------------------------------------
+
+(def l6-layout
+  "Spacious 42x26 three-tier chamber for the L6 spectre room (#310). One
+   open arena split into three stacked floor tiers by two solid divider
+   COLUMNS (cols 28 and 13). Each divider is pierced by two stair mouths,
+   so four open-sided staircases connect the tiers along the east->west
+   axis:
+
+     tier 0 (east,   cols 29-40)  -- z 0.0,  the spawn floor
+     tier 1 (middle, cols 14-27)  -- z 0.75, reached up stairs A / B
+     tier 2 (west,   cols  1-12)  -- z 1.5,  reached up stairs C / D
+
+   The dividers (cols 28 and 13) are solid wall except the named mouths, so
+   a tier is reachable ONLY by walking up a stair run (no flat shortcut):
+
+     col 28 mouths: rows 5-9 (stair A) and 16-20 (stair B)  tier0 -> tier1
+     col 13 mouths: rows 5-9 (stair C) and 16-20 (stair D)  tier1 -> tier2
+
+   Each stair core is three cells tall with OPEN flanks (no side walls), so
+   the player/enemies can fall off the side of a run (#314). Spawn `@` is on
+   the bottom (east) tier (col 35, row 12 -> centre 35.5, 12.5); the
+   unlocked exit `D` sits on the east wall at the spawn row (row 12, col 41),
+   reachable across the open bottom tier with no climb (L6 has no keycard).
+   `l6-floor-heights` indexes the tier + stair cells."
+  ["##########################################"
+   "#............#..............#............#"
+   "#............#..............#............#"
+   "#............#..............#............#"
+   "#............#..............#............#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#............#..............#............#"
+   "#............#..............#............#"
+   "#............#..............#......@.....D"
+   "#............#..............#............#"
+   "#............#..............#............#"
+   "#............#..............#............#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#............#..............#............#"
+   "#............#..............#............#"
+   "#............#..............#............#"
+   "#............#..............#............#"
+   "##########################################"])
+
+(def l6-floor-heights
+  "Per-cell floor `z` for the L6 three-tier stair room (#310). Three flat
+   plateaus stacked west by two `l7-step-rise` (0.375) steps each, plus four
+   three-cell-tall stair cores with OPEN flanks (the flank cells drop back to
+   the tier below, so a run is a real open-sided staircase you can fall off):
+
+     tier 0 -- z 0.0  (default, no entries): the bottom (east) spawn floor.
+     tier 1 -- z 0.75 (cols 14-27): the middle plateau.
+     tier 2 -- z 1.5  (cols 1-12):  the top (west) plateau.
+
+   Lower stairs A (rows 6-8) / B (rows 17-19) climb tier0 -> tier1 through the
+   col-28 mouths: 0.0 -> 0.375 -> 0.75 westward (cols 29 -> 27). Upper stairs
+   C (rows 6-8) / D (rows 17-19) climb tier1 -> tier2 through the col-13
+   mouths: 0.75 -> 1.125 -> 1.5 westward (cols 14 -> 12). Every successive
+   rise is one 0.375 step (< step-up-max) so each run auto-climbs, and the top
+   of each run is continuous with the tier it lands on. The flank cells beside
+   each core stay at the lower tier's height, leaving the stair sides open (a
+   fall-off edge, not a wall)."
+  (merge
+   ;; Tier plateaus: tier 1 (middle) then tier 2 (top/west). Tier 0 is the
+   ;; z 0.0 default (no entries). Later stair entries override plateau cells.
+   (rect-heights 14 1 27 24 l7-tier1-z)
+   (rect-heights 1 1 12 24 l7-tier2-z)
+   ;; Lower stairs A (rows 6-8) / B (rows 17-19): tier0 -> tier1, cols 29 -> 27.
+   (rect-heights 29 6 29 8 0.0) (rect-heights 28 6 28 8 l7-step-rise) (rect-heights 27 6 27 8 l7-tier1-z)
+   (rect-heights 29 17 29 19 0.0) (rect-heights 28 17 28 19 l7-step-rise) (rect-heights 27 17 27 19 l7-tier1-z)
+   ;; Open flanks beside the lower stair cores (cols 27-29 at the mouth edge
+   ;; rows): drop back to tier 0 (z 0.0) so the run sides are fall-off edges.
+   (rect-heights 27 5 29 5 0.0) (rect-heights 27 9 29 9 0.0)
+   (rect-heights 27 16 29 16 0.0) (rect-heights 27 20 29 20 0.0)
+   ;; Upper stairs C (rows 6-8) / D (rows 17-19): tier1 -> tier2, cols 14 -> 12.
+   (rect-heights 14 6 14 8 l7-tier1-z) (rect-heights 13 6 13 8 (* 3.0 l7-step-rise)) (rect-heights 12 6 12 8 l7-tier2-z)
+   (rect-heights 14 17 14 19 l7-tier1-z) (rect-heights 13 17 13 19 (* 3.0 l7-step-rise)) (rect-heights 12 17 12 19 l7-tier2-z)
+   ;; Open flanks beside the upper stair cores (cols 12-14 at the mouth edge
+   ;; rows): drop back to tier 1 (z 0.75).
+   (rect-heights 12 5 14 5 l7-tier1-z) (rect-heights 12 9 14 9 l7-tier1-z)
+   (rect-heights 12 16 14 16 l7-tier1-z) (rect-heights 12 20 14 20 l7-tier1-z)))
+
 (def levels
   "Per-level configuration. Each entry is intentionally tiny — visuals
    live in `enemies.phel` so a new level needs only disposition data
@@ -458,14 +559,21 @@
    ;; L6 — spectres debut. Mostly spectres (HP 3, agile), a couple of
    ;; imps mixed in to keep the early-game vocabulary, plus one caco so
    ;; ranged pressure doesn't vanish for the whole L5-L7 stretch.
-   {:size    [42 26]
-    :walls   58
-    :enemy   :spectre
+   ;; Hand-authored verticality (#310): a spacious three-tier chamber, the
+   ;; east->west counterpart of L7's north-stacked room - two solid divider
+   ;; COLUMNS each pierced by two open-sided staircases, so the player climbs
+   ;; four runs west across three stacked plateaus. The unlocked exit stays
+   ;; on the open bottom (east) tier, reachable with no climb. Keeps the L6
+   ;; identity (name, spectre+imp+caco mix, chase 1.7, no lock); only the
+   ;; geometry is authored. No :ceil-heights: the room is open (flat 1.0).
+   {:enemy   :spectre
     :chase   1.7
     :name    "spectres"
     :enemies [{:type :spectre :count 4}
               {:type :imp     :count 2}
-              {:type :caco    :count 1}]}
+              {:type :caco    :count 1}]
+    :layout        l6-layout
+    :floor-heights l6-floor-heights}
 
    ;; L7 — revenants (HP 4) leading a small demon escort, with a lone
    ;; baron lobbing fireballs to keep a ranged threat in the room.

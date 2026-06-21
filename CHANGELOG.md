@@ -25,6 +25,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 ### Performance
 
 - Render hot-path (issue #262): pin referred frame-math globals (`tex-fade-table`, `bg-cell-cache`, `seam-darken-*`) as frame-level locals in `frame->string` and hoist `floor-flat?` / `vh-1` out of the inner loops, eliminating per-row and per-cell `Phel::getDefinition()` calls. Byte-identical output (golden hashes unchanged); measured -5.9% at 180x40 on no-JIT local PHP.
+- Throttled the per-frame terminal-size poll (issue #280): `term-size` forks + execs `stty size` (~1ms + jitter) and ran once per loop iteration before the render-start timestamp, so its cost fell outside the measured adaptive-sleep budget on a 5ms hot path. A resize is a human-timescale event, so the four size-polling loops (game loop, end screens, settings sub-loop, start menu) now sample `term-size` only every 6th frame and reuse the last dimensions in between, dropping ~5/6 of the forks. The first frame stays eager and a resize is still noticed within ~6 frames; fixed-size frames are byte-identical (golden hashes unchanged).
 
 ### Removed
 

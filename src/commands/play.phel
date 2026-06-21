@@ -80,6 +80,24 @@
     (php/exec "stty size 2>/dev/null" out)
     (or (parse-stty-line (php/aget out 0)) default-term-size)))
 
+(def resize-poll-frames
+  "How often the loops re-sample `term-size`. Each sample forks + execs
+   `stty size` (~1ms + jitter), so polling every frame on a 5ms budget
+   is most of the per-frame IO cost yet a resize is a human-timescale
+   event. Sampling every Nth frame keeps resize handling responsive
+   (re-drawn within ~Nth of a second) while dropping ~5/6 of the forks."
+  6)
+
+(defn poll-size?
+  "True when frame `frame` should re-sample `term-size`: the very first
+   frame (so initial sizing is never delayed) or every
+   `resize-poll-frames`th frame thereafter. Pure so it is unit-testable;
+   between samples the loops reuse the last measured [rows cols], which
+   `redraw-if-resized` + the auto-calibration already tolerate."
+  [frame]
+  (or (php/=== frame 0)
+      (php/=== 0 (php/% frame resize-poll-frames))))
+
 ;; =====================================================================
 ;; § Per-frame tick orchestration (pure, exported for tests)
 ;; =====================================================================
@@ -910,22 +928,29 @@
         ;; An explicit cap (or 0 = fill) opts out: full detail at the
         ;; player's size.
         auto?   (and (php/< max-cols 0) (php/< max-rows 0))]
-    (loop [world     world0
-           t-last    t-start
-           frame-ms  0
-           fps       0
-           prev-keys initial-key-snapshot
-           dims      [0 0]
-           cal       {:px nil :n 0 :best 1.0e9 :tdims [0 0]}
+    (loop [world      world0
+           t-last     t-start
+           frame-ms   0
+           fps        0
+           prev-keys  initial-key-snapshot
+           dims       [0 0]
+           cal        {:px nil :n 0 :best 1.0e9 :tdims [0 0]}
            ;; Last pointer position mouselook (#246) measured against;
            ;; nil until the first SGR report so the pointer's opening
            ;; absolute position can't read as one giant jump. Threaded
            ;; like prev-keys.
-           prev-mpos nil]
+           prev-mpos  nil
+           ;; Frame counter + last raw terminal [trows tcols], threaded so
+           ;; the per-frame `stty size` fork only runs on poll frames
+           ;; (issue #280); other frames reuse the last dims. Named
+           ;; `poll-frame` (not `frame`) to avoid shadowing the demo frame
+           ;; map bound lower in the loop body.
+           poll-frame 0
+           tdims-last [0 0]]
       ;; Manual --max-cols/--max-rows still inset-cap the render area;
       ;; auto mode always fills the terminal (cap-dims with -1 = no-op)
       ;; and varies pixel detail instead.
-      (let [[trows tcols] (term-size)
+      (let [[trows tcols] (if (poll-size? poll-frame) (term-size) tdims-last)
             [rows cols]   (cap-dims trows tcols max-rows max-cols)
             px2?          (and auto? (php/=== 2 (:px cal)))]
         (redraw-if-resized dims rows cols)
@@ -1037,7 +1062,9 @@
                                                              now-keys
                                                              [rows cols]
                                                              cal'
-                                                             (:pos look)))))))))))
+                                                             (:pos look)
+                                                             (php/+ poll-frame 1)
+                                                             [trows tcols]))))))))))
 
 ;; =====================================================================
 ;; § End screens (death / victory)
@@ -1052,8 +1079,10 @@
         spawn or wall layout.
    `render-fn` takes (cols rows) and draws the variant."
   [render-fn]
-  (loop [dims [0 0]]
-    (let [[rows cols] (term-size)]
+  (loop [dims       [0 0]
+         frame      0
+         tdims-last [0 0]]
+    (let [[rows cols] (if (poll-size? frame) (term-size) tdims-last)]
       (redraw-if-resized dims rows cols)
       (render-fn cols rows)
       (php/usleep menu-frame-us)
@@ -1062,7 +1091,7 @@
           (str/contains? keys "q") :quit
           (str/contains? keys "R") :restart-same
           (str/contains? keys "r") :restart
-          :else                    (recur [rows cols]))))))
+          :else                    (recur [rows cols] (php/+ frame 1) [rows cols]))))))
 
 (defn- death-loop [kills survived-s level level-name scores summary]
   (end-loop (fn [cols rows]
@@ -1283,11 +1312,13 @@
    keys ramp); volume edits apply live; the final map is persisted and
    returned so the caller starts the run with the player's choices."
   [settings0]
-  (loop [settings settings0
-         cursor   0
-         prev     initial-key-snapshot
-         dims     [0 0]]
-    (let [[rows cols] (term-size)]
+  (loop [settings   settings0
+         cursor     0
+         prev       initial-key-snapshot
+         dims       [0 0]
+         frame      0
+         tdims-last [0 0]]
+    (let [[rows cols] (if (poll-size? frame) (term-size) tdims-last)]
       (redraw-if-resized dims rows cols)
       (render-settings! cols rows settings cursor)
       (php/usleep menu-frame-us)
@@ -1308,7 +1339,7 @@
           (let [{:cursor cursor-steps :value value-steps} (nav-deltas keys)
                 nav                                       (navigate settings cursor cursor-steps value-steps)]
             (when (:adjusted? nav) (apply-audio-settings! (:settings nav)))
-            (recur (:settings nav) (:cursor nav) now [rows cols])))))))
+            (recur (:settings nav) (:cursor nav) now [rows cols] (php/+ frame 1) [rows cols])))))))
 
 (defn- start-pressed?
   "True when `keys` carries an ENTER / Return (raw mode sends CR; some
@@ -1325,18 +1356,22 @@
    Other keys are ignored so a stray arrow can't launch the run by
    accident. Returns :quit, or the (possibly edited) settings map."
   [settings0]
-  (loop [settings settings0
-         dims     [0 0]]
-    (let [[rows cols] (term-size)]
+  (loop [settings   settings0
+         dims       [0 0]
+         frame      0
+         tdims-last [0 0]]
+    (let [[rows cols] (if (poll-size? frame) (term-size) tdims-last)]
       (redraw-if-resized dims rows cols)
       (render-start-menu cols rows)
       (php/usleep menu-frame-us)
       (let [keys (drain-keys)]
         (cond
           (str/contains? keys "q") :quit
-          (str/contains? keys "s") (recur (settings-screen! settings) [rows cols])
+          ;; Returning from the settings sub-loop is a fresh entry; reset
+          ;; the poll counter so the menu re-samples size eagerly.
+          (str/contains? keys "s") (recur (settings-screen! settings) [rows cols] 0 [rows cols])
           (start-pressed? keys)    settings
-          :else                    (recur settings [rows cols]))))))
+          :else                    (recur settings [rows cols] (php/+ frame 1) [rows cols]))))))
 
 (defn- resolve-difficulty
   "Pick the run difficulty: an explicit, valid --difficulty CLI value

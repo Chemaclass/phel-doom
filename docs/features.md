@@ -17,7 +17,7 @@ See [rendering.md](rendering.md), [raycaster.md](raycaster.md), [performance.md]
 
 ## Levels + map
 
-- 10 levels: L1 pure imps (tutorial), L2-L9 procgen mixed-type with a headline monster + secondaries (L2 demons, L3 cacos, L4 barons, L5 cybers, L6 spectres, L7 revenants, L8 archvile court, L9 the pinky brood), L10 hand-authored boss arena (cyber 50 HP + 2 imps, cap 1 alive)
+- 10 levels: L1 pure imps (tutorial), L2-L9 hand-authored or mixed-type with a headline monster + secondaries, L10 hand-authored boss arena (cyber 50 HP + 2 imps, cap 1 alive)
 - Per-level wall, sky, floor palette
 - Pickups: hearts (heal one full heart; pool is 5 hearts / 10 HP), armor (cap 5, absorbs one whole hit), armor shards (+1 over-cap to 10), soulsphere (over-cap to 14 HP, decays), ammo boxes, berserk (18s 2x dmg), invuln (10s immune), stacking backpack (L2+, reserve tier per pickup)
 - Keycards: L4 blue, L5 red, L7 yellow. Locked door pulses on bump without key. L10 boss door unlocks via synthetic :boss keycard after cyber kill. Compass tints facing letter in lock color.
@@ -115,5 +115,4 @@ See [demo.md](demo.md), [input.md](input.md).
 - **Keyboard**: kitty protocol (instant release: kitty, WezTerm, Ghostty, Alacritty >=0.13, iTerm2 >=3.5) or hold-frame fallback (Terminal.app, GNOME Terminal, xterm).
 - **Mouse look (#246)**: FPS-style mouselook in the terminal via xterm SGR mouse reports - move to turn (yaw) and look up/down (pitch), left-click to fire (held = auto-fire). On by default, toggled by the **Mouse** setting; turn speed scales with **Sensitivity** (50% = neutral 1.0x). Purely additive - the keyboard path is untouched. See [input.md](input.md#mouse-look-issue-246).
 - **Look up/down + vertical-aware aim (#243)**: camera pitch (arrow keys or mouse) shears the horizon as a pure render offset, and hitscan is gated on the crosshair landing on the enemy's drawn sprite, so aiming at the floor or sky misses. Pitch-0 renders byte-for-byte like no pitch. See [input.md](input.md#look-updown-pitch), [combat.md](combat.md), [raycaster.md](raycaster.md#look-updown-pitch-horizon-shear).
-- **Step-up / fall Z physics (#233)**: on levels with raised floors, a low riser (<= 0.4 above the floor underfoot) is climbed instantly, a taller one blocks like a wall, and a drop is eased down by RNG-free gravity. Flat worlds keep `:floor-z`/`:eye-z` at their defaults, so the render stays byte-identical. See [state.md](state.md), [game-loop.md](game-loop.md#z-traversal-step-up--fall-233).
 - **Sprint**: SHIFT+WASD or x for 1.6x speed. Drains 100-unit stamina at 30/s; regen 20/s after 0.5s cooldown. At empty, locked until recover to 20. HUD bar: amber <33%, red at 0.

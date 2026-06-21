@@ -5,8 +5,7 @@
   (:require phel-doom.io.render.palette :refer [base-hud-rows code-r code-g code-b nearest-256])
   (:require phel-doom.core.enemies :refer [enemy-types])
   (:require phel-doom.core.engine :refer [proj-dist])
-  (:require phel-doom.core.projection :refer [char-aspect wall-px])
-  (:require phel-doom.core.projection :as proj))
+  (:require phel-doom.core.projection :refer [char-aspect wall-px]))
 
 (defn- hud-rows-for
   "Number of HUD rows to reserve at the bottom of the viewport. The
@@ -479,55 +478,13 @@
       (= q 6) "↑"
       :else   "↗")))
 
-(defn floor-offset-rows
-  {:doc "Screen-row shift for an entity standing on a cell whose floor sits
-         at world height `fz`, seen at perpendicular distance `dist` with
-         projection numerator `pd` (`proj-dist` at full detail). Thin
-         re-export of `projection/floor-offset-rows` (#291): the math was
-         promoted into core/ so the renderer's sprite anchoring and combat's
-         vertical hit gate share ONE definition. Kept here so existing
-         render callers/tests still reach it as `frame-math/floor-offset-rows`.
-
-         A RAISED floor (fz > 0) returns a POSITIVE row count; callers
-         SUBTRACT it from the sprite's horizon-centred top/bottom rows so a
-         higher floor lifts the sprite UP the screen. Flat floors (fz=0)
-         return 0 at any distance, so the renderer stays byte-identical to
-         the pre-#234 horizon anchoring."
-   :see-also ["wall-px" "project-enemy-pd"]
-   :example "(floor-offset-rows 70.0 0.0 3.0) ; => 0 (flat floor, no shift)"}
-  [^float pd ^float fz ^float dist]
-  (proj/floor-offset-rows pd fz dist))
-
-(defn- cell-floor-z
-  ;; World floor height of the cell an entity at world (x, y) stands in,
-  ;; read from the `:floor-pgrid` float[][] twin (#232). Floors the coords
-  ;; to a cell index and defaults to 0.0 when the grid is nil (legacy
-  ;; world / no #232 data) or the row/cell is missing (out of bounds), so
-  ;; an absent grid reads as flat ground and the enemy keeps its horizon
-  ;; anchoring. The row is read first, then the cell, to dodge a chained
-  ;; php/aget on a temporary.
-  [floor-pgrid ^float x ^float y]
-  (if (php/=== nil floor-pgrid)
-    0.0
-    (let [cy  (php/intval (php/floor y))
-          row (php/aget floor-pgrid cy)]
-      (if (php/=== nil row)
-        0.0
-        (let [cx (php/intval (php/floor x))
-              fz (php/aget row cx)]
-          (if (php/=== nil fz) 0.0 (php/* 1.0 fz)))))))
-
 (defn project-enemy-pd
   "Project one billboard-style entity into screen space for an explicit
    projection numerator `pd` (`proj-dist` at full detail, half of it in
    the pixel-doubled scene so columns/widths land in scene cells).
-   Returns {:col :half-width :dist :scale :damage-ratio :type
-   :floor-offset} or nil when behind / off-screen — see `project-enemy`
-   for the field contract. Optional `floor-pgrid` (the world's `:floor-pgrid`
-   float[][], #232) anchors the sprite to its cell floor height: `:floor-offset`
-   is the row shift from `floor-offset-rows` (0 on flat ground / when the
-   grid is absent, positive on a raised cell)."
-  [^float pd enemy player ^int vw & [floor-pgrid]]
+   Returns {:col :half-width :dist :scale :damage-ratio :type} or nil
+   when behind / off-screen — see `project-enemy` for the field contract."
+  [^float pd enemy player ^int vw]
   (let [dx (php/- (:x enemy) (:x player))
         dy (php/- (:y enemy) (:y player))]
     (let [rel-norm (php/- (php/fmod (php/+ (php/- (php/atan2 dy dx) (:angle player))
@@ -555,44 +512,30 @@
            :dist         dist
            :scale        scale
            :damage-ratio dmg
-           :type         (:type enemy)
-           ;; #234: vertical shift so the sprite stands on its cell floor.
-           ;; 0 on flat ground -> byte-identical render; positive on the
-           ;; raised cells (L5 dais, L7 ledge) the verticality pass added.
-           :floor-offset (floor-offset-rows pd
-                                            (cell-floor-z floor-pgrid (:x enemy) (:y enemy))
-                                            dist)
-           ;; #297: the enemy's RAW cell floor height. The renderer feeds
-           ;; it to `sprite-feet-row` to anchor the billboard by its feet
-           ;; on the projected floor instead of the horizon. 0 on flat
-           ;; ground / when `floor-pgrid` is absent.
-           :fz           (cell-floor-z floor-pgrid (:x enemy) (:y enemy))})))))
+           :type         (:type enemy)})))))
 
 (defn project-enemy
   "Project one enemy into screen space relative to the player. Returns
-   {:col :half-width :dist :damage-ratio :floor-offset} or nil if the enemy
+   {:col :half-width :dist :scale :damage-ratio :type} or nil if the enemy
    is behind the player or off-screen. `:damage-ratio` is 0.0 at full health
    and approaches 1.0 as the enemy nears death; render uses it to tint the
    body shade darker for wounded enemies. Distance is fish-eye corrected
-   so it can be compared directly to entries in the wall `dists` array.
-   Optional `floor-pgrid` (#232/#234) anchors the sprite to its cell floor
-   height via `:floor-offset` (0 on flat ground / when absent)."
-  [enemy player ^int vw & [floor-pgrid]]
-  (project-enemy-pd proj-dist enemy player vw floor-pgrid))
+   so it can be compared directly to entries in the wall `dists` array."
+  [enemy player ^int vw]
+  (project-enemy-pd proj-dist enemy player vw))
 
 (defn collect-enemy-projs
   "Project every alive enemy and return a vector sorted by distance
    descending — back-to-front so closer sprites overwrite farther ones
-   when painted in order. Optional `floor-pgrid` (#232/#234) anchors each
-   sprite to its cell floor height (the per-enemy `:floor-offset`)."
-  [enemies player vw & [floor-pgrid]]
+   when painted in order."
+  [enemies player vw]
   (let [raw (loop [es enemies acc []]
               (if (php/=== es nil)
                 acc
                 (let [e (first es)]
                   (recur (next es)
                          (if (and e (:alive e))
-                           (let [p (project-enemy e player vw floor-pgrid)]
+                           (let [p (project-enemy e player vw)]
                              (if p (conj acc p) acc))
                            acc)))))]
     (sort-by (fn [x] (php/- 0.0 (:dist x))) raw)))

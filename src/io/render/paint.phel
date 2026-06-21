@@ -8,7 +8,7 @@
   (:require phel-doom.io.render.enemy-sprites-data :refer [projectile-sprites death-sprites blood-sprites pickup-sprites])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-col-x sprite-subcol-x enemy-sprite-cell sprite-fade sprite-fade-index])
   (:require phel-doom.core.engine :refer [proj-dist max-depth])
-  (:require phel-doom.core.projection :refer [pitch-rows sprite-feet-row])
+  (:require phel-doom.core.projection :refer [pitch-rows wall-px])
   (:require phel-doom.core.combat :refer [fx-ttl-seconds corpse-ttl-seconds])
   (:require phel-doom.core.format :refer [format-duration])
   (:require phel-doom.core.map :refer [find-door-cell]))
@@ -54,22 +54,15 @@
    the same `pr` to stay pinned to the head. pr=0 keeps the overlay
    exactly where it was.
 
-   The face also tracks the sprite's feet anchor (#297): the projection's
-   `:fz` (from the world's `:floor-pgrid`) feeds `sprite-feet-row`, then the
-   face glyph paints at the sprite's upper third (`feet-row - h + h/6`) so a
-   monster on a platform keeps its face on its head and a grounded monster's
-   face sits on its standing body. 0 on flat ground -> projects the z=0 floor."
+   The face also tracks the sprite's feet anchor: on flat ground (fz=0,
+   eye-z=0.5) the feet row is `round(vh/2 + 0.5 * wall-px(proj-dist, d)) + pr`,
+   and the face glyph paints at the sprite's upper third (`feet-row - h + h/6`)
+   so the face sits on the standing body."
   [parts world stats vw vh dists edists face-phase ^int sc & [pr-arg]]
-  (let [pr    (or pr-arg 0)
-        eye-z (or (:eye-z (:player world)) 0.5)]
-    (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw
-                                      (:floor-pgrid world))]
+  (let [pr (or pr-arg 0)]
+    (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
       (let [col         (:col proj)
             d           (:dist proj)
-            ;; #297: raw cell floor height for the feet anchor (full-detail
-            ;; proj-dist; the overlay paints at full vw/vh and scales the
-            ;; emitted row by `sc`). 0 on flat ground.
-            fz          (or (:fz proj) 0.0)
             visuals     (visuals-for-type (:type proj) stats)
             face        (get visuals :face)
             face-alt    (or (get visuals :face-alt) face)
@@ -83,7 +76,7 @@
                    (php/< col vw)
                    (enemy-front-visible-at? d col dists edists))
           (let [h        (sprite-h vh d 1.0)
-                feet-row (sprite-feet-row proj-dist vh d eye-z fz pr)
+                feet-row (php/+ (php/intval (php/round (php/+ (php// vh 2.0) (php/* 0.5 (wall-px proj-dist d))))) pr)
                 face-row (php/+ (php/- feet-row h) (php/intdiv h 6))]
             (when (and (php/>= face-row 1) (php/<= face-row vh))
               (buf-push parts
@@ -848,28 +841,24 @@
    it. `pr` (rows, default 0) is the look up/down horizon shear at full
    resolution, added so the digit tracks the pitched sprite head.
 
-   The digit also tracks the sprite's feet anchor (#297): the projection's
-   `:fz` (from the world's `:floor-pgrid`) feeds `sprite-feet-row`, then the
-   digit floats one row above the head (`feet-row - h - 1`) so the HP sits
-   above the head wherever the monster stands. 0 on flat ground -> projects
-   the z=0 floor."
+   The digit also tracks the sprite's feet anchor: on flat ground (fz=0,
+   eye-z=0.5) the feet row is `round(vh/2 + 0.5 * wall-px(proj-dist, d)) + pr`,
+   and the digit floats one row above the head (`feet-row - h - 1`)."
   [parts world vw vh & [pr-arg]]
   (let [pr     (or pr-arg 0)
-        player (:player world)
-        eye-z  (or (:eye-z player) 0.5)]
+        player (:player world)]
     (doseq [e (:enemies world)]
       (when (and e
                  (:alive e)
                  (php/> (or (:lives e) 0) 0)
                  (php/> (or (:max-lives e) 1) 1)
                  (php/> (or (:hit-flash-secs e) 0.0) 0.0))
-        (let [proj (project-enemy e player vw (:floor-pgrid world))]
+        (let [proj (project-enemy e player vw)]
           (when proj
             (let [col      (:col proj)
                   d        (:dist proj)
-                  fz       (or (:fz proj) 0.0)
                   h        (sprite-h vh d 1.0)
-                  feet-row (sprite-feet-row proj-dist vh d eye-z fz pr)
+                  feet-row (php/+ (php/intval (php/round (php/+ (php// vh 2.0) (php/* 0.5 (wall-px proj-dist d))))) pr)
                   row      (php/max 1 (php/- (php/- feet-row h) 1))]
               (when (and (php/>= col 1) (php/<= col vw))
                 (buf-push parts

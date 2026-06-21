@@ -2,14 +2,14 @@
 ;; perf snapshot, and the end / menu screens.
 (ns phel-doom.io.render.main
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
-  (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright shade-table shade-code-table shade-table-blood shade-code-table-blood floor-tier tier-shade-tables orange-shade-table tier-bg-cell-caches tier-platform-nose tier-platform-face])
+  (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright shade-table shade-code-table shade-table-blood shade-code-table-blood])
   (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table bg-cell-cache halfblock build-sky-halfblock build-sky-codes-sub seam-darken-16 seam-darken-8 seam-darken-5 collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.wall-texture-data :refer [wall-tex])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type-lod sprite-fade sprite-fade-index sprite-col-x sprite-subcol-x enemy-sprite-cell enemy-sprite-quad])
   (:require phel-doom.io.render.hud :refer [minimap-door-pulse minimap-rows minimap-frame hud-debug-line hud-line-str help-menu-string settings-menu-string pause-menu-string])
   (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-reload-ready paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-weapon-hud paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
-  (:require phel-doom.core.projection :refer [char-aspect wall-px pitch-rows project-height sprite-feet-row clip-sprite-span])
+  (:require phel-doom.core.projection :refer [char-aspect wall-px pitch-rows project-height])
   (:require phel-doom.core.perf :refer [render-scale])
   (:require phel-doom.core.format :refer [format-duration])
   (:require phel-doom.core.version :refer [version]))
@@ -275,40 +275,6 @@
         (recur (php/+ s 1))))
     arr))
 
-(defn- floor-cap-px
-  "Textured + fogged cap cell for a raised floor step whose top sits at
-   world height `fz`, sampled at the screen row whose z=0 GROUND
-   perpendicular distance is `dp0`. The cap plane is higher than the
-   ground, so the same screen row hits it nearer the eye: its perp
-   distance is the ground distance scaled by `(eye-z - fz)/eye-z` (a
-   half-unit eye over a fz=0 floor recovers the plain ground distance;
-   a fz=eye-z surface at eye level pushes to the horizon). Samples the
-   SAME `floor-tex-px` and gamma + `floor-darken` fog as the flat floor,
-   so a step top reads as continuous shaded stone rather than a flat
-   patch. `fdx`/`fdy` are the column's floor-cast basis; `pfx`/`pfy` the
-   player position. `tier` (#304) is the cap's height band (1 cool /
-   2 rose); the fogged texel is fetched from the matching tier-tinted
-   BG cache so the cap reads as tier-coloured STONE (texture + fog kept,
-   only hue pushed). Returns a ready BG cell string.
-
-   Only called from the per-cell cap branch on raised (`fz>0`) columns
-   with the floor texture on; fz=0 / flat columns keep the single-plane
-   fast path, so this never runs on a flat frame (byte-identity holds).
-   A cap is only drawn for fz>0, so `tier` is always 1 or 2 here."
-  [^float dp0 ^float fz ^float eye-z ^float fdx ^float fdy ^float pfx ^float pfy ^int tier]
-  (let [dp  (php/* dp0 (php// (php/- eye-z fz) eye-z))
-        fx  (php/+ pfx (php/* dp fdx))
-        fy  (php/+ pfy (php/* dp fdy))
-        tx  (php/intval (php/* (php/- fx (php/floor fx)) 64))
-        ty  (php/intval (php/* (php/- fy (php/floor fy)) 64))
-        tc  (php/aget floor-tex-px (php/+ (php/* ty 64) tx))
-        lvl (php/max 0
-                     (php/min 23
-                              (php/- (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// dp max-depth))) 0.6) 23))
-                                     floor-darken)))]
-    (php/aget (php/aget tier-bg-cell-caches tier)
-              (php/aget (php/aget tex-fade-table lvl) tc))))
-
 ;; =====================================================================
 ;; § Per-column wall shading
 ;; =====================================================================
@@ -337,30 +303,8 @@
    `pr`         look up/down horizon shear in scene rows (default 0):
                 added to every wall top so the whole wall band slides
                 down (look up) / up (look down) with the sky/floor
-                split. pr=0 keeps the shading byte-identical.
-
-   Optional variadic tail (#232 per-cell floor heights):
-   `pr-arg`       the pitch shear above.
-   `step-dists`   per-col fish-eye distance to the first riser, or nil.
-   `step-fzs`     per-col riser floor height (world z).
-   `step-sides`   per-col 0/1 crossed-face for the riser's EW shading.
-   `eye-z-arg`    camera eye height (default 0.5) for the projection.
-   When `step-dists` is absent or its entry is nil, the returned
-   `:step-bots`/`:step-tops`/`:step-cap-tops` are sentinels (vh / vh+1)
-   so every riser/cap branch in the cell loops is dead and the frame is
-   byte-identical to the flat renderer.
-
-   Further tail (#235 per-cell ceiling heights), the mirror of the floor
-   riser but hanging from the TOP:
-   `ceil-dists`   per-col fish-eye distance to the first ceiling drop, or nil.
-   `ceil-czs`     per-col dropped ceiling height (world z, < viewer ceiling).
-   `ceil-sides`   per-col 0/1 crossed-face for the drop's EW shading.
-   When `ceil-dists` is absent or its entry is nil, the returned
-   `:ceil-from`/`:ceil-bots`/`:ceil-tops` are sentinels (vh / vh / vh+1)
-   so every hanging-ceiling branch in the cell loops is dead (no on-screen
-   row 0..vh-1 satisfies `row >= ceil-from = vh`) and the frame is
-   byte-identical to the flat renderer."
-  [vw vh haze-shift cast palette blood-cols ^float pd & [pr-arg step-dists step-fzs step-sides eye-z-arg ceil-dists ceil-czs ceil-sides step2-dists step2-fzs step2-sides]]
+                split. pr=0 keeps the shading byte-identical."
+  [vw vh haze-shift cast palette blood-cols ^float pd & [pr-arg]]
   (let [{:keys [dists hits sides wallxs]}                              cast
         {:keys [stbl ctbl door-shade-now door-code-now
                 door-tex-boost
@@ -386,56 +330,6 @@
         tex-level                                                      (buf-mk)
         tex-px                                                         (buf-mk)
         pr                                                             (or pr-arg 0)
-        ;; Per-cell floor-height riser bands (#232). step-bots = riser
-        ;; bottom row (player-floor plane at the riser distance), step-tops
-        ;; = riser top / cap near edge (raised-floor plane at the riser
-        ;; distance), step-cap-tops = cap far edge (raised-floor plane at
-        ;; the MAIN wall distance). step-face / step-cap hold the shaded
-        ;; cell strings. Sentinels (vh / vh+1) when the column has no riser
-        ;; -> the cell-loop range test never matches.
-        ;; step-from  = first row the riser/cap occupies (clamped to start
-        ;;              at the main wall bottom - the wall always wins above)
-        ;; step-bots  = first row past the riser (exclusive bottom), <= vh
-        ;; step-tops  = boundary row: rows below it are the flat cap (step
-        ;;              top surface), at/below it is the vertical riser face
-        ;; step-face  = riser-face solid cell, step-cap = cap solid cell
-        step-from                                                      (buf-mk)
-        step-bots                                                      (buf-mk)
-        step-tops                                                      (buf-mk)
-        step-face                                                      (buf-mk)
-        step-cap                                                       (buf-mk)
-        ;; step-nose = the near-black tread-edge line (#319) painted at the
-        ;; cap/face boundary row so each step reads a crisp front nose.
-        step-nose                                                      (buf-mk)
-        ;; SECOND riser band (#322): the next tread UP the staircase, behind
-        ;; and above the first. Same from/bots/tops/face/cap/nose shape, but
-        ;; its bottom is additionally clamped to the FIRST riser's top
-        ;; (`step-tops`) - the near step occludes the base of the far one.
-        ;; Sentinels (vh / vh / vh+1) when the column has no second riser, so
-        ;; the cell-loop range test never enters and a flat / single-step
-        ;; world stays byte-identical.
-        step2-from                                                     (buf-mk)
-        step2-bots                                                     (buf-mk)
-        step2-tops                                                     (buf-mk)
-        step2-face                                                     (buf-mk)
-        step2-cap                                                      (buf-mk)
-        step2-nose                                                     (buf-mk)
-        ;; Per-cell ceiling-height hanging bands (#235), the mirror of
-        ;; the floor riser but anchored at the TOP. ceil-from = top row of
-        ;; the hanging face (viewer-ceiling plane at the drop distance),
-        ;; ceil-bots = first row past the band (exclusive, clamped to the
-        ;; main wall TOP - the wall wins below), ceil-tops = boundary row:
-        ;; rows above it are the vertical hanging face, at/below it is the
-        ;; flat cap (the underside of the hanging ceiling). ceil-face /
-        ;; ceil-cap hold the shaded cell strings. Sentinels (vh / vh / vh+1)
-        ;; when the column has no drop -> the cell-loop range test never
-        ;; matches (no on-screen row satisfies row >= ceil-from = vh).
-        ceil-from                                                      (buf-mk)
-        ceil-bots                                                      (buf-mk)
-        ceil-tops                                                      (buf-mk)
-        ceil-face                                                      (buf-mk)
-        ceil-cap                                                       (buf-mk)
-        eye-z                                                          (or eye-z-arg 0.5)
         ;; Column-loop invariant: vh-1 is used in sky-edge-row and
         ;; flr-edge-row (both per-column). Hoisting saves 2*vw
         ;; subtractions per compute-wall-shades call.
@@ -525,201 +419,11 @@
                   (buf-set tex-u     col (php/min 63 (php/intval (php/* (buf-get wallxs col) 64))))
                   (buf-set tex-level col idx)
                   (buf-set tex-px    col wall-tex-px)))))
-          ;; Per-cell floor-height riser + cap (#232). Runs once per
-          ;; COLUMN (a let/cond is fine here - the closure tax is a
-          ;; per-CELL concern), so the cell loops below read plain agets.
-          ;; nil step distance -> sentinel band (vh / vh+1) that the cell
-          ;; range test never enters -> byte-identical flat path.
-          (let [s-d (if (php/=== nil step-dists) nil (buf-get step-dists col))]
-            (if (php/=== nil s-d)
-              ;; No riser: empty band [vh, vh) so `row >= step-from (vh)`
-              ;; is false for every on-screen row (0..vh-1) -> clause dead.
-              ;; step-tops = vh+1 keeps the riser/cap split nominal even
-              ;; though the band can never be entered.
-              (do (buf-set step-from col vh)
-                  (buf-set step-bots col vh)
-                  (buf-set step-tops col (php/+ vh 1))
-                  (buf-set step-face col "")
-                  (buf-set step-cap  col "")
-                  (buf-set step-nose col ""))
-              (let [s-fz      (buf-get step-fzs col)
-                    s-side    (if (php/=== nil step-sides) 0 (buf-get step-sides col))
-                    wall-bot  (php/+ top wall-h)
-                    ;; Riser bottom = player-floor plane (z 0) at the riser
-                    ;; distance; top = raised-floor plane at the same
-                    ;; distance; cap far edge = raised-floor plane at the
-                    ;; MAIN wall distance (where the step surface recedes
-                    ;; behind the wall). project-height already folds in
-                    ;; char-aspect + the wall-px falloff.
-                    s-bot     (php/+ (php/intval (php/round (project-height pd vh s-d eye-z 0.0))) pr)
-                    s-top     (php/+ (php/intval (php/round (project-height pd vh s-d eye-z s-fz))) pr)
-                    s-cap-top (php/+ (php/intval (php/round (project-height pd vh dist eye-z s-fz))) pr)
-                    ;; Occlusion window: the riser/cap only fill the floor
-                    ;; band BELOW the main wall (the nearer wall wins for
-                    ;; its own rows). Start at max(cap far edge, wall
-                    ;; bottom), clamped on screen; end at the riser bottom,
-                    ;; capped at vh.
-                    s-from    (php/max 0 (php/min vh (php/max s-cap-top wall-bot)))
-                    s-to      (php/min vh s-bot)
-                    ;; Same gamma distance fog + EW side shading as a wall,
-                    ;; minus the near-death haze, sampled at the riser
-                    ;; distance. The cap (horizontal step top) is shaded a
-                    ;; touch darker so the surface reads distinct from the
-                    ;; vertical riser face.
-                    s-idx-raw (php/max 0
-                                       (php/min 23
-                                                (php/+ (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// s-d max-depth))) 0.6) 23))
-                                                       (if (php/=== s-side 0) 3 0))))
-                    s-idx     (php/max 0 (php/- s-idx-raw haze-shift))
-                    ;; Light a step like a real staircase under overhead
-                    ;; light (#319): the horizontal CAP (tread top, you look
-                    ;; down on it) is the brightest plane, the vertical FACE
-                    ;; (riser front) reads in shadow a few steps darker, and a
-                    ;; near-black NOSE line traces the tread's front edge where
-                    ;; cap meets face. That cap-bright / face-dark contrast +
-                    ;; the nose edge is what makes the structure read as
-                    ;; discrete ASCENDING steps instead of one flat tinted
-                    ;; slab (the pre-#319 face and cap were within 2 levels and
-                    ;; the cap was the DARKER of the two, so a near riser read
-                    ;; as a solid blue rectangle). cap-idx brightens toward the
-                    ;; top of the ramp, face-idx darkens, nose-idx is the floor.
-                    cap-idx   (php/min 23 (php/+ s-idx 2))
-                    face-idx  (php/max 0 (php/- s-idx 3))
-                    nose-idx  (php/max 0 (php/- s-idx 8))
-                    ;; Art-direction split (#322): the horizontal CAP (the
-                    ;; flat platform / tread top) is DARK near-neutral stone
-                    ;; keyed on tier height (`tier-shade-tables` - the lower
-                    ;; plateau dark, the higher one darker), while the vertical
-                    ;; riser FACE + its NOSE edge are ORANGE
-                    ;; (`orange-shade-table`) so the stairs read as a clearly
-                    ;; climbable orange ramp against the quiet dark platforms.
-                    ;; Blood i-frames still win (the red wash overrides both for
-                    ;; the "you got hit" cue), and fz<=0 maps to tier 0 = the
-                    ;; neutral grey table, so a flat step is byte-identical.
-                    cap-tbl   (if blood? stbl-l (php/aget tier-shade-tables (floor-tier s-fz)))
-                    face-tbl  (if blood? stbl-l orange-shade-table)]
-                (buf-set step-from col s-from)
-                (buf-set step-bots col s-to)
-                (buf-set step-tops col s-top)
-                (buf-set step-face col (buf-get face-tbl face-idx))
-                (buf-set step-cap  col (buf-get cap-tbl cap-idx))
-                (buf-set step-nose col (buf-get face-tbl nose-idx)))))
-          ;; SECOND riser band (#322): the next tread up, behind + above the
-          ;; first. Mirrors the first riser's projection, but its lower edge
-          ;; is additionally clamped to the FIRST riser's top row (read back
-          ;; from `step-tops`, which holds the first riser's `s-top` here) so
-          ;; the near step occludes the base of the far one. nil step2
-          ;; distance -> sentinel band -> clause dead -> byte-identical on a
-          ;; flat / single-step world. Runs once per COLUMN (the closure tax
-          ;; is a per-CELL concern), so the cell loops read plain agets.
-          (let [s2-d (if (php/=== nil step2-dists) nil (buf-get step2-dists col))]
-            (if (php/=== nil s2-d)
-              (do (buf-set step2-from col vh)
-                  (buf-set step2-bots col vh)
-                  (buf-set step2-tops col (php/+ vh 1))
-                  (buf-set step2-face col "")
-                  (buf-set step2-cap  col "")
-                  (buf-set step2-nose col ""))
-              (let [s2-fz       (buf-get step2-fzs col)
-                    s2-side     (if (php/=== nil step2-sides) 0 (buf-get step2-sides col))
-                    wall-bot    (php/+ top wall-h)
-                    ;; First riser's top row: the second riser's band may not
-                    ;; descend below it (the near step hides the far step's
-                    ;; base). Falls back to vh when there is no first riser
-                    ;; (can't happen - a second implies a first - but keep it
-                    ;; total).
-                    s1-top      (buf-get step-tops col)
-                    s2-bot      (php/+ (php/intval (php/round (project-height pd vh s2-d eye-z 0.0))) pr)
-                    s2-top      (php/+ (php/intval (php/round (project-height pd vh s2-d eye-z s2-fz))) pr)
-                    s2-cap-top  (php/+ (php/intval (php/round (project-height pd vh dist eye-z s2-fz))) pr)
-                    ;; Occlusion: start below the main wall AND below the cap
-                    ;; far edge; END at min(riser bottom, first-riser top) so
-                    ;; the near step crops the far step's base.
-                    s2-from     (php/max 0 (php/min vh (php/max s2-cap-top wall-bot)))
-                    s2-to       (php/min vh (php/min s2-bot s1-top))
-                    s2-idx-raw  (php/max 0
-                                         (php/min 23
-                                                  (php/+ (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// s2-d max-depth))) 0.6) 23))
-                                                         (if (php/=== s2-side 0) 3 0))))
-                    s2-idx      (php/max 0 (php/- s2-idx-raw haze-shift))
-                    s2-cap-idx  (php/min 23 (php/+ s2-idx 2))
-                    s2-face-idx (php/max 0 (php/- s2-idx 3))
-                    s2-nose-idx (php/max 0 (php/- s2-idx 8))
-                    ;; Same dark-platform-cap / orange-stair-face split as the
-                    ;; first riser (#322).
-                    s2-cap-tbl  (if blood? stbl-l (php/aget tier-shade-tables (floor-tier s2-fz)))
-                    s2-face-tbl (if blood? stbl-l orange-shade-table)]
-                (buf-set step2-from col s2-from)
-                (buf-set step2-bots col s2-to)
-                (buf-set step2-tops col s2-top)
-                (buf-set step2-face col (buf-get s2-face-tbl s2-face-idx))
-                (buf-set step2-cap  col (buf-get s2-cap-tbl s2-cap-idx))
-                (buf-set step2-nose col (buf-get s2-face-tbl s2-nose-idx)))))
-          ;; Per-cell ceiling-height hanging ceiling + cap (#235), the
-          ;; mirror of the floor riser but anchored at the TOP. Runs once
-          ;; per COLUMN (the closure tax is a per-CELL concern). nil ceil
-          ;; distance -> sentinel band (vh / vh / vh+1) that the cell range
-          ;; test never enters -> byte-identical flat path.
-          (let [c-d (if (php/=== nil ceil-dists) nil (buf-get ceil-dists col))]
-            (if (php/=== nil c-d)
-              ;; No drop: empty band so `row >= ceil-from (vh)` is false
-              ;; for every on-screen row (0..vh-1) -> clause dead.
-              (do (buf-set ceil-from col vh)
-                  (buf-set ceil-bots col vh)
-                  (buf-set ceil-tops col (php/+ vh 1))
-                  (buf-set ceil-face col "")
-                  (buf-set ceil-cap  col ""))
-              (let [c-cz      (buf-get ceil-czs col)
-                    c-side    (if (php/=== nil ceil-sides) 0 (buf-get ceil-sides col))
-                    ;; Hanging-face top = viewer-ceiling plane (z 1.0, the
-                    ;; flat-ceiling constant the cast gates drops against)
-                    ;; at the drop distance (where it meets the normal
-                    ;; ceiling line); bottom = dropped-ceiling plane at the
-                    ;; same distance; cap far edge = dropped-ceiling plane at
-                    ;; the MAIN wall distance (where the underside recedes to
-                    ;; the wall top). project-height already folds in
-                    ;; char-aspect + the wall-px falloff; a higher z projects
-                    ;; to a SMALLER row, so the dropped ceiling (z < 1.0)
-                    ;; sits below the normal ceiling line, hanging into view.
-                    ;; Mirrors the floor riser hard-coding z 0.0 for its
-                    ;; bottom plane.
-                    c-top     (php/+ (php/intval (php/round (project-height pd vh c-d eye-z 1.0))) pr)
-                    c-bot     (php/+ (php/intval (php/round (project-height pd vh c-d eye-z c-cz))) pr)
-                    c-cap-bot (php/+ (php/intval (php/round (project-height pd vh dist eye-z c-cz))) pr)
-                    ;; Occlusion window: the hanging ceiling only fills the
-                    ;; ceiling band ABOVE the main wall (the nearer wall
-                    ;; wins for its own rows). Start at the face top, clamped
-                    ;; on screen; end at min(cap far edge, wall top), so the
-                    ;; wall occludes anything below its top.
-                    c-from    (php/max 0 (php/min vh c-top))
-                    c-to      (php/max 0 (php/min vh (php/min c-cap-bot top)))
-                    ;; Same gamma distance fog + EW side shading as a wall,
-                    ;; minus the near-death haze, sampled at the drop
-                    ;; distance. The cap (underside, horizontal) is shaded a
-                    ;; touch darker so it reads distinct from the vertical
-                    ;; hanging face.
-                    c-idx-raw (php/max 0
-                                       (php/min 23
-                                                (php/+ (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// c-d max-depth))) 0.6) 23))
-                                                       (if (php/=== c-side 0) 3 0))))
-                    c-idx     (php/max 0 (php/- c-idx-raw haze-shift))
-                    c-cap-idx (php/max 0 (php/- c-idx 2))]
-                (buf-set ceil-from col c-from)
-                (buf-set ceil-bots col c-to)
-                (buf-set ceil-tops col c-bot)
-                (buf-set ceil-face col (buf-get stbl-l c-idx))
-                (buf-set ceil-cap  col (buf-get stbl-l c-cap-idx)))))
           (recur (php/+ col 1)))))
     {:tops tops :bots bots :normal normal
      :top-edge top-edge :bot-edge bot-edge
      :top-shadow top-shadow :bot-shadow bot-shadow
-     :tex-u tex-u :tex-level tex-level :tex-px tex-px
-     :step-from step-from :step-bots step-bots :step-tops step-tops
-     :step-face step-face :step-cap step-cap :step-nose step-nose
-     :step2-from step2-from :step2-bots step2-bots :step2-tops step2-tops
-     :step2-face step2-face :step2-cap step2-cap :step2-nose step2-nose
-     :ceil-from ceil-from :ceil-bots ceil-bots :ceil-tops ceil-tops
-     :ceil-face ceil-face :ceil-cap ceil-cap}))
+     :tex-u tex-u :tex-level tex-level :tex-px tex-px}))
 ;; =====================================================================
 ;; § Pulse cadences + near-death haze
 ;; =====================================================================
@@ -1002,33 +706,6 @@
           (compact-cast-2 (cast-frame world vw 2) svw)
           (cast-frame world svw scale))
         {:keys [dists hits sides wallxs floordxs floordys]} cast-result
-        ;; Per-cell floor-height riser arrays (#232). Present only on the
-        ;; full-detail cast; compact-cast-2 (px2) drops them, so they read
-        ;; nil there -> compute-wall-shades emits sentinel bands -> px2
-        ;; stays byte-identical (the riser is a px1-only feature for now).
-        step-dists                         (:step-dists cast-result)
-        step-fzs                           (:step-fzs cast-result)
-        step-sides                         (:step-sides cast-result)
-        ;; Second-riser arrays (#322), the next tread up the run. Like the
-        ;; first-riser arrays they ride the full-detail cast only; px2 drops
-        ;; them (nil) so compute-wall-shades emits sentinel bands and px2
-        ;; stays byte-identical.
-        step2-dists                        (:step2-dists cast-result)
-        step2-fzs                          (:step2-fzs cast-result)
-        step2-sides                        (:step2-sides cast-result)
-        ;; Camera eye height (default 0.5 on flat ground). Threaded into
-        ;; the riser projection AND the textured cap floor-cast (#236):
-        ;; the cap plane at world height fz is sampled at the ground
-        ;; perp-distance scaled by (eye-z - fz)/eye-z.
-        eye-z                              (or (:eye-z (:player world)) 0.5)
-        ;; Per-cell ceiling-height drop arrays (#235), the mirror of the
-        ;; floor riser arrays. Present only on the full-detail cast;
-        ;; compact-cast-2 (px2) drops them, so they read nil there ->
-        ;; compute-wall-shades emits sentinel bands -> px2 stays
-        ;; byte-identical (the hanging ceiling is a px1-only feature).
-        ceil-dists                         (:ceil-dists cast-result)
-        ceil-czs                           (:ceil-czs cast-result)
-        ceil-sides                         (:ceil-sides cast-result)
         scene-pd                           (if px2? (php/* 0.5 proj-dist) proj-dist)
         tex-on?                            (wall-textures-enabled?)
         floor-tex-on?                      (and tex-on? (floor-textures-enabled?))
@@ -1152,24 +829,7 @@
          :bot-shadow        shades-bot-shadow
          :tex-u             shades-tex-u
          :tex-level         shades-tex-level
-         :tex-px            shades-tex-px
-         :step-from         shades-step-from
-         :step-bots         shades-step-bots
-         :step-tops         shades-step-tops
-         :step-face         shades-step-face
-         :step-cap          shades-step-cap
-         :step-nose         shades-step-nose
-         :step2-from        shades-step2-from
-         :step2-bots        shades-step2-bots
-         :step2-tops        shades-step2-tops
-         :step2-face        shades-step2-face
-         :step2-cap         shades-step2-cap
-         :step2-nose        shades-step2-nose
-         :ceil-from         shades-ceil-from
-         :ceil-bots         shades-ceil-bots
-         :ceil-tops         shades-ceil-tops
-         :ceil-face         shades-ceil-face
-         :ceil-cap          shades-ceil-cap}
+         :tex-px            shades-tex-px}
         (compute-wall-shades svw svh haze-shift
                              {:dists dists :hits hits :sides sides :wallxs wallxs}
                              {:stbl stbl :ctbl ctbl
@@ -1187,19 +847,7 @@
                               :blood-floor-code-grad blood-floor-code-gradient}
                              blood-cols
                              scene-pd
-                             pr
-                             ;; #232 riser arrays (nil in px2 -> sentinels)
-                             ;; #233 eye-z follows the floor the player
-                             ;; stands on (default 0.5 on the flat ground,
-                             ;; so a grounded world stays byte-identical).
-                             step-dists step-fzs step-sides
-                             eye-z
-                             ;; #235 ceiling-drop arrays (nil in px2 ->
-                             ;; sentinels; flat all-1.0 ceiling -> nil).
-                             ceil-dists ceil-czs ceil-sides
-                             ;; #322 second-riser arrays (nil in px2 / flat /
-                             ;; single-step run -> sentinels).
-                             step2-dists step2-fzs step2-sides)
+                             pr)
         ;; Enemy sprite zone boundaries (head/body/legs). For each
         ;; column carrying an enemy:
         ;;   row in [tops, mids)   -> head
@@ -1261,11 +909,7 @@
         ;; column mapping); the zone passes halve cols/widths into scene
         ;; cells in pixel-doubled mode so sprites keep their on-screen
         ;; size and position.
-        ;; #234: pass :floor-pgrid so each projection carries its cell's
-        ;; :floor-offset (0 on flat ground; positive on a raised cell, the
-        ;; zone pass lifts the sprite by it).
-        enemy-projs                        (collect-enemy-projs (:enemies world) (:player world) vw
-                                                                (:floor-pgrid world))
+        enemy-projs                        (collect-enemy-projs (:enemies world) (:player world) vw)
         ;; Steady-bright minimap door glyph, matching the now-steady 3D
         ;; door shade so the exit catches the eye both in first-person
         ;; and on the overhead map (calmer 3D view: no blink).
@@ -1296,11 +940,7 @@
             hw  (if px2? (php/max 1 (php/intdiv (:half-width proj) 2)) (:half-width proj))
             d   (:dist proj)
             dmg (or (:damage-ratio proj) 0.0)
-            sc  (or (:scale proj) 1.0)
-            ;; #297: raw cell floor height; `sprite-feet-row` folds the
-            ;; raise into the projection so the feet land on the platform.
-            ;; 0 on flat ground -> projects the z=0 floor row.
-            fz  (or (:fz proj) 0.0)]
+            sc  (or (:scale proj) 1.0)]
         (let [;; `sc` scales the sprite vertically in lockstep with
                    ;; :half-width so bosses (cyber, sc=2.0) stay
                    ;; proportional instead of stretching wide-but-flat.
@@ -1352,13 +992,13 @@
                    ;; darkening) rather than level 8 (65%), keeping its
                    ;; shading bands visible against dark stone.
               sfade     (php/aget sprite-fade (sprite-fade-index body-fade))]
-          ;; #297: anchor the billboard by its FEET on the projected floor
-          ;; (`sprite-feet-row`), then draw the body UPWARD by `h`. The cell
-          ;; floor height `fz` is folded into the projection, so a raised
-          ;; cell (L5 dais, L7 ledge) stands ON its platform without the
-          ;; separate `floor-off` term. `scene-pd` is halved in px2 mode, so
-          ;; the projection scales there automatically (no `intdiv fo 2`).
-          (let [feet-row (sprite-feet-row scene-pd svh d eye-z fz pr)
+          ;; #297: anchor the billboard by its FEET on the projected z=0
+          ;; floor (eye-z 0.5 on flat ground), then draw the body UPWARD by
+          ;; `h`. `scene-pd` is halved in px2 mode, so the projection scales
+          ;; there automatically.
+          (let [feet-row (php/+ (php/intval (php/round (php/+ (php// svh 2.0)
+                                                              (php/* 0.5 (wall-px scene-pd d)))))
+                                pr)
                 e-top    (php/- feet-row h)]
             (let [e-bot         (php/+ e-top h)
                   e-mid         (php/+ e-top (php/intdiv h 3))
@@ -1397,27 +1037,12 @@
               (loop [c c-from]
                 (when (php/<= c c-to)
                   (when (php/< d (buf-get dists c))
-                    ;; #302 cross-tier occlusion: clip the billboard span
-                    ;; against the NEARER tier geometry in this column, not
-                    ;; just the full-height wall (`dists`, gated above). A
-                    ;; nearer floor riser hides the feet below its on-screen
-                    ;; top edge; a nearer hanging ceiling hides the head
-                    ;; above its bottom lip. `clip-sprite-span` returns the
-                    ;; visible [top bot] or nil (fully occluded -> skip the
-                    ;; column). On a flat level `step-dists`/`ceil-dists` are
-                    ;; nil for every column, so the span is returned
-                    ;; unchanged and the frame is byte-identical.
-                    (let [clipped (clip-sprite-span
-                                   e-top e-bot
-                                   (if (php/=== nil step-dists) nil (buf-get step-dists c))
-                                   (buf-get shades-step-from c)
-                                   (if (php/=== nil ceil-dists) nil (buf-get ceil-dists c))
-                                   (buf-get shades-ceil-bots c)
-                                   d)]
-                      (when (php/!== nil clipped)
-                        (let [c-top (php/aget clipped 0)
-                              c-bot (php/aget clipped 1)]
-                          (if spr
+                    ;; The sprite is gated against the full-height wall
+                    ;; (`dists`, above); on the flat single-floor world the
+                    ;; whole billboard span [e-top, e-bot) is visible.
+                    (let [c-top e-top
+                          c-bot e-bot]
+                      (if spr
                                ;; Sprite path: stash the FULL billboard box
                                ;; (e-stop/e-sbot drive the sprite-y sampling)
                                ;; plus the cross-tier VISIBLE window
@@ -1427,44 +1052,44 @@
                                ;; pixels, not squished into the window. Wall
                                ;; tops/bots stay untouched so transparent
                                ;; pixels show the wall behind.
-                            (do
-                              (buf-set e-stop c e-top)
-                              (buf-set e-sbot c e-bot)
-                              (buf-set e-vtop c c-top)
-                              (buf-set e-vbot c c-bot)
-                              (buf-set e-sx c (sprite-col-x sw col ehw c))
-                              (buf-set e-sxr c (sprite-subcol-x sw col ehw c))
-                              (buf-set e-spx c spx)
-                              (buf-set e-sw c sw)
-                              (buf-set e-sh c sh)
-                              (buf-set e-fade c sfade)
-                              (buf-set emask c true))
-                            (do
+                        (do
+                          (buf-set e-stop c e-top)
+                          (buf-set e-sbot c e-bot)
+                          (buf-set e-vtop c c-top)
+                          (buf-set e-vbot c c-bot)
+                          (buf-set e-sx c (sprite-col-x sw col ehw c))
+                          (buf-set e-sxr c (sprite-subcol-x sw col ehw c))
+                          (buf-set e-spx c spx)
+                          (buf-set e-sw c sw)
+                          (buf-set e-sh c sh)
+                          (buf-set e-fade c sfade)
+                          (buf-set emask c true))
+                        (do
                                  ;; Glyph path: clip the drawn span to [c-top,
                                  ;; c-bot). `mids`/`lowers` keep the UNCLIPPED
                                  ;; `e-mid`/`e-lower` - the head/body/legs split
                                  ;; is anatomical, so clamping tops/bots just
                                  ;; ends the paint loop early (legs/head hidden)
                                  ;; without sliding the zones.
-                              (buf-set tops c c-top)
-                              (buf-set bots c c-bot)
-                              (buf-set mids c e-mid)
-                              (buf-set lowers c e-lower)
+                          (buf-set tops c c-top)
+                          (buf-set bots c c-bot)
+                          (buf-set mids c e-mid)
+                          (buf-set lowers c e-lower)
                                    ;; Cyberdemon: carve a boss silhouette out of
                                    ;; the rectangle so the form reads as helmet +
                                    ;; arms + 2 legs instead of a giant imp brick.
-                              (let [[ph pb pl] (if (and (php/=== (:type proj) :cyber)
-                                                        body-code)
-                                                 (boss-col-paint
-                                                  (php// (php/abs (php/- c col))
-                                                         (php/max 1 hw))
-                                                  fhead fbody flegs body-code body-fade
-                                                  (buf-get shades-normal c))
-                                                 [fhead fbody flegs])]
-                                (buf-set eheads c ph)
-                                (buf-set ebodys c pb)
-                                (buf-set elegss c pl))
-                              (buf-set emask c true)))
+                          (let [[ph pb pl] (if (and (php/=== (:type proj) :cyber)
+                                                    body-code)
+                                             (boss-col-paint
+                                              (php// (php/abs (php/- c col))
+                                                     (php/max 1 hw))
+                                              fhead fbody flegs body-code body-fade
+                                              (buf-get shades-normal c))
+                                             [fhead fbody flegs])]
+                            (buf-set eheads c ph)
+                            (buf-set ebodys c pb)
+                            (buf-set elegss c pl))
+                          (buf-set emask c true)))
                                ;; Track nearest enemy distance for this col so
                                ;; pickups behind it occlude properly. Multiple
                                ;; enemies on the same col → keep the closest.
@@ -1473,9 +1098,9 @@
                                ;; Skipped when fully tier-occluded (clip nil):
                                ;; a hidden enemy can't occlude a pickup as an
                                ;; enemy, and its grounding shadow must not draw.
-                          (let [prev (buf-get edists c)]
-                            (when (or (php/=== prev nil) (php/< d prev))
-                              (buf-set edists c d)))))))
+                      (let [prev (buf-get edists c)]
+                        (when (or (php/=== prev nil) (php/< d prev))
+                          (buf-set edists c d)))))
                   (recur (php/+ c 1)))))))))
     ;; Grounding shadows, second pass. The shadow goes into blood-paint
     ;; (top-priority overlay), so it can't be painted inline during the
@@ -1492,11 +1117,11 @@
         (let [col    (if px2? (php/intdiv (:col proj) 2) (:col proj))
               hw     (if px2? (php/max 1 (php/intdiv (:half-width proj) 2)) (:half-width proj))
               d      (:dist proj)
-              fz     (or (:fz proj) 0.0)
-              ;; #297: the shadow sits on the SAME feet row the zone pass
-              ;; anchors the sprite to (`sprite-feet-row`), so shadow + feet
-              ;; track together on flat ground and on a raised cell.
-              e-bot  (sprite-feet-row scene-pd svh d eye-z fz pr)
+              ;; #297: the shadow sits on the SAME flat z=0 feet row the zone
+              ;; pass anchors the sprite to, so shadow + feet track together.
+              e-bot  (php/+ (php/intval (php/round (php/+ (php// svh 2.0)
+                                                          (php/* 0.5 (wall-px scene-pd d)))))
+                            pr)
               c-from (php/max 0 (php/- col hw))
               c-to   (php/min (php/- svw 1) (php/+ col hw))]
           (when (php/< e-bot svh)
@@ -1507,52 +1132,6 @@
                            (php/+ (php/* e-bot svw) c)
                            sprite-shadow))
                 (recur (php/+ c 1))))))))
-    ;; Sprite ground-platform, third pass (issue #319). A raised-tier enemy
-    ;; was drawn floating because the renderer never paints the tier floor
-    ;; surface under its (correctly lifted) feet - only the single nearest
-    ;; riser + a flat z=0 floor. So for any enemy on a raised cell (fz>0) we
-    ;; paint a short PLATFORM PAD under its feet: a bright tier-tinted lit
-    ;; edge at the feet row (the lip it stands on) over one or two darker
-    ;; tier-tinted face rows (the riser dropping toward the player), so the
-    ;; billboard unmistakably stands ON tier stone. Unlike the grounding
-    ;; shadow above, this runs in BOTH sprite + glyph modes (the floating
-    ;; reads worst with the default billboards) and only when fz>0 - a flat
-    ;; enemy (fz=0, every flat level) paints no pad, so flat frames stay
-    ;; byte-identical. Same blood-paint overlay + `enemy-front-visible-at?`
-    ;; wall/enemy occlusion gate as the shadow, and the pad is widened one
-    ;; column past the sprite each side so it reads as ground the feet rest
-    ;; on, not a halo hugging the silhouette. Painted after the shadow so a
-    ;; raised enemy's lit pad wins over the dark contact-shadow row.
-    (doseq [proj enemy-projs]
-      (let [fz (or (:fz proj) 0.0)]
-        (when (php/> fz 0.0)
-          (let [col    (if px2? (php/intdiv (:col proj) 2) (:col proj))
-                hw     (if px2? (php/max 1 (php/intdiv (:half-width proj) 2)) (:half-width proj))
-                d      (:dist proj)
-                tier   (floor-tier fz)
-                nose   (php/aget tier-platform-nose tier)
-                face   (php/aget tier-platform-face tier)
-                e-bot  (sprite-feet-row scene-pd svh d eye-z fz pr)
-                ;; Pad face depth scales with apparent size so a near / boss
-                ;; sprite stands on a chunkier ledge and a far one on a thin
-                ;; lip; clamped so it never swallows the view.
-                pad-h  (php/max 1 (php/min 3 (php/intdiv hw 2)))
-                ;; One column wider than the sprite each side: a platform a
-                ;; body stands on reads as extending past the feet.
-                c-from (php/max 0 (php/- col (php/+ hw 1)))
-                c-to   (php/min (php/- svw 1) (php/+ col (php/+ hw 1)))]
-            (when (and (php/>= e-bot 0) (php/< e-bot svh))
-              (loop [c c-from]
-                (when (php/<= c c-to)
-                  (when (enemy-front-visible-at? d c dists edists)
-                    ;; Lit nose at the feet row.
-                    (buf-set blood-paint (php/+ (php/* e-bot svw) c) nose)
-                    ;; Darker face rows just below, clamped on screen.
-                    (loop [r (php/+ e-bot 1)]
-                      (when (and (php/<= r (php/+ e-bot pad-h)) (php/< r svh))
-                        (buf-set blood-paint (php/+ (php/* r svw) c) face)
-                        (recur (php/+ r 1)))))
-                  (recur (php/+ c 1)))))))))
     ;; Chain the fx + pickup painters: each one takes the current
     ;; blood-paint, returns a new buffer (PHP arrays pass by value, so
     ;; the helper owns the allocation). Rename per step to keep phel
@@ -2203,90 +1782,6 @@
                             ;; live tops/bots.
                             mixw? (php/=== 1 (php/aget wsub-mix col))]
                         (cond
-                          ;; Per-cell floor-height riser + cap (#232).
-                          ;; FIRST clause: claims the floor-band rows a
-                          ;; raised step occupies, BEFORE the floor cast can
-                          ;; paint them (occlusion). step-from .. step-bots
-                          ;; is the on-screen band (already clamped below the
-                          ;; main wall); rows above step-tops are the flat
-                          ;; cap (step top surface), at/below it the vertical
-                          ;; riser face. On a flat world step-from = vh, so
-                          ;; this test never fires and the frame is
-                          ;; byte-identical. Sky rows (< top) and wall rows
-                          ;; (< bot) never enter the band, so order is safe.
-                          (if (php/>= row (buf-get shades-step-from col))
-                            (php/< row (buf-get shades-step-bots col))
-                            false)
-                          (if (php/< row (buf-get shades-step-tops col))
-                            ;; Cap (step top surface). #236: texture + fog it
-                            ;; like the ground floor instead of a flat shade.
-                            ;; The cap plane at world height fz is the SAME
-                            ;; stone the flat floor casts, sampled at the
-                            ;; row's ground perp-distance (dp-cell) scaled by
-                            ;; the height (floor-cap-px). fz=0 columns (none
-                            ;; here — a riser only exists for fz>0) or the
-                            ;; flat-floor flag fall back to the flat cap
-                            ;; shade, so the single-plane path is untouched.
-                            ;; Guard fz<eye-z too: a cap at/above the eye
-                            ;; projects past the horizon (not a floor you look
-                            ;; down on) and would scale to a negative
-                            ;; distance, so it keeps the flat shade.
-                            (if (if floor-tex-on?
-                                  (if (php/> (buf-get step-fzs col) 0.0)
-                                    (php/< (buf-get step-fzs col) eye-z)
-                                    false)
-                                  false)
-                              (php/aset cell-reg 0
-                                        (floor-cap-px dp-cell (buf-get step-fzs col) eye-z
-                                                      (buf-get floordxs col) (buf-get floordys col)
-                                                      pfx pfy (floor-tier (buf-get step-fzs col))))
-                              (php/aset cell-reg 0 (buf-get shades-step-cap col)))
-                            ;; Below the cap: the vertical riser face, with a
-                            ;; near-black NOSE line on its very top row (#319)
-                            ;; - the tread's front edge where the lit cap rolls
-                            ;; into the shadowed face. That single dark line per
-                            ;; step is what reads the structure as discrete
-                            ;; ascending steps rather than one flat tinted slab.
-                            (if (php/=== row (buf-get shades-step-tops col))
-                              (php/aset cell-reg 0 (buf-get shades-step-nose col))
-                              (php/aset cell-reg 0 (buf-get shades-step-face col))))
-                          ;; SECOND riser band (#322): the next tread up the
-                          ;; staircase, behind + above the first. Same cap /
-                          ;; nose / face split as the first riser, but its band
-                          ;; (step2-from .. step2-bots) sits at HIGHER rows and
-                          ;; is clamped to end at the first riser's top, so the
-                          ;; two steps read as an ascending pair. The 2nd cap
-                          ;; uses the flat tier shade (not the textured floor-
-                          ;; cast) - it is farther + smaller, so the cheap flat
-                          ;; cap reads fine and keeps the hot loop lean. nil
-                          ;; step2 -> step2-from = vh -> clause dead -> a flat /
-                          ;; single-step world is byte-identical.
-                          (if (php/>= row (buf-get shades-step2-from col))
-                            (php/< row (buf-get shades-step2-bots col))
-                            false)
-                          (if (php/< row (buf-get shades-step2-tops col))
-                            (php/aset cell-reg 0 (buf-get shades-step2-cap col))
-                            (if (php/=== row (buf-get shades-step2-tops col))
-                              (php/aset cell-reg 0 (buf-get shades-step2-nose col))
-                              (php/aset cell-reg 0 (buf-get shades-step2-face col))))
-                          ;; Per-cell ceiling-height hanging ceiling + cap
-                          ;; (#235), the mirror of the floor riser above.
-                          ;; Claims the ceiling-band rows a dropped ceiling
-                          ;; occupies, BEFORE the sky clause can paint them
-                          ;; (occlusion). ceil-from .. ceil-bots is the
-                          ;; on-screen band (already clamped above the main
-                          ;; wall top); rows above ceil-tops are the vertical
-                          ;; hanging face, at/below it the flat cap (the
-                          ;; ceiling underside). On a flat ceiling
-                          ;; ceil-from = vh, so this test never fires and the
-                          ;; frame is byte-identical. The band lives at low
-                          ;; rows (above the wall), so it precedes sky.
-                          (if (php/>= row (buf-get shades-ceil-from col))
-                            (php/< row (buf-get shades-ceil-bots col))
-                            false)
-                          (if (php/< row (buf-get shades-ceil-tops col))
-                            (php/aset cell-reg 0 (buf-get shades-ceil-face col))
-                            (php/aset cell-reg 0 (buf-get shades-ceil-cap col)))
                           ;; Half-block sky stacks two gradient sub-rows
                           ;; per cell (2× vertical). Blood columns keep
                           ;; the flat red wash.

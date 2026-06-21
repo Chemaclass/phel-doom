@@ -9,15 +9,13 @@ Pure data shapes that every other module operates on. `src/core/state.phel`.
 ```phel
 {:grid       <vector of vectors of cell ints>
  :pgrid      <PHP nested array, fast-path twin of :grid>
- :floor-pgrid <PHP float[][], per-cell floor heights (#232); same shape as :pgrid, all 0.0 by default>
- :ceil-pgrid <PHP float[][], per-cell ceiling heights (#235); same shape as :pgrid, all 1.0 by default>
  :width      <int>
  :height     <int>
  :player     <player map>
  :show-map   <bool>     ; minimap toggle (default OFF, M toggles)
  :paused     <bool>     ; P toggle
  :sound-on   <bool>     ; N toggle
- :enemies    <vector of {:x :y :alive :lives :max-lives :type :hit-flash-secs [:respawn-after] [:max-concurrent] [:fire-now] [:path-wp :path-cd :path-ptier]}>
+ :enemies    <vector of {:x :y :alive :lives :max-lives :type :hit-flash-secs [:respawn-after] [:max-concurrent] [:fire-now]}>
  :projectiles <vector of {:x :y :vx :vy :ttl :type}>  ; enemy fireballs (core/projectile)
  :hit-stop-secs <float>  ; >0 freezes the gameplay step (kill weight); decays each frame
  :hearts     <vector of {:x :y}>
@@ -88,23 +86,7 @@ After `build-world` from `core/level.phel` stamps level metadata, the world also
 :pgrid (to-php-array (map to-php-array grid))
 ```
 
-On grid mutation (door turning into floor, etc.) **both** must update. See `pickup-hearts` and door logic in `commands/play.phel`.
-
-## :floor-pgrid (per-cell floor heights, #232)
-
-A third PHP-native grid, a `float[][]` of the SAME shape as `:pgrid`, holding the world `z` each cell's floor sits at. `new-world` builds it all-`0.0` (the classic flat world); `state/apply-floor-heights` stamps a `{[x y] height}` map into it, and `level/build-world` calls that with the level config's optional `:floor-heights` (absent on every current level, so the default is flat). The raycaster reads it to accumulate the first riser a column crosses (see [raycaster.md](raycaster.md)); the renderer paints that riser + its cap.
-
-`rebuild-pgrid` carries `:floor-pgrid` along (preserving an existing grid, or building a fresh all-zero one sized to `:grid` when absent, e.g. a loaded savegame) so a wall mutation can't leave it stale. Note PHP's value semantics: a stamp reads the inner row, writes the cell, then writes the row back into the grid (the closure array-copy gotcha) - a chained two-level `php/aset` would land on a copy.
-
-All-zero `:floor-pgrid` is byte-identical to the pre-#232 renderer.
-
-## :ceil-pgrid (per-cell ceiling heights, #235)
-
-The mirror of `:floor-pgrid` on the ceiling axis: a `float[][]` of the SAME shape as `:pgrid`, holding the world `z` each cell's ceiling sits at. `new-world` builds it all-`1.0` (the flat ceiling at the top of a one-unit wall, exactly where the renderer baked it before); `state/apply-ceil-heights` stamps a `{[x y] height}` map into it, and `level/build-world` calls that with the level config's optional `:ceil-heights` (absent on every current level, so the default is flat). A height above 1.0 lifts the ceiling (a tall atrium); below 1.0 drops it (a low tunnel / hanging ceiling). The raycaster reads it to accumulate the first ceiling that drops below the viewer's (see [raycaster.md](raycaster.md)); the renderer paints that hanging face + its underside cap from the top of the view.
-
-`rebuild-pgrid` carries `:ceil-pgrid` along the same way (preserving an existing grid, or building a fresh all-1.0 one sized to `:grid` when absent) so a wall mutation can't leave it stale, with the same PHP value-semantics stamp (read row, write cell, write row back).
-
-All-1.0 `:ceil-pgrid` is byte-identical to the pre-#235 renderer.
+On grid mutation (door turning into floor, etc.) **both** must update. See `pickup-hearts` and door logic in `commands/play.phel`. `rebuild-pgrid` is called after any grid edit to keep the PHP mirror in sync.
 
 ## The player
 
@@ -112,18 +94,10 @@ All-1.0 `:ceil-pgrid` is byte-identical to the pre-#235 renderer.
 {:x       <float world units>
  :y       <float>
  :angle   <float radians>
- :pitch   <float look up/down fraction in [-1, 1], 0 = level>
- :floor-z <float world z of the floor underfoot (#233), 0.0 on the ground>
- :eye-z   <float camera height = floor-z + eye-height (0.5 grounded)>}
+ :pitch   <float look up/down fraction in [-1, 1], 0 = level>}
 ```
 
-`new-player x y angle` creates (spawning grounded: `:floor-z 0.0`, `:eye-z 0.5`). `move-player` does delta translation (no collision); `turn-player` does delta angle. Collision + the Z step/fall decision are handled at `physics/try-move`.
-
-### :floor-z / :eye-z (Z physics, #233)
-
-The player tracks the world `z` of the floor under their feet (`:floor-z`) and a derived camera height `:eye-z = floor-z + state/eye-height` (`eye-height` = 0.5). `state/set-floor-z` is the single writer for the pair, so `:eye-z` can never drift from `:floor-z`. The raycaster reads `:floor-z` as the riser threshold (`do-cast`) and the renderer reads `:eye-z` for the vertical projection, so the view rises and sinks with the floor.
-
-Movement applies the Z decision in `physics/try-move`: a destination cell whose floor is at most `physics/step-up-max` (0.4) above the current floor is climbed instantly; a taller riser blocks the move like a wall; a lower floor is walked onto and then eased down by `physics/tick-fall` at `physics/fall-speed` (a deterministic, RNG-free gravity). On the flat all-zero world the destination floor always equals the current floor, so `:floor-z` / `:eye-z` never leave their defaults and the render stays byte-identical. See [game-loop.md](game-loop.md) for the per-frame ordering.
+`new-player x y angle` creates the player at a world position and facing angle. `move-player` does delta translation (no collision); `turn-player` does delta angle. `change-pitch` updates camera look. Collision is handled at `physics/try-move`. The world is uniformly flat (no elevation), so the camera is fixed at standard eye height (0.5 units above the ground plane).
 
 ## Movement counters (`:moves`)
 
@@ -168,6 +142,6 @@ Float-seconds countdowns on the world, decayed by `decay-timers` in `core/combat
 
 `advance-game-time` adds `dt` to `:game-time` on every non-paused frame; on a paused frame `tick-world` returns early so the value is left untouched. Render samples this clock for every blink/pulse (door, behind warning, jam, pickup throb, enemy face/body cycle, screen-shake) so pressing `p` freezes every visual animation that was driven by the wall clock before. Resume picks up exactly where the freeze caught it.
 
-## Why a flat map
+## Flat world design
 
-Keeps construction simple (one `new-world` call), updates lightweight (`assoc`/`update`), and tests literal (`(is (= expected (tick-world ...)))`). Trade-off: no compiler help on key names, so `frame-stats` centralizes all reads to catch typos.
+The world has a single flat floor plane (z = 0) and a flat ceiling (z = 1). All gameplay occurs on this plane. This keeps construction simple (one `new-world` call), updates lightweight (`assoc`/`update`), and tests literal (`(is (= expected (tick-world ...)))`). Trade-off: no compiler help on key names, so `frame-stats` centralizes all reads to catch typos.

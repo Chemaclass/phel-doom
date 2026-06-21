@@ -80,15 +80,9 @@ The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself; the g
 
 `tick-world` calls no IO. Every cue (pickups, combat, secret reveal, switch) enqueues `{:name :vol}` on `:sfx` via `push-sfx`. Queue reset at tick top, drained + emitted by game-loop after tick, gated on `:sound-on`. Keeps tick pure so tests run full frame sequences without side effects. See [audio.md](audio.md).
 
-## Z traversal: step-up + fall (#233, #299)
+## Physics on flat ground
 
-`apply-physics` translates, then settles the player's vertical position, all pure (no RNG, no IO):
-
-1. **Step decision (in `try-move`)** - after the move clears the wall / locked-door check, the destination cell's floor height is read from `:floor-pgrid` (`physics/floor-z-at`, nil-safe to 0.0). A riser at most `step-up-max` (0.4) above the floor underfoot is **climbed** instantly (`:floor-z` snaps onto the step via `state/set-floor-z`); a taller riser **blocks** the move exactly like a wall (the player keeps their x/y AND `:floor-z`); a floor that drops at most `step-up-max` is a **normal step-down**, walked onto with `:floor-z` left high for now.
-2. **Fall easing (`tick-fall`, after the move)** - sinks `:floor-z` toward the floor under the player's current cell at `fall-speed` (6.0 z/s), clamped so the eye lands exactly on the floor without dipping below. This is what turns a step-down or pit into a smooth descent over a few frames instead of an instant snap. Grounded players (target == current) are a no-op.
-3. **Off-edge fall (#299)** - a drop of MORE than `step-up-max` is an off-edge fall rather than a step-down. If that downward edge carries a handrail (the world's `:handrails` set of directed `[hx hy lx ly]` keys) the move is **blocked** like a wall - a fenced lip you see over but can't cross. Otherwise the player walks off and **loses 1 life per tier dropped** (`physics/fall-tiers` = `round(drop / tier-gap)`, min 1; tier-gap 0.75, so a 0.75 lip = 1 life, a 1.5 two-tier drop = 2), tallied into the run summary's `:damage-taken`. The fall is environmental: armor does not absorb it and no i-frames are armed; the eye still eases down via `tick-fall`. The tier drop is measured CELL-to-CELL (source-cell floor vs destination), not from the possibly-mid-ease `:floor-z`, so a fall begun while already descending still reads its true height. Enemies obey the same rule in `enemy/try-step` + `enemy/step-toward` (a rail blocks them; an unrailed lip costs them lives and can kill).
-
-`:eye-z` (`:floor-z + state/eye-height`) follows automatically because `set-floor-z` is the only writer. On the flat all-zero world the destination floor always equals the current floor (so the step / fall arms never fire) and no level but L7 carries handrails, so neither field ever leaves its default and the renderer stays byte-identical (the pinned-bytes golden in `tests/io/render-cache-test.phel` still holds). See [state.md](state.md) for the field contract.
+The world is uniformly flat (z = 0 floor, z = 1 ceiling). `apply-physics` translates and returns updated player position. No step-up / fall / handrail logic applies since there is no elevation change. Wall and locked-door collision are checked. The player's camera is fixed at standard eye height (0.5 units above the ground). See [state.md](state.md) for the field contract.
 
 ## Frame timing + adaptive FPS
 

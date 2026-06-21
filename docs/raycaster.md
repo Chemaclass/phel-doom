@@ -52,10 +52,7 @@ Returns raw (uncorrected) distance. Detailed tuple `[dist side hx hy]` is comput
 
 ```phel
 (defn cast-frame [world ^int width ^int scale]
-  ...returns {:dists :hits :sides :hxs :hys :wallxs :floordxs :floordys
-              :step-dists :step-fzs :step-sides :step-hxs :step-hys
-              :step2-dists :step2-fzs :step2-sides :step2-hxs :step2-hys
-              :ceil-dists :ceil-czs :ceil-sides})
+  ...returns {:dists :hits :sides :hxs :hys :wallxs :floordxs :floordys})
 ```
 
 Cast `width / scale` rays; return the parallel PHP arrays (one per output column).
@@ -65,46 +62,7 @@ Cast `width / scale` rays; return the parallel PHP arrays (one per output column
 - `hxs, hys`: hit cell coordinates
 - `wallxs`: wall-hit fraction in [0, 1) - the texture U coordinate (frac of world-y on a vertical face, world-x on a horizontal face, from the raw perpendicular distance)
 - `floordxs, floordys`: floor-cast basis = ray direction / cos(offset). A floor cell at per-row perpendicular distance `dperp` sits at world `player + dperp * (floordx, floordy)`, so the renderer needs no per-cell trig (two mul-adds + a frac for the texture sample)
-- `step-dists, step-fzs, step-sides, step-hxs, step-hys`: per-cell floor-height riser side-channel (#232, see below). Each entry is nil per column when the ray crossed no raised floor, so a flat world leaves them all-nil (additive contract).
-- `step2-dists, step2-fzs, step2-sides, step2-hxs, step2-hys`: the SECOND riser (#322) - the next tread up the staircase past the first. nil per column when the ray crossed at most one riser (flat world, or a single-step run).
-- `ceil-dists, ceil-czs, ceil-sides`: per-cell ceiling-height drop side-channel (#235, see below). Each entry is nil per column when the ray crossed no ceiling that drops below the viewer's ceiling, so a flat (all-1.0) ceiling leaves them all-nil (additive contract).
 
-## Per-cell floor heights (#232)
-
-A second per-cell grid, `:floor-pgrid` (a PHP `float[][]` twin of `:pgrid`, same shape, all `0.0` by default), gives each cell the world `z` its floor sits at. The DDA march carries one extra accumulator, `step-acc`: scanning outward it records the FIRST floor cell it crosses whose height rises above the player's own floor (`:floor-z`, today always 0). That first riser is pinned (the nearest one occludes farther steps) and surfaced as the additive `:step-*` arrays:
-
-| Field | Meaning |
-|---|---|
-| `step-dists` | fish-eye corrected distance to the riser (or nil) |
-| `step-fzs`   | the riser cell's floor height (world z) |
-| `step-sides` | 0/1 face of the crossed boundary (EW shading, like walls) |
-| `step-hxs, step-hys` | integer coords of the riser cell |
-
-The accumulator is computed as nested `if` in the loop's tail position (never `and`, never a `let`-binding statement-form), so it compiles closure-free and the flat all-zero floor never trips the `fh > player-floor-z` test - the cast stays allocation-equivalent to the pre-#232 path (verified by diffing the compiled `out/` do-cast: still 5 closures, none new in the DDA loop).
-
-The renderer (`compute-wall-shades` + the px1 cell loop, see [rendering.md](rendering.md)) turns each riser into a vertical **riser face** plus a **cap** (the step top surface), painted into the floor band below the main wall (the nearer wall always wins its own rows). The cap rows are claimed before the floor-cast clause so the ground texture does not also paint them. Since #236 the cap is itself a textured floor sample (`floor-cap-px`): the same stone + fog as the ground, projected at the cap's height (the ground distance scaled by `(eye-z - fz)/eye-z`), so a step top reads as continuous stone rather than a flat patch. A flat world leaves every `:step-*` entry nil, so the riser/cap branches are dead and the frame is byte-identical (pinned by `render-cache-test/test-frame-bytes-pinned`). Z physics (stepping up onto the riser) lands in #233.
-
-## Second riser (#322)
-
-The single-nearest riser above draws a staircase run as ONE step plus flat ground beyond, because the accumulator sticks on the first tread. The DDA march now carries a SECOND accumulator, `step-acc2`: once `step-acc` is pinned, `step-acc2` records the first cell PAST it whose floor steps higher still (the next tread up), then sticks. So a multi-step run reads as an ascending pair of steps. It is surfaced as the additive `:step2-*` arrays (same five fields + fish-eye correction as the first riser), nil per column when the ray crossed at most one riser.
-
-K=2 (nearest two risers) is not a compromise but a fit to the level geometry: every L7/L6 run is exactly two 0.375 steps between adjacent tiers, and from any standing position a sightline crosses at most ~2-3 visible risers before a wall (the next run's treads sit on the tier you have not climbed yet, hidden by the divider). Tracking the nearest two captures the full visible staircase.
-
-`step-acc2` is folded as ONE more nested `if` in the loop's tail position - never `and`, never a `let`-binding statement-form - exactly like `step-acc`/`ceil-acc`, so the DDA loop stays a SINGLE closure (verified by diffing the compiled `out/phel_doom/core/engine.php`: the `function` count is unchanged at 15, and the `$hit_arr_` closure's only diff is the five extra captured `step2-*` arrays). Allocation is a fixed +5 arrays per cast (constant, not per-column), so there is no per-column list churn. Cost is a measured ~+10% cast-phase on the L7 stair scene (the extra per-cell `aget`/compare on active multi-tier rays) and ZERO on flat levels (both accumulators stay nil immediately, so the golden hashes hold). The renderer draws the second riser as a band above the first, clamped to end at the first riser's top so the near step occludes the far step's base; the second cap uses the flat tier shade rather than the textured floor-cast (it is farther and smaller, so the cheap cap keeps the hot cell loop lean). See [rendering.md](rendering.md).
-
-## Per-cell ceiling heights (#235)
-
-The exact mirror of the floor riser, on the ceiling axis. A third per-cell grid, `:ceil-pgrid` (a PHP `float[][]` twin of `:pgrid`, same shape, all `1.0` by default - the ceiling at the top of a one-unit wall), gives each cell the world `z` its ceiling sits at. The DDA march carries a SECOND accumulator alongside `step-acc`, `ceil-acc`: scanning outward it records the FIRST ceiling cell it crosses whose height DROPS below the viewer's own ceiling (`viewer-ceil-z`, today always 1.0). A height above 1.0 lifts the ceiling (a tall atrium - just extra headroom, no hanging edge, so the accumulator does NOT fire); a height below 1.0 drops it (a low tunnel / hanging ceiling). That first drop is pinned (the nearest one occludes farther ones) and surfaced as the additive `:ceil-*` arrays:
-
-| Field | Meaning |
-|---|---|
-| `ceil-dists` | fish-eye corrected distance to the ceiling drop (or nil) |
-| `ceil-czs`   | the dropped cell's ceiling height (world z, < viewer ceiling) |
-| `ceil-sides` | 0/1 face of the crossed boundary (EW shading, like walls) |
-
-Like `step-acc`, the ceiling accumulator is computed as nested `if` in the loop's tail position (never `and`, never a `let`-binding statement-form), reading the cell's ceiling height through the same `let` already present for the floor height, so it compiles closure-free and the flat all-1.0 ceiling never trips the `ch < viewer-ceil-z` test - the cast stays allocation-equivalent to the pre-#235 path (verified by diffing the compiled `out/` `engine.php`: identical `function`-token count to HEAD, no new closure in the DDA loop).
-
-The renderer (`compute-wall-shades` + the px1 cell loop, see [rendering.md](rendering.md)) turns each drop into a vertical **hanging face** plus a flat-shaded **cap** (the ceiling underside), hanging from the top of the view: the face top is the viewer-ceiling plane (z 1.0) projected at the drop distance, the boundary row is the dropped-ceiling plane at the same distance, and the cap recedes back to the main wall top. It is painted into the ceiling band above the main wall (the nearer wall always wins its own rows), claimed before the sky-cast clause so the sky does not also paint it. A flat ceiling leaves every `:ceil-*` entry nil, so the hanging-ceiling branches are dead and the frame is byte-identical (pinned by `render-cache-test/test-frame-bytes-pinned`). Levels opt in via an optional `:ceil-heights` map; none ship yet, so the world stays flat-ceilinged. Textured ceiling caps follow with the floor caps in #236.
 
 ## Two key details
 
@@ -120,7 +78,7 @@ Edge rays travel further than central rays to reach the same wall plane. Multipl
 
 ## Projection primitive
 
-`src/core/projection.phel` holds the pure vertical-projection kernel shared by the wall paths (and, ahead, variable floor/ceiling heights, pitch, eye-height):
+`src/core/projection.phel` holds the pure vertical-projection kernel shared by the wall paths:
 
 ```phel
 (wall-px num dist)                 ; projected pixel height of a num-unit
@@ -129,13 +87,10 @@ Edge rays travel further than central rays to reach the same wall plane. Multipl
                                    ; z lands
 (pitch-rows pitch vh)              ; integer horizon shear (scene rows) for
                                    ; a look up/down fraction
-(sprite-feet-row pd svh dist       ; integer screen row where an enemy's
-                 eye-z fz pr)      ; FEET stand (the projected cell floor)
 ```
 
 - `wall-px num dist` = `num / ((max 0.3 dist) * char-aspect)`. `num` is `proj-dist` for a one-unit wall, or `n * proj-dist` for an n-sub-row half-block slice. The 0.3 floor stops a surface in the player's own cell projecting to an infinite slice. Both the cell-resolution wall path (`compute-wall-shades`) and the half-block sub-pixel path (`build-wall-sub-bounds`) call it, so they agree to the last bit.
-- `project-height pd vh dist eye-z z` = `vh/2 - (z - eye-z) * (wall-px pd dist)`. The horizon (z = eye-z) sits at `vh/2`; points above the eye rise, below sink. Today's flat wall is the special case `eye-z = 0.5` with `z = 1` (top) and `z = 0` (bottom). Variable heights pass other `z`; jump/crouch pass other `eye-z`.
-- `sprite-feet-row pd svh dist eye-z fz pr` = `round(project-height pd svh dist eye-z fz) + pr`. The screen row where an enemy billboard's FEET stand: the projection of its cell floor surface (world height `fz`) plus the pitch shear. On flat ground (`fz = 0`, `eye-z = 0.5`) this is the same row the floor texture meets the wall, so the sprite stands ON the floor. `project-height` at `z = fz` already folds in the raised floor, so callers must NOT also subtract a separate floor offset (doing so double-counts the lift). See "Sprite anchoring" below.
+- `project-height pd vh dist eye-z z` = `vh/2 - (z - eye-z) * (wall-px pd dist)`. The horizon (z = eye-z) sits at `vh/2`; points above the eye rise, below sink. The flat wall is the case `eye-z = 0.5` with `z = 1` (top) and `z = 0` (bottom).
 - `char-aspect` (2.0) lives here too, as the canonical projection constant alongside `proj-dist`, so the kernel stays pure `core/` with no `io/` dependency.
 
 ## Look up/down (pitch): horizon shear
@@ -148,53 +103,17 @@ Looking up/down is a pure **vertical shear of the horizon**, not a re-projection
 - the sub-row seam bounds in `build-wall-sub-bounds` (`+ pr*n`, n sub-rows per scene cell)
 - the floor-cast distance tables `build-floor-dperp` / `build-floor-dperp-sub` (horizon `vh/2 + pr`, sub-row `vh + 2*pr`)
 - the sky/floor gradients and their code twins in `frame-math` (each gradient builder takes an optional `horizon-offset`; the gradient cache keys on `(vh, pr)`)
-- enemy sprite anchors (`sprite-feet-row` carries the same `pr`, so the feet, the grounding shadow, and the face / HP-flash overlays all shear together with the floor; see "Sprite anchoring")
+- enemy sprite anchors (the flat z=0 feet row carries the same `pr`, so the feet, the grounding shadow, and the face / HP-flash overlays all shear together with the floor; see "Sprite anchoring")
 
 The crosshair stays fixed (it is a weapon sight, not part of the world). Because every offset is **additive and 0 at `pitch = 0`**, a level gaze renders byte-for-byte identically to the no-pitch path (pinned by `render-cache-test/test-frame-bytes-pinned`).
 
 ## Sprite anchoring (feet on the floor)
 
-Enemy billboards are anchored by their **feet**, not their centre (issue #297). The renderer stands each sprite on `sprite-feet-row` and draws the body UPWARD by its pixel height `h`:
-
-```
-feet-row = (sprite-feet-row scene-pd svh dist eye-z fz pr)   ; on the floor
-e-top    = feet-row - h                                       ; head
-body     = rows [e-top, feet-row]
-```
-
-`fz` is the enemy's cell floor height (read from `:floor-pgrid`, 0 on flat ground). A raised cell (the L5 dais `fz 0.8`, the L7 ledge `fz 1.05`) projects `feet-row` higher up the screen, so the monster stands ON its platform; the raise lives entirely inside `project-height`, so the renderer never adds a second floor offset. The grounding shadow, the face glyph, and the floating HP digit all derive from this one `feet-row`, so they track the feet on flat AND raised ground.
-
-The **old** anchor centred the billboard on the horizon (`(svh - h)/2 + pr - floor-off`), which left the feet hanging one row above the projected floor at most distances - the reported "enemies float" bug. The feet anchor lands the feet exactly on the floor surface row at every distance.
+Enemy billboards are anchored by their **feet**, not their centre. The renderer stands each sprite on a projected row and draws the body UPWARD by its pixel height `h`. On flat ground the feet land exactly on the floor surface row at every distance. The grounding shadow, the face glyph, and the floating HP digit all derive from this row anchor.
 
 ### Hitscan agreement
 
-`enemy/vertical-hit?` reuses the SAME `sprite-feet-row`, so the vertical aim gate and the drawn pixels cannot disagree (issues #243 / #291 / #297). A shot connects when the FIXED screen-centre crosshair (`svh/2` - it does not shear with pitch) lands inside the drawn body:
-
-```
-hit?  =  (feet-row - h) <= svh/2 <= feet-row
-```
-
-Because `feet-row` carries `pr` but the crosshair does not, looking up slides a sprite DOWN past the centre and looking down lifts it UP, so a short far billboard slips off the crosshair (vertical aim) while a tall near one stays caught. On a raised cell the lift moves the body above the centre at level aim, so the player looks up to put the crosshair back on the drawn sprite.
-
-### Cross-tier occlusion (issue #302)
-
-Feet anchoring (#297/#300) gives an enemy on another tier the right vertical PLACEMENT; cross-tier occlusion is the visibility half. An enemy billboard is a transparent sprite clipped per column by a depth gate. Before #302 that gate was the full-height WALL buffer (`dists[c]`) alone, so the partial-height tier geometry - the floor risers (#232) and hanging ceilings (#235) - was invisible to it: an enemy tucked behind a nearer step could draw THROUGH it, and one on a higher tier could clip wrong against the edge.
-
-The clip now also intersects each sprite column against the NEARER tier band in that column. The pure helper is `clip-sprite-span` in `core/projection.phel`:
-
-```
-(clip-sprite-span e-top e-bot step-d step-from ceil-d ceil-bots d)
-;; -> [top bot]  the visible rows, or
-;; -> nil        when a nearer tier fully covers the column
-```
-
-- `step-d`/`step-from` are the column's nearest floor-riser distance (`step-dists[c]`) and the riser band's on-screen TOP row (`shades-step-from[c]`). A riser NEARER than the sprite (`step-d < d`) hides every row at or below `step-from`, so the feet clamp to `min(e-bot, step-from)` - the near riser face plus the near-tier floor in front of it block the lower body.
-- `ceil-d`/`ceil-bots` are the column's nearest ceiling-drop distance (`ceil-dists[c]`) and the ceiling band's on-screen BOTTOM lip (`shades-ceil-bots[c]`). A drop NEARER than the sprite (`ceil-d < d`) hides every row above the lip, so the head clamps to `max(e-top, ceil-bots)`.
-- A farther or absent tier is ignored. The band values are read only when the matching distance is present, so the sentinel `svh` a riserless / ceilingless column carries never reaches the `max`/`min` (the ceiling `max` would otherwise swallow the whole span). When the two clamps cross (`top >= bot`) the sprite is fully occluded and the column is skipped.
-
-So an enemy on a higher tier shows over a platform edge (its feet project above the nearer riser's top, nothing to clip), one standing below behind a nearer step has its legs cut, and one fully behind the step vanishes - exactly where the line of sight is geometrically clear. The clip only INTERSECTS the projected span; it never re-derives the projection. A FLAT level carries nil for `step-dists`/`ceil-dists` in every column, so both guards are false, the span is returned unchanged, and the render is byte-identical (pinned by `render-cache-test/test-frame-bytes-pinned`).
-
-Scope (px1, single nearest tier): the cast keeps only the NEAREST riser + ceiling per column, so an enemy sandwiched between two near tiers is clipped against the nearer one alone (no multi-tier stacking). The pixel-doubled cast (`compact-cast-2`) drops the tier arrays, so px2 keeps the old wall-only gate. The grounding shadow / face / HP-flash overlays still reuse the wall `dists` gate and can bleed past a riser (cosmetic fast-follow). See [rendering.md](rendering.md) for where the clip sits in the zone pass.
+Hitscan reuses the same foot-row projection, so the vertical aim gate and the drawn pixels stay in sync. A shot connects when the FIXED screen-centre crosshair (`svh/2` - it does not shear with pitch) lands inside the drawn body. Looking up slides a sprite DOWN past the centre and looking down lifts it UP, so a short far billboard slips off the crosshair (vertical aim) while a tall near one stays caught.
 
 ## Performance
 

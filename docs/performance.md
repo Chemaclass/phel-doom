@@ -218,35 +218,6 @@ Effect on `cast-frame` (2000-iter bench, `default-grid`):
 
 Cast scales linearly with column count. Live perf is available in-game via **F3** (cast/render split, bytes emitted, PHP memory, RLE compression).
 
-### Per-cell floor heights (#232)
-
-The riser side-channel adds 5 parallel `:step-*` arrays to `cast-frame` (one extra DDA recur accumulator + 5 `php/aset` per output column). On a FLAT world (`build-world 1`, no `:floor-heights`) at the three viewports, no-JIT `phel run` absolutes (trust deltas, not ms):
-
-| Viewport | metric | main | #232 | Δ% | verdict |
-|---|---|---|---|---|---|
-| 80x24  | cast   | 0.157 | 0.192 | +22% | structural (5 asets/col) |
-| 80x24  | render | 4.62  | 4.74  | +2.6% | noise |
-| 120x30 | cast   | 0.227 | 0.278 | +22% | structural |
-| 120x30 | render | 6.26  | 6.43  | +2.7% | noise |
-| 180x40 | cast   | 0.338 | 0.410 | +21% | structural |
-| 180x40 | render | 9.35  | 9.73  | +4% | noise-ish |
-
-The cast delta is a fixed +0.03 to +0.07 ms (the 5 array writes), on a base that is ~25x smaller than render, so it is a rounding error against the 5 ms cast+render budget. The render path is unchanged on a flat world (the riser/cap branches are dead when `step-from = vh`), consistent with the byte-identical golden hashes. The compiled `do-cast` keeps its 5 closures (none new in the DDA loop) and the per-cell render loops keep their closure count, so the closure-tax invariant holds. Frame output is byte-identical with all floors 0 (`render-cache-test/test-frame-bytes-pinned`, hashes unchanged).
-
-### Textured step caps (#236)
-
-The #232 cap was a flat shade aget; #236 makes it a textured floor sample (`floor-cap-px`: scale the row's ground distance by `(eye-z - fz)/eye-z`, look up the `floor-tex-px` texel, fog by `floor-level`). This is added ONLY inside the cap branch (rows above `step-tops` inside the riser band), so it executes only where a raised cap is on screen. `frame->string` render-ms (no-JIT local `phel run`, 300-iter mean after 20 warm; trust deltas, not ms):
-
-| Viewport | world | main | #236 | Δ ms | Δ% | verdict |
-|---|---|---|---|---|---|---|
-| 80x24  | flat (fz=0) | 4.141 | 4.117 | -0.024 | -0.6% | noise |
-| 120x30 | flat (fz=0) | 5.594 | 5.661 | +0.067 | +1.2% | noise |
-| 180x40 | flat (fz=0) | 8.381 | 8.456 | +0.075 | +0.9% | noise |
-| 80x24  | raised caps | 3.896 | 4.036 | +0.140 | +3.6% | cap texturing |
-| 120x30 | raised caps | 5.298 | 5.462 | +0.164 | +3.1% | cap texturing |
-| 180x40 | raised caps | 7.901 | 8.091 | +0.190 | +2.4% | cap texturing |
-
-The FLAT fast path is the gate: a flat (`fz=0`) world never enters the cap branch (the whole riser/cap clause is dead when `step-from = vh`), so the +0.07 ms at 120x30 is pure measurement noise (well under the 0.2 ms budget; the flat clause emits the same `step-dists=nil` sentinel and the same byte-identical golden hashes). The raised-caps delta (+0.14 to +0.19 ms vs the flat-cap baseline, a 3x9-cell stair run) is the intended texture sample + gamma-fog cost, paid only on the cap rows that are actually visible. The `floor-cap-px` `let` sits in cond-statement position (an `if`-clause body, not a binding value), so it does NOT add a per-cell closure - the closure-tax invariant holds.
 
 Half-block sub-pixel rendering (`frame->string`, 200-iter mean, measured BEFORE the closure-tax fix - the ratios still hold, the absolutes are ~5-10x today's):
 

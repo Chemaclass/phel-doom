@@ -2,7 +2,7 @@
 ;; perf snapshot, and the end / menu screens.
 (ns phel-doom.io.render.main
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
-  (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade sky-code floor-code door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright shade-table shade-code-table shade-table-blood shade-code-table-blood])
+  (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright shade-table shade-code-table shade-table-blood shade-code-table-blood floor-tier tier-shade-tables tier-bg-cell-caches])
   (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table bg-cell-cache halfblock build-sky-halfblock build-sky-codes-sub seam-darken-16 seam-darken-8 seam-darken-5 collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.wall-texture-data :refer [wall-tex])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type-lod sprite-fade sprite-fade-index sprite-col-x sprite-subcol-x enemy-sprite-cell enemy-sprite-quad])
@@ -286,12 +286,16 @@
    SAME `floor-tex-px` and gamma + `floor-darken` fog as the flat floor,
    so a step top reads as continuous shaded stone rather than a flat
    patch. `fdx`/`fdy` are the column's floor-cast basis; `pfx`/`pfy` the
-   player position. Returns a ready `bg-cell-cache` cell string.
+   player position. `tier` (#304) is the cap's height band (1 cool /
+   2 rose); the fogged texel is fetched from the matching tier-tinted
+   BG cache so the cap reads as tier-coloured STONE (texture + fog kept,
+   only hue pushed). Returns a ready BG cell string.
 
    Only called from the per-cell cap branch on raised (`fz>0`) columns
    with the floor texture on; fz=0 / flat columns keep the single-plane
-   fast path, so this never runs on a flat frame (byte-identity holds)."
-  [^float dp0 ^float fz ^float eye-z ^float fdx ^float fdy ^float pfx ^float pfy]
+   fast path, so this never runs on a flat frame (byte-identity holds).
+   A cap is only drawn for fz>0, so `tier` is always 1 or 2 here."
+  [^float dp0 ^float fz ^float eye-z ^float fdx ^float fdy ^float pfx ^float pfy ^int tier]
   (let [dp  (php/* dp0 (php// (php/- eye-z fz) eye-z))
         fx  (php/+ pfx (php/* dp fdx))
         fy  (php/+ pfy (php/* dp fdy))
@@ -302,7 +306,8 @@
                      (php/min 23
                               (php/- (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// dp max-depth))) 0.6) 23))
                                      floor-darken)))]
-    (php/aget bg-cell-cache (php/aget (php/aget tex-fade-table lvl) tc))))
+    (php/aget (php/aget tier-bg-cell-caches tier)
+              (php/aget (php/aget tex-fade-table lvl) tc))))
 
 ;; =====================================================================
 ;; § Per-column wall shading
@@ -319,7 +324,7 @@
    keep the same names it used previously.
 
    `cast`       ray-cast outputs {:dists :hits :sides}
-   `palette`    {:stbl :ctbl :sky-c :floor-c :door-shade-now :door-code-now
+   `palette`    {:stbl :ctbl :door-shade-now :door-code-now
                  :door-tex-boost :sky-code-grad :floor-code-grad
                  :blood-sky-code-grad :blood-floor-code-grad}
    `blood-cols` per-col directional blood mask (from build-blood-cols)
@@ -357,7 +362,7 @@
    byte-identical to the flat renderer."
   [vw vh haze-shift cast palette blood-cols ^float pd & [pr-arg step-dists step-fzs step-sides eye-z-arg ceil-dists ceil-czs ceil-sides]]
   (let [{:keys [dists hits sides wallxs]}                              cast
-        {:keys [stbl ctbl sky-c floor-c door-shade-now door-code-now
+        {:keys [stbl ctbl door-shade-now door-code-now
                 door-tex-boost
                 boss-door-shade-now boss-door-code-now
                 sky-code-grad floor-code-grad
@@ -549,12 +554,20 @@
                                                 (php/+ (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// s-d max-depth))) 0.6) 23))
                                                        (if (php/=== s-side 0) 3 0))))
                     s-idx     (php/max 0 (php/- s-idx-raw haze-shift))
-                    cap-idx   (php/max 0 (php/- s-idx 2))]
+                    cap-idx   (php/max 0 (php/- s-idx 2))
+                    ;; Per-tier hue tint (#304): a raised step's face + cap
+                    ;; read in the cool / rose tier shade keyed on its floor
+                    ;; height so stacked plateaus are visually distinct.
+                    ;; Blood i-frames still win (red wash overrides the tint
+                    ;; for the "you got hit" cue), and fz<=0 maps to tier 0 =
+                    ;; the neutral grey table, so a flat step is byte-
+                    ;; identical to the pre-#304 shade.
+                    tier-tbl  (if blood? stbl-l (php/aget tier-shade-tables (floor-tier s-fz)))]
                 (buf-set step-from col s-from)
                 (buf-set step-bots col s-to)
                 (buf-set step-tops col s-top)
-                (buf-set step-face col (buf-get stbl-l s-idx))
-                (buf-set step-cap  col (buf-get stbl-l cap-idx)))))
+                (buf-set step-face col (buf-get tier-tbl s-idx))
+                (buf-set step-cap  col (buf-get tier-tbl cap-idx)))))
           ;; Per-cell ceiling-height hanging ceiling + cap (#235), the
           ;; mirror of the floor riser but anchored at the TOP. Runs once
           ;; per COLUMN (the closure tax is a per-CELL concern). nil ceil
@@ -943,8 +956,6 @@
         ;; Half-block edge cells need the sky/floor colour CODE for
         ;; the current palette so the composer can write
         ;; "\e[48;5;WALL;38;5;SKYm▀" and let ▀'s upper half show sky.
-        sky-c                              sky-code
-        floor-c                            floor-code
         ctbl                               shade-code-table
         ;; Calmer 3D view: doors and the aggro head are held STEADY on
         ;; their bright frame instead of pulsing between two shades. The
@@ -1059,7 +1070,6 @@
         (compute-wall-shades svw svh haze-shift
                              {:dists dists :hits hits :sides sides :wallxs wallxs}
                              {:stbl stbl :ctbl ctbl
-                              :sky-c sky-c :floor-c floor-c
                               :door-shade-now door-shade-now
                               :door-code-now  door-code-now
                               ;; Steady door brightness (calm 3D view): the
@@ -2026,7 +2036,7 @@
                               (php/aset cell-reg 0
                                         (floor-cap-px dp-cell (buf-get step-fzs col) eye-z
                                                       (buf-get floordxs col) (buf-get floordys col)
-                                                      pfx pfy))
+                                                      pfx pfy (floor-tier (buf-get step-fzs col))))
                               (php/aset cell-reg 0 (buf-get shades-step-cap col)))
                             (php/aset cell-reg 0 (buf-get shades-step-face col)))
                           ;; Per-cell ceiling-height hanging ceiling + cap

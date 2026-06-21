@@ -452,3 +452,128 @@
     (if (php/<= dc dg)
       (php/+ 16 (php/* 36 ri) (php/* 6 gi) bi)
       (php/+ 232 gidx))))
+
+;; ---------------------------------------------------------------------
+;; Per-tier floor tint (issue #304). A multi-tier room (L7) drew every
+;; raised platform, riser and cap in the same grey stone, so the stepped
+;; structure was invisible. Each raised tier now gets a DISTINCT hue tint
+;; keyed on the cell's floor height `fz`: the lower raised band reads cool
+;; (steel-blue stone), the higher band reads rose (magenta stone). Tier 0
+;; (fz<=0, the spawn floor + every flat level) keeps the neutral grey -
+;; the tint is a strict NO-OP there, so flat frames stay byte-identical
+;; (the golden `test-frame-bytes-pinned` hashes are unchanged).
+;; ---------------------------------------------------------------------
+
+(defn floor-tier
+  "Tier band for a cell floor height `fz` (issue #304): 0 = ground (no
+   tint, fz<=0 - flat floor + descended trench), 1 = lower raised band
+   (cool), 2 = higher raised band (rose). The 0.85 split lands the L7
+   middle tier (0.75) + L5 dais (0.8) in the cool band and the L7 top
+   tier (1.5) + its 1.125 stair in the rose band, so the two stacked
+   plateaus read as two distinct hues. Pure; one comparison, hot-path
+   cheap (called once per riser column, not per cell)."
+  [^float fz]
+  (cond (php/<= fz 0.0) 0
+        (php/< fz 0.85) 1
+        :else           2))
+
+(def- tier-tints
+  ;; Per-tier RGB channel multipliers applied to the grey stone before
+  ;; re-quantizing. Tuned to stay a TINT, not a solid neon: luminance is
+  ;; preserved (the fog ramp + EW side shading still read), only the hue
+  ;; is pushed. Index 0 is unused (tier 0 never tints).
+  ;;   tier 1 = cool steel-blue (pull blue up, red/green down).
+  ;;   tier 2 = magenta-rose (pull red + blue up, CRUSH green).
+  ;; The base stone is warm-grey, so an amber tier-2 would blend into it
+  ;; (a stone code like 94 only shifts to the near-identical 130). Rose is
+  ;; ABSENT from the grey/brown/orange stone band, so a rose riser reads
+  ;; distinct at any distance, and cool-blue + rose form a complementary
+  ;; cold/warm pair so the two tiers never compete in the same hue half.
+  {1 {:r 0.55 :g 0.75 :b 1.45}    ; cool steel-blue
+   2 {:r 1.35 :g 0.55 :b 1.10}})  ; magenta-rose
+
+(defn- tint-code
+  ;; Hue-shift one grey 256-colour `code` by a tier's RGB multipliers,
+  ;; then quantize to the nearest 256 code. Clamps each channel to 255 so
+  ;; a bright near-white stone does not overflow. Load-time only.
+  [^int code mult]
+  (let [v (php/aget code-r code)]            ; grey: r=g=b, any channel works
+    (nearest-256 (php/min 255 (php/intval (php/* v (:r mult))))
+                 (php/min 255 (php/intval (php/* v (:g mult))))
+                 (php/min 255 (php/intval (php/* v (:b mult)))))))
+
+(defn- tint-shade-table
+  ;; Build a 24-entry tinted twin of `shade-table` for `tier`: each grey
+  ;; level 0-23 is hue-shifted then baked into a ready `\e[48;5;Cm ` BG
+  ;; cell string, so the riser/cap hot path is one aget (no per-cell tint
+  ;; math). Mirrors shade-table's structure so the riser/cap loop can swap
+  ;; tables by tier with no other change.
+  [tier]
+  (let [mult (get tier-tints tier)
+        t    (buf-mk)]
+    (loop [i 0]
+      (when (php/< i 24)
+        (buf-set t i (str "\e[48;5;" (tint-code (php/+ 232 i) mult) "m "))
+        (recur (php/+ i 1))))
+    t))
+
+(def shade-table-tier1
+  "Cool steel-blue tint of `shade-table` for the lower raised tier
+   (issue #304). Same 24-level fog ramp, hue pushed cool so a mid-height
+   platform/riser reads as a distinct tier without losing depth shading."
+  (tint-shade-table 1))
+
+(def shade-table-tier2
+  "Magenta-rose tint of `shade-table` for the higher raised tier (issue
+   #304). Same 24-level fog ramp, hue pushed to rose - a hue ABSENT from
+   the warm-grey stone palette, so the top tier reads distinct from both
+   the neutral ground and the cool middle tier at any distance."
+  (tint-shade-table 2))
+
+(def tier-shade-tables
+  "Tier index -> tinted shade table. Index 0 is the neutral grey
+   `shade-table` (no tint), so a `(php/aget tier-shade-tables (floor-tier
+   fz))` lookup is a uniform, branch-free table swap on the riser/cap
+   path. fz=0 cells select the grey table verbatim, keeping flat frames
+   byte-identical."
+  (php/array shade-table shade-table-tier1 shade-table-tier2))
+
+(defn- tint-bg-cell-cache
+  ;; Build a tinted twin of frame-math's `bg-cell-cache` for `tier`: a
+  ;; 256-entry table mapping each 256-colour code to a ready
+  ;; `\e[48;5;Cm ` BG cell whose colour is the tier-hue-shifted code.
+  ;; The textured cap path resolves a fogged floor texel code, then
+  ;; fetches its tinted cell here so a raised cap reads as tier-coloured
+  ;; STONE (texture + fog preserved, only hue pushed). Load-time only.
+  [tier]
+  (let [mult (get tier-tints tier)
+        a    (buf-mk)]
+    (loop [c 0]
+      (when (php/< c 256)
+        (buf-set a c (str "\e[48;5;" (tint-code c mult) "m "))
+        (recur (php/+ c 1))))
+    a))
+
+(def- neutral-bg-cell-cache
+  ;; Untinted twin of frame-math's `bg-cell-cache` (palette can't require
+  ;; frame-math - that would be a circular dep - so it is rebuilt here).
+  ;; Only used as the index-0 fallback below; the per-cell hot path still
+  ;; goes through frame-math's own `bg-cell-cache`.
+  (let [a (buf-mk)]
+    (loop [c 0]
+      (when (php/< c 256)
+        (buf-set a c (str "\e[48;5;" c "m "))
+        (recur (php/+ c 1))))
+    a))
+
+(def tier-bg-cell-caches
+  "Tier index -> tinted `bg-cell-cache` for the textured step cap
+   (issue #304). Index 1 = cool, index 2 = rose. Index 0 is the NEUTRAL
+   (untinted) cache: a tier-0 cap never exists today (a cap is only drawn
+   for fz>0, guarded at the `floor-cap-px` call site), so the cap path
+   only ever indexes 1 or 2 - but index 0 holds real cells (not nil) so
+   that if the textured-cap path is ever extended to fz=0 it renders plain
+   stone rather than a silent empty-string hole (`php/aget` on nil). Lets
+   `floor-cap-px` fetch a tier-tinted stone cell with the same single
+   nested aget as the neutral path."
+  (php/array neutral-bg-cell-cache (tint-bg-cell-cache 1) (tint-bg-cell-cache 2)))

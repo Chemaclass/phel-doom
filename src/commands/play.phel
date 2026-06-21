@@ -126,13 +126,13 @@
   (update-in world [:player :angle] (fn [a] (php/+ a php/M_PI))))
 
 (defn apply-mouse-look
-  "Apply one frame's mouselook delta (issue #246) to the player. `look`
-   is the `controls/mouse-look` result; `:yaw` rotates `:angle` (same
-   path as a keyboard turn) and `:pitch` shears `:pitch` clamped to
+  "Apply one frame's positional mouselook steering (#318) to the player.
+   `look` is the `controls/mouse-look` result; `:yaw` rotates `:angle`
+   (same path as a keyboard turn) and `:pitch` shears `:pitch` clamped to
    [-1, 1] via `clamp-pitch` (same saturation as the ↑/↓ keys). A zero
-   delta (no mouse motion) is a no-op so the keyboard look is untouched.
-   Pure; the game loop calls it only on an unpaused frame so the camera
-   can't drift while a menu is up."
+   yaw/pitch (pointer in the centre deadzone) is a no-op so the keyboard
+   look is untouched. Pure; the game loop calls it only on an unpaused
+   frame so the camera can't drift while a menu is up."
   [world look]
   (let [yaw   (or (:yaw look) 0.0)
         pitch (or (:pitch look) 0.0)
@@ -956,10 +956,11 @@
            prev-keys  initial-key-snapshot
            dims       [0 0]
            cal        {:px nil :n 0 :best 1.0e9 :tdims [0 0]}
-           ;; Last pointer position mouselook (#246) measured against;
-           ;; nil until the first SGR report so the pointer's opening
-           ;; absolute position can't read as one giant jump. Threaded
-           ;; like prev-keys.
+           ;; Cached pointer position positional mouselook (#318) steers
+           ;; from. nil until the first SGR report or until seeded to the
+           ;; terminal CENTER below (a centered pointer steers zero, so the
+           ;; camera never spins before a real report). Threaded like
+           ;; prev-keys.
            prev-mpos  nil
            ;; Frame counter + last raw terminal [trows tcols], threaded so
            ;; the per-frame `stty size` fork only runs on poll frames
@@ -1002,17 +1003,24 @@
                 ms        (or (:ms frame) live-ms)
                 now-keys  (key-states keys)
                 edges0    (rising-edges now-keys prev-keys)
-                ;; Mouselook (#246): parse the same drained byte string for
-                ;; SGR mouse reports. `:yaw`/`:pitch` move the camera (applied
-                ;; to the world below, before the tick, so the frame renders +
-                ;; aims with the new heading); a left click ORs into the
+                ;; Positional mouselook (#318): parse the same drained byte
+                ;; string for SGR mouse reports. `:yaw`/`:pitch` steer the
+                ;; camera by how far the cached pointer sits from the terminal
+                ;; CENTER (applied below before the tick, so the frame renders
+                ;; + aims with the new heading); a left click ORs into the
                 ;; existing space-fire edges so a mouse click shoots exactly
                 ;; like space (held button feeds auto-fire weapons). `:pos`
-                ;; threads forward as the next frame's delta baseline. The
-                ;; live `[rows cols]` enables edge-turn continuation (#288):
-                ;; pushing the pointer into an edge keeps the camera turning
-                ;; so the pointer never needs to leave the terminal.
-                look      (mouse-look keys prev-mpos
+                ;; threads forward as the next frame's cached pointer. Seed the
+                ;; cached pointer to CENTER at game start (prev-mpos nil) and
+                ;; reset it on a resize: a centered pointer steers zero, so the
+                ;; camera never auto-spins before a real report or when the
+                ;; absolute coords shift meaning under a new terminal size. The
+                ;; live `[rows cols]` gives steer-rate the axis lengths so the
+                ;; pointer keeps turning the camera while held off-center.
+                mpos      (if (or (nil? prev-mpos) (not= [rows cols] dims))
+                            [(php// (php/+ 1 cols) 2.0) (php// (php/+ 1 rows) 2.0)]
+                            prev-mpos)
+                look      (mouse-look keys mpos
                                       (mouse-sensitivity (:settings world))
                                       [rows cols])
                 edges     (assoc edges0
@@ -1036,7 +1044,7 @@
                     ;; tick so this frame's hitscan + render use the new
                     ;; heading. Gated on not-paused so the camera can't drift
                     ;; while a menu is up (tick-world freezes gameplay anyway,
-                    ;; but the look delta is outside that short-circuit).
+                    ;; but the steering yaw/pitch is outside that short-circuit).
                     aimed   (if (:paused world) scened (apply-mouse-look scened look))
                     ticked0 (tick-world aimed keys (php// ms 1000.0) edges)
                   ;; Pause overlay (#203): while paused (and not in the H

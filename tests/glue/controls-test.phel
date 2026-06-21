@@ -731,3 +731,110 @@
   ;; the approach contributes; the saturated tail is a zero delta.
   (let [r (mouse-look "\e[<35;120;10M\e[<35;120;10M" mouse-origin 1.0)]
     (is (approx? (php/* 110 0.018) (:yaw r)) "only the approach to the edge turns; the stuck tail adds nothing")))
+
+;; ---------------------------------------------------------------------
+;; mouse-look EDGE-TURN CONTINUATION (#288): with the live [rows cols]
+;; threaded in, a pointer in the thin outer band adds a CONTINUOUS yaw in
+;; that direction (signed + ramped with depth) on TOP of the saturated
+;; delta, so pushing into an edge keeps the camera turning. The central
+;; region stays pure delta (old feel). band on 120 cols = max(2, 8% of
+;; 120) = 10; edge-turn rate 0.06 rad/frame at full depth.
+;; ---------------------------------------------------------------------
+
+(def look-dims
+  "Live [rows cols] for edge-turn tests: 30 rows, 120 cols (band = 10)."
+  [30 120])
+
+(deftest test-mouse-look-right-edge-continues-turning-right
+  ;; Pointer parked at the very right edge cell (x=cols=120) with NO delta
+  ;; (re-report at the same edge cell): the saturated delta is zero, but
+  ;; edge-turn adds a positive (turn-right) yaw at full depth = +0.06.
+  (let [r (mouse-look "\e[<35;120;15M" [120 15] 1.0 look-dims)]
+    (is (approx? 0.06 (:yaw r)) "right edge -> continuous +yaw (turn right) even with zero delta")
+    (is (= 0.0 (:pitch r)) "edge-turn is yaw-only")))
+
+(deftest test-mouse-look-left-edge-continues-turning-left
+  ;; Pointer parked at the very left edge cell (x=1): edge-turn adds a
+  ;; negative (turn-left) yaw at full depth = -0.06.
+  (let [r (mouse-look "\e[<35;1;15M" [1 15] 1.0 look-dims)]
+    (is (approx? -0.06 (:yaw r)) "left edge -> continuous -yaw (turn left)")
+    (is (= 0.0 (:pitch r)) "edge-turn is yaw-only")))
+
+(deftest test-mouse-look-edge-turn-ramps-with-depth
+  ;; Deeper into the band = more yaw. Inside the right band on 120 cols:
+  ;; at x=115 the depth term is (band - (cols - x)) = (10 - 5) = 5, ramp
+  ;; 5/10 = 0.5 -> 0.03; at x=120 (the edge cell) it is (10 - 0) = 10, ramp
+  ;; 1.0 -> 0.06. Both measured with zero delta (re-report at the same
+  ;; cell) so only edge-turn contributes.
+  (let [shallow (mouse-look "\e[<35;115;15M" [115 15] 1.0 look-dims)
+        deep    (mouse-look "\e[<35;120;15M" [120 15] 1.0 look-dims)]
+    (is (approx? 0.03 (:yaw shallow)) "half-depth -> half rate")
+    (is (approx? 0.06 (:yaw deep)) "full depth -> full rate")
+    (is (php/> (:yaw deep) (:yaw shallow)) "deeper into the edge turns faster")))
+
+(deftest test-mouse-look-edge-turn-rides-on-top-of-delta
+  ;; Edge-turn is ADDITIVE on the (saturated) delta, not a replacement. A
+  ;; flick INTO the right edge: dx=10->120 = 110 cells = 1.98 rad of delta
+  ;; yaw, PLUS the +0.06 edge-turn because the endpoint sits at the edge.
+  (let [r (mouse-look "\e[<35;120;10M" mouse-origin 1.0 look-dims)]
+    (is (approx? (php/+ (php/* 110 0.018) 0.06) (:yaw r))
+        "edge-turn adds on top of the approach delta")))
+
+(deftest test-mouse-look-edge-turn-respects-sensitivity
+  ;; Edge-turn is scaled by sensitivity like the delta look (#288 respects
+  ;; the Sensitivity setting). 2x sensitivity doubles the edge-turn yaw;
+  ;; 0 sensitivity kills it entirely.
+  (is (approx? 0.12 (:yaw (mouse-look "\e[<35;120;15M" [120 15] 2.0 look-dims)))
+      "2x sensitivity doubles edge-turn")
+  (is (= 0.0 (:yaw (mouse-look "\e[<35;120;15M" [120 15] 0.0 look-dims)))
+      "0 sensitivity = no edge-turn"))
+
+(deftest test-mouse-look-central-pointer-is-pure-delta-with-dims
+  ;; The CENTRAL region is untouched by edge-turn even with dims threaded
+  ;; in: a hover well clear of both bands (x=10 -> 60 on 120 cols) yields
+  ;; exactly the delta yaw (50 * 0.018 = 0.9) and nothing extra. Same
+  ;; result as the no-dims call - the old feel is preserved.
+  (let [with-dims (mouse-look "\e[<35;60;15M" [10 15] 1.0 look-dims)
+        no-dims   (mouse-look "\e[<35;60;15M" [10 15] 1.0)]
+    (is (approx? 0.9 (:yaw with-dims)) "centre -> pure delta yaw, no edge-turn")
+    (is (= (:yaw no-dims) (:yaw with-dims)) "dims do not change central feel")))
+
+(deftest test-mouse-look-no-dims-disables-edge-turn
+  ;; Backwards-compatible: omitting dims (the old 3-arg call) means NO
+  ;; edge-turn, so a pointer pinned at the edge with zero delta produces
+  ;; zero yaw - exactly the pre-#288 saturation behaviour.
+  (let [r (mouse-look "\e[<35;120;15M" [120 15] 1.0)]
+    (is (= 0.0 (:yaw r)) "no dims -> no edge-turn (old saturating behaviour)")))
+
+(deftest test-mouse-look-reentry-after-gap-resets-cleanly
+  ;; Graceful re-entry (#288): if the pointer leaves the terminal and
+  ;; comes back FAR from where it was (a Chebyshev gap beyond
+  ;; mouse-reentry-gap-cells = 256), that frame RE-BASELINES rather than
+  ;; reading the gap as one giant yaw jump. Here prev-pos is [10 10] and
+  ;; the pointer re-appears at x=300: the 290-cell gap is treated as a
+  ;; re-entry, so no yaw this frame; pos still advances so the NEXT frame
+  ;; measures from the new spot.
+  (let [r (mouse-look "\e[<35;300;10M" [10 10] 1.0)]
+    (is (= 0.0 (:yaw r)) "re-entry gap re-baselines, no jump yaw")
+    (is (= 0.0 (:pitch r)) "and no jump pitch")
+    (is (= [300 10] (:pos r)) "pos advances so the next frame measures cleanly")))
+
+(deftest test-mouse-look-fast-flick-is-not-a-reentry
+  ;; The re-entry guard must NOT swallow a fast-but-continuous flick: a
+  ;; 110-cell sweep (under the 256 floor) is real travel and turns
+  ;; normally. Guards against a too-tight threshold killing fast looks.
+  (let [r (mouse-look "\e[<35;120;10M" mouse-origin 1.0)]
+    (is (approx? (php/* 110 0.018) (:yaw r)) "a wide flick is real travel, not a re-entry")))
+
+(deftest test-mouse-look-reentry-threshold-scales-with-width
+  ;; On a very wide terminal the re-entry threshold scales to 2*cols, so a
+  ;; full-width flick (here ~398 cells on a 400-col terminal, above the 256
+  ;; floor but below 2*400 = 800) is still read as REAL travel, not a
+  ;; re-entry. Without the cols-aware scaling the static 256 floor would
+  ;; misclassify it and drop the yaw.
+  (let [wide [60 400]
+        r    (mouse-look "\e[<35;400;10M" [2 10] 1.0 wide)]
+    ;; dx = 398; the endpoint x=400 also sits at the right edge so a full
+    ;; edge-turn (+0.06) rides on top of the delta. The point of the test
+    ;; is that the 398-cell delta is NOT swallowed as a re-entry.
+    (is (php/> (:yaw r) (php/* 398 0.018)) "a full-width flick on a wide terminal is real travel, not a re-entry")))

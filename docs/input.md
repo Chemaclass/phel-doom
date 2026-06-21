@@ -73,10 +73,26 @@ So `b=0` final `M` is a left press, `b=32` is a left drag (button 0 + motion), `
 - **Camera speed tracks pointer speed** (issue #275): the mapping is linear and clamp-free, so a fast flick (a big per-frame delta) turns fast and a slow nudge turns slow - a 2x-larger delta yields 2x the yaw at a fixed sensitivity. Nothing inside `mouse-look` or `apply-mouse-look` clamps the yaw magnitude (only `:pitch` saturates, by design, at the clamped [-1, 1] range). The proportionality is pinned by tests.
 - Per-cell scales (`mouse-yaw-scale` 0.018 rad, `mouse-pitch-scale` 0.02 fraction) tune the native-FPS feel. Yaw is sized so a brisk full-width flick (~120 cols) sweeps ~2.16 rad (~124 deg) at the neutral 1.0x sensitivity - a strong turn per stroke before the pointer saturates at the edge. Pitch covers a useful slice of the clamped [-1, 1] range in a few cells of vertical travel.
 - Motion RIGHT (+dx) -> +yaw; motion UP -> +pitch (rows grow DOWNWARD, so up is a decreasing y, hence the dy is negated).
-- **Edge-clamp caveat**: because the coords are absolute and clamp to `1..cols` / `1..rows`, a continuous drag into a screen edge produces a **zero delta** there - the terminal equivalent of running the mouse off the pad. There is no recentering. This approximates true mouselook within the terminal's limits, not perfectly.
+- **Edge-clamp caveat**: because the coords are absolute and clamp to `1..cols` / `1..rows`, a continuous drag into a screen edge produces a **zero delta** there - the terminal equivalent of running the mouse off the pad. There is no recentering. **Edge-turn continuation** (below) is the workaround.
 - `:pos` threads forward as the next frame's baseline (in `game-loop`, alongside `prev-keys`). The very first report of a session only establishes the baseline (zero delta), so the pointer's opening absolute position can't read as one giant jump.
 
 `commands/play.apply-mouse-look` folds the delta into the player before the tick (so the frame renders + aims with the new heading), gated on not-paused so the camera can't drift while a menu is up.
+
+### Edge-turn continuation (issue #288)
+
+A terminal **cannot truly lock or warp the pointer** - there is no portable way to recenter the OS cursor. So instead of locking it, `mouse-look` makes the pointer rarely *need* to reach the edge: pushing it into the outer edge band keeps the camera turning on its own, like RTS edge-scroll. The player can spin a full 360 without the pointer ever leaving the terminal. This is **best-effort**, not a real pointer lock; if the player flings the pointer fully out of the window it still leaves (the re-entry guard below recovers it).
+
+The live `[rows cols]` is threaded into `mouse-look` (the `& [dims]` arg) so it knows where the edges are. Omitting `dims` keeps the old pure-delta behaviour (used by tests / any non-loop caller).
+
+- **The band.** Per axis, the outer band is `max(mouse-edge-margin-cells = 2, round(mouse-edge-margin-frac = 8% * len))`, capped at half the axis. On a 120-col terminal that is 10 cells each side, leaving the central ~84% as **pure delta look** - normal feel is unchanged in the centre.
+- **The continuous yaw.** When the latest pointer x lands in the left/right band, an extra yaw is added **on top of** the (saturated) delta. It ramps **linearly** from 0 at the band's inner edge to `mouse-edge-turn-rate` (0.06 rad/frame) at the very edge cell, signed toward that edge (left band -> turn left, right band -> turn right). Deeper into the edge = faster turn. It is multiplied by the same Sensitivity multiplier as the delta, so the Mouse on/off + Sensitivity settings both still govern it. Yaw is the priority; pitch already clamps to [-1, 1] so top/bottom edge-continue is intentionally not added.
+- **Graceful re-entry.** If a report arrives more than the re-entry threshold (Chebyshev) from the previous pointer cell - the signature of the pointer leaving the terminal and re-appearing somewhere far off - that frame **re-baselines** (zero delta, `:pos` advances to the new cell) instead of reading the gap as one giant yaw jump. Under any-motion tracking the terminal emits a report per cell crossed, so a genuine fast flick never steps that far between consecutive reports; only a true leave-and-return does. The threshold is `max(mouse-reentry-gap-cells = 256, 2 * cols)` (`reentry-gap`), so even a full-width flick on a very wide (4K / tiny-font) terminal stays under it and is read as real travel; only a true teleport crosses it.
+
+The edge math (`edge-turn-yaw`, `edge-band-cells`, `reentry-jump?`) stays **pure** in `glue/controls` and is unit-tested (sign, depth ramp, additivity, sensitivity scaling, central-region pure-delta, re-entry reset). The escape re-assert that re-arms reporting lives in `io/` (next section).
+
+### Re-arming mouse reporting (issue #288)
+
+A focus loss / regain (or some resizes) can make a terminal **silently drop** mouse tracking, leaving mouselook dead even though the pointer is still over the window. `init-input!` only enables tracking once at startup, so `io/input.rearm-mouse!` re-asserts the `\e[?1003h\e[?1006h` escapes (plus `\e[?25l` to keep the caret hidden across the same mode flip). The play loop calls it - gated on the Mouse setting - on a resize (where tracking most often drops) or every `rearm-mouse-frames` (60th) frame, via the pure `rearm-mouse?` cadence predicate. One short idempotent escape burst; the frame budget is untouched.
 
 ### Fire
 

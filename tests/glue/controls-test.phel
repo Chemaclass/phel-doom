@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.glue.controls
             :refer [key-states refresh-from-keys rising-edges initial-key-snapshot
-                    nav-deltas refresh-move mouse-look steer-rate]))
+                    nav-deltas refresh-move mouse-aim reticle-axis edge-pan-rate]))
 
 (def blank-moves
   {:fwd          0
@@ -454,305 +454,288 @@
   (is (= false (:confirm (rising-edges {:sp false :enter false} {:sp false :enter false})))))
 
 ;; ---------------------------------------------------------------------
-;; Mouse look POSITIONAL STEERING (#318): pure SGR-mouse parse -> per-frame
-;; yaw/pitch RATE from the cached pointer's distance to the terminal
-;; CENTER + fire intent. SGR report shape: ESC [ < b ; Cx ; Cy (M|m).
+;; Movable aim crosshair (#324): pure SGR-mouse parse -> reticle position
+;; (1:1 with the pointer, clamped to the viewport) + an edge-pan yaw/pitch
+;; RATE that only fires while the reticle sits in the outer band. Replaces
+;; the positional steer-rate model (#318/#320). SGR report shape:
+;; ESC [ < b ; Cx ; Cy (M|m), Cx/Cy 1-based absolute cells.
 ;;   b = 0  -> left button press (discrete)
-;;   b = 32 -> motion bit set, button 0 = LEFT DRAG (held during move)
-;;   b = 35 -> motion bit set, low bits 3 = bare hover (no button held)
-;; A central DEADZONE produces no turn; past it an ease-in ramp reaches
-;; max-rate at the screen edge. Yaw is signed by which side of center the
-;; pointer x is on; pitch y is NEGATED (rows grow downward, so a pointer
-;; ABOVE center looks UP, +pitch). The steering reads the FINAL cached
-;; position, so a HELD pointer keeps turning with NO new bytes.
+;;   b = 32 -> motion bit, button 0 = LEFT DRAG (held during move)
+;;   b = 35 -> motion bit, low bits 3 = bare hover (no button held)
 ;;
-;; All look tests pass `look-dims` so steer-rate has the axis lengths.
-;; For [30 120]: center-col 60.5, half-col 59.5, deadzone-col 5.95 (10% of
-;; half), span-col 53.55; rate-max yaw 0.16, pitch 0.06 at the far edge.
+;; reticle-axis maps a 1-based pointer cell to a 0-based viewport cell:
+;; clamp(center + (pointer-1 - center)*sens), so it is 1:1 at sens 1 and
+;; PINS at the edge when the pointer leaves the window (absolute-clamped,
+;; the #313 pointer-drift fix). edge-pan-rate is 0 in the inner centre
+;; region and eases (square) to max-rate at the very edge.
+;;
+;; For [30 120]: centre cell (0-based) is 59.5 col / 14.5 row; the edge-pan
+;; band is the outer 30% of each half-axis, so the col band starts at
+;; ~101.15 and the row band at ~24.65; rate-max yaw 0.16, pitch 0.06.
 ;; ---------------------------------------------------------------------
 
 (def look-dims
-  "Live [rows cols] for the positional-steering tests: 30 rows, 120 cols
-   (center cell 60.5 / 15.5; deadzone 10% of each half-axis)."
+  "Live [rows cols] for the reticle tests: 30 rows, 120 cols (centre cell
+   59.5 col / 14.5 row, 0-based)."
   [30 120])
 
-;; Pointer cells used across the suite (all on the 30x120 axes):
+;; Pointer cells (1-based SGR Cx/Cy) used across the suite:
 (def center-pos
-  "Cell at (or one off) the terminal center, inside the deadzone."
+  "Pointer at (or one off) the terminal centre."
   [60 15])
-(def right-edge-pos [120 15])  ; far right edge cell -> max +yaw
-(def left-edge-pos  [1 15])    ; far left edge cell  -> max -yaw
-(def top-edge-pos   [60 1])    ; top edge cell       -> max +pitch (look up)
-(def bottom-edge-pos [60 30])  ; bottom edge cell    -> max -pitch (look down)
+(def right-edge-pos [120 15])  ; far right edge   -> reticle col 119, +yaw
+(def left-edge-pos  [1 15])    ; far left edge    -> reticle col 0,   -yaw
+(def top-edge-pos   [60 1])    ; top edge         -> reticle row 0,   +pitch (look up)
+(def bottom-edge-pos [60 30])  ; bottom edge      -> reticle row 29,  -pitch (look down)
 
 (defn- approx?
   "Float compare with a tolerance, so an eased ramp that lands on
-   0.0309444... still matches the expected value."
+   0.0393... still matches the expected value."
   [^float a ^float b]
   (php/< (php/abs (php/- a b)) 1.0e-9))
 
-;; steer-rate is the core of the model; pin its key points directly.
+;; --- reticle-axis: 1-based pointer cell -> 0-based clamped reticle cell ---
 
-(deftest test-steer-rate-center-is-deadzone
-  ;; A pointer at (or beside) the center cell sits in the deadzone -> 0.
-  (is (= 0.0 (steer-rate 60 120 0.16)) "center -> no turn")
-  (is (= 0.0 (steer-rate 61 120 0.16)) "one cell off center is still deadzone"))
+(deftest test-reticle-axis-is-one-to-one-at-neutral-sensitivity
+  ;; sens 1.0: the reticle tracks the pointer cell exactly (1-based ->
+  ;; 0-based, so Cx 60 -> col 59), moving one cell per pointer cell.
+  (is (= 59.0 (reticle-axis 60 120 1.0)) "pointer cell 60 -> reticle col 59")
+  (is (= 79.0 (reticle-axis 80 120 1.0)) "pointer cell 80 -> reticle col 79")
+  ;; 1:1: a 20-cell pointer move is a 20-cell reticle move.
+  (is (= 20.0 (php/- (reticle-axis 80 120 1.0) (reticle-axis 60 120 1.0)))
+      "20 pointer cells -> 20 reticle cells (1:1)"))
 
-(deftest test-steer-rate-edges-hit-max
-  ;; At the far edge cells the ramp saturates to +/- max-rate.
-  (is (approx? 0.16 (steer-rate 120 120 0.16)) "right edge -> +max")
-  (is (approx? -0.16 (steer-rate 1 120 0.16)) "left edge -> -max"))
+(deftest test-reticle-axis-clamps-to-viewport
+  ;; The reticle never leaves the viewport: the right/left edges clamp to
+  ;; the last/first cell, and a pointer PAST the window pins at that edge
+  ;; (the pointer-drift robustness - aiming never freezes mid-screen).
+  (is (= 119.0 (reticle-axis 120 120 1.0)) "right edge clamps to col 119")
+  (is (= 0.0 (reticle-axis 1 120 1.0)) "left edge clamps to col 0")
+  (is (= 119.0 (reticle-axis 200 120 1.0)) "pointer past the window pins at the edge")
+  (is (= 0.0 (reticle-axis -50 120 1.0)) "pointer left of the window pins at col 0"))
 
-(deftest test-steer-rate-grows-with-offset
-  ;; Magnitude grows monotonically the further the pointer is from center.
-  (let [near (steer-rate 75 120 0.16)
-        mid  (steer-rate 95 120 0.16)
-        far  (steer-rate 115 120 0.16)]
-    (is (php/> near 0) "right of center -> positive")
-    (is (php/> mid near) "further out turns faster")
-    (is (php/> far mid) "further still turns faster")
+(deftest test-reticle-axis-scales-with-sensitivity
+  ;; Sensitivity scales the reticle speed: at 2x the same pointer offset
+  ;; moves the reticle twice as far from centre; at 0.5x half as far.
+  (is (= 98.5 (reticle-axis 80 120 2.0)) "2x sensitivity doubles the offset from centre")
+  (is (= 69.25 (reticle-axis 80 120 0.5)) "0.5x sensitivity halves it"))
+
+(deftest test-reticle-axis-degenerate-axis-is-nil
+  ;; A nil / <=1 axis length has no viewport to clamp into.
+  (is (nil? (reticle-axis 60 nil 1.0)) "nil len -> nil")
+  (is (nil? (reticle-axis 60 1 1.0)) "len 1 -> nil"))
+
+;; --- edge-pan-rate: 0-based reticle cell -> per-frame pan rate ---
+
+(deftest test-edge-pan-rate-center-region-is-zero
+  ;; The inner ~70% centre region is pure 1:1 reticle movement: NO camera
+  ;; turn. Only the outer band pans.
+  (is (= 0.0 (edge-pan-rate 59.5 120 0.16)) "screen centre -> no pan")
+  (is (= 0.0 (edge-pan-rate 75.0 120 0.16)) "still in the centre region -> no pan")
+  (is (= 0.0 (edge-pan-rate 101.0 120 0.16)) "just inside the band edge -> no pan"))
+
+(deftest test-edge-pan-rate-band-pans
+  ;; Past the band threshold the camera pans, saturating to max-rate at the
+  ;; very edge cell; the left edge pans the opposite sign.
+  (is (php/> (edge-pan-rate 110.0 120 0.16) 0.0) "deep in the right band -> +pan")
+  (is (approx? 0.16 (edge-pan-rate 119.0 120 0.16)) "right edge saturates to +max")
+  (is (approx? -0.16 (edge-pan-rate 0.0 120 0.16)) "left edge saturates to -max"))
+
+(deftest test-edge-pan-rate-grows-toward-edge
+  ;; Magnitude grows monotonically the deeper into the band the reticle is.
+  (let [near (edge-pan-rate 105.0 120 0.16)
+        far  (edge-pan-rate 115.0 120 0.16)]
+    (is (php/> near 0.0) "inside the band -> positive")
+    (is (php/> far near) "nearer the edge pans faster")
     (is (php/<= far 0.16) "never exceeds the max rate")))
 
-(deftest test-steer-rate-eases-in
-  ;; Ease-in (square): the response is gentle near the deadzone edge. The
-  ;; midpoint of the post-deadzone span gives frac=0.5 -> eased 0.25, i.e.
-  ;; a QUARTER of max-rate, not half (a linear ramp would give half).
-  ;; span = half-dead = 53.55; midpoint offset = dead + span/2 = 32.725
-  ;; -> x = center + 32.725 = 93.225 ~ cell 93.
-  (let [mid (steer-rate 93 120 0.16)]
-    (is (php/< mid (php/* 0.5 0.16)) "ease-in: mid-span is below the linear half")))
+(deftest test-edge-pan-rate-degenerate-axis-is-zero
+  (is (= 0.0 (edge-pan-rate 60.0 nil 0.16)) "nil len -> 0")
+  (is (= 0.0 (edge-pan-rate 0.0 1 0.16)) "len 1 -> 0"))
 
-(deftest test-steer-rate-degenerate-axis-is-zero
-  ;; A nil or <=1 axis length must never auto-steer.
-  (is (= 0.0 (steer-rate 60 nil 0.16)) "nil len -> 0")
-  (is (= 0.0 (steer-rate 1 1 0.16)) "len 1 -> 0")
-  (is (= 0.0 (steer-rate 1 0 0.16)) "len 0 -> 0"))
+;; --- mouse-aim: the per-frame reticle + edge-pan + fire result ---
 
-;; mouse-look: the per-frame yaw/pitch + fire result.
-
-(deftest test-mouse-look-center-no-bytes-is-zero
-  ;; Pointer cached at center, no input this frame: no turn (deadzone), no
-  ;; fire, and the cached pos is carried forward unchanged. The keyboard
-  ;; path is untouched.
-  (let [r (mouse-look "" center-pos 1.0 look-dims)]
-    (is (= 0.0 (:yaw r)) "center deadzone -> no yaw")
-    (is (= 0.0 (:pitch r)) "center deadzone -> no pitch")
+(deftest test-mouse-aim-center-no-bytes-pins-reticle-center
+  ;; Pointer cached at centre, no input this frame: the reticle sits at the
+  ;; centre cell, no pan (centre region), no fire, pos carried forward.
+  (let [r (mouse-aim "" center-pos 1.0 look-dims)]
+    (is (= 59.0 (:aim-col r)) "reticle at centre col")
+    (is (= 14.0 (:aim-row r)) "reticle at centre row")
+    (is (= 0.0 (:yaw r)) "centre region -> no yaw")
+    (is (= 0.0 (:pitch r)) "centre region -> no pitch")
     (is (= false (:fire? r)))
     (is (= false (:fire-held? r)))
     (is (= center-pos (:pos r)) "cached pointer carried forward")))
 
-(deftest test-mouse-look-right-of-center-yields-positive-yaw
-  ;; A hover (b=35) that leaves the pointer right of center steers +yaw
-  ;; (turn right); magnitude grows with offset, saturating near the edge.
-  (let [mild (mouse-look "\e[<35;90;15M" center-pos 1.0 look-dims)
-        edge (mouse-look "\e[<35;120;15M" center-pos 1.0 look-dims)]
-    (is (php/> (:yaw mild) 0) "right of center -> +yaw")
-    (is (= 0.0 (:pitch mild)) "horizontal pointer at mid-row -> no pitch")
-    (is (php/> (:yaw edge) (:yaw mild)) "nearer the edge turns faster")
-    (is (approx? 0.16 (:yaw edge)) "the edge saturates at max yaw")
-    (is (= [120 15] (:pos edge)) "pos trails the latest report")))
+(deftest test-mouse-aim-tracks-pointer-one-to-one
+  ;; A hover (b=35) moves the reticle to the pointer's cell, 1:1, with no
+  ;; pan while it stays in the centre region.
+  (let [r (mouse-aim "\e[<35;80;15M" center-pos 1.0 look-dims)]
+    (is (= 79.0 (:aim-col r)) "reticle follows the pointer column 1:1")
+    (is (= 14.0 (:aim-row r)) "row unchanged at mid-screen")
+    (is (= 0.0 (:yaw r)) "still centre region -> no pan")
+    (is (= [80 15] (:pos r)) "pos trails the latest report")))
 
-(deftest test-mouse-look-left-of-center-yields-negative-yaw
-  ;; Left of center steers -yaw (turn left), saturating to -max at the edge.
-  (let [mild (mouse-look "\e[<35;30;15M" center-pos 1.0 look-dims)
-        edge (mouse-look "\e[<35;1;15M" center-pos 1.0 look-dims)]
-    (is (php/< (:yaw mild) 0) "left of center -> -yaw")
-    (is (php/< (:yaw edge) (:yaw mild)) "nearer the edge turns faster (more negative)")
-    (is (approx? -0.16 (:yaw edge)) "the edge saturates at -max yaw")))
+(deftest test-mouse-aim-clamps-reticle-at-right-edge-and-pans
+  ;; Pushing the pointer to / past the right edge pins the reticle at the
+  ;; last column AND edge-pans the camera right (the aim-beyond-view move).
+  (let [edge (mouse-aim "\e[<35;120;15M" center-pos 1.0 look-dims)
+        past (mouse-aim "\e[<35;200;15M" center-pos 1.0 look-dims)]
+    (is (= 119.0 (:aim-col edge)) "reticle pinned at the right edge col")
+    (is (php/> (:yaw edge) 0.0) "right edge edge-pans the camera right")
+    (is (= 119.0 (:aim-col past)) "pointer past the window keeps the reticle pinned")
+    (is (php/> (:yaw past) 0.0) "and edge-pan keeps turning - aiming never freezes")))
 
-(deftest test-mouse-look-above-center-yields-positive-pitch
-  ;; A pointer ABOVE center (smaller y) looks UP (+pitch): rows grow
-  ;; downward, so the rate is negated. Saturates at +max at the top edge.
-  (let [mild (mouse-look "\e[<35;60;6M" center-pos 1.0 look-dims)
-        edge (mouse-look "\e[<35;60;1M" center-pos 1.0 look-dims)]
-    (is (php/> (:pitch mild) 0) "above center -> +pitch (look up)")
-    (is (= 0.0 (:yaw mild)) "vertical pointer at mid-col -> no yaw")
-    (is (php/> (:pitch edge) (:pitch mild)) "nearer the top turns faster")
-    (is (approx? 0.06 (:pitch edge)) "the top edge saturates at +max pitch")))
+(deftest test-mouse-aim-left-edge-pans-left
+  (let [r (mouse-aim "\e[<35;1;15M" center-pos 1.0 look-dims)]
+    (is (= 0.0 (:aim-col r)) "reticle pinned at the left edge col")
+    (is (php/< (:yaw r) 0.0) "left edge edge-pans the camera left")))
 
-(deftest test-mouse-look-below-center-yields-negative-pitch
-  ;; A pointer BELOW center (larger y) looks DOWN (-pitch), saturating to
-  ;; -max at the bottom edge.
-  (let [mild (mouse-look "\e[<35;60;24M" center-pos 1.0 look-dims)
-        edge (mouse-look "\e[<35;60;30M" center-pos 1.0 look-dims)]
-    (is (php/< (:pitch mild) 0) "below center -> -pitch (look down)")
-    (is (approx? -0.06 (:pitch edge)) "the bottom edge saturates at -max pitch")))
+(deftest test-mouse-aim-top-edge-looks-up
+  ;; Pointer at the top band: reticle pins at row 0 and pitch is POSITIVE
+  ;; (look up) - rows grow downward, so the top of the screen is +pitch.
+  (let [r (mouse-aim "\e[<35;60;1M" center-pos 1.0 look-dims)]
+    (is (= 0.0 (:aim-row r)) "reticle pinned at the top row")
+    (is (php/> (:pitch r) 0.0) "top band looks UP (+pitch)")
+    (is (= 0.0 (:yaw r)) "vertical pointer at mid-col -> no yaw")))
 
-(deftest test-mouse-look-held-off-center-keeps-turning-without-bytes
-  ;; THE KEY NEW PROPERTY (#318): the terminal sends reports only on
-  ;; MOTION, so a pointer held STILL off-center yields NO new bytes. The
-  ;; camera must keep turning anyway, because the steer-rate is read from
-  ;; the CACHED position every frame, not from a delta. Empty `keys` with a
-  ;; right-of-center cached pointer still returns +yaw.
-  (let [r (mouse-look "" right-edge-pos 1.0 look-dims)]
-    (is (approx? 0.16 (:yaw r)) "held at right edge, no bytes -> still +max yaw")
-    (is (= right-edge-pos (:pos r)) "cached pointer unchanged"))
-  (let [r (mouse-look "" left-edge-pos 1.0 look-dims)]
-    (is (approx? -0.16 (:yaw r)) "held at left edge, no bytes -> still -max yaw"))
-  (let [r (mouse-look "" top-edge-pos 1.0 look-dims)]
-    (is (approx? 0.06 (:pitch r)) "held above center, no bytes -> still +pitch"))
-  (let [r (mouse-look "" bottom-edge-pos 1.0 look-dims)]
-    (is (approx? -0.06 (:pitch r)) "held below center, no bytes -> still -pitch")))
+(deftest test-mouse-aim-bottom-edge-looks-down
+  (let [r (mouse-aim "\e[<35;60;30M" center-pos 1.0 look-dims)]
+    (is (= 29.0 (:aim-row r)) "reticle pinned at the bottom row")
+    (is (php/< (:pitch r) 0.0) "bottom band looks DOWN (-pitch)")))
 
-(deftest test-mouse-look-report-moves-cached-pointer
-  ;; A motion report relocates the cached pointer, and the steering on the
-  ;; SAME frame reflects the NEW position. Pointer was at center; a report
-  ;; lands it at the right edge -> max +yaw this very frame.
-  (let [r (mouse-look "\e[<35;120;15M" center-pos 1.0 look-dims)]
-    (is (approx? 0.16 (:yaw r)) "steering follows the latest reported cell")
-    (is (= [120 15] (:pos r)) "cached pointer advanced to the report"))
-  ;; Two reports in one frame: only the LAST cell drives the rate (no
-  ;; delta accumulation). center -> x=90 -> x=120 ends at the edge = max.
-  (let [r (mouse-look "\e[<35;90;15M\e[<35;120;15M" center-pos 1.0 look-dims)]
-    (is (approx? 0.16 (:yaw r)) "the final report's position sets the rate")
-    (is (= [120 15] (:pos r)) "pos trails the last report")))
+(deftest test-mouse-aim-held-at-edge-keeps-panning-without-bytes
+  ;; The whole point of the model: once the reticle is parked in the edge
+  ;; band, the camera keeps panning every frame with NO new bytes, because
+  ;; the pan rate is read from the cached pointer position. So a pointer
+  ;; that left the window at an edge keeps the camera turning.
+  (let [r (mouse-aim "" right-edge-pos 1.0 look-dims)]
+    (is (php/> (:yaw r) 0.0) "held at the right edge keeps panning right"))
+  (let [r (mouse-aim "" left-edge-pos 1.0 look-dims)]
+    (is (php/< (:yaw r) 0.0) "held at the left edge keeps panning left"))
+  (let [r (mouse-aim "" top-edge-pos 1.0 look-dims)]
+    (is (php/> (:pitch r) 0.0) "held at the top keeps looking up"))
+  (let [r (mouse-aim "" bottom-edge-pos 1.0 look-dims)]
+    (is (php/< (:pitch r) 0.0) "held at the bottom keeps looking down")))
 
-(deftest test-mouse-look-returning-to-center-stops
-  ;; Bringing the pointer back to center stops the turn (no recenter creep,
-  ;; no momentum): a report that lands the pointer in the center deadzone
-  ;; yields zero yaw even though the previous cached pos was at the edge.
-  (let [r (mouse-look "\e[<35;60;15M" right-edge-pos 1.0 look-dims)]
-    (is (= 0.0 (:yaw r)) "back to center -> stop turning")
-    (is (= [60 15] (:pos r)))))
+(deftest test-mouse-aim-returning-to-center-stops-pan
+  ;; Bringing the pointer back to centre re-centres the reticle and stops
+  ;; the pan: precise 1:1 aim resumes with no camera drift.
+  (let [r (mouse-aim "\e[<35;60;15M" right-edge-pos 1.0 look-dims)]
+    (is (= 59.0 (:aim-col r)) "reticle back at centre col")
+    (is (= 0.0 (:yaw r)) "back in the centre region -> pan stops")))
 
-(deftest test-mouse-look-sensitivity-scales-the-rate
-  ;; sensitivity 2.0 doubles, 0.0 zeroes the steering (mouselook off) while
-  ;; leaving fire untouched. At the right edge: 0.16 * 2.0 = 0.32.
-  (is (approx? 0.32 (:yaw (mouse-look "" right-edge-pos 2.0 look-dims))) "2x sensitivity doubles yaw")
-  (is (= 0.0 (:yaw (mouse-look "" right-edge-pos 0.0 look-dims))) "0 sensitivity = no turn")
-  (is (= 0.0 (:pitch (mouse-look "" top-edge-pos 0.0 look-dims))) "0 sensitivity = no pitch")
-  (let [r (mouse-look "\e[<0;60;15M" center-pos 0.0 look-dims)]
-    (is (= true (:fire? r)) "0 sensitivity still lets a click fire")))
+(deftest test-mouse-aim-report-moves-cached-pointer
+  ;; A position report advances the cached pointer to the reported cell so
+  ;; the next frame reads from there; the LAST report wins within a frame.
+  (let [r (mouse-aim "\e[<35;120;15M" center-pos 1.0 look-dims)]
+    (is (= [120 15] (:pos r)) "pos updated to the report"))
+  (let [r (mouse-aim "\e[<35;90;15M\e[<35;120;15M" center-pos 1.0 look-dims)]
+    (is (= [120 15] (:pos r)) "the last report in the frame wins")))
 
-(deftest test-mouse-look-no-dims-is-inert
-  ;; Without dims (no axis lengths) the steering can't know where the edges
-  ;; are, so it yields zero yaw/pitch - while fire intent still parses. So
-  ;; a non-loop caller (or a frame before the size is known) never spins.
-  (let [r (mouse-look "\e[<35;120;15M" center-pos 1.0)]
-    (is (= 0.0 (:yaw r)) "no dims -> no yaw")
-    (is (= 0.0 (:pitch r)) "no dims -> no pitch")
-    (is (= [120 15] (:pos r)) "but pos still tracks the report"))
-  (let [r (mouse-look "\e[<0;60;15M" center-pos 1.0)]
+(deftest test-mouse-aim-sensitivity-scales-reticle-and-pan
+  ;; Sensitivity scales BOTH the reticle speed and the edge-pan rate.
+  (is (= 98.5 (:aim-col (mouse-aim "\e[<35;80;15M" center-pos 2.0 look-dims)))
+      "2x sensitivity moves the reticle twice as far")
+  (is (approx? 0.32 (:yaw (mouse-aim "" right-edge-pos 2.0 look-dims)))
+      "2x sensitivity doubles the edge-pan yaw")
+  (is (= 0.0 (:yaw (mouse-aim "" right-edge-pos 0.0 look-dims)))
+      "0 sensitivity = no pan")
+  ;; Even at 0 sensitivity a click still fires (the look is disabled, not
+  ;; the trigger).
+  (let [r (mouse-aim "\e[<0;60;15M" center-pos 0.0 look-dims)]
+    (is (= true (:fire? r)) "click fires regardless of sensitivity")))
+
+(deftest test-mouse-aim-no-dims-has-no-reticle-or-pan
+  ;; Without [rows cols] there is no viewport to clamp into or band to pan
+  ;; from, so the reticle + pan are inert - but fire intent still parses, so
+  ;; a non-loop caller is unaffected.
+  (let [r (mouse-aim "\e[<35;120;15M" center-pos 1.0)]
+    (is (nil? (:aim-col r)) "no dims -> no reticle column")
+    (is (= 0.0 (:yaw r)) "no dims -> no pan")
+    (is (= 0.0 (:pitch r)) "no dims -> no pitch"))
+  (let [r (mouse-aim "\e[<0;60;15M" center-pos 1.0)]
     (is (= true (:fire? r)) "fire still parses with no dims")))
 
-(deftest test-mouse-look-nil-pos-no-report-is-zero
-  ;; prev-pos nil (no prior report this session) AND no report this frame:
-  ;; the cached pos stays nil, so there is no position to steer from -> a
-  ;; clean zero, never a spin before the first real report.
-  (let [r (mouse-look "" nil 1.0 look-dims)]
-    (is (= 0.0 (:yaw r)) "nil pos -> no yaw")
-    (is (= 0.0 (:pitch r)) "nil pos -> no pitch")
-    (is (= nil (:pos r)) "cached pointer still nil")))
+(deftest test-mouse-aim-nil-pos-no-report-has-no-reticle
+  ;; No cached pointer and no report this frame: nothing to place the
+  ;; reticle from, so no reticle / no pan / no fire.
+  (let [r (mouse-aim "" nil 1.0 look-dims)]
+    (is (nil? (:aim-col r)) "nil pos, no report -> no reticle")
+    (is (= 0.0 (:yaw r)) "nil pos -> no pan")
+    (is (= false (:fire? r)))
+    (is (= nil (:pos r)) "pos stays nil")))
 
-(deftest test-mouse-look-left-press-fires
-  ;; Discrete left press (b=0, final M): :fire? and :fire-held? both set so
-  ;; a click shoots like space. At center the steering stays zero.
-  (let [r (mouse-look "\e[<0;60;15M" center-pos 1.0 look-dims)]
+;; --- fire intent (unchanged from the positional model) ---
+
+(deftest test-mouse-aim-left-press-fires
+  ;; A left-button press (b=0, final M) is a fresh fire rising-edge.
+  (let [r (mouse-aim "\e[<0;60;15M" center-pos 1.0 look-dims)]
     (is (= true (:fire? r)) "left press fires")
-    (is (= true (:fire-held? r)) "press counts as held this frame")
-    (is (= 0.0 (:yaw r)) "press at center adds no turn")
-    (is (= 0.0 (:pitch r)))))
+    (is (= true (:fire-held? r)) "and counts as held")))
 
-(deftest test-mouse-look-left-release-does-not-fire
-  ;; Release (final m): NOT a press, button not down.
-  (let [r (mouse-look "\e[<0;60;15m" center-pos 1.0 look-dims)]
-    (is (= false (:fire? r)) "release is not a press")
+(deftest test-mouse-aim-left-release-does-not-fire
+  ;; A left release (final m) is not a press, so it doesn't fire.
+  (let [r (mouse-aim "\e[<0;60;15m" center-pos 1.0 look-dims)]
+    (is (= false (:fire? r)) "release does not fire")
     (is (= false (:fire-held? r)) "release is not held")))
 
-(deftest test-mouse-look-left-drag-is-held-fire-and-steers
-  ;; Left DRAG (b=32: motion bit + button 0) that lands right of center:
-  ;; steers (+yaw) AND holds the trigger (auto-fire weapons spray while
-  ;; dragged), but is NOT a fresh press edge. Click + drag to shoot stays
-  ;; intact.
-  (let [r (mouse-look "\e[<32;120;15M" center-pos 1.0 look-dims)]
-    (is (= false (:fire? r)) "a drag is not a rising-edge press")
-    (is (= true (:fire-held? r)) "left held during drag = held-fire")
-    (is (approx? 0.16 (:yaw r)) "drag still steers")))
+(deftest test-mouse-aim-left-drag-is-held-fire-and-tracks
+  ;; A left DRAG (b=32: motion bit + button 0) feeds auto-fire weapons and
+  ;; still moves the reticle to the dragged cell.
+  (let [r (mouse-aim "\e[<32;120;15M" center-pos 1.0 look-dims)]
+    (is (= false (:fire? r)) "a drag is not a fresh press edge")
+    (is (= true (:fire-held? r)) "but it holds the trigger for auto-fire")
+    (is (= 119.0 (:aim-col r)) "and the reticle tracks the drag to the edge")))
 
-(deftest test-mouse-look-press-then-move-fires-and-steers
-  ;; A press followed by a hover move in the same frame: fire AND steer
-  ;; from the moved-to cell (the edge -> max yaw).
-  (let [r (mouse-look "\e[<0;60;15M\e[<35;120;15M" center-pos 1.0 look-dims)]
-    (is (= true (:fire? r)) "the press still registers")
-    (is (approx? 0.16 (:yaw r)) "the move still steers from the new cell")))
+(deftest test-mouse-aim-press-then-move-fires-and-tracks
+  (let [r (mouse-aim "\e[<0;60;15M\e[<35;120;15M" center-pos 1.0 look-dims)]
+    (is (= true (:fire? r)) "the press in the frame still fires")
+    (is (= 119.0 (:aim-col r)) "the reticle ends at the moved-to edge cell")))
 
-(deftest test-mouse-look-press-then-release-fires-once
-  ;; A full click in ONE drained frame: left press (M) then its release
-  ;; (m), both at center. :fire? / :fire-held? are OR'd across the events,
-  ;; so the press latches the single rising-edge fire; the trailing release
-  ;; neither re-fires nor un-fires it.
-  (let [r (mouse-look "\e[<0;60;15M\e[<0;60;15m" center-pos 1.0 look-dims)]
-    (is (= true (:fire? r)) "press latches one fire even with a trailing release")
-    (is (= true (:fire-held? r)) "the in-frame press counts as held this frame")
-    (is (= 0.0 (:yaw r)) "click at center adds no turn")
-    (is (= [60 15] (:pos r)) "pos trails the last (release) report"))
-  ;; The NEXT frame, fed only the release tail (button already up), is a
-  ;; clean no-op fire-wise.
-  (let [r (mouse-look "\e[<0;60;15m" center-pos 1.0 look-dims)]
-    (is (= false (:fire? r)) "release-only frame does not fire")
-    (is (= false (:fire-held? r)) "release-only frame is not held")))
+(deftest test-mouse-aim-wheel-tick-adds-no-fire
+  ;; A scroll-wheel tick (b=64) carries no aim intent: no fire.
+  (let [r (mouse-aim "\e[<64;120;15M" center-pos 1.0 look-dims)]
+    (is (= false (:fire? r)) "wheel up does not fire")
+    (is (= false (:fire-held? r)) "wheel is not held-fire")))
 
-(deftest test-mouse-look-wheel-tick-adds-no-turn-no-fire
-  ;; A scroll-wheel report (bit 6 set: b=64) carries no aim intent. It must
-  ;; NOT fire - but :pos still advances to its cell so a following motion
-  ;; steers from the true pointer spot.
-  (let [r (mouse-look "\e[<64;120;15M" center-pos 1.0 look-dims)]
-    (is (= false (:fire? r)) "wheel is not a fire")
-    (is (= false (:fire-held? r)) "wheel is not held-fire")
-    (is (= [120 15] (:pos r)) ":pos advances to the wheel cell")))
+(deftest test-mouse-aim-right-button-does-not-fire
+  (let [r (mouse-aim "\e[<2;60;15M" center-pos 1.0 look-dims)]
+    (is (= false (:fire? r)) "right button is not the fire button")))
 
-(deftest test-mouse-look-right-button-does-not-fire
-  ;; Right-button report (b=2). Only the LEFT button maps to fire.
-  (let [r (mouse-look "\e[<2;60;15M" center-pos 1.0 look-dims)]
-    (is (= false (:fire? r)) "right press is not a fire edge")
-    (is (= false (:fire-held? r)) "right button is not held-fire")))
+(deftest test-mouse-aim-middle-button-does-not-fire
+  (let [r (mouse-aim "\e[<1;60;15M" center-pos 1.0 look-dims)]
+    (is (= false (:fire? r)) "middle button is not the fire button")))
 
-(deftest test-mouse-look-middle-button-does-not-fire
-  ;; Middle-button report (b=1). Same rule - only button 0 fires.
-  (let [r (mouse-look "\e[<1;60;15M" center-pos 1.0 look-dims)]
-    (is (= false (:fire? r)) "middle press is not a fire edge")
-    (is (= false (:fire-held? r)) "middle button is not held-fire")))
+(deftest test-mouse-aim-malformed-sequence-ignored
+  ;; A truncated report (missing the y field) matches nothing, so the
+  ;; reticle stays put and nothing fires.
+  (let [r (mouse-aim "\e[<35;15M" center-pos 1.0 look-dims)]
+    (is (= 59.0 (:aim-col r)) "reticle holds the cached centre")
+    (is (= false (:fire? r)))))
 
-(deftest test-mouse-look-malformed-sequence-ignored
-  ;; A truncated SGR report (missing the y coord + terminator) matches
-  ;; nothing, so the cached pointer is carried forward and steering reads
-  ;; it (here center -> zero).
-  (let [r (mouse-look "\e[<35;15M" center-pos 1.0 look-dims)]
-    (is (= 0.0 (:yaw r)))
-    (is (= 0.0 (:pitch r)))
-    (is (= center-pos (:pos r)) "malformed leaves the cached pointer untouched")))
+(deftest test-mouse-aim-ignores-kitty-key-event
+  ;; A kitty CSI-u KEY event must not be mistaken for a mouse report.
+  (let [r (mouse-aim "\e[97;1:1u" center-pos 1.0 look-dims)]
+    (is (= 59.0 (:aim-col r)) "kitty key leaves the reticle alone")
+    (is (= false (:fire? r)) "kitty key 'a' does not fire")))
 
-(deftest test-mouse-look-ignores-kitty-key-event
-  ;; REGRESSION: a kitty CSI-u key report (e.g. 'a' press = \e[97;1:1u)
-  ;; shares the ESC-[ prefix but is NOT an SGR mouse report. It must NOT
-  ;; move the cached pointer or fire, so the mouse parser can never hijack
-  ;; the keyboard path.
-  (let [r (mouse-look "\e[97;1:1u" center-pos 1.0 look-dims)]
-    (is (= 0.0 (:yaw r)) "kitty key is not pointer motion")
-    (is (= 0.0 (:pitch r)))
-    (is (= false (:fire? r)) "kitty key is not a mouse click")
-    (is (= center-pos (:pos r)))))
-
-(deftest test-mouse-look-ignores-arrow-and-fkey
-  ;; REGRESSION: legacy arrow (\e[C) and F-key (\eOR = F3) sequences are
-  ;; not SGR mouse reports either - no steering change, no fire.
-  (let [arrow (mouse-look "\e[C" center-pos 1.0 look-dims)
-        fkey  (mouse-look "\eOR" center-pos 1.0 look-dims)]
-    (is (= 0.0 (:yaw arrow)) "arrow is not pointer motion")
+(deftest test-mouse-aim-ignores-arrow-and-fkey
+  ;; Arrow + F-key escapes are not SGR mouse reports.
+  (let [arrow (mouse-aim "\e[C" center-pos 1.0 look-dims)
+        fkey  (mouse-aim "\eOR" center-pos 1.0 look-dims)]
+    (is (= 59.0 (:aim-col arrow)) "arrow leaves the reticle alone")
     (is (= false (:fire? arrow)))
-    (is (= 0.0 (:yaw fkey)) "F-key is not pointer motion")
     (is (= false (:fire? fkey)))))
 
-(deftest test-mouse-look-mixed-keyboard-and-mouse-bytes
-  ;; A frame can carry BOTH a WASD byte and a mouse report (drained
-  ;; together). mouse-look only parses the SGR part; the surrounding 'w'/'d'
-  ;; are ignored here (refresh-from-keys handles them) and must not corrupt
-  ;; the cached pointer.
-  (let [r (mouse-look "w\e[<35;120;15Md" center-pos 1.0 look-dims)]
-    (is (approx? 0.16 (:yaw r)) "WASD bytes around the report don't affect steering")
-    (is (= [120 15] (:pos r)))))
+(deftest test-mouse-aim-mixed-keyboard-and-mouse-bytes
+  ;; A drain holding both WASD bytes and an SGR report: mouse-aim only
+  ;; reads the SGR part; the 'w'/'d' are the keyboard path's job.
+  (let [r (mouse-aim "w\e[<35;120;15Md" center-pos 1.0 look-dims)]
+    (is (= 119.0 (:aim-col r)) "the embedded report still moves the reticle")
+    (is (= [120 15] (:pos r)) "pos comes from the SGR part only")))
 
-(deftest test-mouse-look-bytes-do-not-leak-into-key-parsing
+(deftest test-mouse-aim-bytes-do-not-leak-into-key-parsing
   ;; REGRESSION (the inverse guard): an SGR mouse report fed to the
   ;; keyboard parsers must not be mistaken for movement / fire. The
   ;; report's digits and 'M' must not trip key-states or refresh-move.

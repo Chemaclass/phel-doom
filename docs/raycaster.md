@@ -166,6 +166,26 @@ hit?  =  (feet-row - h) <= svh/2 <= feet-row
 
 Because `feet-row` carries `pr` but the crosshair does not, looking up slides a sprite DOWN past the centre and looking down lifts it UP, so a short far billboard slips off the crosshair (vertical aim) while a tall near one stays caught. On a raised cell the lift moves the body above the centre at level aim, so the player looks up to put the crosshair back on the drawn sprite.
 
+### Cross-tier occlusion (issue #302)
+
+Feet anchoring (#297/#300) gives an enemy on another tier the right vertical PLACEMENT; cross-tier occlusion is the visibility half. An enemy billboard is a transparent sprite clipped per column by a depth gate. Before #302 that gate was the full-height WALL buffer (`dists[c]`) alone, so the partial-height tier geometry - the floor risers (#232) and hanging ceilings (#235) - was invisible to it: an enemy tucked behind a nearer step could draw THROUGH it, and one on a higher tier could clip wrong against the edge.
+
+The clip now also intersects each sprite column against the NEARER tier band in that column. The pure helper is `clip-sprite-span` in `core/projection.phel`:
+
+```
+(clip-sprite-span e-top e-bot step-d step-from ceil-d ceil-bots d)
+;; -> [top bot]  the visible rows, or
+;; -> nil        when a nearer tier fully covers the column
+```
+
+- `step-d`/`step-from` are the column's nearest floor-riser distance (`step-dists[c]`) and the riser band's on-screen TOP row (`shades-step-from[c]`). A riser NEARER than the sprite (`step-d < d`) hides every row at or below `step-from`, so the feet clamp to `min(e-bot, step-from)` - the near riser face plus the near-tier floor in front of it block the lower body.
+- `ceil-d`/`ceil-bots` are the column's nearest ceiling-drop distance (`ceil-dists[c]`) and the ceiling band's on-screen BOTTOM lip (`shades-ceil-bots[c]`). A drop NEARER than the sprite (`ceil-d < d`) hides every row above the lip, so the head clamps to `max(e-top, ceil-bots)`.
+- A farther or absent tier is ignored. The band values are read only when the matching distance is present, so the sentinel `svh` a riserless / ceilingless column carries never reaches the `max`/`min` (the ceiling `max` would otherwise swallow the whole span). When the two clamps cross (`top >= bot`) the sprite is fully occluded and the column is skipped.
+
+So an enemy on a higher tier shows over a platform edge (its feet project above the nearer riser's top, nothing to clip), one standing below behind a nearer step has its legs cut, and one fully behind the step vanishes - exactly where the line of sight is geometrically clear. The clip only INTERSECTS the projected span; it never re-derives the projection. A FLAT level carries nil for `step-dists`/`ceil-dists` in every column, so both guards are false, the span is returned unchanged, and the render is byte-identical (pinned by `render-cache-test/test-frame-bytes-pinned`).
+
+Scope (px1, single nearest tier): the cast keeps only the NEAREST riser + ceiling per column, so an enemy sandwiched between two near tiers is clipped against the nearer one alone (no multi-tier stacking). The pixel-doubled cast (`compact-cast-2`) drops the tier arrays, so px2 keeps the old wall-only gate. The grounding shadow / face / HP-flash overlays still reuse the wall `dists` gate and can bleed past a riser (cosmetic fast-follow). See [rendering.md](rendering.md) for where the clip sits in the zone pass.
+
 ## Performance
 
 DDA averages ~5-8 cell crossings per ray instead of ~35 fixed steps. Hot loop uses direct PHP ops (`php/+`, `php/<`) and `:pgrid` (nested PHP array).

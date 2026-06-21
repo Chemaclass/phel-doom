@@ -128,6 +128,58 @@
   [^float pd ^int svh ^float dist ^float eye-z ^float fz ^int pr]
   (php/+ (php/intval (php/round (project-height pd svh dist eye-z fz))) pr))
 
+(defn clip-sprite-span
+  {:doc "Intersect an enemy billboard's vertical span `[e-top, e-bot)`
+         (head row .. feet row, smaller = higher on screen) with the
+         nearer-tier geometry in its column, returning the visible
+         `[top bot]` rows or nil when the sprite is fully occluded (issue
+         #302). The CROSS-TIER occlusion half of the grounded-feet anchor
+         (`sprite-feet-row`, #300): a sprite is drawn only where the line
+         of sight past the nearer tier floor riser / hanging ceiling is
+         geometrically clear, so an enemy on another tier shows over a
+         platform edge / down into a pit but hides behind an intervening
+         step or cap.
+
+         `step-d`    distance to the nearest floor RISER in the column
+                     (`step-dists[c]`), or nil if the column has none.
+         `step-from` the riser band's on-screen TOP row
+                     (`shades-step-from[c]`): a nearer riser hides every
+                     sprite row at or below it (the riser face + the near
+                     tier floor in front of it block the feet).
+         `ceil-d`    distance to the nearest hanging CEILING drop
+                     (`ceil-dists[c]`), or nil if the column has none.
+         `ceil-bots` the ceiling band's on-screen BOTTOM lip row
+                     (`shades-ceil-bots[c]`): a nearer drop hides every
+                     sprite row above it (the hanging face + the normal
+                     ceiling above it block the head).
+         `d`         the sprite's perpendicular distance.
+
+         A tier only clips when it is NEARER than the sprite (`step-d < d`
+         / `ceil-d < d`); a farther or absent tier is ignored, so the band
+         values are read only when the matching distance is present (the
+         sentinel `svh` the riserless / ceilingless column carries is never
+         consulted, which matters for the ceiling `max` that would
+         otherwise swallow the whole span). FLAT levels carry nil for both
+         distances in every column, so both guards are false, the span is
+         returned unchanged, and the render stays byte-identical.
+
+         This only INTERSECTS spans; it never re-derives the projection.
+         Tracks a single nearest riser + ceiling per column (the cast keeps
+         only the nearest of each), so an enemy sandwiched between two near
+         tiers is clipped against the nearer one alone."
+   :see-also ["sprite-feet-row" "project-height"]
+   :example "(clip-sprite-span 8 20 2.0 14 nil 30 5.0) ; => [8 14] (feet hidden below a nearer riser; ceil-bots 30 is the riserless sentinel, unread because ceil-d is nil)"}
+  [^int e-top ^int e-bot step-d ^int step-from ceil-d ^int ceil-bots ^float d]
+  (let [c-bot (if (and (php/!== nil step-d) (php/< step-d d))
+                (php/min e-bot step-from)
+                e-bot)
+        c-top (if (and (php/!== nil ceil-d) (php/< ceil-d d))
+                (php/max e-top ceil-bots)
+                e-top)]
+    (if (php/< c-top c-bot)
+      [c-top c-bot]
+      nil)))
+
 (defn sprite-half-rows
   {:doc "Half the on-screen height (rows) of an enemy billboard at
          perpendicular distance `dist` in a scene `svh` rows tall, scaled

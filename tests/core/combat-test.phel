@@ -1,9 +1,10 @@
 (ns phel-doom-tests.core.combat-test
   (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.rng :as rng)
   (:require phel-doom.core.state :refer [new-world new-player max-lives])
   (:require phel-doom.core.enemy :refer [new-enemy])
   (:require phel-doom.core.combat
-            :refer [arm-berserk armory-reserve closest-attacker attacker-side attacker-octant berserk? berserk-damage-mul berserk-melee-mul berserk-mul-for berserk-seconds can-fire? apply-heat damage-step empty-click-seconds enemy-hit-damage hit-damage-for hit-player-at hit-stop-for hit-stop-tough-seconds hit-stop-boss-seconds invuln? invuln-seconds knockback mag-size pick-loot-weapon player-immune? push-sfx reload reloading? roll-loot-kind tick-armory tick-shooting]))
+            :refer [aim-angle-offset arm-berserk armory-reserve closest-attacker attacker-side attacker-octant berserk? berserk-damage-mul berserk-melee-mul berserk-mul-for berserk-seconds can-fire? apply-heat damage-step empty-click-seconds enemy-hit-damage fire-shot hit-damage-for hit-player-at hit-stop-for hit-stop-tough-seconds hit-stop-boss-seconds invuln? invuln-seconds knockback mag-size pick-loot-weapon player-immune? push-sfx reload reloading? roll-loot-kind tick-armory tick-shooting]))
 
 ;; ---------------------------------------------------------------------
 ;; closest-attacker: selection rule.
@@ -1103,3 +1104,100 @@
   (let [w (-> {} (push-sfx :hit 1.0) (push-sfx :kill 0.6))]
     (is (= [{:name :hit :vol 1.0} {:name :kill :vol 0.6}] (:sfx w))
         "events stay in enqueue order")))
+
+;; ---------------------------------------------------------------------
+;; Off-center hitscan via the movable aim crosshair (#324). The reticle
+;; column is mapped to an angular offset added to the player's facing
+;; (the SAME per-column FOV ray the renderer casts), so a shot lands on
+;; the enemy whose projected sprite column the reticle sits over - not the
+;; fixed screen-centre axis. `aim-angle-offset` is the pure column->radians
+;; map; `fire-shot` reads `:aim-col` / `:scene-cols` off the world to steer
+;; the hitscan.
+;; ---------------------------------------------------------------------
+
+;; A wide-open chamber so the forward ray has room before any wall.
+(def aim-chamber
+  [[1 1 1 1 1 1 1 1 1 1 1 1]
+   [1 0 0 0 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 0 0 0 1]
+   [1 1 1 1 1 1 1 1 1 1 1 1]])
+
+(defn- aim-world [enemies aim-col]
+  ;; Player near the west wall facing east (angle 0). An enemy sits OFF
+  ;; the centre axis (right of facing). `:scene-cols` 120 / `:scene-rows`
+  ;; nil (vertical gate disabled, so the column test stands alone). The
+  ;; pistol is :pierce?, so fire-shot routes through pierce-fire.
+  (-> (new-world aim-chamber (new-player 1.5 4.5 0.0))
+      (assoc :enemies enemies
+             :weapon :pistol
+             :scene-cols 120
+             :aim-col aim-col)))
+
+;; Enemy at angular offset +0.15 rad off the player's facing, ~4 units out:
+;; (5.455, 5.098). On the centre ray its perpendicular distance is ~0.598
+;; > shot-hit-radius (0.5), so a centre-axis shot MISSES; its projected
+;; screen column on a 120-wide scene is ~71 (centre 60), so a reticle at
+;; column 71 aims a ray straight through it.
+(def aim-enemy-x 5.455)
+(def aim-enemy-y 5.098)
+(def aim-enemy-col 71)
+
+(deftest test-fire-shot-misses-off-center-enemy-with-centered-reticle
+  ;; Reticle at screen centre (col 60): the shot keeps the old centre-axis
+  ;; behaviour and the off-axis enemy is NOT hit (no wound flash, full HP).
+  (rng/seed! 1)
+  (let [e   (new-enemy aim-enemy-x aim-enemy-y 3 :caco)
+        w'  (fire-shot (aim-world [e] 60))
+        hit (first (:enemies w'))]
+    (is (= 3 (:lives hit)) "centred reticle leaves the off-axis enemy unharmed")
+    (is (nil? (:hit-fx w')) "no hit-marker when the centred shot misses")))
+
+(deftest test-fire-shot-hits-off-center-enemy-when-reticle-over-it
+  ;; Reticle at the enemy's projected column (71): the hitscan steers to
+  ;; that column and the off-axis enemy takes the pistol's 1 damage (3 -> 2)
+  ;; plus a hit-marker. This FAILS under the old centre-only hitscan.
+  (rng/seed! 1)
+  (let [e   (new-enemy aim-enemy-x aim-enemy-y 3 :caco)
+        w'  (fire-shot (aim-world [e] aim-enemy-col))
+        hit (first (:enemies w'))]
+    (is (= 2 (:lives hit)) "reticle over the enemy lands the shot (3 -> 2)")
+    (is (some? (:hit-fx w')) "a connecting off-centre shot lights the hit-marker")))
+
+(deftest test-fire-shot-reticle-elsewhere-misses
+  ;; Reticle pushed to the FAR side (column 10, left of centre): aims away
+  ;; from the right-side enemy, so it is not hit - the column genuinely
+  ;; selects the target, it is not just "any non-centre column hits".
+  (rng/seed! 1)
+  (let [e   (new-enemy aim-enemy-x aim-enemy-y 3 :caco)
+        w'  (fire-shot (aim-world [e] 10))
+        hit (first (:enemies w'))]
+    (is (= 3 (:lives hit)) "aiming the reticle away from the enemy misses it")))
+
+;; ---------------------------------------------------------------------
+;; aim-angle-offset: pure reticle-column -> radians map. Centre column =>
+;; 0 (no offset, the byte-identical centre-aim default); a column right of
+;; centre => positive offset (turn the shot right), left => negative. nil
+;; column / scene width => 0 so a mouse-off / headless world fires straight
+;; ahead exactly as before.
+;; ---------------------------------------------------------------------
+
+(deftest test-aim-angle-offset-center-is-zero
+  (is (= 0.0 (aim-angle-offset 60 120)) "reticle at centre -> no offset")
+  (is (= 0.0 (aim-angle-offset nil 120)) "nil column -> no offset")
+  (is (= 0.0 (aim-angle-offset 60 nil)) "nil scene width -> no offset"))
+
+(deftest test-aim-angle-offset-sign
+  (is (php/> (aim-angle-offset 90 120) 0.0) "right of centre -> +offset (turn right)")
+  (is (php/< (aim-angle-offset 30 120) 0.0) "left of centre -> -offset (turn left)"))
+
+(deftest test-aim-angle-offset-grows-with-column
+  ;; Further from centre -> larger magnitude (monotone), bounded by the
+  ;; half-FOV at the screen edge.
+  (let [near (aim-angle-offset 70 120)
+        far  (aim-angle-offset 110 120)]
+    (is (php/> far near) "a column nearer the edge offsets the shot more")))

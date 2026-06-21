@@ -2508,8 +2508,18 @@
       ;; shade, which mismatched the textured wall and read as a fake light
       ;; box). Fallback to the column's flat wall shade only if the centre
       ;; was never captured (degenerate viewport).
-      (let [c-col       (php/intdiv svw 2)
-            center-cell (or (php/aget center-cap 0)
+      ;; Reticle scene column (#324): the cell whose BG the `+` paints on.
+      ;; The reticle's terminal-coord 0-based column (:aim-col) maps to its
+      ;; scene column by the pixel-double scale; absent (mouse off) it is the
+      ;; scene centre, and the row loop's live `center-cap` capture is reused
+      ;; there verbatim so the mouse-off frame stays byte-identical. Off the
+      ;; centre we fall back to that column's wall shade (the live textured
+      ;; cell was only captured at the centre).
+      (let [aim-col     (get stats :aim-col)
+            c-col       (if (php/=== nil aim-col)
+                          (php/intdiv svw 2)
+                          (php/max 0 (php/min (php/- svw 1) (php/intdiv aim-col px-sc))))
+            center-cell (or (when (php/=== c-col (php/intdiv svw 2)) (php/aget center-cap 0))
                             (buf-get shades-normal c-col))
             center-bg   (php/mb_substr center-cell 0
                                        (php/max 0 (php/- (php/mb_strlen center-cell) 1)))

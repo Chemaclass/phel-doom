@@ -557,6 +557,33 @@
   (let [r (mouse-look "\e[<0;10;10M" mouse-origin 0.0)]
     (is (= true (:fire? r)) "0 sensitivity still lets a click fire")))
 
+(deftest test-mouse-look-yaw-tracks-pointer-speed
+  ;; Issue #275: the camera turn must TRACK how fast the pointer moves -
+  ;; a 2x-bigger per-frame delta yields ~2x the yaw at a FIXED sensitivity
+  ;; (fast flick = fast turn, slow nudge = slow turn). Pin the linear,
+  ;; clamp-free proportionality so a future tweak can't silently flatten
+  ;; it. dx=4 vs dx=8 at sensitivity 1.0; pitch tracks dy the same way.
+  (let [slow (mouse-look "\e[<35;14;10M" mouse-origin 1.0)   ; dx=+4
+        fast (mouse-look "\e[<35;18;10M" mouse-origin 1.0)]  ; dx=+8
+    (is (approx? (php/* 2.0 (:yaw slow)) (:yaw fast))
+        "2x pointer delta = 2x yaw at fixed sensitivity")
+    (is (php/> (:yaw fast) (:yaw slow)) "faster flick turns more"))
+  (let [slow (mouse-look "\e[<35;10;7M" mouse-origin 1.0)    ; dy=-3 (up)
+        fast (mouse-look "\e[<35;10;4M" mouse-origin 1.0)]   ; dy=-6 (up)
+    (is (approx? (php/* 2.0 (:pitch slow)) (:pitch fast))
+        "2x vertical delta = 2x pitch at fixed sensitivity")))
+
+(deftest test-mouse-look-proportionality-holds-under-sensitivity
+  ;; The delta->yaw proportionality is preserved AFTER the sensitivity
+  ;; multiplier: at any fixed sensitivity, doubling the delta doubles the
+  ;; yaw (sensitivity scales the whole proportional response, #275). Here
+  ;; sensitivity is the wider 3.0x high-end multiplier from core/settings.
+  (let [slow (mouse-look "\e[<35;14;10M" mouse-origin 3.0)   ; dx=+4
+        fast (mouse-look "\e[<35;18;10M" mouse-origin 3.0)]  ; dx=+8
+    (is (approx? (php/* 2.0 (:yaw slow)) (:yaw fast))
+        "proportionality survives the sensitivity scale")
+    (is (approx? (php/* 4.0 0.018 3.0) (:yaw slow)) "yaw = dx * yaw-scale * sensitivity")))
+
 (deftest test-mouse-look-first-report-only-sets-baseline
   ;; prev-pos nil (no prior report this session): the first position
   ;; report ESTABLISHES the baseline and contributes NO delta, so the

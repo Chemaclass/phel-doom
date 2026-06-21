@@ -161,11 +161,33 @@
   (is (= 100 (:sensitivity (adjust (assoc default-settings :sensitivity 100) :sensitivity 1))) "clamps at 100")
   (is (= 0 (:sensitivity (adjust (assoc default-settings :sensitivity 0) :sensitivity -1))) "clamps at 0"))
 
+(defn- approx?
+  "Float compare with a tolerance, for the geometric sensitivity curve
+   whose ends land on irrational multipliers (3^-1, 3^-0.8...)."
+  [^float a ^float b]
+  (php/< (php/abs (php/- a b)) 1.0e-9))
+
 (deftest test-mouse-sensitivity-maps-percent-to-multiplier
-  ;; The midpoint is the neutral 1.0x; 0% slows to 0, 100% doubles.
-  (is (= 1.0 (mouse-sensitivity (assoc default-settings :sensitivity mouse-sensitivity-neutral))))
-  (is (= 0.0 (mouse-sensitivity (assoc default-settings :sensitivity 0))))
-  (is (= 2.0 (mouse-sensitivity (assoc default-settings :sensitivity 100)))))
+  ;; Geometric span^((pct-50)/50) around the midpoint (#275): 50% neutral
+  ;; 1.0x (back-compat for saved settings), 0% ~0.33x (1/3), 100% 3.0x.
+  ;; Distinctly slower at the low end, distinctly faster at the high end -
+  ;; the wider slow<->fast range the old 0..2x linear map lacked.
+  (is (= 1.0 (mouse-sensitivity (assoc default-settings :sensitivity mouse-sensitivity-neutral)))
+      "50% stays the neutral 1.0x (saved-settings back-compat)")
+  (is (approx? (php// 1.0 3.0) (mouse-sensitivity (assoc default-settings :sensitivity 0)))
+      "0% slows to ~0.33x (1/3), not off")
+  (is (= 3.0 (mouse-sensitivity (assoc default-settings :sensitivity 100)))
+      "100% speeds up to 3.0x"))
+
+(deftest test-mouse-sensitivity-is-geometric-and-symmetric
+  ;; The curve is geometric, so points equidistant from the midpoint are
+  ;; reciprocals (40% and 60% multiply to 1.0) and the low end is a usable
+  ;; slow speed, NOT zero - the key behaviour change from the linear map.
+  (let [low  (mouse-sensitivity (assoc default-settings :sensitivity 40))
+        high (mouse-sensitivity (assoc default-settings :sensitivity 60))]
+    (is (approx? 1.0 (php/* low high)) "equidistant percents are reciprocals")
+    (is (php/< low 1.0) "below neutral is slower than 1.0x")
+    (is (php/> low 0.0) "but never fully off (unlike the old 0% = 0.0)")))
 
 (deftest test-adjust-unknown-field-is-noop
   (is (= default-settings (adjust default-settings :nope 1))))

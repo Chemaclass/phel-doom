@@ -3,6 +3,7 @@
   (:require phel-doom.core.map        :refer [random-spawn wall?])
   (:require phel-doom.core.enemies    :refer [resists? default-lives-for])
   (:require phel-doom.core.engine     :refer [proj-dist])
+  (:require phel-doom.core.physics    :refer [step-up-max])
   (:require phel-doom.core.projection :refer [sprite-half-rows sprite-feet-row])
   (:require phel-doom.core.enemy-ai   :refer [apply-pain maybe-start-attack moves? observe start-wander target-pos tick-attack tick-pain tick-wander]))
 
@@ -107,39 +108,67 @@
         t (php/* 0.75 php/M_PI)]
     [0.0 q (php/- 0.0 q) h (php/- 0.0 h) t (php/- 0.0 t)]))
 
+(defn- cell-floor-z
+  ;; World floor height of the cell an entity at world (x, y) stands in,
+  ;; read from the world's `:floor-pgrid` float[][] twin (#232). Floors the
+  ;; coords to a cell index, defaulting to 0.0 when the grid is nil (legacy
+  ;; / headless callers) or the row/cell is missing (out of bounds), so an
+  ;; absent grid reads as flat ground. Mirrors the renderer's private
+  ;; cell-floor-z so the combat hit gate and the drawn sprite agree (#291).
+  [floor-pgrid ^float x ^float y]
+  (if (php/=== nil floor-pgrid)
+    0.0
+    (let [row (php/aget floor-pgrid (php/intval (php/floor y)))]
+      (if (php/=== nil row)
+        0.0
+        (let [fz (php/aget row (php/intval (php/floor x)))]
+          (if (php/=== nil fz) 0.0 (php/* 1.0 fz)))))))
+
 (defn- try-step
   "Attempt to step `dist` units from (ex, ey) along `angle`. Returns
-   [nx ny] if the destination cell is open, nil otherwise."
-  [grid ^float ex ^float ey ^float dist ^float angle]
+   [nx ny] if the destination cell is open AND at most `step-up-max`
+   (physics) above the enemy's current floor, nil otherwise. The riser
+   gate mirrors the player's `physics/resolve-step` so a monster can no
+   longer 2D-walk UP a stair flank taller than a knee-high step (#301):
+   tall risers block like a wall, descents always pass. `cur-floor` is
+   the floor height the enemy stands on now; `floor-pgrid` the world's
+   `:floor-pgrid` twin (nil reads as flat ground via `cell-floor-z`, so
+   flat levels keep the old wall?-only behaviour byte-for-byte)."
+  [grid floor-pgrid ^float ex ^float ey ^float cur-floor ^float dist ^float angle]
   (let [nx (php/+ ex (php/* dist (php/cos angle)))
         ny (php/+ ey (php/* dist (php/sin angle)))]
-    (if (wall? grid (php/intval nx) (php/intval ny))
+    (if (or (wall? grid (php/intval nx) (php/intval ny))
+            (php/> (php/- (cell-floor-z floor-pgrid nx ny) cur-floor) step-up-max))
       nil
       [nx ny])))
 
 (defn- pick-step
   "Walk chase-angle-offsets in order and return the first [nx ny] whose
-   destination is open. nil if the enemy is sealed in."
-  [grid ^float ex ^float ey ^float step ^float desired]
+   destination is open AND climbable (try-step's riser Z-gate, #301).
+   nil if the enemy is sealed in or every open offset rises a tier."
+  [grid floor-pgrid ^float ex ^float ey ^float cur-floor ^float step ^float desired]
   (loop [offsets chase-angle-offsets]
     (cond
       (empty? offsets) nil
-      :else            (let [hit (try-step grid ex ey step (php/+ desired (first offsets)))]
+      :else            (let [hit (try-step grid floor-pgrid ex ey cur-floor step (php/+ desired (first offsets)))]
                          (if hit hit (recur (rest offsets)))))))
 
 (defn- step-toward
   "Walk one frame of `speed` * dt toward (target-x, target-y). The
    enemy slides around obstacles via pick-step's offset cascade
-   instead of bumping forever."
-  [enemy grid ^float target-x ^float target-y ^float dt ^float speed]
-  (let [ex   (:x enemy)
-        ey   (:y enemy)
-        dx   (php/- target-x ex)
-        dy   (php/- target-y ey)
-        dist (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
+   instead of bumping forever. `floor-pgrid` (the world's `:floor-pgrid`
+   twin, nil reads as flat) feeds pick-step's riser Z-gate so the slide
+   can't levitate UP a tier flank taller than step-up-max (#301)."
+  [enemy grid floor-pgrid ^float target-x ^float target-y ^float dt ^float speed]
+  (let [ex        (:x enemy)
+        ey        (:y enemy)
+        cur-floor (cell-floor-z floor-pgrid ex ey)
+        dx        (php/- target-x ex)
+        dy        (php/- target-y ey)
+        dist      (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
     (if (php/<= dist stop-dist)
       enemy
-      (let [hit (pick-step grid ex ey
+      (let [hit (pick-step grid floor-pgrid ex ey cur-floor
                            (php/* speed dt)
                            (php/atan2 dy dx))]
         (if hit
@@ -160,22 +189,6 @@
    the vertical hitscan check agrees with the drawn sprite (issue #243)."
   [enemy]
   (if (php/=== (:type enemy) :cyber) boss-sprite-scale 1.0))
-
-(defn- cell-floor-z
-  ;; World floor height of the cell an entity at world (x, y) stands in,
-  ;; read from the world's `:floor-pgrid` float[][] twin (#232). Floors the
-  ;; coords to a cell index, defaulting to 0.0 when the grid is nil (legacy
-  ;; / headless callers) or the row/cell is missing (out of bounds), so an
-  ;; absent grid reads as flat ground. Mirrors the renderer's private
-  ;; cell-floor-z so the combat hit gate and the drawn sprite agree (#291).
-  [floor-pgrid ^float x ^float y]
-  (if (php/=== nil floor-pgrid)
-    0.0
-    (let [row (php/aget floor-pgrid (php/intval (php/floor y)))]
-      (if (php/=== nil row)
-        0.0
-        (let [fz (php/aget row (php/intval (php/floor x)))]
-          (if (php/=== nil fz) 0.0 (php/* 1.0 fz)))))))
 
 (defn- vertical-hit?
   "True when the screen-centre crosshair is vertically ON the enemy's
@@ -579,11 +592,15 @@
    raycasts. nil pgrid skips the observation pass — tests that don't
    carry a pgrid fall through with the enemy's existing :state, which
    defaults to :aware (`enemy-ai/default-state`) so their existing
-   chase expectations still hold.
+   chase expectations still hold. `floor-pgrid` is the world's
+   `:floor-pgrid` float[][] twin, forwarded into step-toward so the
+   chase honours the riser Z-gate (#301): an enemy cannot levitate UP a
+   tier flank taller than step-up-max. nil floor-pgrid reads as flat
+   ground, leaving the move wall?-gated exactly as before.
 
    `revive?` false suspends every dead enemy's timer (boss dead on L10
    → no more respawns of boss OR minions, the run is winding down)."
-  [e grid pgrid ^float player-x ^float player-y ^float dt ^float speed all-enemies revive?]
+  [e grid pgrid floor-pgrid ^float player-x ^float player-y ^float dt ^float speed all-enemies revive?]
   (cond
     (:alive e)                (let [;; Per-frame AI pipeline. Order matters:
                                     ;;
@@ -628,7 +645,7 @@
                                                   (let [target (target-pos wandered player-x player-y)
                                                         mul    (or (get type-speed-mul (:type wandered)) 1.0)]
                                                     (if target
-                                                      (step-toward wandered grid (:x target) (:y target) dt (php/* speed mul))
+                                                      (step-toward wandered grid floor-pgrid (:x target) (:y target) dt (php/* speed mul))
                                                       wandered))
                                                   wandered)
                                     flash'      (php/max 0.0 (php/- (or (:hit-flash-secs wandered) 0.0) dt))]
@@ -674,16 +691,26 @@
    The 7-arity form skips the LOS pass (`pgrid` defaults to nil) so
    test callers don't have to build a PHP-array grid mirror; the AI
    then falls through to the enemy's existing `:state` (default
-   `:aware` → they chase as before).
+   `:aware` → they chase as before). The 8-arity form carries `pgrid`
+   but still defaults `floor-pgrid` to nil. Both shims funnel into the
+   9-arity form; a nil `floor-pgrid` reads as flat ground, so the riser
+   Z-gate (#301) is inert and the move stays wall?-gated exactly as
+   before — legacy callers and flat levels are byte-identical.
+
+   `floor-pgrid` (the world's `:floor-pgrid` float[][] twin) gates the
+   chase by floor height so an enemy cannot levitate UP a tier flank
+   taller than step-up-max (#301).
 
    `revive?`, when false, freezes every dead enemy in place — used on
    L10 once the boss is down so neither the cyberdemon nor its capped
    minions ever come back."
   ([enemies grid player-x player-y dt speed revive?]
-   (advance enemies grid nil player-x player-y dt speed revive?))
-  ([es g pg x y delta sp rev?]
+   (advance enemies grid nil nil player-x player-y dt speed revive?))
+  ([es7 g7 pg7 px7 py7 dt7 sp7 rev7?]
+   (advance es7 g7 pg7 nil px7 py7 dt7 sp7 rev7?))
+  ([es g pg fpg x y delta sp rev?]
    (apply vector
-          (map (fn [e] (tick-one e g pg x y delta sp es rev?))
+          (map (fn [e] (tick-one e g pg fpg x y delta sp es rev?))
                es))))
 
 (def scare-trigger-dist

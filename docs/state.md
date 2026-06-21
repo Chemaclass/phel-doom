@@ -17,7 +17,7 @@ Pure data shapes that every other module operates on. `src/core/state.phel`.
  :show-map   <bool>     ; minimap toggle (default OFF, M toggles)
  :paused     <bool>     ; P toggle
  :sound-on   <bool>     ; N toggle
- :enemies    <vector of {:x :y :alive :lives :max-lives :type :hit-flash-secs [:respawn-after] [:max-concurrent] [:fire-now]}>
+ :enemies    <vector of {:x :y :alive :lives :max-lives :type :hit-flash-secs [:respawn-after] [:max-concurrent] [:fire-now] [:path-wp :path-cd :path-ptier]}>
  :projectiles <vector of {:x :y :vx :vy :ttl :type}>  ; enemy fireballs (core/projectile)
  :hit-stop-secs <float>  ; >0 freezes the gameplay step (kill weight); decays each frame
  :hearts     <vector of {:x :y}>

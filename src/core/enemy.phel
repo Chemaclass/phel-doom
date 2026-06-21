@@ -195,6 +195,136 @@
               (recur (rest offsets) hit diff)
               (recur (rest offsets) best best-diff))))))))
 
+(def bfs-max-visited
+  "Hard cap on cells the cross-tier BFS (#311) will ENQUEUE before giving
+   up (the search bails once this many distinct cells have been pushed onto
+   the frontier). Must exceed the walkable interior of the largest multi-
+   tier level so a reachable goal is always dequeued before the cap fires -
+   the L7 stair room (the only multi-tier level) has ~909 non-wall cells, so
+   1200 clears it with headroom while still bounding the worst case. The cap
+   is the runaway guard for a (hypothetical) disconnected or pathological
+   grid; on a connected level BFS terminates at the goal far sooner. Even
+   the full sweep is ~1200 nodes x 4 edges - microseconds - and runs at most
+   once per `path-recompute-frames` per cross-tier enemy, so the enemy step
+   phase stays inside the frame budget with a full roster."
+  1200)
+
+(def path-recompute-frames
+  "Frame cadence for recomputing an enemy's cached BFS waypoint (#311).
+   The BFS runs at most once per enemy per this many frames (and also on
+   reaching the waypoint cell or on a tier change); in between, the enemy
+   just steers toward the cached next-cell. At the ~0.1s dt the play loop
+   feeds, 12 frames is ~1.2s - frequent enough that the route stays fresh
+   as the player moves between tiers, rare enough that BFS is off the hot
+   path on the vast majority of frames. Greedy still owns every same-tier
+   frame (BFS never runs there), so this only paces the cross-tier case."
+  12)
+
+(defn- cell-floor-at
+  ;; Floor height of the integer grid cell (cx, cy), read from the php-array
+  ;; float[][] `floor-pgrid`. nil grid / missing row / missing cell all read
+  ;; as 0.0 (flat ground). The cell-indexed twin of `cell-floor-z` (which
+  ;; floors world coords); used by the BFS climb gate where coords are
+  ;; already integer cells.
+  [floor-pgrid ^int cx ^int cy]
+  (if (php/=== nil floor-pgrid)
+    0.0
+    (let [row (php/aget floor-pgrid cy)]
+      (if (php/=== nil row)
+        0.0
+        (let [fz (php/aget row cx)]
+          (if (php/=== nil fz) 0.0 (php/* 1.0 fz)))))))
+
+(defn- bfs-step-ok?
+  ;; True when an entity may traverse the directed edge from cell
+  ;; (fx, fy) to the orthogonally-adjacent cell (tx, ty) during the
+  ;; cross-tier BFS (#311). The destination must NOT be a wall and the
+  ;; floor-height change must lie within the auto-climb band on BOTH sides:
+  ;; a rise of at most `step-up-max` (the same ascent gate `try-step`
+  ;; enforces - no levitating up a tier flank) AND a drop of at most
+  ;; `step-up-max` (so the route never deliberately runs the enemy OFF a
+  ;; cliff to its death; it threads the smooth stair treads instead - each
+  ;; L7 tread rises/drops 0.375 < 0.4, so a full staircase is traversable).
+  ;; A bigger drop (a real fall, #299) is NOT a BFS edge: stairs are what
+  ;; connect the tiers, so the path uses them; an enemy still falls off an
+  ;; open lip organically when the per-frame `try-step` / `land-step` walks
+  ;; it there, but the planner won't route a suicide drop. Handrails are not
+  ;; consulted (the per-step `try-step` re-applies them); BFS only needs the
+  ;; walkable-terrain reachability.
+  [grid floor-pgrid ^int fx ^int fy ^int tx ^int ty]
+  (and (not (wall? grid tx ty))
+       (php/<= (php/abs (php/- (cell-floor-at floor-pgrid tx ty)
+                               (cell-floor-at floor-pgrid fx fy)))
+               step-up-max)))
+
+(defn- bfs-first-step
+  "Bounded breadth-first search (#311) over the grid from the enemy cell
+   (sx, sy) toward the player cell (gx, gy), expanding only cells that are
+   non-`wall?` AND climb-gated (`bfs-step-ok?`: rise <= step-up-max,
+   descents free). Returns the FIRST cell `[cx cy]` on a shortest reachable
+   path - the immediate next waypoint the enemy should walk to - or nil
+   when the goal is unreachable within `bfs-max-visited` expanded cells, or
+   when start and goal are the same cell (already there).
+
+   This is the fallback the greedy chase (`seek-climbable-step`) cannot
+   cover: it routes the enemy to and through a stair mouth from ANY
+   position, including when the only way up/down is a stair the enemy is
+   not facing (the off-bearing stall greedy leaves it in). Pure: reads the
+   immutable grid + floor-pgrid, mutates nothing. Bounded + amortized by
+   the caller (cached per enemy, recomputed every `path-recompute-frames`),
+   so it stays off the hot per-frame path."
+  [grid floor-pgrid ^int sx ^int sy ^int gx ^int gy]
+  (if (and (php/=== sx gx) (php/=== sy gy))
+    nil
+    (let [w    (count (first grid))
+          ;; Encode a cell as a single int key (y*W + x) for the visited /
+          ;; parent maps - cheaper + hashable vs a [x y] vector key.
+          enc  (fn [^int x ^int y] (php/+ (php/* y w) x))
+          goal (enc gx gy)]
+      ;; queue: a growing vector read via a head index (no O(n) shift).
+      ;; parent: child-key -> parent-key, for path reconstruction.
+      (loop [queue   [[sx sy]]
+             head    0
+             parent  {}
+             visited #{(enc sx sy)}
+             seen    1]
+        (if (or (php/>= head (count queue))
+                (php/> seen bfs-max-visited))
+          nil
+          (let [[cx cy] (get queue head)
+                ckey    (enc cx cy)]
+            (if (php/=== ckey goal)
+              ;; Reconstruct: walk parent links back from goal to the cell
+              ;; whose parent is the start, and return THAT cell (the first
+              ;; step off the start).
+              (loop [k goal]
+                (let [p (get parent k)]
+                  (if (php/=== p (enc sx sy))
+                    [(php/% k w) (php/intdiv k w)]
+                    (if (php/=== nil p)
+                      ;; goal == a direct neighbour of start: step onto it.
+                      [gx gy]
+                      (recur p)))))
+              ;; Expand the four orthogonal neighbours.
+              (let [neighbours           [[(php/+ cx 1) cy] [(php/- cx 1) cy]
+                                          [cx (php/+ cy 1)] [cx (php/- cy 1)]]
+                    [q' par' vis' seen']
+                    (reduce
+                     (fn [acc nb]
+                       (let [[nx ny]       nb
+                             [qa pa va sa] acc
+                             nkey          (enc nx ny)]
+                         (if (or (contains? va nkey)
+                                 (not (bfs-step-ok? grid floor-pgrid cx cy nx ny)))
+                           acc
+                           [(conj qa nb)
+                            (put pa nkey ckey)
+                            (conj va nkey)
+                            (php/+ sa 1)])))
+                     [queue parent visited seen]
+                     neighbours)]
+                (recur q' (php/+ head 1) par' vis' seen')))))))))
+
 (defn- pick-step
   "Walk chase-angle-offsets in order and return the first [nx ny] whose
    destination is open AND climbable (try-step's riser Z-gate, #301).
@@ -235,6 +365,33 @@
           (assoc moved :lives lives)))
       moved)))
 
+(defn- refresh-path
+  ;; Refresh an enemy's cached cross-tier BFS waypoint (#311) when it is
+  ;; stale, then return [enemy' wp] where `wp` is the [cx cy] cell to walk
+  ;; toward (nil when no path / already at the player cell). The cache is
+  ;; recomputed only when: there is none, the per-enemy cooldown
+  ;; (`:path-cd`) has run out, the enemy now stands IN the cached waypoint
+  ;; cell (reached it), or the player's tier changed since the last compute
+  ;; (`:path-ptier`). Otherwise the existing waypoint is reused and the
+  ;; cooldown ticks down - so the bounded BFS runs at most once per
+  ;; `path-recompute-frames` frames per enemy, keeping it off the hot path.
+  [enemy grid floor-pgrid ^int ex-cell ^int ey-cell ^int gx ^int gy ^float target-floor]
+  (let [wp     (:path-wp enemy)
+        cd     (or (:path-cd enemy) 0)
+        ptier  (:path-ptier enemy)
+        stale? (or (nil? wp)
+                   (php/<= cd 0)
+                   (and (php/=== ex-cell (first wp)) (php/=== ey-cell (second wp)))
+                   (php/!== ptier target-floor))]
+    (if (not stale?)
+      [(put enemy :path-cd (php/- cd 1)) wp]
+      (let [wp' (bfs-first-step grid floor-pgrid ex-cell ey-cell gx gy)]
+        [(-> enemy
+             (put :path-wp wp')
+             (put :path-cd path-recompute-frames)
+             (put :path-ptier target-floor))
+         wp']))))
+
 (defn- step-toward
   "Walk one frame of `speed` * dt toward (target-x, target-y). The
    enemy slides around obstacles via pick-step's offset cascade
@@ -247,7 +404,20 @@
    which tread (descending vs ascending) heads toward the player.
    `handrails` (the world's `:handrails` set) blocks a step off a railed
    lip; a step off an UNRAILED edge falls and the enemy takes fall damage
-   via `land-step` (#299)."
+   via `land-step` (#299).
+
+   Cross-tier routing (#311): when the enemy stands on a DIFFERENT floor
+   tier than the player (`cur-floor != target-floor`), greedy alone stalls
+   if it is off-bearing from the stair mouth. In that case the heading is
+   aimed at a cached bounded-BFS waypoint (`refresh-path`) instead of
+   straight at the player, so the enemy routes to and through the mouth
+   from any position; the actual move still goes through `pick-step` /
+   `land-step`, so the Z-gate, wall-slide, rails and fall damage all still
+   apply. On the SAME tier (every flat level, and the final approach once
+   the enemy reaches the player's tier) the heading points straight at the
+   player and BFS never runs - so flat / same-tier behaviour is byte-
+   identical. The cache fields are cleared on the same-tier branch so a
+   later tier split recomputes fresh."
   [enemy grid floor-pgrid handrails ^float target-x ^float target-y ^float dt ^float speed]
   (let [ex           (:x enemy)
         ey           (:y enemy)
@@ -258,13 +428,33 @@
         dist         (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
     (if (php/<= dist stop-dist)
       enemy
-      (let [hit (pick-step grid floor-pgrid handrails ex ey cur-floor
-                           (php/* speed dt)
-                           (php/atan2 dy dx)
-                           target-floor)]
+      ;; Pick the chase heading + the enemy to step. Same tier (or no
+      ;; floor-pgrid) -> straight at the player, drop any stale path cache.
+      ;; Different tier -> steer toward the cached BFS waypoint cell so an
+      ;; off-bearing enemy still routes to the mouth.
+      (let [cross?          (and floor-pgrid (php/!== cur-floor target-floor))
+            [actor desired]
+            (if (not cross?)
+              [(-> enemy (put :path-wp nil) (put :path-cd 0))
+               (php/atan2 dy dx)]
+              (let [[a wp] (refresh-path enemy grid floor-pgrid
+                                         (php/intval ex) (php/intval ey)
+                                         (php/intval target-x) (php/intval target-y)
+                                         target-floor)]
+                (if (nil? wp)
+                  ;; No reachable path (defensive) -> fall back to the direct
+                  ;; player bearing and let greedy / seek do what it can.
+                  [a (php/atan2 dy dx)]
+                  ;; Aim at the waypoint cell centre.
+                  [a (php/atan2 (php/- (php/+ 0.5 (second wp)) ey)
+                                (php/- (php/+ 0.5 (first wp)) ex))])))
+            hit             (pick-step grid floor-pgrid handrails ex ey cur-floor
+                                       (php/* speed dt)
+                                       desired
+                                       target-floor)]
         (if hit
-          (land-step enemy cur-floor (first hit) (second hit) floor-pgrid)
-          enemy)))))
+          (land-step actor cur-floor (first hit) (second hit) floor-pgrid)
+          actor)))))
 
 (def boss-sprite-scale
   "Vertical billboard scale for the cyberdemon: it towers 2× taller than

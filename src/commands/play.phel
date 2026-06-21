@@ -709,6 +709,23 @@
   [^float t-then ^float t-now]
   (php/intval (php/* (php/- t-now t-then) 1000)))
 
+(def max-frame-ms
+  "Upper bound on a single frame's dt (#278). Real frames run 16-50ms; a
+   stall (GC, swap, debugger break) can spike one frame's delta to
+   hundreds of ms. Feeding that raw to the pure tick lets `apply-physics`
+   translate `move-speed * dt` in one un-swept step, tunnelling the player
+   through 1-thick walls / locked doors, and drains every feel timer a
+   full step at once. Clamping to 100ms (a ~10fps floor) caps the worst-
+   case step well above the real range, so live frames are untouched."
+  100)
+
+(defn clamp-frame-ms
+  "Cap a raw per-frame millisecond delta at `max-frame-ms` (#278). Pure so
+   the clamp is unit-testable; real frames (<= 100ms) pass through
+   unchanged, so the live tick / FPS / golden frames stay byte-identical."
+  [^int ms]
+  (php/min max-frame-ms ms))
+
 (defn- fps-from-ms
   "Instant fps estimate from one frame's ms cost. 0 if delta < 1ms."
   [ms]
@@ -826,6 +843,18 @@
   "How long the SAVED / LOADED HUD cue holds after F5 / F9."
   1.2)
 
+(defn adopt-loaded-world
+  "Pure: graft a quick-loaded `loaded` world onto the live session,
+   carrying the CURRENT world's `:settings` + `:settings-cursor` (#279).
+   Settings are session-global preference, not run state, so a load must
+   keep the live choices rather than the snapshot baked into the save -
+   otherwise the load reverts settings and the next resume persists the
+   stale copy."
+  [current loaded]
+  (assoc loaded
+         :settings (:settings current)
+         :settings-cursor (:settings-cursor current)))
+
 (defn- handle-save-load
   "F5 saves the current world to the quick-save slot; F9 loads it back
    (swapping the whole world). Both stamp a brief `:save-flash-*` HUD
@@ -839,7 +868,8 @@
     (:load edges)
     (let [loaded (load-game quick-save-slot)]
       (if loaded
-        (assoc loaded :save-flash-secs save-flash-seconds :save-flash-msg "LOADED")
+        (assoc (adopt-loaded-world world loaded)
+               :save-flash-secs save-flash-seconds :save-flash-msg "LOADED")
         (assoc world :save-flash-secs save-flash-seconds :save-flash-msg "NO SAVE")))
     :else         world))
 
@@ -906,7 +936,11 @@
               cal'         (next-cal cal auto? trows tcols render-ms)]
           (let [live-keys (drain-keys)
                 now       (php/microtime true)
-                live-ms   (ms-since t-last now)
+                ;; Clamp the raw per-frame dt (#278) so one stalled frame
+                ;; can't translate the player a full move-speed*dt step in
+                ;; the un-swept physics tick (tunnelling through 1-thick
+                ;; walls / locked doors) or drain every feel timer at once.
+                live-ms   (clamp-frame-ms (ms-since t-last now))
               ;; Input source: live terminal, or — under demo record /
               ;; replay — the recorder taps the stream / the player
               ;; feeds recorded frames (issue #64). A replay that runs

@@ -33,6 +33,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Fixed
 
+- Per-frame dt is now clamped to 100ms before the physics tick (issue #278): after a stall (GC, swap, a debugger break) one frame's delta could spike to hundreds or thousands of ms, and the un-swept move integrator translated the player a full move-speed * dt step in one go - tunnelling straight through 1-thick walls and locked doors and draining every feel timer at once. Real frames (16-50ms) are untouched, so the live tick, FPS and golden frames are byte-identical.
+- F9 quick-load no longer reverts settings or persists a stale copy to disk (issue #279): saves now drop `:settings` / `:settings-cursor` and a load keeps the live settings, since they are session-global preference rather than run state. Previously a load adopted the baked-in snapshot and the next pause-resume wrote it back permanently.
 - Pickups, projectiles, tracers and blood splats now shear with the horizon when looking up/down (issue #242): previously they stayed pinned to the level-gaze horizon and floated while the walls, floor and enemies pitched. A level gaze renders unchanged.
 
 ## [0.15.0] - 2026-06-16

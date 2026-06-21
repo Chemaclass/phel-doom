@@ -5,7 +5,7 @@
   (:require phel-doom.core.level  :refer [build-world])
   (:require phel-doom.core.rng    :as rng)
   (:require phel-doom.commands.play  :refer [tick-world resumed-pause? step-pause-menu
-                                             apply-mouse-look]))
+                                             apply-mouse-look clamp-frame-ms adopt-loaded-world]))
 
 (def open-grid
   (apply vector
@@ -333,6 +333,42 @@
         w' (apply-mouse-look w {})]
     (is (= 2.0 (:angle (:player w'))))
     (is (= 0.1 (:pitch (:player w'))))))
+
+;; ---------------------------------------------------------------------
+;; Per-frame dt clamp (#278): a stalled frame must not feed an unbounded
+;; dt into the un-swept physics tick (tunnelling) or drain feel timers a
+;; full step. Real frames (16-50ms) pass through; only spikes are capped.
+;; ---------------------------------------------------------------------
+
+(deftest test-clamp-frame-ms-passes-real-frames-through
+  (is (= 16 (clamp-frame-ms 16)) "a 60fps frame is untouched")
+  (is (= 50 (clamp-frame-ms 50)) "a 20fps frame is untouched")
+  (is (= 100 (clamp-frame-ms 100)) "the cap itself passes through"))
+
+(deftest test-clamp-frame-ms-caps-stalls
+  (is (= 100 (clamp-frame-ms 5000)) "a multi-second stall is capped at 100ms")
+  (is (= 100 (clamp-frame-ms 101)) "one ms over the cap is capped"))
+
+;; ---------------------------------------------------------------------
+;; Quick-load keeps LIVE settings, not the snapshot baked into the save
+;; (#279): settings are session-global preference, not run state.
+;; ---------------------------------------------------------------------
+
+(deftest test-adopt-loaded-world-keeps-current-settings
+  (let [current (assoc (new-world open-grid (new-player 5.0 5.0 0.0))
+                       :settings {:music-volume 9 :mouse true}
+                       :settings-cursor 3
+                       :level 1)
+        loaded  (assoc (new-world open-grid (new-player 2.0 2.0 0.0))
+                       :settings {:music-volume 1 :mouse false}
+                       :settings-cursor 0
+                       :level 7)
+        adopted (adopt-loaded-world current loaded)]
+    (is (= {:music-volume 9 :mouse true} (:settings adopted))
+        "live settings win over the loaded snapshot")
+    (is (= 3 (:settings-cursor adopted)) "live settings cursor wins")
+    (is (= 7 (:level adopted)) "the rest of the loaded run state is adopted")
+    (is (= 2.0 (:x (:player adopted))) "loaded player position is adopted")))
 
 (deftest test-apply-mouse-look-negative-yaw-turns-the-other-way
   (let [w' (apply-mouse-look (player-at-angle 1.0 0.0)

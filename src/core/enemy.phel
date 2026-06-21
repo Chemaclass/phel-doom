@@ -142,35 +142,97 @@
       nil
       [nx ny])))
 
+(def stair-seek-offsets
+  "Finer angle fan tried only by the stair-seeking second pass (#301
+   part 2). The coarse `chase-angle-offsets` samples the cardinals +
+   diagonals; this fills the gaps between them at the odd 22.5° marks
+   (±22.5° / ±67.5° / ±112.5° / ±157.5°), so a riser-blocked enemy can
+   spot a stair mouth that sits between two coarse rays and route onto
+   it instead of freezing against the tier wall."
+  (let [e (php/* 0.125 php/M_PI)]
+    [e (php/- 0.0 e)
+     (php/* 3.0 e) (php/- 0.0 (php/* 3.0 e))
+     (php/* 5.0 e) (php/- 0.0 (php/* 5.0 e))
+     (php/* 7.0 e) (php/- 0.0 (php/* 7.0 e))]))
+
+(defn- seek-climbable-step
+  "Stair-seeking second pass (#301 part 2). Run ONLY when the coarse
+   `pick-step` cascade found no move AND a floor-pgrid is present. Sweeps
+   the finer `stair-seek-offsets` fan, `try-step`-ing each (try-step
+   already Z-gates, so every returned cell is both 2D-open AND within
+   step-up-max of the enemy's floor - i.e. a walkable tread). Among the
+   walkable candidates it picks the one whose destination floor height
+   is CLOSEST to `target-floor` (the floor the player stands on), so an
+   enemy ABOVE the player steps onto the descending tread and one BELOW
+   onto the ascending tread - it mounts the stair mouth and moves toward
+   the player's tier. Returns the best [nx ny] or nil if the fan is fully
+   blocked.
+
+   Greedy-with-detour, not a planner: it only finds a mouth that lies
+   roughly along the current chase bearing's fan. A maze switchback whose
+   mouth is off-bearing (behind a divider, not in the fan) would need a
+   bounded BFS-to-nearest-mouth follow-up; YAGNI for L7's four fixed,
+   on-bearing stair mouths."
+  [grid floor-pgrid ^float ex ^float ey ^float cur-floor ^float step ^float desired ^float target-floor]
+  (loop [offsets   stair-seek-offsets
+         best      nil
+         best-diff nil]
+    (if (empty? offsets)
+      best
+      (let [hit (try-step grid floor-pgrid ex ey cur-floor step (php/+ desired (first offsets)))]
+        (if (nil? hit)
+          (recur (rest offsets) best best-diff)
+          (let [dz   (cell-floor-z floor-pgrid (first hit) (second hit))
+                diff (php/abs (php/- target-floor dz))]
+            (if (or (nil? best-diff) (php/< diff best-diff))
+              (recur (rest offsets) hit diff)
+              (recur (rest offsets) best best-diff))))))))
+
 (defn- pick-step
   "Walk chase-angle-offsets in order and return the first [nx ny] whose
    destination is open AND climbable (try-step's riser Z-gate, #301).
-   nil if the enemy is sealed in or every open offset rises a tier."
-  [grid floor-pgrid ^float ex ^float ey ^float cur-floor ^float step ^float desired]
-  (loop [offsets chase-angle-offsets]
-    (cond
-      (empty? offsets) nil
-      :else            (let [hit (try-step grid floor-pgrid ex ey cur-floor step (php/+ desired (first offsets)))]
-                         (if hit hit (recur (rest offsets)))))))
+   nil if the enemy is sealed in or every open offset rises a tier.
+
+   When the coarse cascade finds nothing AND a floor-pgrid is present
+   (raised terrain), fall through to `seek-climbable-step` (#301 part 2):
+   a finer fan that routes the enemy onto a stair mouth toward the
+   player's tier instead of freezing. On flat ground (floor-pgrid nil, or
+   the all-0.0 grid where the coarse pass always finds an open cell) the
+   second pass is unreachable, so the chase stays byte-identical."
+  [grid floor-pgrid ^float ex ^float ey ^float cur-floor ^float step ^float desired ^float target-floor]
+  (let [coarse (loop [offsets chase-angle-offsets]
+                 (cond
+                   (empty? offsets) nil
+                   :else            (let [hit (try-step grid floor-pgrid ex ey cur-floor step (php/+ desired (first offsets)))]
+                                      (if hit hit (recur (rest offsets))))))]
+    (if (and (nil? coarse) floor-pgrid)
+      (seek-climbable-step grid floor-pgrid ex ey cur-floor step desired target-floor)
+      coarse)))
 
 (defn- step-toward
   "Walk one frame of `speed` * dt toward (target-x, target-y). The
    enemy slides around obstacles via pick-step's offset cascade
    instead of bumping forever. `floor-pgrid` (the world's `:floor-pgrid`
    twin, nil reads as flat) feeds pick-step's riser Z-gate so the slide
-   can't levitate UP a tier flank taller than step-up-max (#301)."
+   can't levitate UP a tier flank taller than step-up-max (#301), and its
+   stair-seeking second pass so a riser-blocked enemy routes onto a stair
+   mouth toward the player's tier (#301 part 2). `target-floor` - the
+   floor height the player stands on, read once here - tells the seek
+   which tread (descending vs ascending) heads toward the player."
   [enemy grid floor-pgrid ^float target-x ^float target-y ^float dt ^float speed]
-  (let [ex        (:x enemy)
-        ey        (:y enemy)
-        cur-floor (cell-floor-z floor-pgrid ex ey)
-        dx        (php/- target-x ex)
-        dy        (php/- target-y ey)
-        dist      (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
+  (let [ex           (:x enemy)
+        ey           (:y enemy)
+        cur-floor    (cell-floor-z floor-pgrid ex ey)
+        target-floor (cell-floor-z floor-pgrid target-x target-y)
+        dx           (php/- target-x ex)
+        dy           (php/- target-y ey)
+        dist         (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
     (if (php/<= dist stop-dist)
       enemy
       (let [hit (pick-step grid floor-pgrid ex ey cur-floor
                            (php/* speed dt)
-                           (php/atan2 dy dx))]
+                           (php/atan2 dy dx)
+                           target-floor)]
         (if hit
           (assoc enemy :x (first hit) :y (second hit))
           enemy)))))

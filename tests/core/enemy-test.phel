@@ -1,5 +1,7 @@
 (ns phel-doom-tests.core.enemy-test
   (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.rng :as rng)
+  (:require phel-doom.core.level :refer [build-world])
   (:require phel-doom.core.enemy :refer [default-wander-fraction new-enemy promote-wanderers push-back-enemy spawn-enemies spawn-enemies-mixed shoot pierce spread-shoot splash beam-impact advance tick-scare rear-attacker? type-speed-mul]))
 
 (def open-grid
@@ -585,6 +587,186 @@
     (is (= (:y ne) (:y ze)) "nil floor-pgrid == all-0.0 grid: y identical")))
 
 ;; ---------------------------------------------------------------------
+;; Stair-seeking second pass (#301 part 2): when the coarse chase cascade
+;; is fully blocked by risers AND a floor-pgrid is present, pick-step
+;; falls through to seek-climbable-step - a finer angle fan that routes
+;; the enemy onto a stair-mouth tread toward the player's tier instead of
+;; freezing. On flat ground the coarse pass always finds an open cell, so
+;; the second pass is unreachable and the chase stays byte-identical.
+;; ---------------------------------------------------------------------
+
+(def seek-arena-grid
+  "9x9 bordered open arena, no interior walls. The riser shape lives
+   entirely in the floor-pgrid below."
+  [[1 1 1 1 1 1 1 1 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 1 1 1 1 1 1 1 1]])
+
+(def seek-one-tread-floor-pgrid
+  ;; Enemy at (4.5, 4.5) chasing a player due east. With a 2.5-unit step
+  ;; (speed 5.0 x dt 0.5), EVERY cell the coarse chase fan can reach
+  ;; (straight / +/-45 / +/-90 / +/-135 around east) is a +0.8 riser -
+  ;; too tall to climb - so the coarse pass returns nil. The ONLY open,
+  ;; climbable cell among the finer stair-seek fan is the +0.3 tread at
+  ;; cell (6,5) (the +22.5 deg offset). seek-climbable-step must find it.
+  ;; Every other reachable seek cell is also a +0.8 riser, so the tread
+  ;; is the unambiguous single answer.
+  (php/array
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+   (php/array 0.0 0.0 0.8 0.0 0.8 0.0 0.8 0.0 0.0)
+   (php/array 0.0 0.0 0.8 0.0 0.0 0.0 0.8 0.0 0.0)
+   (php/array 0.0 0.0 0.8 0.0 0.0 0.0 0.0 0.8 0.0)
+   (php/array 0.0 0.0 0.8 0.0 0.0 0.0 0.3 0.0 0.0)
+   (php/array 0.0 0.0 0.8 0.8 0.0 0.8 0.8 0.0 0.0)
+   (php/array 0.0 0.0 0.0 0.0 0.8 0.0 0.0 0.0 0.0)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)))
+
+(deftest test-seek-routes-to-mouth-when-coarse-blocked
+  ;; Coarse cascade fully blocked by +0.8 risers; the only open climbable
+  ;; cell is the +0.3 tread at (6,5). The stair-seek second pass must
+  ;; route the enemy onto it instead of freezing in place.
+  (let [start (assoc (new-enemy 4.5 4.5 1 :imp) :state :aware)
+        es'   (advance [start] seek-arena-grid nil seek-one-tread-floor-pgrid
+                       7.5 4.5 0.5 5.0 true)
+        e     (first es')]
+    ;; Landed on the lone +0.3 tread cell (6,5), not frozen at (4,4).
+    (is (= 6 (php/intval (:x e))) "stair-seek stepped onto the tread column (x cell 6)")
+    (is (= 5 (php/intval (:y e))) "stair-seek stepped onto the tread row (y cell 5)")
+    ;; Proves it actually moved off the start cell (seek fired, not frozen).
+    (is (or (php/!== 4 (php/intval (:x e)))
+            (php/!== 4 (php/intval (:y e)))) "enemy did not freeze on the start cell")))
+
+(def seek-fully-blocked-floor-pgrid
+  ;; Same arena but the (6,5) tread is ALSO a +0.8 riser, so EVERY
+  ;; reachable cell (coarse AND seek fan) is too tall. Both passes return
+  ;; nil and the enemy holds position - the seek pass adds reach, not a
+  ;; bypass of the Z-gate.
+  (php/array
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+   (php/array 0.0 0.0 0.8 0.8 0.8 0.8 0.8 0.0 0.0)
+   (php/array 0.0 0.0 0.8 0.0 0.0 0.0 0.8 0.0 0.0)
+   (php/array 0.0 0.0 0.8 0.0 0.0 0.0 0.8 0.8 0.0)
+   (php/array 0.0 0.0 0.8 0.0 0.0 0.0 0.8 0.0 0.0)
+   (php/array 0.0 0.0 0.8 0.8 0.8 0.8 0.8 0.0 0.0)
+   (php/array 0.0 0.0 0.0 0.0 0.8 0.0 0.0 0.0 0.0)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)))
+
+(deftest test-seek-freezes-when-every-tread-too-tall
+  ;; Negative control: with no climbable cell anywhere in reach, the seek
+  ;; pass cannot conjure a move - the enemy stays put. Confirms the second
+  ;; pass still honours the riser Z-gate (it only finds climbable treads).
+  (let [start (assoc (new-enemy 4.5 4.5 1 :imp) :state :aware)
+        es'   (advance [start] seek-arena-grid nil seek-fully-blocked-floor-pgrid
+                       7.5 4.5 0.5 5.0 true)
+        e     (first es')]
+    (is (= 4.5 (:x e)) "no climbable tread in reach: x frozen")
+    (is (= 4.5 (:y e)) "no climbable tread in reach: y frozen")))
+
+(deftest test-seek-skipped-on-flat
+  ;; On an all-0.0 floor-pgrid the coarse pass always finds an open cell,
+  ;; so the stair-seek pass is never reached. The result must equal the
+  ;; nil-floor-pgrid (legacy, no Z-data) result byte-for-byte: flat ground
+  ;; is unaffected by part 2.
+  (let [flat-floor (php/array
+                    (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+                    (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+                    (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+                    (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+                    (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+                    (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+                    (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+                    (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+                    (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0))
+        flat-es    (advance [(new-enemy 4.5 4.5)] seek-arena-grid nil flat-floor 7.5 4.5 0.5 0.75 true)
+        nil-es     (advance [(new-enemy 4.5 4.5)] seek-arena-grid nil nil        7.5 4.5 0.5 0.75 true)
+        fe         (first flat-es)
+        ne         (first nil-es)]
+    (is (= (:x fe) (:x ne)) "flat floor-pgrid == nil: x identical (seek pass never runs)")
+    (is (= (:y fe) (:y ne)) "flat floor-pgrid == nil: y identical")
+    ;; And it actually advanced east on flat ground (coarse chase intact).
+    (is (php/> (:x fe) 4.5) "flat chase still advances toward the player")))
+
+(deftest test-l7-enemy-above-descends-to-player
+  ;; INTEGRATION over the REAL L7 three-tier stair room (#298/#303). An
+  ;; aware enemy starts on tier 2 (top plateau, z 1.5) above the western
+  ;; upper stair (stair C); the player stands at the foot of the western
+  ;; staircase on tier 0 (z 0.0, cell (9, 22)) so both stair mouths (C
+  ;; then A) lie roughly along the chase bearing - the on-bearing case the
+  ;; greedy seek handles (the off-bearing maze switchback is the YAGNI
+  ;; BFS-to-mouth follow-up). Run ~250 frames of the live advance with
+  ;; L7's real grid + floor-pgrid: the enemy must walk DOWN both flights
+  ;; (floor-z strictly decreases tier by tier, never rising above its
+  ;; start), reach the player's bottom tier, and close to within stop-dist.
+  ;; Pins the end-to-end "enemy uses the stairs to reach the player" goal.
+  ;;
+  ;; Seed the global RNG first so this test is deterministic (build-world
+  ;; draws RNG for the spawn angle) AND, crucially, so the ~250 frames of
+  ;; advance it runs do NOT leave PHP-version-dependent global RNG state
+  ;; for later tests (the float path can differ ~1 ULP across PHP minors,
+  ;; shifting draw counts). Re-seeding here pins the state regardless.
+  (rng/seed! 1)
+  (let [w        (build-world 7 5)
+        g        (:grid w)
+        fpg      (:floor-pgrid w)
+        px       9.5
+        py       22.5
+        floor-at (fn [x y]
+                   (let [row (php/aget fpg (php/intval (php/floor y)))]
+                     (if (php/=== nil row)
+                       0.0
+                       (let [z (php/aget row (php/intval (php/floor x)))]
+                         (if (php/=== nil z) 0.0 (php/* 1.0 z))))))
+        dist-to  (fn [x y]
+                   (php/sqrt (php/+ (php/* (php/- x px) (php/- x px))
+                                    (php/* (php/- y py) (php/- y py)))))
+        start    (assoc (new-enemy 7.5 3.5 1 :imp) :state :aware)
+        start-fz (floor-at (:x start) (:y start))
+        start-d  (dist-to (:x start) (:y start))
+        final    (loop [es [start] i 0 maxfz start-fz]
+                   (if (php/>= i 250)
+                     {:e (first es) :max-fz maxfz}
+                     (let [es'   (advance es g nil fpg px py 0.1 1.8 true)
+                           cur-e (first es')]
+                       (recur es' (php/+ i 1) (php/max maxfz (floor-at (:x cur-e) (:y cur-e)))))))
+        e        (:e final)
+        end-fz   (floor-at (:x e) (:y e))
+        end-d    (dist-to (:x e) (:y e))]
+    ;; Started on the top tier, ended on the bottom tier with the player.
+    (is (= 1.5 start-fz) "enemy starts on tier 2 (z 1.5)")
+    (is (php/< end-fz start-fz) "enemy descended: end floor below start floor")
+    (is (php/<= end-fz 0.0) "enemy reached the bottom tier (z 0.0) with the player")
+    ;; Never levitated UP a tier on the way down: the running max floor
+    ;; height never exceeded the tier it started on.
+    (is (php/<= (:max-fz final) start-fz) "floor height never exceeded the start tier")
+    ;; Ended dramatically closer to the player.
+    (is (php/< end-d start-d) "enemy ended closer to the player than it started")
+    (is (php/< end-d 2.0) "enemy closed to within ~stop-dist of the player")))
+
+(deftest test-l7-flat-chase-unchanged
+  ;; The seek pass must not perturb L7's open bottom tier: an enemy and
+  ;; player both on tier 0 (z 0.0) chase exactly as on any flat level -
+  ;; the coarse cascade always finds an open cell, so the second pass
+  ;; never runs and the enemy advances toward the player on the flat.
+  (let [w     (build-world 7 5)
+        g     (:grid w)
+        fpg   (:floor-pgrid w)
+        ;; Both on the bottom tier (spawn region, all z 0.0).
+        start (assoc (new-enemy 22.5 22.5 1 :imp) :state :aware)
+        es'   (advance [start] g nil fpg 19.5 22.5 0.5 1.8 true)
+        e     (first es')]
+    ;; Moved toward the player (west, -x) on flat ground.
+    (is (php/< (:x e) 22.5) "flat-tier enemy chases the player on the open bottom tier")
+    (is (= 22.5 (:y e)) "no lateral drift on a straight-west chase")))
+
+;; ---------------------------------------------------------------------
 ;; tick-scare: fires the wide-eyed beat ONLY on the inbound crossing
 ;; past scare-trigger-dist (3.5). Tracks last frame's nearest enemy so
 ;; sitting inside the band doesn't keep refiring.
@@ -802,6 +984,15 @@
   ;; Two imps both flagged :nightmare?, cap 1. One alive, one dead with
   ;; expired timer. The cap that would normally block revival is
   ;; ignored on nightmare; the dead one revives this frame.
+  ;;
+  ;; Seed the global RNG first: revival routes through
+  ;; `random-spawn-far-from`, which draws from `core/rng`'s module atom.
+  ;; Without a seed the revival outcome depends on whatever global state
+  ;; earlier tests left, and a ~1-ULP float drift between PHP minor
+  ;; versions can shift the draw count enough to land a nil spawn cell
+  ;; (no revive) on one runtime but not another. Seeding makes the spawn
+  ;; deterministic and order-independent across PHP versions.
+  (rng/seed! 1)
   (let [es  [{:x 3.0 :y 3.0 :alive true :lives 1 :max-lives 1
               :type :imp :max-concurrent 1 :nightmare? true :hit-flash-secs 0.0}
              {:x 0.0 :y 0.0 :alive false :lives 0 :max-lives 1

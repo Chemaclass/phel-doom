@@ -306,6 +306,16 @@
    ;; :mag and :ammo-reserve mirror the active weapon's live state so
    ;; combat / render / HUD code can read them without an extra hop;
    ;; weapons/switch keeps the mirror in sync.
+   ;; Movable aim crosshair (#324). The reticle's viewport cell the gun
+   ;; aims at: combat reads :aim-col (+ :scene-cols) to steer the off-centre
+   ;; hitscan, render paints the `+` at (:aim-col, :aim-row). nil = centred
+   ;; (mouse off / not yet placed): combat then offsets 0 and render draws
+   ;; at screen centre, so a fresh / mouse-off world stays byte-identical to
+   ;; the pre-#324 centre-aim. The play loop stamps concrete cells from
+   ;; controls/mouse-aim while the mouse is on and resets them to nil on a
+   ;; resize or when the mouse is off (see reset-reticle).
+   :aim-col        nil
+   :aim-row        nil
    :weapon         :pistol
    ;; Fresh runs only own the pistol. Shotgun + chaingun must be
    ;; found on the map (level.phel/maybe-spawn-weapon-pickup).
@@ -469,3 +479,25 @@
   "Rotate the player by dtheta radians."
   [world dtheta]
   (assoc-in world [:player :angle] (+ (:angle (:player world)) dtheta)))
+
+(defn set-reticle
+  "Place the movable aim crosshair (#324) at viewport cell `(col, row)`:
+   combat reads `:aim-col` to steer the off-centre hitscan and render
+   paints the `+` there. The play loop calls this each frame the mouse is
+   on with the reticle position controls/mouse-aim returned. A nil col/row
+   centres that axis (see reset-reticle), so passing the mouse-aim result
+   straight through keeps a no-dims / no-pointer frame centred."
+  [world col row]
+  (assoc world :aim-col col :aim-row row))
+
+(defn reset-reticle
+  "Centre the movable aim crosshair (#324) by clearing `:aim-col` /
+   `:aim-row` to nil. nil is the centred sentinel both consumers honour:
+   combat's `aim-angle-offset` returns 0 (fire dead ahead) and render's
+   `paint-crosshair` draws at screen centre. The play loop calls this when
+   the mouse is OFF and on a terminal resize (the old absolute cell coords
+   stop meaning the same screen spot under a new size), so keyboard-only
+   play and every mouse-off frame behave exactly like the pre-#324 centre
+   aim."
+  [world]
+  (assoc world :aim-col nil :aim-row nil))

@@ -1,0 +1,158 @@
+(ns phel-doom-tests.io.tier-tint-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.level :refer [build-world])
+  (:require phel-doom.core.rng :as rng)
+  (:require phel-doom.core.state :refer [new-world new-player])
+  (:require phel-doom.core.engine :refer [mark-visible-cells])
+  (:require phel-doom.io.render.palette :refer [floor-tier shade-table shade-table-tier1 shade-table-tier2 tier-shade-tables])
+  (:require phel-doom.io.render.main :refer [frame->string]))
+
+;; Per-tier floor tint (issue #304): raised floor tiers are tinted by
+;; height so a multi-tier room reads as distinct levels. Tier 0 (fz<=0)
+;; keeps the neutral grey stone (a strict NO-OP, so flat frames stay
+;; byte-identical - that contract is pinned by render-cache-test's golden
+;; hashes); tier 1 (lower raised) reads cool steel-blue, tier 2 (higher)
+;; reads rose magenta. These tests pin: (a) the classification, (b) the
+;; baked tier tables diverge at lit fog levels, (c) the same cell raised
+;; to each tier renders three distinct hue families with no cross-bleed.
+
+(def stats
+  {:game-time 1.0 :debug? false :iframes 0.0 :lives 5 :max-lives 5
+   :armor 0 :kills 0 :level 7 :weapon :pistol :weapon-name "pistol"
+   :mag 10 :mag-size 10 :ammo-reserve 50 :stamina 100 :max-stamina 100
+   :owned-weapons #{:pistol} :difficulty :normal :held-keys #{}
+   :fire-anim-duration 0.1 :reload-duration 1.0 :game-time-s 1.0
+   :secrets-total 0 :secrets-found 0 :backpack-level 0})
+
+;; Controlled 9x9 chamber, player at the west wall facing east; mirrors
+;; render-cache-test/step-chamber so one forward cell can be stamped to a
+;; tier height and its riser/cap cells read back.
+(def step-chamber
+  [[1 1 1 1 1 1 1 1 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 0 0 0 0 0 0 0 1]
+   [1 1 1 1 1 1 1 1 1]])
+
+(defn- step-world []
+  (mark-visible-cells (new-world step-chamber (new-player 1.5 4.5 0.0))))
+
+(defn- raise-floor [world x y h]
+  (let [fpg (:floor-pgrid world)
+        row (php/aget fpg y)]
+    (php/aset row x (php/* 1.0 h))
+    (php/aset fpg y row)
+    (assoc world :floor-pgrid fpg)))
+
+;; Pull the `48;5;<code>` BG code of every painted cell in the frame.
+(defn- bg-codes [frame]
+  (let [m (php/array)]
+    (php/preg_match_all "/48;5;(\\d+)m/" frame m)
+    (php/aget m 1)))
+
+;; Decode a 256-colour code to an [r g b] triple via the xterm cube /
+;; grayscale layout, so a cell's hue can be read back from the ANSI.
+(def cube-lv (php/array 0 95 135 175 215 255))
+(defn- rgb-of [code]
+  (let [c (php/intval code)]
+    (cond
+      (php/>= c 232) (let [v (php/+ 8 (php/* 10 (php/- c 232)))] (php/array v v v))
+      (php/>= c 16)  (let [k (php/- c 16)]
+                       (php/array (php/aget cube-lv (php/intdiv k 36))
+                                  (php/aget cube-lv (php/intdiv (php/% k 36) 6))
+                                  (php/aget cube-lv (php/% k 6))))
+      :else          (php/array 0 0 0))))
+
+;; Hue class of a BG code: :cool (blue clearly dominant - tier 1), :rose
+;; (red + blue both clearly over green - the tier-2 magenta-rose), or
+;; :neutral (grey / warm-grey stone). The stone palette lives entirely in
+;; grey/brown/orange, so it never lands in :cool or :rose - those classes
+;; are introduced ONLY by a tier tint.
+(defn- hue-class [code]
+  (let [rgb (rgb-of code)
+        r   (php/aget rgb 0) g   (php/aget rgb 1) b   (php/aget rgb 2)]
+    (cond
+      (and (php/> r (php/+ g 60)) (php/> b (php/+ g 60))) :rose
+      (php/> b (php/+ r 40))                              :cool
+      :else                                               :neutral)))
+
+(defn- hue-hist [frame]
+  (let [cool (php/array 0) rose (php/array 0)]
+    (foreach [code (bg-codes frame)]
+      (case (hue-class code)
+        :cool (php/aset cool 0 (php/+ (php/aget cool 0) 1))
+        :rose (php/aset rose 0 (php/+ (php/aget rose 0) 1))
+        nil))
+    {:cool (php/aget cool 0) :rose (php/aget rose 0)}))
+
+(deftest tier-classification-is-correct
+  (is (= 0 (floor-tier 0.0))   "ground = tier 0 (no tint)")
+  (is (= 0 (floor-tier -0.8))  "descended trench = tier 0 (no tint)")
+  (is (= 1 (floor-tier 0.375)) "L7 lower stair = cool")
+  (is (= 1 (floor-tier 0.75))  "L7 mid tier = cool")
+  (is (= 1 (floor-tier 0.8))   "L5 dais = cool")
+  (is (= 2 (floor-tier 1.125)) "L7 upper stair = rose")
+  (is (= 2 (floor-tier 1.5))   "L7 top tier = rose")
+  ;; The table swap is a strict no-op at tier 0: index 0 IS the literal
+  ;; grey shade-table (the byte-identity guarantee for flat floors).
+  (is (php/=== shade-table (php/aget tier-shade-tables 0))
+      "tier-0 table IS the neutral grey shade-table (no-op)"))
+
+(deftest tier-shade-tables-diverge-at-lit-levels
+  ;; At the lit / near fog levels (>= 9, where a player reads a tier) the
+  ;; cool + rose tiers are distinct from grey AND from each other. The
+  ;; deepest fog levels (0-8) quantize back toward neutral, so a far tier
+  ;; sinks into haze rather than glowing a saturated colour (intended).
+  (loop [i 9]
+    (when (php/< i 24)
+      (let [g (php/aget shade-table i)
+            c (php/aget shade-table-tier1 i)
+            w (php/aget shade-table-tier2 i)]
+        (is (and (not= g c) (not= g w) (not= c w))
+            (str "lvl " i ": grey/cool/rose all distinct")))
+      (recur (php/+ i 1)))))
+
+(deftest tiers-render-as-distinct-shades
+  ;; THE legibility proof: the SAME forward cell raised to three heights -
+  ;; tier 0 (flat, fz=0), tier 1 (fz=0.75), tier 2 (fz=1.5) - renders the
+  ;; riser/cap band in three distinct colour families with NO cross-bleed.
+  (let [flat   (frame->string (step-world) stats 120 30)
+        t1     (frame->string (raise-floor (step-world) 5 4 0.75) stats 120 30)
+        t2     (frame->string (raise-floor (step-world) 5 4 1.5)  stats 120 30)
+        flat-h (hue-hist flat)
+        t1-h   (hue-hist t1)
+        t2-h   (hue-hist t2)]
+    ;; The warm-grey stone never lands in :cool or :rose, so both classes
+    ;; come ONLY from a tier tint. flat = 0/0 is byte-identity in colour
+    ;; terms; tier 1 introduces cool cells, tier 2 introduces rose cells,
+    ;; and neither tier's hue appears in the OTHER tier's frame.
+    (is (= 0 (:cool flat-h)) "flat tier-0 has NO cool cells (neutral stone)")
+    (is (= 0 (:rose flat-h)) "flat tier-0 has NO rose cells (neutral stone)")
+    (is (php/> (:cool t1-h) 0) "tier-1 step paints COOL steel-blue riser/cap cells")
+    (is (= 0 (:rose t1-h))     "tier-1 is NOT rose (no tier-2 hue bleed)")
+    (is (php/> (:rose t2-h) 0) "tier-2 step paints ROSE magenta riser/cap cells")
+    (is (= 0 (:cool t2-h))     "tier-2 is NOT cool (no tier-1 hue bleed)")
+    ;; Pairwise distinct bytes (visibly different frames).
+    (is (not= flat t1) "tier-1 frame differs from flat")
+    (is (not= flat t2) "tier-2 frame differs from flat")
+    (is (not= t1 t2)   "tier-1 frame differs from tier-2 (cool vs rose)")))
+
+(deftest l7-renders-with-tier-tint
+  ;; Whole-level smoke: stand the player on stair A (cols 8-10) just south
+  ;; of the row-16 divider facing NORTH up the run, so the nearby tier-1
+  ;; plateau + risers fill the view. (From the far spawn those risers fog
+  ;; to neutral grey - correct atmospheric falloff - so this places the
+  ;; camera where a player actually READS the tiers.)
+  (rng/seed! 4242)
+  (let [w0  (mark-visible-cells (build-world 7 5))
+        plr (-> (:player w0)
+                (assoc :x 9.5 :y 17.5 :a (php/* -0.5 php/M_PI)))
+        w   (mark-visible-cells (assoc w0 :player plr))
+        out (frame->string w (assoc stats :level 7) 120 30)
+        h   (hue-hist out)]
+    (is (php/> (php/+ (:cool h) (:rose h)) 0)
+        "L7 emits tier-tinted (cool + rose) BG cells when a player faces a tier")))

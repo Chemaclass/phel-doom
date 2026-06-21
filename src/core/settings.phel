@@ -235,11 +235,28 @@
    has equal headroom to slow the look down or speed it up."
   50)
 
+(def mouse-sensitivity-span
+  "Multiplicative span of the Sensitivity slider, from the midpoint out to
+   either end (#275). The multiplier is `span^((pct - 50) / 50)`, so the
+   slider is geometric (not linear) around the neutral 1.0x: each end sits
+   the SAME ratio away from neutral (3x faster at 100%, 1/3x as fast at
+   0%). 3 gives a clearly useful slow<->fast range - distinctly slower
+   fine-tracking at the low end, distinctly faster flicks at the high end
+   - replacing the old narrow 0..2x linear band where 0% killed the look
+   entirely and 100% only doubled it."
+  3.0)
+
 (defn mouse-sensitivity
-  "Mouselook speed multiplier (#246) for the current Sensitivity percent.
-   The midpoint (`mouse-sensitivity-neutral`, the default) is the neutral
-   1.0x; 0% slows to 0 (mouselook effectively off) and 100% doubles the
-   per-cell yaw/pitch. controls/mouse-look multiplies the raw pointer
-   delta by this."
+  "Mouselook speed multiplier (#275) for the current Sensitivity percent.
+   Geometric around the slider midpoint (`mouse-sensitivity-neutral`, the
+   default): `mouse-sensitivity-span ^ ((pct - 50) / 50)`. So 50% is the
+   neutral 1.0x (back-compatible with saved settings), 0% slows to ~0.33x
+   for fine aiming, and 100% speeds up to 3.0x for fast flicks - a wider,
+   genuinely useful range than the old 0..2x linear map.
+   controls/mouse-look multiplies the raw pointer delta by this, so the
+   camera turn already tracks pointer speed (a 2x-bigger flick = 2x yaw at
+   a fixed sensitivity); this only scales that proportional response."
   [settings]
-  (php// (php/intval (:sensitivity settings)) (php/* 1.0 mouse-sensitivity-neutral)))
+  (php/pow mouse-sensitivity-span
+           (php// (php/- (php/intval (:sensitivity settings)) mouse-sensitivity-neutral)
+                  (php/* 1.0 mouse-sensitivity-neutral))))

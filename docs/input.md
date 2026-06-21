@@ -70,6 +70,7 @@ So `b=0` final `M` is a left press, `b=32` is a left drag (button 0 + motion), `
 
 `controls/mouse-look` (pure) parses every report in the drained byte string and returns `{:yaw :pitch :fire? :fire-held? :pos}`:
 - Terminals report **absolute** cell coords with **no pointer lock and no warp**, so yaw/pitch come from the **delta between consecutive position reports**, summed across the frame. This is NOT the discrete hold-counter model the keyboard uses (turn-hold-frames etc.); it is a per-frame angular delta applied directly to `:angle` / `:pitch`.
+- **Camera speed tracks pointer speed** (issue #275): the mapping is linear and clamp-free, so a fast flick (a big per-frame delta) turns fast and a slow nudge turns slow - a 2x-larger delta yields 2x the yaw at a fixed sensitivity. Nothing inside `mouse-look` or `apply-mouse-look` clamps the yaw magnitude (only `:pitch` saturates, by design, at the clamped [-1, 1] range). The proportionality is pinned by tests.
 - Per-cell scales (`mouse-yaw-scale` 0.018 rad, `mouse-pitch-scale` 0.02 fraction) tune the native-FPS feel. Yaw is sized so a brisk full-width flick (~120 cols) sweeps ~2.16 rad (~124 deg) at the neutral 1.0x sensitivity - a strong turn per stroke before the pointer saturates at the edge. Pitch covers a useful slice of the clamped [-1, 1] range in a few cells of vertical travel.
 - Motion RIGHT (+dx) -> +yaw; motion UP -> +pitch (rows grow DOWNWARD, so up is a decreasing y, hence the dy is negated).
 - **Edge-clamp caveat**: because the coords are absolute and clamp to `1..cols` / `1..rows`, a continuous drag into a screen edge produces a **zero delta** there - the terminal equivalent of running the mouse off the pad. There is no recentering. This approximates true mouselook within the terminal's limits, not perfectly.
@@ -90,7 +91,9 @@ The aim is the **fixed screen-centre crosshair**, never a moving pointer (the te
 
 ### Sensitivity
 
-A `Sensitivity` percent setting (0..100, step 10, default 50) maps through `core/settings.mouse-sensitivity` to a multiplier: the midpoint (50%) is the neutral 1.0x, 0% disables the look (delta scaled to 0), 100% doubles the per-cell yaw/pitch. `mouse-look` multiplies the raw delta by it. Combined with the snappier 0.018 yaw scale, the default (50% / 1.0x) gives a responsive turn out of the box; raise it for a faster flick, lower it for fine tracking.
+A `Sensitivity` percent setting (0..100, step 10, default 50) maps through `core/settings.mouse-sensitivity` to a multiplier, **geometric** around the slider midpoint (issue #275): `3 ^ ((pct - 50) / 50)`. So 50% is the neutral 1.0x (kept exact for saved-settings back-compat), 0% slows to ~0.33x (1/3) for fine aiming, and 100% speeds up to 3.0x for fast flicks. Each end sits the same ratio away from neutral (1/3x vs 3x), giving a clearly useful slow <-> fast span instead of the old narrow 0..2x linear band (where 0% killed the look entirely and 100% only doubled it). `mouse-look` multiplies the raw delta by this multiplier, so the camera turn already tracks pointer speed (see the look-delta note above); the setting just scales that proportional response up or down. Combined with the snappy 0.018 yaw scale, the default (50% / 1.0x) gives a responsive turn out of the box; raise it for a faster flick, lower it for fine tracking.
+
+No acceleration curve: the per-frame delta -> yaw mapping stays linear. A faster-than-linear accel was considered (issue #275, optional) and skipped - the geometric sensitivity span already covers the fast end (3x), terminal pointers saturate at the screen edge so very large single-frame deltas are already rare, and a second curve would break the clean, testable proportionality for marginal feel gain.
 
 ### Backward-compat guard
 

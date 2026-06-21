@@ -2,7 +2,7 @@
 ;; perf snapshot, and the end / menu screens.
 (ns phel-doom.io.render.main
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
-  (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright shade-table shade-code-table shade-table-blood shade-code-table-blood floor-tier tier-shade-tables tier-bg-cell-caches])
+  (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright shade-table shade-code-table shade-table-blood shade-code-table-blood floor-tier tier-shade-tables tier-bg-cell-caches tier-platform-nose tier-platform-face])
   (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table bg-cell-cache halfblock build-sky-halfblock build-sky-codes-sub seam-darken-16 seam-darken-8 seam-darken-5 collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.wall-texture-data :refer [wall-tex])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type-lod sprite-fade sprite-fade-index sprite-col-x sprite-subcol-x enemy-sprite-cell enemy-sprite-quad])
@@ -404,6 +404,9 @@
         step-tops                                                      (buf-mk)
         step-face                                                      (buf-mk)
         step-cap                                                       (buf-mk)
+        ;; step-nose = the near-black tread-edge line (#319) painted at the
+        ;; cap/face boundary row so each step reads a crisp front nose.
+        step-nose                                                      (buf-mk)
         ;; Per-cell ceiling-height hanging bands (#235), the mirror of
         ;; the floor riser but anchored at the TOP. ceil-from = top row of
         ;; the hanging face (viewer-ceiling plane at the drop distance),
@@ -524,7 +527,8 @@
                   (buf-set step-bots col vh)
                   (buf-set step-tops col (php/+ vh 1))
                   (buf-set step-face col "")
-                  (buf-set step-cap  col ""))
+                  (buf-set step-cap  col "")
+                  (buf-set step-nose col ""))
               (let [s-fz      (buf-get step-fzs col)
                     s-side    (if (php/=== nil step-sides) 0 (buf-get step-sides col))
                     wall-bot  (php/+ top wall-h)
@@ -554,7 +558,21 @@
                                                 (php/+ (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// s-d max-depth))) 0.6) 23))
                                                        (if (php/=== s-side 0) 3 0))))
                     s-idx     (php/max 0 (php/- s-idx-raw haze-shift))
-                    cap-idx   (php/max 0 (php/- s-idx 2))
+                    ;; Light a step like a real staircase under overhead
+                    ;; light (#319): the horizontal CAP (tread top, you look
+                    ;; down on it) is the brightest plane, the vertical FACE
+                    ;; (riser front) reads in shadow a few steps darker, and a
+                    ;; near-black NOSE line traces the tread's front edge where
+                    ;; cap meets face. That cap-bright / face-dark contrast +
+                    ;; the nose edge is what makes the structure read as
+                    ;; discrete ASCENDING steps instead of one flat tinted
+                    ;; slab (the pre-#319 face and cap were within 2 levels and
+                    ;; the cap was the DARKER of the two, so a near riser read
+                    ;; as a solid blue rectangle). cap-idx brightens toward the
+                    ;; top of the ramp, face-idx darkens, nose-idx is the floor.
+                    cap-idx   (php/min 23 (php/+ s-idx 2))
+                    face-idx  (php/max 0 (php/- s-idx 3))
+                    nose-idx  (php/max 0 (php/- s-idx 8))
                     ;; Per-tier hue tint (#304): a raised step's face + cap
                     ;; read in the cool / rose tier shade keyed on its floor
                     ;; height so stacked plateaus are visually distinct.
@@ -566,8 +584,9 @@
                 (buf-set step-from col s-from)
                 (buf-set step-bots col s-to)
                 (buf-set step-tops col s-top)
-                (buf-set step-face col (buf-get tier-tbl s-idx))
-                (buf-set step-cap  col (buf-get tier-tbl cap-idx)))))
+                (buf-set step-face col (buf-get tier-tbl face-idx))
+                (buf-set step-cap  col (buf-get tier-tbl cap-idx))
+                (buf-set step-nose col (buf-get tier-tbl nose-idx)))))
           ;; Per-cell ceiling-height hanging ceiling + cap (#235), the
           ;; mirror of the floor riser but anchored at the TOP. Runs once
           ;; per COLUMN (the closure tax is a per-CELL concern). nil ceil
@@ -628,7 +647,7 @@
      :top-shadow top-shadow :bot-shadow bot-shadow
      :tex-u tex-u :tex-level tex-level :tex-px tex-px
      :step-from step-from :step-bots step-bots :step-tops step-tops
-     :step-face step-face :step-cap step-cap
+     :step-face step-face :step-cap step-cap :step-nose step-nose
      :ceil-from ceil-from :ceil-bots ceil-bots :ceil-tops ceil-tops
      :ceil-face ceil-face :ceil-cap ceil-cap}))
 ;; =====================================================================
@@ -1062,6 +1081,7 @@
          :step-tops         shades-step-tops
          :step-face         shades-step-face
          :step-cap          shades-step-cap
+         :step-nose         shades-step-nose
          :ceil-from         shades-ceil-from
          :ceil-bots         shades-ceil-bots
          :ceil-tops         shades-ceil-tops
@@ -1401,6 +1421,52 @@
                            (php/+ (php/* e-bot svw) c)
                            sprite-shadow))
                 (recur (php/+ c 1))))))))
+    ;; Sprite ground-platform, third pass (issue #319). A raised-tier enemy
+    ;; was drawn floating because the renderer never paints the tier floor
+    ;; surface under its (correctly lifted) feet - only the single nearest
+    ;; riser + a flat z=0 floor. So for any enemy on a raised cell (fz>0) we
+    ;; paint a short PLATFORM PAD under its feet: a bright tier-tinted lit
+    ;; edge at the feet row (the lip it stands on) over one or two darker
+    ;; tier-tinted face rows (the riser dropping toward the player), so the
+    ;; billboard unmistakably stands ON tier stone. Unlike the grounding
+    ;; shadow above, this runs in BOTH sprite + glyph modes (the floating
+    ;; reads worst with the default billboards) and only when fz>0 - a flat
+    ;; enemy (fz=0, every flat level) paints no pad, so flat frames stay
+    ;; byte-identical. Same blood-paint overlay + `enemy-front-visible-at?`
+    ;; wall/enemy occlusion gate as the shadow, and the pad is widened one
+    ;; column past the sprite each side so it reads as ground the feet rest
+    ;; on, not a halo hugging the silhouette. Painted after the shadow so a
+    ;; raised enemy's lit pad wins over the dark contact-shadow row.
+    (doseq [proj enemy-projs]
+      (let [fz (or (:fz proj) 0.0)]
+        (when (php/> fz 0.0)
+          (let [col    (if px2? (php/intdiv (:col proj) 2) (:col proj))
+                hw     (if px2? (php/max 1 (php/intdiv (:half-width proj) 2)) (:half-width proj))
+                d      (:dist proj)
+                tier   (floor-tier fz)
+                nose   (php/aget tier-platform-nose tier)
+                face   (php/aget tier-platform-face tier)
+                e-bot  (sprite-feet-row scene-pd svh d eye-z fz pr)
+                ;; Pad face depth scales with apparent size so a near / boss
+                ;; sprite stands on a chunkier ledge and a far one on a thin
+                ;; lip; clamped so it never swallows the view.
+                pad-h  (php/max 1 (php/min 3 (php/intdiv hw 2)))
+                ;; One column wider than the sprite each side: a platform a
+                ;; body stands on reads as extending past the feet.
+                c-from (php/max 0 (php/- col (php/+ hw 1)))
+                c-to   (php/min (php/- svw 1) (php/+ col (php/+ hw 1)))]
+            (when (and (php/>= e-bot 0) (php/< e-bot svh))
+              (loop [c c-from]
+                (when (php/<= c c-to)
+                  (when (enemy-front-visible-at? d c dists edists)
+                    ;; Lit nose at the feet row.
+                    (buf-set blood-paint (php/+ (php/* e-bot svw) c) nose)
+                    ;; Darker face rows just below, clamped on screen.
+                    (loop [r (php/+ e-bot 1)]
+                      (when (and (php/<= r (php/+ e-bot pad-h)) (php/< r svh))
+                        (buf-set blood-paint (php/+ (php/* r svw) c) face)
+                        (recur (php/+ r 1)))))
+                  (recur (php/+ c 1)))))))))
     ;; Chain the fx + pickup painters: each one takes the current
     ;; blood-paint, returns a new buffer (PHP arrays pass by value, so
     ;; the helper owns the allocation). Rename per step to keep phel
@@ -2089,7 +2155,15 @@
                                                       (buf-get floordxs col) (buf-get floordys col)
                                                       pfx pfy (floor-tier (buf-get step-fzs col))))
                               (php/aset cell-reg 0 (buf-get shades-step-cap col)))
-                            (php/aset cell-reg 0 (buf-get shades-step-face col)))
+                            ;; Below the cap: the vertical riser face, with a
+                            ;; near-black NOSE line on its very top row (#319)
+                            ;; - the tread's front edge where the lit cap rolls
+                            ;; into the shadowed face. That single dark line per
+                            ;; step is what reads the structure as discrete
+                            ;; ascending steps rather than one flat tinted slab.
+                            (if (php/=== row (buf-get shades-step-tops col))
+                              (php/aset cell-reg 0 (buf-get shades-step-nose col))
+                              (php/aset cell-reg 0 (buf-get shades-step-face col))))
                           ;; Per-cell ceiling-height hanging ceiling + cap
                           ;; (#235), the mirror of the floor riser above.
                           ;; Claims the ceiling-band rows a dropped ceiling

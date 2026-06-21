@@ -577,3 +577,49 @@
    `floor-cap-px` fetch a tier-tinted stone cell with the same single
    nested aget as the neutral path."
   (php/array neutral-bg-cell-cache (tint-bg-cell-cache 1) (tint-bg-cell-cache 2)))
+
+;; ---------------------------------------------------------------------
+;; Sprite ground-platform (issue #319). An enemy standing on a raised tier
+;; was drawn with its feet correctly LIFTED but with no platform under it,
+;; so it read as floating: the renderer only ever paints the single nearest
+;; riser + a flat z=0 floor, never the tier floor surface the enemy stands
+;; on. To ground the billboard we paint a short PLATFORM PAD directly under
+;; its feet - a bright lit front edge (the lip the enemy stands on) rolling
+;; into a darker tier-tinted face below. Tier-hued (cool/rose, same #304
+;; palette) so the pad reads as the same stone as the rest of that tier and
+;; the enemy unmistakably stands ON it. fz<=0 (flat ground / every flat
+;; level) never paints a pad, so flat frames stay byte-identical.
+;; ---------------------------------------------------------------------
+
+(defn- tier-stone-code
+  ;; Tier-hue-shifted twin of a grey ramp code `232+lvl` (lvl 0-23). One
+  ;; nearest-256 quantize; load-time only. tier 0 returns the grey code
+  ;; verbatim so the helper is a no-op there.
+  [tier ^int lvl]
+  (let [code (php/+ 232 (php/min 23 (php/max 0 lvl)))]
+    (if (php/=== tier 0)
+      code
+      (tint-code code (get tier-tints tier)))))
+
+(def tier-platform-nose
+  "Tier index -> the platform's lit FRONT-EDGE cell (issue #319): a BRIGHT
+   tier-tinted stone BG painted at the enemy's feet row - the lit lip the
+   billboard stands on. Kept a BG-only space cell (not a `▀` half-block) so
+   a run of identical pad cells RLE-coalesces into one escape + spaces; a
+   glyph cell would defeat the renderer's space-run compression and draw a
+   single edge mark followed by blanks. Legibility comes from the strong
+   brightness step between this bright nose row and the darker `tier-platform-
+   face` rows below, which reads as a lit edge dropping into shadow. Indexed
+   by `(floor-tier fz)`; index 0 is an unused grey fallback (pad drawn for
+   fz>0 only)."
+  (let [mk (fn [tier] (str "\e[48;5;" (tier-stone-code tier 18) "m "))]
+    (php/array (mk 0) (mk 1) (mk 2))))
+
+(def tier-platform-face
+  "Tier index -> the platform's FACE cell (issue #319): a solid mid-dark
+   tier-tinted stone painted for the row(s) below the lit nose, so the pad
+   has visible depth (a small riser dropping toward the player) instead of a
+   single floating line. Indexed by `(floor-tier fz)`; index 0 is an unused
+   grey fallback (pad drawn for fz>0 only)."
+  (let [mk (fn [tier] (str "\e[48;5;" (tier-stone-code tier 8) "m "))]
+    (php/array (mk 0) (mk 1) (mk 2))))

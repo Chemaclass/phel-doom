@@ -82,7 +82,6 @@ The decorative lights-flicker, the jump-scare face flash, and the blinking door-
 
 - High contrast (Settings toggle, default off): un-dims the dim/grey HUD elements (compass non-facing letters, empty heart pips, healthy ammo reserve) to bold white so the HUD reads on washed-out / low-quality terminals. Pure overlay branch, no frame-speed cost.
 - Calm 3D view (default for everyone): the gameplay view carries no decorative blinks or strobes. The lights-flicker overlay, the jump-scare face flash and the blinking door-eye are removed entirely (decoration, no info); the low-health heartbeat edge, the berserk border, the low-ammo / behind-you / reload HUD labels, the powerup banners, the JAMMED chip and the low-health hearts strip are held steady (info kept, on/off pulse dropped); doors and aggro heads stay steady-bright. There is no `\e[5` terminal hardware-blink anywhere in the renderer. Essential single-shot feedback (directional hit-vignette, kill flash, CLICK prompt, crosshair hit-marker) and the gentle interactive-pickup glow are kept. Pure overlay branch, no frame-speed cost. See [rendering.md](rendering.md#calm-3d-view-no-decorative-blinks).
-- Reduced motion (Settings toggle, default off; `PHEL_DOOM_REDUCED_MOTION=1` to force on): retained for back-compat. Since the calm 3D view above is now unconditional, this toggle no longer changes the render; it still persists and shows in the menu.
 
 ## Audio
 

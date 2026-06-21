@@ -86,6 +86,45 @@
    smooth descent rather than an instant snap."
   6.0)
 
+(def tier-gap
+  "Reference height (world z) of one tier drop, used to convert a fall's
+   depth into a life cost (#299). The L7 stair room stacks its plateaus
+   `l7-tier1-z` (0.75) apart, so a one-tier off-edge drop is ~0.75 and a
+   two-tier drop ~1.5. Fall damage is `round(drop / tier-gap)` lives
+   (min 1), so a 0.75 drop costs 1 life and a 1.5 drop costs 2. A stair
+   tread (0.375, below `step-up-max`) is never a fall, so it never enters
+   the formula."
+  0.75)
+
+(defn fall-tiers
+  "Life cost of an off-edge drop of `drop` world-z (#299): the drop
+   measured in tiers, rounded, floored at 1. Only ever called for a real
+   fall (`drop > step-up-max`), so the result is always >= 1 - a knee-high
+   step never reaches here. `(fall-tiers 0.75)` => 1, `(fall-tiers 1.5)`
+   => 2, `(fall-tiers 0.4001)` => 1."
+  [^float drop]
+  (php/max 1 (php/intval (php/round (php// drop tier-gap)))))
+
+(defn fall?
+  "True when stepping from floor `cur` onto floor `dest` is a FALL rather
+   than a walkable descent (#299): the floor drops by MORE than
+   `step-up-max`. A stair tread or any drop within the auto-climb band is
+   a normal step-down (gravity eases it, no damage); only a bigger lip /
+   open stair-side drop counts as a fall."
+  [^float cur ^float dest]
+  (php/> (php/- cur dest) step-up-max))
+
+(defn railed-edge?
+  "True when the directed edge from high cell `(hx, hy)` down to low cell
+   `(lx, ly)` carries a handrail (#299), so an entity cannot step off it.
+   `handrails` is the world's `:handrails` set of `[hx hy lx ly]` edge
+   keys (nil / empty reads as no rail anywhere, so railless levels are
+   unaffected). Directed + per-edge: railing the plateau lip leaves the
+   open stair side fall-off-able, since only the listed edge is blocked."
+  [handrails ^int hx ^int hy ^int lx ^int ly]
+  (and (php/!== nil handrails)
+       (contains? handrails [hx hy lx ly])))
+
 (defn floor-z-at
   "World z of the floor in cell `(ix, iy)`, read from the world's
    `:floor-pgrid` (#232 float[][] twin of `:pgrid`). nil-safe at every
@@ -124,32 +163,68 @@
     (php/> dest cur)                     (set-floor-z moved dest)
     :else                                moved))
 
+(defn- apply-fall-damage
+  "Charge the player `tiers` lives for an off-edge fall (#299), clamped to
+   the pool, and tally the loss into the run summary's `:damage-taken`
+   like a combat hit. Environmental + deterministic: armor does NOT
+   absorb it and it arms no i-frames - gravity, not an attacker. The
+   eye still eases down via `tick-fall`; this only decrements the pool."
+  [world ^int tiers]
+  (let [lost (php/min tiers (or (:lives world) 0))]
+    (-> world
+        (update :lives (fn [l] (php/max 0 (php/- l tiers))))
+        (update :damage-taken (fn [d] (php/+ (or d 0) lost))))))
+
 (defn try-move
   "Translate the player by (dx, dy) unless the destination cell holds
    a wall, a locked door without the matching keycard, OR a floor riser
    taller than `step-up-max` (#233 - a too-tall step blocks like a
    wall). A climbable riser is stepped up onto (eye rises this frame); a
-   floor that drops is walked off and eased down by `tick-fall`. When a
-   bump is caused specifically by a missing keycard, arm
-   :locked-door-bump-secs + record the colour so the render layer
-   can paint 'NEED <COLOUR> KEY' over the 3D view, and enqueue a
-   muted `:click` deny cue on the :sfx queue. Wall + tall-step bumps are
-   silent — only the locked-door case is informational."
+   floor that drops within the auto-climb band is walked off and eased
+   down by `tick-fall`. A drop GREATER than `step-up-max` is an off-edge
+   FALL (#299): if that downward edge carries a handrail (`:handrails`)
+   the move is BLOCKED like a wall (a fence at the lip you see over but
+   can't cross); otherwise the player falls and loses one life per tier
+   dropped (`fall-tiers`), and the eye eases down as before. When a bump
+   is caused specifically by a missing keycard, arm :locked-door-bump-secs
+   + record the colour so the render layer can paint 'NEED <COLOUR> KEY'
+   over the 3D view, and enqueue a muted `:click` deny cue on the :sfx
+   queue. Wall + tall-step + railed bumps are silent — only the
+   locked-door case is informational."
   [world ^float dx ^float dy]
-  (let [{:keys [grid player held-keys]} world
-        nx                              (+ (:x player) dx)
-        ny                              (+ (:y player) dy)
-        ix                              (php/intval nx)
-        iy                              (php/intval ny)]
+  (let [{:keys [grid player held-keys handrails]} world
+        nx                                        (+ (:x player) dx)
+        ny                                        (+ (:y player) dy)
+        ix                                        (php/intval nx)
+        iy                                        (php/intval ny)]
     (cond
       (passable? grid held-keys ix iy)
       ;; Wall-clear: now apply the Z gate. A nil from resolve-step means
       ;; the riser is too tall, so the move is rejected and the player
       ;; holds position (and floor-z) exactly like a wall bump.
-      (let [cur     (or (:floor-z player) 0.0)
-            dest    (floor-z-at world ix iy)
-            stepped (resolve-step (move-player world dx dy) cur dest)]
-        (if (php/=== nil stepped) world stepped))
+      (let [cur       (or (:floor-z player) 0.0)
+            dest      (floor-z-at world ix iy)
+            ;; Tier drop is measured CELL-to-CELL (source cell floor vs
+            ;; destination), not from the possibly-mid-ease `:floor-z`, so
+            ;; a fall mid-descent still reads its true height.
+            src-floor (floor-z-at world (php/intval (:x player)) (php/intval (:y player)))]
+        (cond
+          ;; Off-edge fall onto a railed edge -> blocked like a wall.
+          (and (fall? src-floor dest)
+               (railed-edge? handrails (php/intval (:x player)) (php/intval (:y player)) ix iy))
+          world
+
+          ;; Off-edge fall onto an OPEN edge -> step off + take fall damage
+          ;; (eye eases down via tick-fall exactly as a step-down does).
+          (fall? src-floor dest)
+          (let [stepped (resolve-step (move-player world dx dy) cur dest)]
+            (if (php/=== nil stepped)
+              world
+              (apply-fall-damage stepped (fall-tiers (php/- src-floor dest)))))
+
+          :else
+          (let [stepped (resolve-step (move-player world dx dy) cur dest)]
+            (if (php/=== nil stepped) world stepped))))
 
       :else
       (let [need (missing-key-for grid held-keys ix iy)]

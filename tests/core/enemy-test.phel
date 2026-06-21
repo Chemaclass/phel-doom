@@ -767,6 +767,105 @@
     (is (= 22.5 (:y e)) "no lateral drift on a straight-west chase")))
 
 ;; ---------------------------------------------------------------------
+;; Enemy handrails + fall damage (#299): an enemy that walks off an
+;; UNRAILED tier edge falls to the lower tier AND loses 1 life per tier
+;; (and can die from the drop); a RAILED edge blocks the step like a wall.
+;; east-tall-floor-pgrid (+0.8 east tier) is a one-tier drop; a deeper
+;; grid below is a two-tier drop.
+;; ---------------------------------------------------------------------
+
+(def east-deep-floor-pgrid
+  ;; East tier raised a full +1.5 (two tiers), so an enemy walking WEST off
+  ;; it onto z 0.0 falls two tiers (2 lives).
+  (php/array
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 1.5 1.5 1.5 1.5)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 1.5 1.5 1.5 1.5)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 1.5 1.5 1.5 1.5)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 1.5 1.5 1.5 1.5)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 1.5 1.5 1.5 1.5)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 1.5 1.5 1.5 1.5)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 1.5 1.5 1.5 1.5)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 1.5 1.5 1.5 1.5)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 1.5 1.5 1.5 1.5)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 1.5 1.5 1.5 1.5)))
+
+(defn- floor-of
+  ;; Read a cell's floor height from a php-array float[][], nil-safe, for
+  ;; the fall tests. Mirrors enemy/cell-floor-z (private).
+  [fpg x y]
+  (let [row (php/aget fpg (php/intval (php/floor y)))]
+    (if (php/=== nil row)
+      0.0
+      (let [z (php/aget row (php/intval (php/floor x)))]
+        (if (php/=== nil z) 0.0 (php/* 1.0 z))))))
+
+(deftest test-enemy-falls-off-open-edge-and-loses-one-life
+  ;; A 3-life enemy stands on the +0.8 east tier (6.5, 5.5); the player is
+  ;; on the flat west ground. Walking west off the open lip is a one-tier
+  ;; fall: the enemy steps off AND loses exactly 1 life (3 -> 2), staying
+  ;; alive. No rails passed (handrails nil), so the edge is open.
+  ;; speed 2.0 x dt 0.5 = a 1.0-unit step, enough to cross from the high
+  ;; cell (6) onto the lower cell (5) so the fall actually happens.
+  (let [start (assoc (new-enemy 6.5 5.5 3 :imp) :state :aware)
+        es'   (advance [start] open-grid nil east-tall-floor-pgrid nil
+                       2.5 5.5 0.5 2.0 true)
+        e     (first es')]
+    (is (php/< (:x e) 6.0) "enemy walked off the open ledge toward the player")
+    (is (= 2 (:lives e)) "one-tier fall cost the enemy exactly 1 life")
+    (is (= true (:alive e)) "still alive after a survivable fall")))
+
+(deftest test-enemy-two-tier-fall-costs-two-lives
+  ;; Same setup on the +1.5 (two-tier) east tier: a 3-life enemy walking
+  ;; west off the lip drops two tiers and loses 2 lives (3 -> 1).
+  (let [start (assoc (new-enemy 6.5 5.5 3 :imp) :state :aware)
+        es'   (advance [start] open-grid nil east-deep-floor-pgrid nil
+                       2.5 5.5 0.5 2.0 true)
+        e     (first es')]
+    (is (php/< (:x e) 6.0) "enemy fell off the two-tier ledge")
+    (is (= 1 (:lives e)) "two-tier fall cost the enemy 2 lives")
+    (is (= true (:alive e)) "1 life left - survived the two-tier drop")))
+
+(deftest test-enemy-dies-from-lethal-fall
+  ;; A 1-life imp on the +1.5 two-tier ledge walking off it takes 2 fall
+  ;; damage: the pool empties and it DIES (`:alive false`) - a monster can
+  ;; plunge to its death off an open edge.
+  (let [start (assoc (new-enemy 6.5 5.5 1 :imp) :state :aware)
+        es'   (advance [start] open-grid nil east-deep-floor-pgrid nil
+                       2.5 5.5 0.5 2.0 true)
+        e     (first es')]
+    (is (= 0 (:lives e)) "fall drained the enemy's pool to 0")
+    (is (= false (:alive e)) "enemy died from the lethal fall")))
+
+(deftest test-enemy-handrail-blocks-step-off-the-ledge
+  ;; Rail the enemy's whole downward lip from cell (6,5): the straight-west
+  ;; edge AND the two diagonal edges onto the lower column-5 cells. With
+  ;; every off-edge step fenced, the chase can't drop off the ledge - it
+  ;; holds the high tier and takes NO fall damage. (Railing only the
+  ;; straight edge would let the slide cascade fall diagonally off an open
+  ;; neighbouring edge - a rail blocks just its own directed edge.)
+  (let [start (assoc (new-enemy 6.5 5.5 3 :imp) :state :aware)
+        rails #{[6 5 5 5] [6 5 5 4] [6 5 5 6]}
+        es'   (advance [start] open-grid nil east-tall-floor-pgrid rails
+                       2.5 5.5 0.5 2.0 true)
+        e     (first es')]
+    (is (= 3 (:lives e)) "railed lip blocked the fall - no life lost")
+    (is (= true (:alive e)) "still alive, still on its tier")
+    (is (php/>= (floor-of east-tall-floor-pgrid (:x e) (:y e)) 0.8)
+        "enemy stayed on the high tier (never fell off the railed edge)")))
+
+(deftest test-enemy-stair-descent-costs-no-life
+  ;; Walking DOWN a climbable +0.3 tier (<= step-up-max) is a normal
+  ;; descent, not a fall: a 1-life imp survives stepping off east-step
+  ;; ground with no damage.
+  (let [start (assoc (new-enemy 6.5 5.5 1 :imp) :state :aware)
+        es'   (advance [start] open-grid nil east-step-floor-pgrid nil
+                       2.5 5.5 0.5 2.0 true)
+        e     (first es')]
+    (is (php/< (:x e) 6.0) "enemy stepped down the small tier toward the player")
+    (is (= 1 (:lives e)) "a <= step-up-max descent is never a fall - no damage")
+    (is (= true (:alive e)) "survives a normal step-down")))
+
+;; ---------------------------------------------------------------------
 ;; tick-scare: fires the wide-eyed beat ONLY on the inbound crossing
 ;; past scare-trigger-dist (3.5). Tracks last frame's nearest enemy so
 ;; sitting inside the band doesn't keep refiring.

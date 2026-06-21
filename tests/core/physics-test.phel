@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.level   :refer [build-world])
   (:require phel-doom.core.state   :refer [max-stamina new-world new-player eye-height set-floor-z])
-  (:require phel-doom.core.physics :refer [try-move apply-physics tick-fall floor-z-at step-up-max fall-speed sprint-engage-threshold sprint-multiplier stamina-drain stamina-regen tick-heartbeat tick-stamina tick-blood-drops]))
+  (:require phel-doom.core.physics :refer [try-move apply-physics tick-fall floor-z-at step-up-max fall-speed tier-gap fall? fall-tiers railed-edge? sprint-engage-threshold sprint-multiplier stamina-drain stamina-regen tick-heartbeat tick-stamina tick-blood-drops]))
 
 ;; Tiny 3x3 grid: walls around the perimeter, open centre.
 (def open-world
@@ -550,6 +550,121 @@
     (is (= 0.5 (:eye-z p)))))
 
 ;; ---------------------------------------------------------------------
+;; Handrails + fall damage (#299): stepping off an UNRAILED tier edge
+;; (a drop > step-up-max) is a fall that costs 1 life per tier dropped;
+;; a RAILED edge blocks the step like a wall; a normal stair descent
+;; (<= step-up-max) is never a fall. Player side here; enemy side in
+;; enemy-test. tier-gap (0.75) maps drop -> life cost.
+;; ---------------------------------------------------------------------
+
+(deftest test-fall-predicate-and-tier-cost
+  ;; Pure helpers: fall? fires only past step-up-max; fall-tiers rounds the
+  ;; drop to whole tiers, floored at 1.
+  (is (= false (fall? 0.0 0.0))   "flat: not a fall")
+  (is (= false (fall? 0.75 0.5))  "0.25 step-down: within climb band, not a fall")
+  (is (= false (fall? 0.4 0.0))   "exactly step-up-max down: not a fall")
+  (is (= true  (fall? 0.75 0.0))  "0.75 tier drop: a fall")
+  (is (= true  (fall? 1.5 0.0))   "1.5 two-tier drop: a fall")
+  ;; tier-gap is 0.75, so one tier = 1 life, two tiers = 2.
+  (is (= 1 (fall-tiers tier-gap))          "one tier-gap drop costs 1 life")
+  (is (= 2 (fall-tiers (php/* 2.0 tier-gap))) "two tier-gaps cost 2 lives")
+  (is (= 1 (fall-tiers 0.41))              "a just-over-max drop still costs the 1-life minimum")
+  (is (= 1 (fall-tiers 0.9))               "0.9 rounds to ~1 tier -> 1 life"))
+
+(deftest test-railed-edge-predicate
+  ;; Directed [hx hy lx ly] membership; nil / absent set reads as no rail.
+  (let [rails #{[3 4 4 4] [5 5 5 6]}]
+    (is (= true  (railed-edge? rails 3 4 4 4)) "listed downward edge is railed")
+    (is (= false (railed-edge? rails 4 4 3 4)) "the REVERSE edge is not railed (directed)")
+    (is (= false (railed-edge? rails 9 9 9 10)) "unlisted edge is open")
+    (is (= false (railed-edge? nil 3 4 4 4))   "nil rail set: nothing railed")
+    (is (= false (railed-edge? #{} 3 4 4 4))   "empty rail set: nothing railed")))
+
+(deftest test-player-falls-one-tier-and-loses-one-life
+  ;; Player stands high on a 0.75 floor and steps DOWN onto the 0.0 ground:
+  ;; a one-tier fall. The move is accepted (they walk off the lip) and they
+  ;; lose exactly 1 life; the eye still eases down via tick-fall.
+  (let [high (-> (raise-cell empty-world 1 1 0.75)
+                 (set-floor-z 0.75)
+                 (assoc :lives 10))
+        w'   (try-move high 1.0 0.0)
+        p    (:player w')]
+    (is (< (php/abs (- (:x p) 2.5)) 0.0001) "walked off the lip onto the lower cell")
+    (is (= 9 (:lives w')) "one-tier fall cost exactly 1 life")
+    (is (= 1 (:damage-taken w')) "fall damage tallies into the run summary")
+    (is (= 0.75 (:floor-z p)) "floor-z still high this frame; tick-fall eases it down")))
+
+(deftest test-player-falls-two-tiers-and-loses-two-lives
+  ;; A 1.5 (two-tier) drop costs 2 lives.
+  (let [high (-> (raise-cell empty-world 1 1 1.5)
+                 (set-floor-z 1.5)
+                 (assoc :lives 10))
+        w'   (try-move high 1.0 0.0)]
+    (is (< (php/abs (- (:x (:player w')) 2.5)) 0.0001) "fell to the ground two tiers down")
+    (is (= 8 (:lives w')) "two-tier fall cost exactly 2 lives")
+    (is (= 2 (:damage-taken w')))))
+
+(deftest test-player-stair-descent-costs-no-life
+  ;; Stepping DOWN a single 0.375-style tread (<= step-up-max) is a normal
+  ;; descent, NOT a fall: no life lost, and the eye eases as before.
+  (let [high (-> (raise-cell empty-world 1 1 0.375)
+                 (set-floor-z 0.375)
+                 (assoc :lives 10))
+        w'   (try-move high 1.0 0.0)]
+    (is (< (php/abs (- (:x (:player w')) 2.5)) 0.0001) "stepped down onto the lower tread")
+    (is (= 10 (:lives w')) "a small step-down is never a fall - no damage")
+    (is (php/=== nil (:damage-taken w')) "no fall-damage tally for a normal descent")))
+
+(deftest test-player-fall-can-be-lethal
+  ;; A two-tier fall with only 1 life left empties the pool (clamped at 0)
+  ;; without going negative.
+  (let [high (-> (raise-cell empty-world 1 1 1.5)
+                 (set-floor-z 1.5)
+                 (assoc :lives 1))
+        w'   (try-move high 1.0 0.0)]
+    (is (= 0 (:lives w')) "fall drained the pool to 0 (lethal), clamped")
+    (is (= 1 (:damage-taken w')) "only the life actually lost is tallied")))
+
+(deftest test-handrail-blocks-player-stepping-off-the-lip
+  ;; The downward edge from the player's cell (1,1) onto (2,1) carries a
+  ;; handrail: the off-edge step is blocked like a wall - x/y, floor-z, and
+  ;; lives all unchanged, no fall, no damage, no sfx.
+  (let [high (-> (raise-cell empty-world 1 1 0.75)
+                 (set-floor-z 0.75)
+                 (assoc :lives 10
+                        :handrails #{[1 1 2 1]}))
+        w'   (try-move high 1.0 0.0)
+        p    (:player w')]
+    (is (= 1.5 (:x p)) "x unchanged - railed lip blocked the step")
+    (is (= 1.5 (:y p)) "y unchanged")
+    (is (= 0.75 (:floor-z p)) "floor-z unchanged - never stepped off")
+    (is (= 10 (:lives w')) "no life lost - the rail prevented the fall")
+    (is (= [] (or (:sfx w') [])) "railed bump is silent")))
+
+(deftest test-handrail-only-blocks-its-own-direction
+  ;; The rail on edge [1 1 2 1] must NOT block an unrelated step. Stepping
+  ;; off the OTHER side (no rail there) still falls + costs a life.
+  (let [;; raise the centre and the WEST cell (0,1) is ground 0.0 -> stepping
+        ;; west is an unrailed fall; the rail only guards the east edge.
+        high (-> (raise-cell empty-world 1 1 0.75)
+                 (set-floor-z 0.75)
+                 (assoc :lives 10
+                        :handrails #{[1 1 2 1]}))
+        w'   (try-move high -1.0 0.0)
+        p    (:player w')]
+    (is (< (php/abs (- (:x p) 0.5)) 0.0001) "fell off the UNrailed west lip")
+    (is (= 9 (:lives w')) "unrailed fall still costs a life")))
+
+(deftest test-flat-move-takes-no-fall-damage
+  ;; Belt-and-suspenders byte-identity: a normal flat-ground walk never
+  ;; touches :lives or :damage-taken (the fall path is unreachable when
+  ;; src-floor == dest == 0.0).
+  (let [w  (assoc empty-world :lives 10)
+        w' (try-move w 0.5 0.0)]
+    (is (= 10 (:lives w')) "flat move: no life lost")
+    (is (php/=== nil (:damage-taken w')) "flat move: no fall-damage tally")))
+
+;; ---------------------------------------------------------------------
 ;; Showcase level traversal (issue #237): the player walks the REAL L2
 ;; staircase the showcase ships and drops into its pit, exercising
 ;; step-up + gravity on the authored geometry end-to-end. Driven on the
@@ -734,3 +849,34 @@
         (is (< (php/abs (- (:floor-z (:player up1)) -0.4)) 1.0e-9) "climbed to rim")
         (is (< (php/abs (- (:floor-z (:player up2)) 0.0)) 1.0e-9) "climbed back to ground")
         (is (< (php/abs (- (:y (:player up2)) 8.5)) 0.0001) "back on flat ground")))))
+
+;; ---------------------------------------------------------------------
+;; L7 handrails (#299) on the REAL built level: the WEST upper-stair (C)
+;; plateau lips are railed (can't fall off), the EAST stair (D) lips are
+;; open (a real one-tier fall). Both behaviours exercised on the shipped
+;; geometry, not a synthetic fixture.
+;; ---------------------------------------------------------------------
+
+(deftest test-l7-handrail-blocks-player-off-the-west-plateau-lip
+  ;; Stand on the top-tier plateau at the west railed lip (cell 3,4 = z 1.5)
+  ;; and try to step EAST off it onto the open stair-C flank (cell 4,4 =
+  ;; z 0.75). The handrail [3 4 4 4] blocks the step: the player holds the
+  ;; plateau and loses no life.
+  (let [w0 (-> (place-on-cell (build-world 7 5) 3 4)
+               (assoc :lives 10))
+        w' (try-move w0 1.0 0.0)
+        p  (:player w')]
+    (is (< (php/abs (- (:x p) 3.5)) 0.0001) "blocked at the railed lip - x unchanged")
+    (is (< (php/abs (- (:floor-z p) 1.5)) 1.0e-9) "still on the plateau (z 1.5)")
+    (is (= 10 (:lives w')) "the rail prevented the fall - no life lost")))
+
+(deftest test-l7-player-falls-off-the-open-east-plateau-lip
+  ;; Stand on the top-tier plateau at an OPEN east lip (cell 27,3 = z 1.5)
+  ;; and step SOUTH off it onto the stair-D flank (cell 27,4 = z 0.75): an
+  ;; unrailed one-tier fall. The player walks off and loses exactly 1 life.
+  (let [w0 (-> (place-on-cell (build-world 7 5) 27 3)
+               (assoc :lives 10))
+        w' (try-move w0 0.0 1.0)
+        p  (:player w')]
+    (is (php/> (:y p) 3.9) "walked off the open lip onto the lower flank")
+    (is (= 9 (:lives w')) "one-tier fall off the open lip cost 1 life")))

@@ -354,6 +354,25 @@
    (rect-heights 4 4 5 6 l7-tier1-z) (rect-heights 9 4 10 6 l7-tier1-z)
    (rect-heights 27 4 28 6 l7-tier1-z) (rect-heights 32 4 33 6 l7-tier1-z)))
 
+(def l7-handrails
+  "Handrails on the L7 top-tier (z 1.5) plateau lip (#299). A handrail is a
+   directed `[hx hy lx ly]` edge (high cell -> low cell) that blocks an
+   entity from stepping OFF that downward edge (physics/try-move +
+   enemy/try-step treat it like a wall - a fence you see over but can't
+   cross). Only the WEST upper-staircase (stair C) plateau lips are railed,
+   so the player/enemy cannot tumble off the plateau onto the west stair
+   flanks; the EAST staircase (stair D) flank lips are left OPEN, so a step
+   off the east plateau lip is a real 1-tier fall (1 life). The stair
+   TREADS themselves are never railed, so all four staircases stay fully
+   walkable up and down - the reachability invariant (exit + yellow key on
+   the open bottom tier) is untouched. Every edge here is a z 1.5 -> 0.75
+   drop (one tier, > step-up-max), enumerated from `l7-floor-heights`."
+  ;; West stair-C plateau lips: the z1.5 plateau cells whose step down lands
+  ;; on the open z0.75 stair-C flank (cols 4-5 and 9-10).
+  #{[4 3 4 4] [5 3 5 4] [9 3 9 4] [10 3 10 4]
+    [3 4 4 4] [6 4 5 4] [8 4 9 4] [11 4 10 4]
+    [3 5 4 5] [11 5 10 5]})
+
 (def levels
   "Per-level configuration. Each entry is intentionally tiny — visuals
    live in `enemies.phel` so a new level needs only disposition data
@@ -465,7 +484,8 @@
               {:type :demon    :count 2}
               {:type :baron    :count 1}]
     :layout        l7-layout
-    :floor-heights l7-floor-heights}
+    :floor-heights l7-floor-heights
+    :handrails     l7-handrails}
 
    ;; L8 — archvile court: two casters backed by mixed mid-tier mass.
    {:size    [50 30]
@@ -942,6 +962,12 @@
             :keycards      (maybe-spawn-keycard grid lock)
             :weapon-pickups (maybe-spawn-weapon-pickups grid lv (or owned #{:pistol}))
             :door-lock     lock
+            ;; Per-edge handrails (#299): the level config's optional
+            ;; `:handrails` set of `[hx hy lx ly]` downward-edge keys,
+            ;; threaded onto the world so physics/try-move + enemy/try-step
+            ;; can block a step off a railed lip. Absent -> empty set, so a
+            ;; level with no rails (every level but L7) behaves as before.
+            :handrails     (or (:handrails cfg) #{})
             :secrets-total (count-secrets grid)
             :secrets-found 0
             ;; Switches: level config opts in via :switches; build-world

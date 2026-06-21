@@ -54,6 +54,7 @@ Returns raw (uncorrected) distance. Detailed tuple `[dist side hx hy]` is comput
 (defn cast-frame [world ^int width ^int scale]
   ...returns {:dists :hits :sides :hxs :hys :wallxs :floordxs :floordys
               :step-dists :step-fzs :step-sides :step-hxs :step-hys
+              :step2-dists :step2-fzs :step2-sides :step2-hxs :step2-hys
               :ceil-dists :ceil-czs :ceil-sides})
 ```
 
@@ -65,6 +66,7 @@ Cast `width / scale` rays; return the parallel PHP arrays (one per output column
 - `wallxs`: wall-hit fraction in [0, 1) - the texture U coordinate (frac of world-y on a vertical face, world-x on a horizontal face, from the raw perpendicular distance)
 - `floordxs, floordys`: floor-cast basis = ray direction / cos(offset). A floor cell at per-row perpendicular distance `dperp` sits at world `player + dperp * (floordx, floordy)`, so the renderer needs no per-cell trig (two mul-adds + a frac for the texture sample)
 - `step-dists, step-fzs, step-sides, step-hxs, step-hys`: per-cell floor-height riser side-channel (#232, see below). Each entry is nil per column when the ray crossed no raised floor, so a flat world leaves them all-nil (additive contract).
+- `step2-dists, step2-fzs, step2-sides, step2-hxs, step2-hys`: the SECOND riser (#322) - the next tread up the staircase past the first. nil per column when the ray crossed at most one riser (flat world, or a single-step run).
 - `ceil-dists, ceil-czs, ceil-sides`: per-cell ceiling-height drop side-channel (#235, see below). Each entry is nil per column when the ray crossed no ceiling that drops below the viewer's ceiling, so a flat (all-1.0) ceiling leaves them all-nil (additive contract).
 
 ## Per-cell floor heights (#232)
@@ -81,6 +83,14 @@ A second per-cell grid, `:floor-pgrid` (a PHP `float[][]` twin of `:pgrid`, same
 The accumulator is computed as nested `if` in the loop's tail position (never `and`, never a `let`-binding statement-form), so it compiles closure-free and the flat all-zero floor never trips the `fh > player-floor-z` test - the cast stays allocation-equivalent to the pre-#232 path (verified by diffing the compiled `out/` do-cast: still 5 closures, none new in the DDA loop).
 
 The renderer (`compute-wall-shades` + the px1 cell loop, see [rendering.md](rendering.md)) turns each riser into a vertical **riser face** plus a **cap** (the step top surface), painted into the floor band below the main wall (the nearer wall always wins its own rows). The cap rows are claimed before the floor-cast clause so the ground texture does not also paint them. Since #236 the cap is itself a textured floor sample (`floor-cap-px`): the same stone + fog as the ground, projected at the cap's height (the ground distance scaled by `(eye-z - fz)/eye-z`), so a step top reads as continuous stone rather than a flat patch. A flat world leaves every `:step-*` entry nil, so the riser/cap branches are dead and the frame is byte-identical (pinned by `render-cache-test/test-frame-bytes-pinned`). Z physics (stepping up onto the riser) lands in #233.
+
+## Second riser (#322)
+
+The single-nearest riser above draws a staircase run as ONE step plus flat ground beyond, because the accumulator sticks on the first tread. The DDA march now carries a SECOND accumulator, `step-acc2`: once `step-acc` is pinned, `step-acc2` records the first cell PAST it whose floor steps higher still (the next tread up), then sticks. So a multi-step run reads as an ascending pair of steps. It is surfaced as the additive `:step2-*` arrays (same five fields + fish-eye correction as the first riser), nil per column when the ray crossed at most one riser.
+
+K=2 (nearest two risers) is not a compromise but a fit to the level geometry: every L7/L6 run is exactly two 0.375 steps between adjacent tiers, and from any standing position a sightline crosses at most ~2-3 visible risers before a wall (the next run's treads sit on the tier you have not climbed yet, hidden by the divider). Tracking the nearest two captures the full visible staircase.
+
+`step-acc2` is folded as ONE more nested `if` in the loop's tail position - never `and`, never a `let`-binding statement-form - exactly like `step-acc`/`ceil-acc`, so the DDA loop stays a SINGLE closure (verified by diffing the compiled `out/phel_doom/core/engine.php`: the `function` count is unchanged at 15, and the `$hit_arr_` closure's only diff is the five extra captured `step2-*` arrays). Allocation is a fixed +5 arrays per cast (constant, not per-column), so there is no per-column list churn. Cost is a measured ~+10% cast-phase on the L7 stair scene (the extra per-cell `aget`/compare on active multi-tier rays) and ZERO on flat levels (both accumulators stay nil immediately, so the golden hashes hold). The renderer draws the second riser as a band above the first, clamped to end at the first riser's top so the near step occludes the far step's base; the second cap uses the flat tier shade rather than the textured floor-cast (it is farther and smaller, so the cheap cap keeps the hot cell loop lean). See [rendering.md](rendering.md).
 
 ## Per-cell ceiling heights (#235)
 

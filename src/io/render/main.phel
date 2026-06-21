@@ -414,7 +414,11 @@
         ceil-tops                                                      (buf-mk)
         ceil-face                                                      (buf-mk)
         ceil-cap                                                       (buf-mk)
-        eye-z                                                          (or eye-z-arg 0.5)]
+        eye-z                                                          (or eye-z-arg 0.5)
+        ;; Column-loop invariant: vh-1 is used in sky-edge-row and
+        ;; flr-edge-row (both per-column). Hoisting saves 2*vw
+        ;; subtractions per compute-wall-shades call.
+        vh-1                                                           (php/- vh 1)]
     (loop [col 0]
       (when (php/< col vw)
         (let [dist         (buf-get dists col)
@@ -427,8 +431,8 @@
               ;; cell so the ▀ top-half blends the true sky shade at that
               ;; row (not a flat dark-236), eliminating the dark-dot
               ;; artifact where bright gradient meets flat edge code.
-              sky-edge-row (php/max 0 (php/min (php/- vh 1) top))
-              flr-edge-row (php/max 0 (php/min (php/- vh 1) (php/- (php/+ top wall-h) 1)))
+              sky-edge-row (php/max 0 (php/min vh-1 top))
+              flr-edge-row (php/max 0 (php/min vh-1 (php/- (php/+ top wall-h) 1)))
               sky-edge-c   (buf-get (if (and blood? blood-sky-code-grad)
                                       blood-sky-code-grad
                                       sky-code-grad)
@@ -1491,7 +1495,23 @@
                                   (php/aget (php/aget tex-fade-table (php/aget floor-level-sub sub))
                                             (php/aget floor-tex-px
                                                       (php/+ (php/* (php/intval (php/* (php/- fy (php/floor fy)) 64)) 64)
-                                                             (php/intval (php/* (php/- fx (php/floor fx)) 64)))))))]
+                                                             (php/intval (php/* (php/- fx (php/floor fx)) 64)))))))
+          ;; frame-constant: floor-tex-on? does not change within a frame,
+          ;; so floor-flat? is hoisted here out of both per-row let bindings
+          ;; (px1 dotimes row + px2 dotimes r2) to avoid recomputing it vh
+          ;; (or svh) times per frame. Byte-identical output guaranteed.
+          floor-flat?         (if floor-tex-on? false true)
+          ;; Pin the referred frame-math globals as frame-level locals so
+          ;; inner references resolve to a PHP local variable instead of a
+          ;; Phel::getDefinition() call (two array lookups + singleton probe)
+          ;; every time they appear in per-row or per-cell code. tex-fade-table
+          ;; is the hottest: 4 reads per row in px2 + 2-3 reads per wall cell
+          ;; in px1. Byte-identical output guaranteed (same value, cached early).
+          tex-fade-table      tex-fade-table
+          bg-cell-cache       bg-cell-cache
+          seam-darken-16      seam-darken-16
+          seam-darken-8       seam-darken-8
+          seam-darken-5       seam-darken-5]
       (if px2?
         ;; ----- Pixel-doubled scene emitter -------------------------
         ;; Walk the half-res scene; each internal cell emits two output
@@ -1543,7 +1563,6 @@
                 sky-r2         (buf-get sky-gradient r2)
                 blood-sky-r2   (if blood-sky-gradient (buf-get blood-sky-gradient r2) nil)
                 flr-r2         (buf-get floor-gradient r2)
-                floor-flat?    (if floor-tex-on? false true)
                 mini-slim      (if (and (php/>= r2 mini-srow-lo) (php/<= r2 mini-srow-hi)) mini-scol0 svw)
                 cap-this-srow? (php/=== r2 cap-sr)
                 rowbase2       (php/* r2 svw)]
@@ -1927,7 +1946,6 @@
                 ;; Intentional alias (same as the gradient pair): blood
                 ;; floor = blood sky, one uniform red wash.
                 blood-flr-row blood-sky-row
-                floor-flat?   (if floor-tex-on? false true)
                 rowbase       (php/* row vw)
                 mini-lim      (if (and (php/>= row mini-row-lo) (php/<= row mini-row-hi)) mini-col0 vw)
                 cap-this-row? (php/=== row cap-row)

@@ -110,6 +110,27 @@ Raycaster and minimap use `:pgrid` via direct subscript. Both `:grid` and `:pgri
 
 Compute each column's three shade strings (normal, top-edge, bot-edge) once in an outer loop; per-row inner loop does one `aget`. Expensive math (distance, side darken, clamp) runs once per column, not per cell. 40x reduction at 180x40.
 
+## Frame-level global capture (issue #262)
+
+Referred globals (`tex-fade-table`, `bg-cell-cache`, `seam-darken-*`) compiled through `Phel::getDefinition()` - a static singleton probe + two array lookups - on every reference. Inside per-row and per-cell code paths this accumulates: `tex-fade-table` has 4 reads per px2 row (floor fade for sub-rows 0-3) and 2-3 reads per textured wall cell in the px1 path.
+
+Fix: bind each hot global once in the frame-level `let` in `frame->string` under its own name. The compiler promotes inner references to a PHP local variable (`$tex_fade_table_...`) instead of re-calling `getDefinition`. Byte-identical (same value, just cached).
+
+Also hoisted in the same pass (all frame-constant, sub-microsecond each):
+
+- `floor-flat?` - was recomputed per row in both px1 and px2 loops; hoisted to frame-level after `floor-code-at`.
+- `vh-1 = (php/- vh 1)` - used twice per column in `compute-wall-shades`; hoisted to the outer `let`.
+
+Bench (1000-iter mean after 20-frame warmup, no-JIT local `phel run`; trust deltas, not ms):
+
+| Viewport | before | after | delta |
+|---|---|---|---|
+| 80x24  | 4.02 ms | 3.85 ms | -4.2% |
+| 120x30 | 6.68 ms | 6.50 ms | -2.6% |
+| 180x40 | 10.24 ms | 9.63 ms | **-5.9%** |
+
+The 180x40 result crosses the >5% real-improvement threshold. Smaller viewports land within noise - fewer total cell lookups make the `getDefinition` overhead smaller relative to the frame.
+
 ## Run-length encoding
 
 Consecutive same-color cells coalesce: one escape, N spaces. Cuts output 5-10x on monochrome rows. In-place state machine with `prev` + `run` counters.

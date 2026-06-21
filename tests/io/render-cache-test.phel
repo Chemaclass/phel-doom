@@ -3,7 +3,9 @@
   (:require phel-doom.core.level :refer [build-world])
   (:require phel-doom.core.rng :as rng)
   (:require phel-doom.core.state :refer [new-world new-player])
+  (:require phel-doom.core.enemy :refer [new-enemy])
   (:require phel-doom.core.engine :refer [mark-visible-cells])
+  (:require phel-doom.core.projection :refer [clip-sprite-span])
   (:require phel-doom.io.render.frame-math :refer [halfblock build-sky-halfblock])
   (:require phel-doom.io.render.palette :refer [shade-code-table])
   (:require phel-doom.io.render.main :refer [frame->string floor-tex-px]))
@@ -379,3 +381,48 @@
       ;; Deterministic: re-rendering the same built world is byte-stable.
       (is (= out (frame->string w (assoc stats :level n) 120 30))
           (str "L" n " render is byte-stable")))))
+
+;; ---------------------------------------------------------------------
+;; Cross-tier enemy occlusion (#302): the enemy-sprite clip
+;; (clip-sprite-span) hides the rows of a billboard a nearer tier
+;; riser/ceiling blocks. It runs ONLY inside the enemy-projs loop and ONLY
+;; intersects the projected span, so a height-world with no enemy in front
+;; of the riser is untouched. Reuses step-chamber / step-world / raise-floor
+;; from the riser tests above.
+;; ---------------------------------------------------------------------
+
+(deftest test-riser-world-no-enemy-byte-stable
+  ;; The #302 clip is inert without an enemy: a riser chamber with an empty
+  ;; :enemies renders byte-identically twice. Guards that the clip path adds
+  ;; no per-frame nondeterminism to a height-world (the riser column with no
+  ;; enemy in front renders unchanged).
+  (let [w (raise-floor (step-world) 5 4 0.5)]
+    (is (= (frame->string w stats 120 30)
+           (frame->string w stats 120 30))
+        "a riser world with no enemy is byte-stable")))
+
+(deftest test-riser-behind-enemy-does-not-clip
+  ;; An enemy standing on flat ground CLOSER than a riser behind it must
+  ;; render the SAME whether or not that farther cell is raised: the clip
+  ;; only fires for a riser NEARER than the sprite (step-d < d), so a step
+  ;; beyond the enemy can't cut it. Enemy at x=4 (dist ~2.5 east), riser at
+  ;; x=6 (farther): raising x=6 changes the wall/floor scene but must not
+  ;; touch the enemy's own columns - so the enemy strip is identical. We
+  ;; assert via the inverse: the enemy makes a difference vs no-enemy in
+  ;; BOTH the flat and raised worlds (it is drawn, not swallowed).
+  (let [e       [(new-enemy 4.0 4.5 1 :imp)]
+        flat0   (frame->string (step-world) stats 120 30)
+        flatE   (frame->string (assoc (step-world) :enemies e) stats 120 30)
+        raised0 (frame->string (raise-floor (step-world) 6 4 0.5) stats 120 30)
+        raisedE (frame->string (assoc (raise-floor (step-world) 6 4 0.5) :enemies e) stats 120 30)]
+    (is (not= flat0 flatE) "enemy is drawn on flat ground")
+    (is (not= raised0 raisedE)
+        "enemy in front of a FARTHER riser is still drawn (not clipped away)")))
+
+(deftest test-clip-helper-is-a-noop-on-flat-bands
+  ;; Contract mirror at the render seam: with no nearer tier (nil step/ceil
+  ;; distances) clip-sprite-span returns the span verbatim, so the sprite
+  ;; path writes the same e-stop/e-sbot it did pre-#302. Pinned by the flat
+  ;; golden hashes (test-frame-bytes-pinned) staying unchanged; re-asserted
+  ;; directly here so a regression in the helper fails close to its cause.
+  (is (= [7 21] (clip-sprite-span 7 21 nil 30 nil 30 6.0))))

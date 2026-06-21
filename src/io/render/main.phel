@@ -9,7 +9,7 @@
   (:require phel-doom.io.render.hud :refer [minimap-door-pulse minimap-rows minimap-frame hud-debug-line hud-line-str help-menu-string settings-menu-string pause-menu-string])
   (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-reload-ready paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-weapon-hud paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
-  (:require phel-doom.core.projection :refer [char-aspect wall-px pitch-rows project-height sprite-feet-row])
+  (:require phel-doom.core.projection :refer [char-aspect wall-px pitch-rows project-height sprite-feet-row clip-sprite-span])
   (:require phel-doom.core.perf :refer [render-scale])
   (:require phel-doom.core.format :refer [format-duration])
   (:require phel-doom.core.version :refer [version]))
@@ -1119,8 +1119,16 @@
         ;; baked sprite. The zone pass populates these INSTEAD of
         ;; tops/bots/eheads/ebodys/elegss so the wall extent is
         ;; preserved behind transparent pixels.
-        ;;   e-stop  : billboard top screen row
-        ;;   e-sbot  : billboard bottom screen row (exclusive)
+        ;;   e-stop  : billboard top screen row (FULL box; drives sprite-y)
+        ;;   e-sbot  : billboard bottom screen row (exclusive, FULL box)
+        ;;   e-vtop  : cross-tier VISIBLE-window top row (#302). Equals
+        ;;             e-stop unless a nearer ceiling drop shaved the head.
+        ;;   e-vbot  : visible-window bottom (exclusive). Equals e-sbot
+        ;;             unless a nearer floor riser cut the feet. The paint
+        ;;             gate draws only [e-vtop, e-vbot) while the sprite is
+        ;;             sampled against the FULL [e-stop, e-sbot) box, so a
+        ;;             clipped sprite is CROPPED (true pixels, hidden rows
+        ;;             gone) instead of squished into the window.
         ;;   e-sx    : sprite x for this column (precomputed, see sprite-col-x)
         ;;   e-spx   : sprite `:px` php-array ref
         ;;   e-sw    : sprite native width
@@ -1129,6 +1137,8 @@
         ;;             wound tint), shared by every covered column
         e-stop                             (buf-mk)
         e-sbot                             (buf-mk)
+        e-vtop                             (buf-mk)
+        e-vbot                             (buf-mk)
         e-sx                               (buf-mk)
         e-sxr                              (buf-mk)
         e-spx                              (buf-mk)
@@ -1281,48 +1291,85 @@
               (loop [c c-from]
                 (when (php/<= c c-to)
                   (when (php/< d (buf-get dists c))
-                    (if spr
-                           ;; Sprite path: stash the billboard box +
-                           ;; sprite ref. Leave wall tops/bots untouched
-                           ;; so transparent pixels show the wall behind.
-                      (do
-                        (buf-set e-stop c e-top)
-                        (buf-set e-sbot c e-bot)
-                        (buf-set e-sx c (sprite-col-x sw col ehw c))
-                        (buf-set e-sxr c (sprite-subcol-x sw col ehw c))
-                        (buf-set e-spx c spx)
-                        (buf-set e-sw c sw)
-                        (buf-set e-sh c sh)
-                        (buf-set e-fade c sfade)
-                        (buf-set emask c true))
-                      (do
-                        (buf-set tops c e-top)
-                        (buf-set bots c e-bot)
-                        (buf-set mids c e-mid)
-                        (buf-set lowers c e-lower)
-                             ;; Cyberdemon: carve a boss silhouette out of
-                             ;; the rectangle so the form reads as helmet +
-                             ;; arms + 2 legs instead of a giant imp brick.
-                        (let [[ph pb pl] (if (and (php/=== (:type proj) :cyber)
-                                                  body-code)
-                                           (boss-col-paint
-                                            (php// (php/abs (php/- c col))
-                                                   (php/max 1 hw))
-                                            fhead fbody flegs body-code body-fade
-                                            (buf-get shades-normal c))
-                                           [fhead fbody flegs])]
-                          (buf-set eheads c ph)
-                          (buf-set ebodys c pb)
-                          (buf-set elegss c pl))
-                        (buf-set emask c true)))
-                         ;; Track nearest enemy distance for this col so
-                         ;; pickups behind it occlude properly. Multiple
-                         ;; enemies on the same col → keep the closest.
-                         ;; The shadow pass below also reads this to keep
-                         ;; only the front enemy's grounding shadow.
-                    (let [prev (buf-get edists c)]
-                      (when (or (php/=== prev nil) (php/< d prev))
-                        (buf-set edists c d))))
+                    ;; #302 cross-tier occlusion: clip the billboard span
+                    ;; against the NEARER tier geometry in this column, not
+                    ;; just the full-height wall (`dists`, gated above). A
+                    ;; nearer floor riser hides the feet below its on-screen
+                    ;; top edge; a nearer hanging ceiling hides the head
+                    ;; above its bottom lip. `clip-sprite-span` returns the
+                    ;; visible [top bot] or nil (fully occluded -> skip the
+                    ;; column). On a flat level `step-dists`/`ceil-dists` are
+                    ;; nil for every column, so the span is returned
+                    ;; unchanged and the frame is byte-identical.
+                    (let [clipped (clip-sprite-span
+                                   e-top e-bot
+                                   (if (php/=== nil step-dists) nil (buf-get step-dists c))
+                                   (buf-get shades-step-from c)
+                                   (if (php/=== nil ceil-dists) nil (buf-get ceil-dists c))
+                                   (buf-get shades-ceil-bots c)
+                                   d)]
+                      (when (php/!== nil clipped)
+                        (let [c-top (php/aget clipped 0)
+                              c-bot (php/aget clipped 1)]
+                          (if spr
+                               ;; Sprite path: stash the FULL billboard box
+                               ;; (e-stop/e-sbot drive the sprite-y sampling)
+                               ;; plus the cross-tier VISIBLE window
+                               ;; (e-vtop/e-vbot gate which rows paint). The
+                               ;; emitter samples against the full box, so a
+                               ;; tier-clipped sprite is CROPPED at its true
+                               ;; pixels, not squished into the window. Wall
+                               ;; tops/bots stay untouched so transparent
+                               ;; pixels show the wall behind.
+                            (do
+                              (buf-set e-stop c e-top)
+                              (buf-set e-sbot c e-bot)
+                              (buf-set e-vtop c c-top)
+                              (buf-set e-vbot c c-bot)
+                              (buf-set e-sx c (sprite-col-x sw col ehw c))
+                              (buf-set e-sxr c (sprite-subcol-x sw col ehw c))
+                              (buf-set e-spx c spx)
+                              (buf-set e-sw c sw)
+                              (buf-set e-sh c sh)
+                              (buf-set e-fade c sfade)
+                              (buf-set emask c true))
+                            (do
+                                 ;; Glyph path: clip the drawn span to [c-top,
+                                 ;; c-bot). `mids`/`lowers` keep the UNCLIPPED
+                                 ;; `e-mid`/`e-lower` - the head/body/legs split
+                                 ;; is anatomical, so clamping tops/bots just
+                                 ;; ends the paint loop early (legs/head hidden)
+                                 ;; without sliding the zones.
+                              (buf-set tops c c-top)
+                              (buf-set bots c c-bot)
+                              (buf-set mids c e-mid)
+                              (buf-set lowers c e-lower)
+                                   ;; Cyberdemon: carve a boss silhouette out of
+                                   ;; the rectangle so the form reads as helmet +
+                                   ;; arms + 2 legs instead of a giant imp brick.
+                              (let [[ph pb pl] (if (and (php/=== (:type proj) :cyber)
+                                                        body-code)
+                                                 (boss-col-paint
+                                                  (php// (php/abs (php/- c col))
+                                                         (php/max 1 hw))
+                                                  fhead fbody flegs body-code body-fade
+                                                  (buf-get shades-normal c))
+                                                 [fhead fbody flegs])]
+                                (buf-set eheads c ph)
+                                (buf-set ebodys c pb)
+                                (buf-set elegss c pl))
+                              (buf-set emask c true)))
+                               ;; Track nearest enemy distance for this col so
+                               ;; pickups behind it occlude properly. Multiple
+                               ;; enemies on the same col → keep the closest.
+                               ;; The shadow pass below also reads this to keep
+                               ;; only the front enemy's grounding shadow.
+                               ;; Skipped when fully tier-occluded (clip nil):
+                               ;; a hidden enemy can't occlude a pickup as an
+                               ;; enemy, and its grounding shadow must not draw.
+                          (let [prev (buf-get edists c)]
+                            (when (or (php/=== prev nil) (php/< d prev))
+                              (buf-set edists c d)))))))
                   (recur (php/+ c 1)))))))))
     ;; Grounding shadows, second pass. The shadow goes into blood-paint
     ;; (top-priority overlay), so it can't be painted inline during the
@@ -1835,8 +1882,12 @@
                                        nil
                                        (if sprites-on
                                          (if (buf-get emask col)
-                                           (if (php/>= r2 (buf-get e-stop col))
-                                             (if (php/< r2 (buf-get e-sbot col))
+                                           ;; #302: gate on the VISIBLE window
+                                           ;; (e-vtop/e-vbot) but sample against
+                                           ;; the FULL box (e-stop/e-sbot) so a
+                                           ;; tier-clipped sprite crops, not squishes.
+                                           (if (php/>= r2 (buf-get e-vtop col))
+                                             (if (php/< r2 (buf-get e-vbot col))
                                                (enemy-sprite-quad
                                                 (buf-get e-spx col) (buf-get e-sw col) (buf-get e-sh col)
                                                 (buf-get e-sx col) (buf-get e-sxr col)
@@ -2221,8 +2272,11 @@
                         ;; keep it (wall/floor shows through).
                         (when sprites-on
                           (when (buf-get emask col)
-                            (when (php/>= row (buf-get e-stop col))
-                              (when (php/< row (buf-get e-sbot col))
+                            ;; #302: gate on the VISIBLE window (e-vtop/e-vbot)
+                            ;; but sample against the FULL box (e-stop/e-sbot) so
+                            ;; a tier-clipped sprite crops rather than squishes.
+                            (when (php/>= row (buf-get e-vtop col))
+                              (when (php/< row (buf-get e-vbot col))
                                 (let [sc (enemy-sprite-cell
                                           (buf-get e-spx col) (buf-get e-sw col) (buf-get e-sh col)
                                           (buf-get e-sx col) (buf-get e-sxr col)

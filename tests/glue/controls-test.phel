@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.glue.controls
             :refer [key-states refresh-from-keys rising-edges initial-key-snapshot
-                    nav-deltas refresh-move mouse-look]))
+                    nav-deltas refresh-move mouse-look steer-rate]))
 
 (def blank-moves
   {:fwd          0
@@ -454,387 +454,310 @@
   (is (= false (:confirm (rising-edges {:sp false :enter false} {:sp false :enter false})))))
 
 ;; ---------------------------------------------------------------------
-;; Mouse look (issue #246): pure SGR-mouse parse -> per-frame yaw/pitch
-;; delta + fire intent. SGR report shape: ESC [ < b ; Cx ; Cy (M|m).
+;; Mouse look POSITIONAL STEERING (#318): pure SGR-mouse parse -> per-frame
+;; yaw/pitch RATE from the cached pointer's distance to the terminal
+;; CENTER + fire intent. SGR report shape: ESC [ < b ; Cx ; Cy (M|m).
 ;;   b = 0  -> left button press (discrete)
 ;;   b = 32 -> motion bit set, button 0 = LEFT DRAG (held during move)
 ;;   b = 35 -> motion bit set, low bits 3 = bare hover (no button held)
-;; Deltas are measured against the previous pointer position; motion
-;; RIGHT (+dx) -> +yaw, motion UP (-dy, rows grow downward) -> +pitch.
-;; Scales: yaw 0.045, pitch 0.05 rad/fraction per cell at sensitivity 1.
+;; A central DEADZONE produces no turn; past it an ease-in ramp reaches
+;; max-rate at the screen edge. Yaw is signed by which side of center the
+;; pointer x is on; pitch y is NEGATED (rows grow downward, so a pointer
+;; ABOVE center looks UP, +pitch). The steering reads the FINAL cached
+;; position, so a HELD pointer keeps turning with NO new bytes.
+;;
+;; All look tests pass `look-dims` so steer-rate has the axis lengths.
+;; For [30 120]: center-col 60.5, half-col 59.5, deadzone-col 5.95 (10% of
+;; half), span-col 53.55; rate-max yaw 0.16, pitch 0.06 at the far edge.
 ;; ---------------------------------------------------------------------
 
-;; Shared baseline so deltas are computed immediately (a non-nil prev-pos
-;; skips the first-report-establishes-baseline rule).
-(def mouse-origin [10 10])
+(def look-dims
+  "Live [rows cols] for the positional-steering tests: 30 rows, 120 cols
+   (center cell 60.5 / 15.5; deadzone 10% of each half-axis)."
+  [30 120])
+
+;; Pointer cells used across the suite (all on the 30x120 axes):
+(def center-pos
+  "Cell at (or one off) the terminal center, inside the deadzone."
+  [60 15])
+(def right-edge-pos [120 15])  ; far right edge cell -> max +yaw
+(def left-edge-pos  [1 15])    ; far left edge cell  -> max -yaw
+(def top-edge-pos   [60 1])    ; top edge cell       -> max +pitch (look up)
+(def bottom-edge-pos [60 30])  ; bottom edge cell    -> max -pitch (look down)
 
 (defn- approx?
-  "Float compare with a tolerance, so e.g. -6 * 0.045 (which lands on
-   -0.26999999... not the exact literal) still matches -0.27."
+  "Float compare with a tolerance, so an eased ramp that lands on
+   0.0309444... still matches the expected value."
   [^float a ^float b]
   (php/< (php/abs (php/- a b)) 1.0e-9))
 
-(deftest test-mouse-look-no-bytes-is-zero-delta
-  ;; The keyboard path must be untouched: empty input yields no delta and
-  ;; carries prev-pos forward unchanged.
-  (let [r (mouse-look "" mouse-origin 1.0)]
-    (is (= 0.0 (:yaw r)))
-    (is (= 0.0 (:pitch r)))
+;; steer-rate is the core of the model; pin its key points directly.
+
+(deftest test-steer-rate-center-is-deadzone
+  ;; A pointer at (or beside) the center cell sits in the deadzone -> 0.
+  (is (= 0.0 (steer-rate 60 120 0.16)) "center -> no turn")
+  (is (= 0.0 (steer-rate 61 120 0.16)) "one cell off center is still deadzone"))
+
+(deftest test-steer-rate-edges-hit-max
+  ;; At the far edge cells the ramp saturates to +/- max-rate.
+  (is (approx? 0.16 (steer-rate 120 120 0.16)) "right edge -> +max")
+  (is (approx? -0.16 (steer-rate 1 120 0.16)) "left edge -> -max"))
+
+(deftest test-steer-rate-grows-with-offset
+  ;; Magnitude grows monotonically the further the pointer is from center.
+  (let [near (steer-rate 75 120 0.16)
+        mid  (steer-rate 95 120 0.16)
+        far  (steer-rate 115 120 0.16)]
+    (is (php/> near 0) "right of center -> positive")
+    (is (php/> mid near) "further out turns faster")
+    (is (php/> far mid) "further still turns faster")
+    (is (php/<= far 0.16) "never exceeds the max rate")))
+
+(deftest test-steer-rate-eases-in
+  ;; Ease-in (square): the response is gentle near the deadzone edge. The
+  ;; midpoint of the post-deadzone span gives frac=0.5 -> eased 0.25, i.e.
+  ;; a QUARTER of max-rate, not half (a linear ramp would give half).
+  ;; span = half-dead = 53.55; midpoint offset = dead + span/2 = 32.725
+  ;; -> x = center + 32.725 = 93.225 ~ cell 93.
+  (let [mid (steer-rate 93 120 0.16)]
+    (is (php/< mid (php/* 0.5 0.16)) "ease-in: mid-span is below the linear half")))
+
+(deftest test-steer-rate-degenerate-axis-is-zero
+  ;; A nil or <=1 axis length must never auto-steer.
+  (is (= 0.0 (steer-rate 60 nil 0.16)) "nil len -> 0")
+  (is (= 0.0 (steer-rate 1 1 0.16)) "len 1 -> 0")
+  (is (= 0.0 (steer-rate 1 0 0.16)) "len 0 -> 0"))
+
+;; mouse-look: the per-frame yaw/pitch + fire result.
+
+(deftest test-mouse-look-center-no-bytes-is-zero
+  ;; Pointer cached at center, no input this frame: no turn (deadzone), no
+  ;; fire, and the cached pos is carried forward unchanged. The keyboard
+  ;; path is untouched.
+  (let [r (mouse-look "" center-pos 1.0 look-dims)]
+    (is (= 0.0 (:yaw r)) "center deadzone -> no yaw")
+    (is (= 0.0 (:pitch r)) "center deadzone -> no pitch")
     (is (= false (:fire? r)))
     (is (= false (:fire-held? r)))
-    (is (= mouse-origin (:pos r)) "prev-pos carried forward")))
+    (is (= center-pos (:pos r)) "cached pointer carried forward")))
 
-(deftest test-mouse-look-motion-right-yields-positive-yaw
-  ;; Hover (b=35) from x=10 to x=15: dx=+5 -> yaw = 5 * 0.045 = 0.225.
-  ;; No pitch (dy=0), no fire (hover, not a press / drag).
-  (let [r (mouse-look "\e[<35;15;10M" mouse-origin 1.0)]
-    (is (approx? 0.225 (:yaw r)) "+dx -> +yaw")
-    (is (= 0.0 (:pitch r)))
-    (is (= false (:fire? r)))
-    (is (= false (:fire-held? r)) "bare hover is not held-fire")
-    (is (= [15 10] (:pos r)))))
+(deftest test-mouse-look-right-of-center-yields-positive-yaw
+  ;; A hover (b=35) that leaves the pointer right of center steers +yaw
+  ;; (turn right); magnitude grows with offset, saturating near the edge.
+  (let [mild (mouse-look "\e[<35;90;15M" center-pos 1.0 look-dims)
+        edge (mouse-look "\e[<35;120;15M" center-pos 1.0 look-dims)]
+    (is (php/> (:yaw mild) 0) "right of center -> +yaw")
+    (is (= 0.0 (:pitch mild)) "horizontal pointer at mid-row -> no pitch")
+    (is (php/> (:yaw edge) (:yaw mild)) "nearer the edge turns faster")
+    (is (approx? 0.16 (:yaw edge)) "the edge saturates at max yaw")
+    (is (= [120 15] (:pos edge)) "pos trails the latest report")))
 
-(deftest test-mouse-look-motion-left-yields-negative-yaw
-  ;; Hover from x=10 to x=4: dx=-6 -> yaw = -6 * 0.045 = -0.27.
-  (let [r (mouse-look "\e[<35;4;10M" mouse-origin 1.0)]
-    (is (approx? -0.27 (:yaw r)) "-dx -> -yaw")
-    (is (= 0.0 (:pitch r)))))
+(deftest test-mouse-look-left-of-center-yields-negative-yaw
+  ;; Left of center steers -yaw (turn left), saturating to -max at the edge.
+  (let [mild (mouse-look "\e[<35;30;15M" center-pos 1.0 look-dims)
+        edge (mouse-look "\e[<35;1;15M" center-pos 1.0 look-dims)]
+    (is (php/< (:yaw mild) 0) "left of center -> -yaw")
+    (is (php/< (:yaw edge) (:yaw mild)) "nearer the edge turns faster (more negative)")
+    (is (approx? -0.16 (:yaw edge)) "the edge saturates at -max yaw")))
 
-(deftest test-mouse-look-motion-up-yields-positive-pitch
-  ;; Hover from y=10 to y=6: rows grow DOWNWARD so up is dy=-4; the
-  ;; negation makes pitch = -(-4) * 0.05 = +0.2 (look up).
-  (let [r (mouse-look "\e[<35;10;6M" mouse-origin 1.0)]
-    (is (approx? 0.2 (:pitch r)) "moving up -> +pitch")
-    (is (= 0.0 (:yaw r)))))
+(deftest test-mouse-look-above-center-yields-positive-pitch
+  ;; A pointer ABOVE center (smaller y) looks UP (+pitch): rows grow
+  ;; downward, so the rate is negated. Saturates at +max at the top edge.
+  (let [mild (mouse-look "\e[<35;60;6M" center-pos 1.0 look-dims)
+        edge (mouse-look "\e[<35;60;1M" center-pos 1.0 look-dims)]
+    (is (php/> (:pitch mild) 0) "above center -> +pitch (look up)")
+    (is (= 0.0 (:yaw mild)) "vertical pointer at mid-col -> no yaw")
+    (is (php/> (:pitch edge) (:pitch mild)) "nearer the top turns faster")
+    (is (approx? 0.06 (:pitch edge)) "the top edge saturates at +max pitch")))
 
-(deftest test-mouse-look-motion-down-yields-negative-pitch
-  ;; Hover from y=10 to y=14: down is dy=+4 -> pitch = -4 * 0.05 = -0.2.
-  (let [r (mouse-look "\e[<35;10;14M" mouse-origin 1.0)]
-    (is (approx? -0.2 (:pitch r)) "moving down -> -pitch")))
+(deftest test-mouse-look-below-center-yields-negative-pitch
+  ;; A pointer BELOW center (larger y) looks DOWN (-pitch), saturating to
+  ;; -max at the bottom edge.
+  (let [mild (mouse-look "\e[<35;60;24M" center-pos 1.0 look-dims)
+        edge (mouse-look "\e[<35;60;30M" center-pos 1.0 look-dims)]
+    (is (php/< (:pitch mild) 0) "below center -> -pitch (look down)")
+    (is (approx? -0.06 (:pitch edge)) "the bottom edge saturates at -max pitch")))
+
+(deftest test-mouse-look-held-off-center-keeps-turning-without-bytes
+  ;; THE KEY NEW PROPERTY (#318): the terminal sends reports only on
+  ;; MOTION, so a pointer held STILL off-center yields NO new bytes. The
+  ;; camera must keep turning anyway, because the steer-rate is read from
+  ;; the CACHED position every frame, not from a delta. Empty `keys` with a
+  ;; right-of-center cached pointer still returns +yaw.
+  (let [r (mouse-look "" right-edge-pos 1.0 look-dims)]
+    (is (approx? 0.16 (:yaw r)) "held at right edge, no bytes -> still +max yaw")
+    (is (= right-edge-pos (:pos r)) "cached pointer unchanged"))
+  (let [r (mouse-look "" left-edge-pos 1.0 look-dims)]
+    (is (approx? -0.16 (:yaw r)) "held at left edge, no bytes -> still -max yaw"))
+  (let [r (mouse-look "" top-edge-pos 1.0 look-dims)]
+    (is (approx? 0.06 (:pitch r)) "held above center, no bytes -> still +pitch"))
+  (let [r (mouse-look "" bottom-edge-pos 1.0 look-dims)]
+    (is (approx? -0.06 (:pitch r)) "held below center, no bytes -> still -pitch")))
+
+(deftest test-mouse-look-report-moves-cached-pointer
+  ;; A motion report relocates the cached pointer, and the steering on the
+  ;; SAME frame reflects the NEW position. Pointer was at center; a report
+  ;; lands it at the right edge -> max +yaw this very frame.
+  (let [r (mouse-look "\e[<35;120;15M" center-pos 1.0 look-dims)]
+    (is (approx? 0.16 (:yaw r)) "steering follows the latest reported cell")
+    (is (= [120 15] (:pos r)) "cached pointer advanced to the report"))
+  ;; Two reports in one frame: only the LAST cell drives the rate (no
+  ;; delta accumulation). center -> x=90 -> x=120 ends at the edge = max.
+  (let [r (mouse-look "\e[<35;90;15M\e[<35;120;15M" center-pos 1.0 look-dims)]
+    (is (approx? 0.16 (:yaw r)) "the final report's position sets the rate")
+    (is (= [120 15] (:pos r)) "pos trails the last report")))
+
+(deftest test-mouse-look-returning-to-center-stops
+  ;; Bringing the pointer back to center stops the turn (no recenter creep,
+  ;; no momentum): a report that lands the pointer in the center deadzone
+  ;; yields zero yaw even though the previous cached pos was at the edge.
+  (let [r (mouse-look "\e[<35;60;15M" right-edge-pos 1.0 look-dims)]
+    (is (= 0.0 (:yaw r)) "back to center -> stop turning")
+    (is (= [60 15] (:pos r)))))
+
+(deftest test-mouse-look-sensitivity-scales-the-rate
+  ;; sensitivity 2.0 doubles, 0.0 zeroes the steering (mouselook off) while
+  ;; leaving fire untouched. At the right edge: 0.16 * 2.0 = 0.32.
+  (is (approx? 0.32 (:yaw (mouse-look "" right-edge-pos 2.0 look-dims))) "2x sensitivity doubles yaw")
+  (is (= 0.0 (:yaw (mouse-look "" right-edge-pos 0.0 look-dims))) "0 sensitivity = no turn")
+  (is (= 0.0 (:pitch (mouse-look "" top-edge-pos 0.0 look-dims))) "0 sensitivity = no pitch")
+  (let [r (mouse-look "\e[<0;60;15M" center-pos 0.0 look-dims)]
+    (is (= true (:fire? r)) "0 sensitivity still lets a click fire")))
+
+(deftest test-mouse-look-no-dims-is-inert
+  ;; Without dims (no axis lengths) the steering can't know where the edges
+  ;; are, so it yields zero yaw/pitch - while fire intent still parses. So
+  ;; a non-loop caller (or a frame before the size is known) never spins.
+  (let [r (mouse-look "\e[<35;120;15M" center-pos 1.0)]
+    (is (= 0.0 (:yaw r)) "no dims -> no yaw")
+    (is (= 0.0 (:pitch r)) "no dims -> no pitch")
+    (is (= [120 15] (:pos r)) "but pos still tracks the report"))
+  (let [r (mouse-look "\e[<0;60;15M" center-pos 1.0)]
+    (is (= true (:fire? r)) "fire still parses with no dims")))
+
+(deftest test-mouse-look-nil-pos-no-report-is-zero
+  ;; prev-pos nil (no prior report this session) AND no report this frame:
+  ;; the cached pos stays nil, so there is no position to steer from -> a
+  ;; clean zero, never a spin before the first real report.
+  (let [r (mouse-look "" nil 1.0 look-dims)]
+    (is (= 0.0 (:yaw r)) "nil pos -> no yaw")
+    (is (= 0.0 (:pitch r)) "nil pos -> no pitch")
+    (is (= nil (:pos r)) "cached pointer still nil")))
 
 (deftest test-mouse-look-left-press-fires
-  ;; Discrete left press (b=0, final M) at the origin: no delta, but
-  ;; :fire? and :fire-held? both set so a click shoots like space.
-  (let [r (mouse-look "\e[<0;10;10M" mouse-origin 1.0)]
+  ;; Discrete left press (b=0, final M): :fire? and :fire-held? both set so
+  ;; a click shoots like space. At center the steering stays zero.
+  (let [r (mouse-look "\e[<0;60;15M" center-pos 1.0 look-dims)]
     (is (= true (:fire? r)) "left press fires")
     (is (= true (:fire-held? r)) "press counts as held this frame")
-    (is (= 0.0 (:yaw r)) "press at the same cell adds no delta")
+    (is (= 0.0 (:yaw r)) "press at center adds no turn")
     (is (= 0.0 (:pitch r)))))
 
 (deftest test-mouse-look-left-release-does-not-fire
-  ;; Release (final m) at the origin: NOT a press, button not down.
-  (let [r (mouse-look "\e[<0;10;10m" mouse-origin 1.0)]
+  ;; Release (final m): NOT a press, button not down.
+  (let [r (mouse-look "\e[<0;60;15m" center-pos 1.0 look-dims)]
     (is (= false (:fire? r)) "release is not a press")
     (is (= false (:fire-held? r)) "release is not held")))
 
-(deftest test-mouse-look-left-drag-is-held-fire-and-turns
-  ;; Left DRAG (b=32: motion bit + button 0) from x=10 to x=15: turns
-  ;; (+yaw) AND holds the trigger (auto-fire weapons spray while dragged),
-  ;; but is NOT a fresh press edge.
-  (let [r (mouse-look "\e[<32;15;10M" mouse-origin 1.0)]
+(deftest test-mouse-look-left-drag-is-held-fire-and-steers
+  ;; Left DRAG (b=32: motion bit + button 0) that lands right of center:
+  ;; steers (+yaw) AND holds the trigger (auto-fire weapons spray while
+  ;; dragged), but is NOT a fresh press edge. Click + drag to shoot stays
+  ;; intact.
+  (let [r (mouse-look "\e[<32;120;15M" center-pos 1.0 look-dims)]
     (is (= false (:fire? r)) "a drag is not a rising-edge press")
     (is (= true (:fire-held? r)) "left held during drag = held-fire")
-    (is (approx? 0.225 (:yaw r)) "drag still turns")))
+    (is (approx? 0.16 (:yaw r)) "drag still steers")))
 
-(deftest test-mouse-look-multiple-events-accumulate
-  ;; Two hover reports in one frame: 10->15 (dx+5) then 15->20 (dx+5).
-  ;; Deltas sum: total dx=10 -> yaw = 10 * 0.045 = 0.45; pos ends at 20.
-  (let [r (mouse-look "\e[<35;15;10M\e[<35;20;10M" mouse-origin 1.0)]
-    (is (approx? 0.45 (:yaw r)) "deltas across the frame sum")
-    (is (= [20 10] (:pos r)) "pos trails the last report")))
-
-(deftest test-mouse-look-press-then-move-fires-and-turns
-  ;; A press followed by a hover move in the same frame: fire AND yaw.
-  (let [r (mouse-look "\e[<0;10;10M\e[<35;16;10M" mouse-origin 1.0)]
+(deftest test-mouse-look-press-then-move-fires-and-steers
+  ;; A press followed by a hover move in the same frame: fire AND steer
+  ;; from the moved-to cell (the edge -> max yaw).
+  (let [r (mouse-look "\e[<0;60;15M\e[<35;120;15M" center-pos 1.0 look-dims)]
     (is (= true (:fire? r)) "the press still registers")
-    (is (approx? 0.27 (:yaw r)) "the move still turns (dx +6 -> 0.27)")))
+    (is (approx? 0.16 (:yaw r)) "the move still steers from the new cell")))
 
-(deftest test-mouse-look-sensitivity-scales-the-delta
-  ;; sensitivity 2.0 doubles, 0.0 zeroes the look (mouselook effectively
-  ;; off) while leaving fire untouched. dx=5 -> 5 * 0.045 * 2.0 = 0.45.
-  (is (approx? 0.45 (:yaw (mouse-look "\e[<35;15;10M" mouse-origin 2.0))) "2x sensitivity doubles yaw")
-  (is (= 0.0  (:yaw (mouse-look "\e[<35;15;10M" mouse-origin 0.0))) "0 sensitivity = no look")
-  (let [r (mouse-look "\e[<0;10;10M" mouse-origin 0.0)]
-    (is (= true (:fire? r)) "0 sensitivity still lets a click fire")))
+(deftest test-mouse-look-press-then-release-fires-once
+  ;; A full click in ONE drained frame: left press (M) then its release
+  ;; (m), both at center. :fire? / :fire-held? are OR'd across the events,
+  ;; so the press latches the single rising-edge fire; the trailing release
+  ;; neither re-fires nor un-fires it.
+  (let [r (mouse-look "\e[<0;60;15M\e[<0;60;15m" center-pos 1.0 look-dims)]
+    (is (= true (:fire? r)) "press latches one fire even with a trailing release")
+    (is (= true (:fire-held? r)) "the in-frame press counts as held this frame")
+    (is (= 0.0 (:yaw r)) "click at center adds no turn")
+    (is (= [60 15] (:pos r)) "pos trails the last (release) report"))
+  ;; The NEXT frame, fed only the release tail (button already up), is a
+  ;; clean no-op fire-wise.
+  (let [r (mouse-look "\e[<0;60;15m" center-pos 1.0 look-dims)]
+    (is (= false (:fire? r)) "release-only frame does not fire")
+    (is (= false (:fire-held? r)) "release-only frame is not held")))
 
-(deftest test-mouse-look-yaw-tracks-pointer-speed
-  ;; Issue #275: the camera turn must TRACK how fast the pointer moves -
-  ;; a 2x-bigger per-frame delta yields ~2x the yaw at a FIXED sensitivity
-  ;; (fast flick = fast turn, slow nudge = slow turn). Pin the linear,
-  ;; clamp-free proportionality so a future tweak can't silently flatten
-  ;; it. dx=4 vs dx=8 at sensitivity 1.0; pitch tracks dy the same way.
-  (let [slow (mouse-look "\e[<35;14;10M" mouse-origin 1.0)   ; dx=+4
-        fast (mouse-look "\e[<35;18;10M" mouse-origin 1.0)]  ; dx=+8
-    (is (approx? (php/* 2.0 (:yaw slow)) (:yaw fast))
-        "2x pointer delta = 2x yaw at fixed sensitivity")
-    (is (php/> (:yaw fast) (:yaw slow)) "faster flick turns more"))
-  (let [slow (mouse-look "\e[<35;10;7M" mouse-origin 1.0)    ; dy=-3 (up)
-        fast (mouse-look "\e[<35;10;4M" mouse-origin 1.0)]   ; dy=-6 (up)
-    (is (approx? (php/* 2.0 (:pitch slow)) (:pitch fast))
-        "2x vertical delta = 2x pitch at fixed sensitivity")))
-
-(deftest test-mouse-look-proportionality-holds-under-sensitivity
-  ;; The delta->yaw proportionality is preserved AFTER the sensitivity
-  ;; multiplier: at any fixed sensitivity, doubling the delta doubles the
-  ;; yaw (sensitivity scales the whole proportional response, #275). Here
-  ;; sensitivity is the wider 3.0x high-end multiplier from core/settings.
-  (let [slow (mouse-look "\e[<35;14;10M" mouse-origin 3.0)   ; dx=+4
-        fast (mouse-look "\e[<35;18;10M" mouse-origin 3.0)]  ; dx=+8
-    (is (approx? (php/* 2.0 (:yaw slow)) (:yaw fast))
-        "proportionality survives the sensitivity scale")
-    (is (approx? (php/* 4.0 0.045 3.0) (:yaw slow)) "yaw = dx * yaw-scale * sensitivity")))
-
-(deftest test-mouse-look-first-report-only-sets-baseline
-  ;; prev-pos nil (no prior report this session): the first position
-  ;; report ESTABLISHES the baseline and contributes NO delta, so the
-  ;; pointer's opening absolute coords can't read as one giant jump.
-  (let [r (mouse-look "\e[<35;40;20M" nil 1.0)]
-    (is (= 0.0 (:yaw r)) "first report = baseline, no yaw")
-    (is (= 0.0 (:pitch r)) "first report = baseline, no pitch")
-    (is (= [40 20] (:pos r)) "baseline recorded for next frame")))
-
-(deftest test-mouse-look-wheel-tick-adds-no-look-delta
-  ;; A scroll-wheel report (bit 6 set: b=64 up / b=65 down) carries no
-  ;; look intent. Even if its reported cell differs from the baseline, it
-  ;; must NOT feed yaw/pitch - but it advances :pos so a following real
-  ;; motion still measures from the true pointer spot.
-  (let [r (mouse-look "\e[<64;30;30M" mouse-origin 1.0)]
-    (is (= 0.0 (:yaw r)) "wheel adds no yaw")
-    (is (= 0.0 (:pitch r)) "wheel adds no pitch")
+(deftest test-mouse-look-wheel-tick-adds-no-turn-no-fire
+  ;; A scroll-wheel report (bit 6 set: b=64) carries no aim intent. It must
+  ;; NOT fire - but :pos still advances to its cell so a following motion
+  ;; steers from the true pointer spot.
+  (let [r (mouse-look "\e[<64;120;15M" center-pos 1.0 look-dims)]
     (is (= false (:fire? r)) "wheel is not a fire")
-    (is (= [30 30] (:pos r)) "but :pos still advances to the wheel cell"))
-  ;; Wheel tick then a hover from the wheel's cell: only the hover counts.
-  (let [r (mouse-look "\e[<64;30;30M\e[<35;33;30M" mouse-origin 1.0)]
-    (is (approx? 0.135 (:yaw r)) "delta measured from the wheel cell (33-30=3)")))
+    (is (= false (:fire-held? r)) "wheel is not held-fire")
+    (is (= [120 15] (:pos r)) ":pos advances to the wheel cell")))
+
+(deftest test-mouse-look-right-button-does-not-fire
+  ;; Right-button report (b=2). Only the LEFT button maps to fire.
+  (let [r (mouse-look "\e[<2;60;15M" center-pos 1.0 look-dims)]
+    (is (= false (:fire? r)) "right press is not a fire edge")
+    (is (= false (:fire-held? r)) "right button is not held-fire")))
+
+(deftest test-mouse-look-middle-button-does-not-fire
+  ;; Middle-button report (b=1). Same rule - only button 0 fires.
+  (let [r (mouse-look "\e[<1;60;15M" center-pos 1.0 look-dims)]
+    (is (= false (:fire? r)) "middle press is not a fire edge")
+    (is (= false (:fire-held? r)) "middle button is not held-fire")))
 
 (deftest test-mouse-look-malformed-sequence-ignored
-  ;; A truncated SGR report (missing the y coord + terminator) does not
-  ;; match the parser, so it produces no delta and leaves prev-pos as-is.
-  (let [r (mouse-look "\e[<35;15M" mouse-origin 1.0)]
+  ;; A truncated SGR report (missing the y coord + terminator) matches
+  ;; nothing, so the cached pointer is carried forward and steering reads
+  ;; it (here center -> zero).
+  (let [r (mouse-look "\e[<35;15M" center-pos 1.0 look-dims)]
     (is (= 0.0 (:yaw r)))
     (is (= 0.0 (:pitch r)))
-    (is (= mouse-origin (:pos r)) "malformed leaves baseline untouched")))
+    (is (= center-pos (:pos r)) "malformed leaves the cached pointer untouched")))
 
 (deftest test-mouse-look-ignores-kitty-key-event
   ;; REGRESSION: a kitty CSI-u key report (e.g. 'a' press = \e[97;1:1u)
   ;; shares the ESC-[ prefix but is NOT an SGR mouse report. It must NOT
-  ;; produce a look delta or fire, so the mouse parser can never hijack
+  ;; move the cached pointer or fire, so the mouse parser can never hijack
   ;; the keyboard path.
-  (let [r (mouse-look "\e[97;1:1u" mouse-origin 1.0)]
-    (is (= 0.0 (:yaw r)) "kitty key is not mouse motion")
+  (let [r (mouse-look "\e[97;1:1u" center-pos 1.0 look-dims)]
+    (is (= 0.0 (:yaw r)) "kitty key is not pointer motion")
     (is (= 0.0 (:pitch r)))
     (is (= false (:fire? r)) "kitty key is not a mouse click")
-    (is (= mouse-origin (:pos r)))))
+    (is (= center-pos (:pos r)))))
 
 (deftest test-mouse-look-ignores-arrow-and-fkey
   ;; REGRESSION: legacy arrow (\e[C) and F-key (\eOR = F3) sequences are
-  ;; not SGR mouse reports either - no delta, no fire.
-  (let [arrow (mouse-look "\e[C" mouse-origin 1.0)
-        fkey  (mouse-look "\eOR" mouse-origin 1.0)]
-    (is (= 0.0 (:yaw arrow)) "arrow is not mouse motion")
+  ;; not SGR mouse reports either - no steering change, no fire.
+  (let [arrow (mouse-look "\e[C" center-pos 1.0 look-dims)
+        fkey  (mouse-look "\eOR" center-pos 1.0 look-dims)]
+    (is (= 0.0 (:yaw arrow)) "arrow is not pointer motion")
     (is (= false (:fire? arrow)))
-    (is (= 0.0 (:yaw fkey)) "F-key is not mouse motion")
+    (is (= 0.0 (:yaw fkey)) "F-key is not pointer motion")
     (is (= false (:fire? fkey)))))
 
 (deftest test-mouse-look-mixed-keyboard-and-mouse-bytes
   ;; A frame can carry BOTH a WASD byte and a mouse report (drained
-  ;; together). mouse-look only parses the SGR part; the 'w' is ignored
-  ;; here (refresh-from-keys handles it elsewhere) but must not corrupt
-  ;; the delta.
-  (let [r (mouse-look "w\e[<35;15;10Md" mouse-origin 1.0)]
-    (is (approx? 0.225 (:yaw r)) "WASD bytes around the report don't affect yaw")
-    (is (= [15 10] (:pos r)))))
+  ;; together). mouse-look only parses the SGR part; the surrounding 'w'/'d'
+  ;; are ignored here (refresh-from-keys handles them) and must not corrupt
+  ;; the cached pointer.
+  (let [r (mouse-look "w\e[<35;120;15Md" center-pos 1.0 look-dims)]
+    (is (approx? 0.16 (:yaw r)) "WASD bytes around the report don't affect steering")
+    (is (= [120 15] (:pos r)))))
 
 (deftest test-mouse-look-bytes-do-not-leak-into-key-parsing
   ;; REGRESSION (the inverse guard): an SGR mouse report fed to the
   ;; keyboard parsers must not be mistaken for movement / fire. The
-  ;; report's digits ('1', '5', '3', '2') and 'M' must not trip key-states
-  ;; or refresh-move into phantom input.
+  ;; report's digits and 'M' must not trip key-states or refresh-move.
   (let [drag "\e[<32;15;10M"
         st   (key-states drag)
         w'   (refresh-from-keys blank-world drag)]
     (is (= false (:sp st)) "no phantom fire from the mouse digits")
     (is (= blank-moves (:moves w')) "no phantom movement from the report")))
-
-(deftest test-mouse-look-right-button-does-not-fire
-  ;; Right-button report (b=2: low bits 2 = button 2, final M). Only the
-  ;; LEFT button maps to fire, so a right click must leave :fire? /
-  ;; :fire-held? clear (and at the same cell adds no look delta).
-  (let [r (mouse-look "\e[<2;10;10M" mouse-origin 1.0)]
-    (is (= false (:fire? r)) "right press is not a fire edge")
-    (is (= false (:fire-held? r)) "right button is not held-fire")
-    (is (= 0.0 (:yaw r)) "right press at the same cell adds no yaw")
-    (is (= 0.0 (:pitch r)))))
-
-(deftest test-mouse-look-middle-button-does-not-fire
-  ;; Middle-button report (b=1: low bits 1 = button 1, final M). Same rule
-  ;; as the right button - only button 0 (left) fires.
-  (let [r (mouse-look "\e[<1;10;10M" mouse-origin 1.0)]
-    (is (= false (:fire? r)) "middle press is not a fire edge")
-    (is (= false (:fire-held? r)) "middle button is not held-fire")
-    (is (= 0.0 (:yaw r)) "middle press at the same cell adds no yaw")))
-
-(deftest test-mouse-look-press-then-release-fires-once
-  ;; A full click in ONE drained frame: left press (M) immediately
-  ;; followed by its release (m), both at the origin. :fire? is OR'd
-  ;; across the events, so the press still latches the single rising-edge
-  ;; fire; the trailing release neither re-fires nor un-fires it. :held?
-  ;; is OR'd too, so the in-frame press keeps it set for this frame even
-  ;; though the button is up by the end (the press itself is held-fire).
-  (let [r (mouse-look "\e[<0;10;10M\e[<0;10;10m" mouse-origin 1.0)]
-    (is (= true (:fire? r)) "press latches one fire even with a trailing release")
-    (is (= true (:fire-held? r)) "the in-frame press counts as held this frame")
-    (is (= 0.0 (:yaw r)) "click in place adds no look delta")
-    (is (= [10 10] (:pos r)) "pos trails the last (release) report"))
-  ;; The NEXT frame, fed only the release tail (button already up), is a
-  ;; clean no-op: no fire, no held, no delta.
-  (let [r (mouse-look "\e[<0;10;10m" mouse-origin 1.0)]
-    (is (= false (:fire? r)) "release-only frame does not fire")
-    (is (= false (:fire-held? r)) "release-only frame is not held")
-    (is (= 0.0 (:yaw r)))))
-
-(deftest test-mouse-look-left-drag-counts-as-held-fire
-  ;; PIN (existing-correct): a left DRAG (b=32, motion bit + button 0) is
-  ;; the terminal's only "trigger still down" signal during motion, so it
-  ;; must read as held-fire (auto-fire weapons spray) without being a fresh
-  ;; press edge. Distinct from the right/middle buttons above, which never
-  ;; fire at all.
-  (let [r (mouse-look "\e[<32;12;10M" mouse-origin 1.0)]
-    (is (= true (:fire-held? r)) "left drag = held-fire")
-    (is (= false (:fire? r)) "but not a rising-edge press")))
-
-(deftest test-mouse-look-wide-flick-yields-proportional-yaw
-  ;; Large-delta saturation: a single wide pointer flick from x=10 to
-  ;; x=110 (a ~100-cell sweep across a wide terminal) yields a yaw that is
-  ;; exactly proportional to the travel: dx=100 -> 100 * 0.045 = 4.5 rad.
-  ;; No clamping inside mouse-look itself - the proportionality is linear
-  ;; right up to wherever the terminal stops reporting.
-  (let [r (mouse-look "\e[<35;110;10M" mouse-origin 1.0)]
-    (is (approx? 4.5 (:yaw r)) "wide flick -> proportional yaw (100 cells)")
-    (is (= 0.0 (:pitch r)) "horizontal flick has no pitch")
-    (is (= [110 10] (:pos r)) "pos trails the flick endpoint")))
-
-(deftest test-mouse-look-edge-clamped-coords-yield-zero-delta
-  ;; PIN the docstring's edge-clamp promise: terminals report ABSOLUTE
-  ;; clamped cell coords with no pointer lock, so once the pointer
-  ;; saturates at a screen edge it reports the SAME clamped cell every
-  ;; frame. Two consecutive reports at the same edge cell therefore carry
-  ;; a zero delta - the terminal equivalent of the mouse running off the
-  ;; pad. Drive the pointer to an edge cell, then hold there: the second
-  ;; report adds no further yaw/pitch.
-  (let [edge [120 1]
-        held (mouse-look "\e[<35;120;1M" edge 1.0)]
-    (is (= 0.0 (:yaw held)) "re-report at the clamped edge cell adds no yaw")
-    (is (= 0.0 (:pitch held)) "and no pitch")
-    (is (= [120 1] (:pos held)) "pos stays pinned at the edge cell"))
-  ;; A flick INTO the edge, then a second report stuck at the edge: only
-  ;; the approach contributes; the saturated tail is a zero delta.
-  (let [r (mouse-look "\e[<35;120;10M\e[<35;120;10M" mouse-origin 1.0)]
-    (is (approx? (php/* 110 0.045) (:yaw r)) "only the approach to the edge turns; the stuck tail adds nothing")))
-
-;; ---------------------------------------------------------------------
-;; mouse-look EDGE-TURN CONTINUATION (#288): with the live [rows cols]
-;; threaded in, a pointer in the thin outer band adds a CONTINUOUS yaw in
-;; that direction (signed + ramped with depth) on TOP of the saturated
-;; delta, so pushing into an edge keeps the camera turning. The central
-;; region stays pure delta (old feel). band on 120 cols = max(2, 8% of
-;; 120) = 10; edge-turn rate 0.15 rad/frame at full depth.
-;; ---------------------------------------------------------------------
-
-(def look-dims
-  "Live [rows cols] for edge-turn tests: 30 rows, 120 cols (band = 10)."
-  [30 120])
-
-(deftest test-mouse-look-right-edge-continues-turning-right
-  ;; Pointer parked at the very right edge cell (x=cols=120) with NO delta
-  ;; (re-report at the same edge cell): the saturated delta is zero, but
-  ;; edge-turn adds a positive (turn-right) yaw at full depth = +0.15.
-  (let [r (mouse-look "\e[<35;120;15M" [120 15] 1.0 look-dims)]
-    (is (approx? 0.15 (:yaw r)) "right edge -> continuous +yaw (turn right) even with zero delta")
-    (is (= 0.0 (:pitch r)) "edge-turn is yaw-only")))
-
-(deftest test-mouse-look-left-edge-continues-turning-left
-  ;; Pointer parked at the very left edge cell (x=1): edge-turn adds a
-  ;; negative (turn-left) yaw at full depth = -0.15.
-  (let [r (mouse-look "\e[<35;1;15M" [1 15] 1.0 look-dims)]
-    (is (approx? -0.15 (:yaw r)) "left edge -> continuous -yaw (turn left)")
-    (is (= 0.0 (:pitch r)) "edge-turn is yaw-only")))
-
-(deftest test-mouse-look-edge-turn-ramps-with-depth
-  ;; Deeper into the band = more yaw. Inside the right band on 120 cols:
-  ;; at x=115 the depth term is (band - (cols - x)) = (10 - 5) = 5, ramp
-  ;; 5/10 = 0.5 -> 0.075; at x=120 (the edge cell) it is (10 - 0) = 10, ramp
-  ;; 1.0 -> 0.15. Both measured with zero delta (re-report at the same
-  ;; cell) so only edge-turn contributes.
-  (let [shallow (mouse-look "\e[<35;115;15M" [115 15] 1.0 look-dims)
-        deep    (mouse-look "\e[<35;120;15M" [120 15] 1.0 look-dims)]
-    (is (approx? 0.075 (:yaw shallow)) "half-depth -> half rate")
-    (is (approx? 0.15 (:yaw deep)) "full depth -> full rate")
-    (is (php/> (:yaw deep) (:yaw shallow)) "deeper into the edge turns faster")))
-
-(deftest test-mouse-look-edge-turn-rides-on-top-of-delta
-  ;; Edge-turn is ADDITIVE on the (saturated) delta, not a replacement. A
-  ;; flick INTO the right edge: dx=10->120 = 110 cells = 4.95 rad of delta
-  ;; yaw, PLUS the +0.15 edge-turn because the endpoint sits at the edge.
-  (let [r (mouse-look "\e[<35;120;10M" mouse-origin 1.0 look-dims)]
-    (is (approx? (php/+ (php/* 110 0.045) 0.15) (:yaw r))
-        "edge-turn adds on top of the approach delta")))
-
-(deftest test-mouse-look-edge-turn-respects-sensitivity
-  ;; Edge-turn is scaled by sensitivity like the delta look (#288 respects
-  ;; the Sensitivity setting). 2x sensitivity doubles the edge-turn yaw;
-  ;; 0 sensitivity kills it entirely.
-  (is (approx? 0.3 (:yaw (mouse-look "\e[<35;120;15M" [120 15] 2.0 look-dims)))
-      "2x sensitivity doubles edge-turn")
-  (is (= 0.0 (:yaw (mouse-look "\e[<35;120;15M" [120 15] 0.0 look-dims)))
-      "0 sensitivity = no edge-turn"))
-
-(deftest test-mouse-look-central-pointer-is-pure-delta-with-dims
-  ;; The CENTRAL region is untouched by edge-turn even with dims threaded
-  ;; in: a hover well clear of both bands (x=10 -> 60 on 120 cols) yields
-  ;; exactly the delta yaw (50 * 0.045 = 2.25) and nothing extra. Same
-  ;; result as the no-dims call - the old feel is preserved.
-  (let [with-dims (mouse-look "\e[<35;60;15M" [10 15] 1.0 look-dims)
-        no-dims   (mouse-look "\e[<35;60;15M" [10 15] 1.0)]
-    (is (approx? 2.25 (:yaw with-dims)) "centre -> pure delta yaw, no edge-turn")
-    (is (= (:yaw no-dims) (:yaw with-dims)) "dims do not change central feel")))
-
-(deftest test-mouse-look-no-dims-disables-edge-turn
-  ;; Backwards-compatible: omitting dims (the old 3-arg call) means NO
-  ;; edge-turn, so a pointer pinned at the edge with zero delta produces
-  ;; zero yaw - exactly the pre-#288 saturation behaviour.
-  (let [r (mouse-look "\e[<35;120;15M" [120 15] 1.0)]
-    (is (= 0.0 (:yaw r)) "no dims -> no edge-turn (old saturating behaviour)")))
-
-(deftest test-mouse-look-reentry-after-gap-resets-cleanly
-  ;; Graceful re-entry (#288): if the pointer leaves the terminal and
-  ;; comes back FAR from where it was (a Chebyshev gap beyond
-  ;; mouse-reentry-gap-cells = 256), that frame RE-BASELINES rather than
-  ;; reading the gap as one giant yaw jump. Here prev-pos is [10 10] and
-  ;; the pointer re-appears at x=300: the 290-cell gap is treated as a
-  ;; re-entry, so no yaw this frame; pos still advances so the NEXT frame
-  ;; measures from the new spot.
-  (let [r (mouse-look "\e[<35;300;10M" [10 10] 1.0)]
-    (is (= 0.0 (:yaw r)) "re-entry gap re-baselines, no jump yaw")
-    (is (= 0.0 (:pitch r)) "and no jump pitch")
-    (is (= [300 10] (:pos r)) "pos advances so the next frame measures cleanly")))
-
-(deftest test-mouse-look-fast-flick-is-not-a-reentry
-  ;; The re-entry guard must NOT swallow a fast-but-continuous flick: a
-  ;; 110-cell sweep (under the 256 floor) is real travel and turns
-  ;; normally. Guards against a too-tight threshold killing fast looks.
-  (let [r (mouse-look "\e[<35;120;10M" mouse-origin 1.0)]
-    (is (approx? (php/* 110 0.045) (:yaw r)) "a wide flick is real travel, not a re-entry")))
-
-(deftest test-mouse-look-reentry-threshold-scales-with-width
-  ;; On a very wide terminal the re-entry threshold scales to 2*cols, so a
-  ;; full-width flick (here ~398 cells on a 400-col terminal, above the 256
-  ;; floor but below 2*400 = 800) is still read as REAL travel, not a
-  ;; re-entry. Without the cols-aware scaling the static 256 floor would
-  ;; misclassify it and drop the yaw.
-  (let [wide [60 400]
-        r    (mouse-look "\e[<35;400;10M" [2 10] 1.0 wide)]
-    ;; dx = 398; the endpoint x=400 also sits at the right edge so a full
-    ;; edge-turn (+0.15) rides on top of the delta. The point of the test
-    ;; is that the 398-cell delta is NOT swallowed as a re-entry.
-    (is (php/> (:yaw r) (php/* 398 0.045)) "a full-width flick on a wide terminal is real travel, not a re-entry")))

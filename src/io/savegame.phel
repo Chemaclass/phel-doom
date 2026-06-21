@@ -15,6 +15,9 @@
 ;; `:pgrid` (a derived PHP-array mirror of `:grid`) and `:visited` (the
 ;; fog-of-war PHP array) are dropped on save: pgrid is rebuilt from the
 ;; grid on load, and the fog simply re-reveals as the player walks.
+;; `:settings` / `:settings-cursor` are also dropped (#279): they are
+;; session-global preference, not run state, so a save must never carry a
+;; stale settings snapshot that a later load would revert live settings to.
 ;; encode / decode are pure (no IO) so the round-trip is unit-tested.
 ;; ---------------------------------------------------------------------
 
@@ -67,9 +70,11 @@
 
 (defn world->savestring
   "Pure: serialize `world` to a versioned JSON string. Drops `:pgrid` +
-   `:visited` (rebuilt / reset on load)."
+   `:visited` (rebuilt / reset on load) and `:settings` +
+   `:settings-cursor` (#279 - session-global preference, not run state,
+   so a save never carries stale preferences into a later load)."
   [world]
-  (let [clean (dissoc world :pgrid :visited)
+  (let [clean (dissoc world :pgrid :visited :settings :settings-cursor)
         o     (php/array)]
     (php/aset o "version" save-version)
     (php/aset o "world"   (encode clean))

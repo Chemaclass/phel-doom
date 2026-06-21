@@ -9,7 +9,7 @@
 | 1 | imps | random | 4 imps |
 | 2 | demons | hand-authored verticality (staircase + platform + pit) | 5 demons + 2 imps + shotgun |
 | 3 | cacodemons | hand-authored verticality (descending trench) | 4 cacos + 2 demons + 2 imps + chaingun |
-| 4 | barons | random + blue lock | 3 barons + 3 demons |
+| 4 | barons | hand-authored verticality (3-tier stronghold, 4 open-sided stairs, outer-flank spines) + blue lock | 3 barons + 3 demons |
 | 5 | cyberdemons | hand-authored verticality (central dais) + red lock | 5 cyberdemons + 2 imps |
 | 6 | spectres | hand-authored verticality (3-tier room, 4 open-sided stairs, east-west axis) | 4 spectres + 2 imps + 1 caco |
 | 7 | revenants | hand-authored verticality (3-tier room, 4 open-sided stairs, north-south axis) + yellow lock | 4 revenants + 2 demons + 1 baron |
@@ -19,9 +19,9 @@
 
 ## Catalog
 
-L1: single-type procgen tutorial (imps only). L2 / L3 / L5 / L6 / L7 / L8: hand-authored verticality (see [Verticality levels](#verticality-levels-floor-heights--ceil-heights) below) - L2 the showcase (staircase + raised platform + sunken pit), L3 a descending trench, L5 a central dais, L6 a spacious three-tier room stacked east-west, L7 a spacious three-tier room stacked north-south, L8 the grand three-tier court with offset stair runs. L4 / L9: mixed-monster procgen (melee secondary salted per level). L10: hand-authored arena with secrets + switches.
+L1: single-type procgen tutorial (imps only). L2 / L3 / L4 / L5 / L6 / L7 / L8: hand-authored verticality (see [Verticality levels](#verticality-levels-floor-heights--ceil-heights) below) - L2 the showcase (staircase + raised platform + sunken pit), L3 a descending trench, L4 a blue-locked three-tier stronghold with outer-flank stair spines, L5 a central dais, L6 a spacious three-tier room stacked east-west, L7 a spacious three-tier room stacked north-south, L8 the grand three-tier court with offset stair runs. L9: mixed-monster procgen (melee secondary salted per level). L10: hand-authored arena with secrets + switches.
 
-Non-locked procgen levels seed up to 2 secret passages (see [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4) and hand-authored layouts (L2, L3, L5, L6, L7, L8, L10) skip seeding to prevent keycard bypass and keep the authored geometry explicit.
+Non-locked procgen levels seed up to 2 secret passages (see [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4) and hand-authored layouts (L2, L3, L4, L5, L6, L7, L8, L10) skip seeding to prevent keycard bypass and keep the authored geometry explicit.
 
 ```phel
 (def levels
@@ -120,6 +120,19 @@ Shared rules: every rise the player climbs is at or below `physics/step-up-max` 
 |---|---|---|
 | Trench rim (one tier down) | cols 5-22, rows 9 + 13 | -0.4 |
 | Trench bottom (deeper tier) | cols 5-22, rows 10-12 | -0.8 |
+
+**L4 - three-tier baron stronghold, four open-sided stairs, outer-flank spines (#310)** (`l4-floor-heights`), a flat 44x28 chamber and the ONLY locked multi-tier room. A wide southern hall (the spawn floor) climbs NORTH up to two raised baron heights, split into three stacked tiers by two solid divider rows (rows 11 and 5), each pierced by two stair mouths on the OUTER flanks (twin west + east stair spines hugging the side walls, cols 2-8 + 35-41 on each divider). The barons hold the wide central heights while the player funnels up the edges (a fourth distinct shape alongside L6's east-west room, L7's centre-aligned north-south one and L8's offset court). A tier is reachable ONLY by walking up a run. The blue-locked exit `B` sits on the bottom tier (east wall, row 20), reachable with ZERO climbs; the blue keycard is seeded at a random open cell, and because EVERY floor cell is reachable the key is always fetchable wherever it lands (a key may sit up a stair, the exit never can). It reuses the same binary-exact 0.375 ladder as L7. No railed lips (all four stair flanks are open fall-offs). No `:ceil-heights` (the room is open: flat 1.0 ceiling).
+
+| Feature | Cells | Height `z` |
+|---|---|---|
+| Tier 0 (bottom, spawn floor) | rows 12-26 | 0.0 (default) |
+| Tier 1 (middle plateau) | rows 6-10 | 0.75 |
+| Tier 2 (baron heights) | rows 1-4 | 1.5 |
+| Lower stair A core (climbs north, west) | cols 3-5, rows 11 -> 9 | 0.0, 0.375, 0.75 |
+| Lower stair B core (east) | cols 37-39, rows 11 -> 9 | 0.0, 0.375, 0.75 |
+| Upper stair C core (west) | cols 3-5, rows 5 -> 3 | 0.75, 1.125, 1.5 |
+| Upper stair D core (east) | cols 37-39, rows 5 -> 3 | 0.75, 1.125, 1.5 |
+| Open stair flanks (fall-off sides) | beside each core | drop to the tier below |
 
 **L5 - central dais** (`l5-floor-heights`), a flat 30x26 chamber. A raised square plateau stands dead-centre (a vantage in the cyberdemon arena), reached by a two-step ramp on its south face. The flat ground rings the dais so the red exit `R` + keycard stay reachable without climbing.
 

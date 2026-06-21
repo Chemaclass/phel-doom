@@ -1,7 +1,7 @@
 (ns phel-doom-tests.core.level-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.level :refer [ammo-box-count armor-shard-count config-for heart-count num-levels build-world place-secret-reward secret-trophies l7-layout l7-floor-heights l6-layout l6-floor-heights l8-layout l8-floor-heights])
-  (:require phel-doom.core.map :refer [cell-wall cell-floor cell-door cell-door-yellow])
+  (:require phel-doom.core.level :refer [ammo-box-count armor-shard-count config-for heart-count num-levels build-world place-secret-reward secret-trophies l7-layout l7-floor-heights l6-layout l6-floor-heights l8-layout l8-floor-heights l4-layout l4-floor-heights])
+  (:require phel-doom.core.map :refer [cell-wall cell-floor cell-door cell-door-blue cell-door-yellow])
   (:require phel-doom.core.physics :refer [step-up-max])
   (:require phel-doom.core.rng :as rng))
 
@@ -1273,3 +1273,277 @@
     (is (= 50 (count (first (:grid w)))) "50 wide")
     (is (= 30 (count (:grid w))) "30 tall")
     (is (= 0 (count (:keycards w))) "no keycard spawned")))
+
+;; ---------------------------------------------------------------------
+;; L4 three-tier baron stronghold (#310). The blue-locked baron level
+;; became a 44x28 stronghold: a wide southern floor (the spawn tier) that
+;; climbs NORTH up to two raised baron heights, split into three stacked
+;; tiers (z 0.0 / 0.75 / 1.5) by two solid divider rows (rows 11 and 5),
+;; each pierced by two stair mouths on the OUTER flanks (twin west + east
+;; stair spines hugging the side walls), so the barons hold the wide
+;; central heights while the player funnels up the edges. This is the only
+;; LOCKED multi-tier room, so the tests below add the keycard invariant:
+;; the blue-locked exit sits on the bottom tier (reachable with ZERO
+;; climbs) and EVERY floor cell is reachable, so the blue keycard - dropped
+;; at a random open cell by `maybe-spawn-keycard` - is always fetchable no
+;; matter which tier it lands on (a key may sit up a stair, the exit never
+;; can).
+;; ---------------------------------------------------------------------
+
+(deftest test-l4-layout-is-exactly-44-wide-28-tall
+  ;; parse-row silently pads short rows -> a ragged grid corrupts geometry.
+  ;; Pin the footprint: every authored row is exactly 44 chars, 28 rows.
+  (is (= 28 (count l4-layout)) "28 rows")
+  (loop [y 0]
+    (when (php/< y (count l4-layout))
+      (is (= 44 (php/strlen (get l4-layout y)))
+          (str "row " y " is 44 chars"))
+      (recur (php/+ y 1)))))
+
+(deftest test-l4-spawn-and-blue-exit-parse-to-the-bottom-tier
+  ;; Spawn @ at col 22 row 20 -> centre (22.5, 20.5); BLUE exit B at the east
+  ;; wall col 43 row 20, both on the open bottom (south) tier.
+  (rng/seed! 1)
+  (let [w (build-world 4 5)]
+    (is (= 22.5 (:x (:player w))) "spawn x")
+    (is (= 20.5 (:y (:player w))) "spawn y")
+    (is (= cell-door-blue (php/aget (php/aget (:grid w) 20) 43))
+        "blue exit door at [43 20]")
+    (is (= :blue (:door-lock w)) "blue lock preserved")))
+
+(deftest test-l4-divider-rows-are-wall-except-the-named-mouths
+  ;; Row 11 mouths: cols 2-8 + 35-41. Row 5 mouths: cols 2-8 + 35-41 (the
+  ;; outer-flank stair spines). Everywhere else on those rows is divider wall.
+  (rng/seed! 1)
+  (let [w      (build-world 4 5)
+        grid   (:grid w)
+        mouth? (fn [x] (or (and (php/>= x 2)  (php/<= x 8))
+                           (and (php/>= x 35) (php/<= x 41))))]
+    (loop [x 1]
+      (when (php/< x 43)
+        (let [c11 (php/aget (php/aget grid 11) x)
+              c5  (php/aget (php/aget grid 5) x)]
+          (if (mouth? x)
+            (do (is (= cell-floor c11) (str "row 11 col " x " is a mouth (floor)"))
+                (is (= cell-floor c5)  (str "row 5 col " x " is a mouth (floor)")))
+            (do (is (= cell-wall c11)  (str "row 11 col " x " is divider wall"))
+                (is (= cell-wall c5)   (str "row 5 col " x " is divider wall")))))
+        (recur (php/+ x 1))))))
+
+(deftest test-l4-tier-plateaus-sit-at-0-0_75-and-1_5
+  ;; The three plateaus: bottom z 0.0, mid z 0.75, baron heights z 1.5.
+  (rng/seed! 1)
+  (let [w (build-world 4 5)]
+    ;; tier 0 (bottom, spawn floor)
+    (is (= 0.0 (floor-h w 22 20)) "tier 0 spawn cell")
+    (is (= 0.0 (floor-h w 2 25))  "tier 0 SW")
+    (is (= 0.0 (floor-h w 42 13)) "tier 0 NE corner of bottom tier")
+    ;; tier 1 (mid)
+    (is (< (php/abs (- (floor-h w 22 8) 0.75)) 1.0e-9) "tier 1 centre")
+    (is (< (php/abs (- (floor-h w 1 6)  0.75)) 1.0e-9) "tier 1 NW")
+    (is (< (php/abs (- (floor-h w 42 10) 0.75)) 1.0e-9) "tier 1 SE")
+    ;; tier 2 (baron heights)
+    (is (< (php/abs (- (floor-h w 22 2) 1.5)) 1.0e-9) "tier 2 centre")
+    (is (< (php/abs (- (floor-h w 1 1)  1.5)) 1.0e-9) "tier 2 NW")
+    (is (< (php/abs (- (floor-h w 42 4) 1.5)) 1.0e-9) "tier 2 SE")))
+
+(deftest test-l4-stair-cores-climb-one-0_375-step-each
+  ;; Each stair core climbs by exactly one 0.375 step per row (< step-up-max),
+  ;; landing continuous with the tier above; the flanks beside it drop back to
+  ;; the tier below. The runs climb NORTH on the outer flanks (west cols 3-5,
+  ;; east cols 37-39).
+  (rng/seed! 1)
+  (let [w (build-world 4 5)]
+    ;; Lower stair A (col 4, west), tier0 -> tier1, rows 11 -> 9.
+    (is (= 0.0 (floor-h w 4 11)) "A foot 0.0 (tier 0)")
+    (is (< (php/abs (- (floor-h w 4 10) 0.375)) 1.0e-9) "A step 0.375")
+    (is (< (php/abs (- (floor-h w 4 9) 0.75)) 1.0e-9) "A top 0.75 (== tier 1)")
+    (is (< (php/abs (- (- (floor-h w 4 10) (floor-h w 4 11)) 0.375)) 1.0e-9) "A rise 1 = 0.375")
+    (is (< (php/abs (- (- (floor-h w 4 9) (floor-h w 4 10)) 0.375)) 1.0e-9) "A rise 2 = 0.375")
+    ;; Lower stair B (col 38, east).
+    (is (= 0.0 (floor-h w 38 11)) "B foot 0.0")
+    (is (< (php/abs (- (floor-h w 38 10) 0.375)) 1.0e-9) "B step 0.375")
+    (is (< (php/abs (- (floor-h w 38 9) 0.75)) 1.0e-9) "B top 0.75")
+    ;; Upper stair C (col 4, west), tier1 -> tier2, rows 5 -> 3.
+    (is (< (php/abs (- (floor-h w 4 5) 0.75)) 1.0e-9) "C foot 0.75 (== tier 1)")
+    (is (< (php/abs (- (floor-h w 4 4) 1.125)) 1.0e-9) "C step 1.125")
+    (is (< (php/abs (- (floor-h w 4 3) 1.5)) 1.0e-9) "C top 1.5 (== tier 2)")
+    (is (< (php/abs (- (- (floor-h w 4 4) (floor-h w 4 5)) 0.375)) 1.0e-9) "C rise 1 = 0.375")
+    (is (< (php/abs (- (- (floor-h w 4 3) (floor-h w 4 4)) 0.375)) 1.0e-9) "C rise 2 = 0.375")
+    ;; Upper stair D (col 38, east).
+    (is (< (php/abs (- (floor-h w 38 5) 0.75)) 1.0e-9) "D foot 0.75")
+    (is (< (php/abs (- (floor-h w 38 4) 1.125)) 1.0e-9) "D step 1.125")
+    (is (< (php/abs (- (floor-h w 38 3) 1.5)) 1.0e-9) "D top 1.5")
+    ;; Open flanks beside the lower cores drop back to tier 0 (a 0.75 fall).
+    (is (= 0.0 (floor-h w 2 10))  "A west flank open (tier 0)")
+    (is (= 0.0 (floor-h w 6 10))  "A east flank open (tier 0)")
+    (is (= 0.0 (floor-h w 36 10)) "B west flank open (tier 0)")
+    (is (= 0.0 (floor-h w 40 10)) "B east flank open (tier 0)")
+    ;; Open flanks beside the upper cores drop back to tier 1 (a 0.75 fall).
+    (is (< (php/abs (- (floor-h w 6 4)  0.75)) 1.0e-9) "C east flank open (tier 1)")
+    (is (< (php/abs (- (floor-h w 36 4) 0.75)) 1.0e-9) "D west flank open (tier 1)")))
+
+(deftest test-l4-no-floor-height-cell-lands-on-a-wall
+  ;; Every authored floor-height cell must sit on a walkable floor cell.
+  (rng/seed! 1)
+  (let [w    (build-world 4 5)
+        grid (:grid w)]
+    (doseq [k (keys l4-floor-heights)]
+      (let [x (get k 0)
+            y (get k 1)]
+        (is (not= cell-wall (php/aget (php/aget grid y) x))
+            (str "floor-height cell [" x " " y "] is not a wall"))))))
+
+(deftest test-l4-all-three-tiers-and-blue-exit-reachable-from-spawn
+  ;; Stair-gated flood fill from spawn reaches every tier + the blue exit.
+  (rng/seed! 1)
+  (let [w    (build-world 4 5)
+        seen (riser-reach w 22 20 {})]
+    (is (reach? seen 22 20) "tier 0 (spawn) reachable")
+    (is (reach? seen 22 8)  "tier 1 reachable via a lower stair")
+    (is (reach? seen 22 2)  "tier 2 (baron heights) reachable via an upper stair")
+    (is (reach? seen 43 20) "blue exit cell reachable across the bottom tier")))
+
+(deftest test-l4-blue-exit-reachable-with-zero-climbs
+  ;; CRITICAL for a locked level: the blue exit must be reachable on FLAT
+  ;; ground - the keycard run back to the door never forces a climb, so the
+  ;; lock can never be geometry-blocked behind a stair.
+  (rng/seed! 1)
+  (let [w      (build-world 4 5)
+        grid   (:grid w)
+        h      (count grid)
+        wbar   (count (first grid))
+        raised (loop [y 0 acc {}]
+                 (if (php/>= y h)
+                   acc
+                   (recur (php/+ y 1)
+                          (loop [x 0 a acc]
+                            (if (php/>= x wbar)
+                              a
+                              (recur (php/+ x 1)
+                                     (if (php/> (floor-h w x y) 1.0e-9)
+                                       (assoc a (str x "," y) true)
+                                       a)))))))
+        seen   (riser-reach w 22 20 raised)]
+    (is (reach? seen 43 20) "blue exit reached on flat ground only (zero climbs)")
+    (is (not (reach? seen 22 8)) "tier 1 not reachable on flat ground")))
+
+(deftest test-l4-every-floor-cell-reachable-so-the-keycard-is-always-fetchable
+  ;; The blue keycard is dropped at a RANDOM open cell (maybe-spawn-keycard
+  ;; via random-spawn), which may land on any tier. Prove EVERY floor cell is
+  ;; reachable from spawn under the stair-gated rule, so wherever the key
+  ;; lands the player can fetch it (a key up a stair is fine; an unreachable
+  ;; key would soft-lock the run). Also assert the actually-seeded keycard
+  ;; cell is reachable, for the concrete seed.
+  (rng/seed! 1)
+  (let [w           (build-world 4 5)
+        grid        (:grid w)
+        h           (count grid)
+        wbar        (count (first grid))
+        seen        (riser-reach w 22 20 {})
+        ;; Collect every floor cell and assert each is in the reachable set.
+        unreachable
+        (loop [y 0 acc []]
+          (if (php/>= y h)
+            acc
+            (recur (php/+ y 1)
+                   (loop [x 0 a acc]
+                     (if (php/>= x wbar)
+                       a
+                       (recur (php/+ x 1)
+                              (if (and (php/=== cell-floor (php/aget (php/aget grid y) x))
+                                       (not (reach? seen x y)))
+                                (conj a [x y])
+                                a)))))))]
+    (is (= [] unreachable)
+        (str "every floor cell reachable (unreachable: " unreachable ")"))
+    ;; The concrete seeded keycard sits on a reachable cell.
+    (let [kc (first (:keycards w))]
+      (is (some? kc) "a blue keycard was seeded")
+      (is (= :blue (:colour kc)) "the keycard is blue")
+      (is (reach? seen (php/intval (php/floor (:x kc)))
+                  (php/intval (php/floor (:y kc))))
+          "the seeded keycard cell is reachable"))))
+
+(deftest test-l4-tier1-reachable-only-through-its-stair-mouths
+  ;; Sealing BOTH row-11 mouths (cols 2-8 + 35-41) isolates tier 1 (and tier 2
+  ;; above it). The blue exit on the bottom tier stays reachable.
+  (rng/seed! 1)
+  (let [w       (build-world 4 5)
+        blocked (merge (block-cols 11 2 8) (block-cols 11 35 41))
+        seen    (riser-reach w 22 20 blocked)]
+    (is (not (reach? seen 22 8)) "tier 1 unreachable with both lower mouths sealed")
+    (is (not (reach? seen 22 2)) "tier 2 unreachable too (it sits above tier 1)")
+    (is (reach? seen 43 20)      "blue exit still reachable on the bottom tier")
+    (let [one (block-cols 11 2 8)
+          s1  (riser-reach w 22 20 one)]
+      (is (reach? s1 22 8) "tier 1 still reachable via the un-sealed lower stair"))))
+
+(deftest test-l4-tier2-reachable-only-through-its-stair-mouths
+  ;; Sealing BOTH row-5 mouths (cols 2-8 + 35-41) isolates tier 2 while tier 1
+  ;; stays reachable - the only way to the baron heights is the upper stairs.
+  (rng/seed! 1)
+  (let [w       (build-world 4 5)
+        blocked (merge (block-cols 5 2 8) (block-cols 5 35 41))
+        seen    (riser-reach w 22 20 blocked)]
+    (is (not (reach? seen 22 2)) "tier 2 unreachable with both upper mouths sealed")
+    (is (reach? seen 22 8)       "tier 1 still reachable below the sealed dividers")
+    (let [one (block-cols 5 2 8)
+          s1  (riser-reach w 22 20 one)]
+      (is (reach? s1 22 2) "tier 2 still reachable via the un-sealed upper stair"))))
+
+(deftest test-l4-stair-run-is-walkable-up-and-down-cell-by-cell
+  ;; Walk a lower run (A) and an upper run (C) cell-by-cell and assert the
+  ;; floor z rises tier-by-tier and falls back symmetrically. Each adjacent
+  ;; rise is strictly within step-up-max (0.4) with NO epsilon fudge. The
+  ;; runs climb NORTH (core y decreasing) on the west flank (col 4).
+  (rng/seed! 1)
+  (let [w          (build-world 4 5)
+        a-up       [(floor-h w 4 11) (floor-h w 4 10) (floor-h w 4 9)]
+        c-up       [(floor-h w 4 5)  (floor-h w 4 4)  (floor-h w 4 3)]
+        climbable? (fn [lo hi] (not (php/> (php/- hi lo) step-up-max)))]
+    ;; Ascending A: 0 -> 0.375 -> 0.75.
+    (is (< (php/abs (- (get a-up 0) 0.0)) 1.0e-9) "A bottom = 0.0")
+    (is (< (php/abs (- (get a-up 1) 0.375)) 1.0e-9) "A mid = 0.375")
+    (is (< (php/abs (- (get a-up 2) 0.75)) 1.0e-9) "A top = 0.75")
+    (is (php/< (get a-up 0) (get a-up 1)) "A rises 0->1")
+    (is (php/< (get a-up 1) (get a-up 2)) "A rises 1->2")
+    (is (climbable? (get a-up 0) (get a-up 1)) "A step 1 within auto-climb")
+    (is (climbable? (get a-up 1) (get a-up 2)) "A step 2 within auto-climb")
+    ;; Ascending C: 0.75 -> 1.125 -> 1.5.
+    (is (< (php/abs (- (get c-up 0) 0.75)) 1.0e-9) "C bottom = 0.75")
+    (is (< (php/abs (- (get c-up 1) 1.125)) 1.0e-9) "C mid = 1.125")
+    (is (< (php/abs (- (get c-up 2) 1.5)) 1.0e-9) "C top = 1.5")
+    (is (php/< (get c-up 0) (get c-up 1)) "C rises 0->1")
+    (is (php/< (get c-up 1) (get c-up 2)) "C rises 1->2")
+    (is (climbable? (get c-up 0) (get c-up 1)) "C step 1 within auto-climb")
+    (is (climbable? (get c-up 1) (get c-up 2)) "C step 2 within auto-climb")
+    ;; Descending is the same run reversed: every transition is a DROP (<=0).
+    (is (php/<= (php/- (get a-up 1) (get a-up 2)) 0.0) "A drop 2->1 is free (<=0)")
+    (is (php/<= (php/- (get a-up 0) (get a-up 1)) 0.0) "A drop 1->0 is free (<=0)")
+    (is (climbable? (get a-up 2) (get a-up 1)) "A descent 2->1 never gated")
+    (is (climbable? (get a-up 1) (get a-up 0)) "A descent 1->0 never gated")
+    (is (php/<= (php/- (get c-up 1) (get c-up 2)) 0.0) "C drop 2->1 is free (<=0)")
+    (is (php/<= (php/- (get c-up 0) (get c-up 1)) 0.0) "C drop 1->0 is free (<=0)")
+    (is (php/> (get a-up 2) (get a-up 0)) "A walks back down to tier 0")
+    (is (php/> (get c-up 2) (get c-up 0)) "C walks back down to tier 1")))
+
+(deftest test-l4-stronghold-keeps-identity-and-loads
+  ;; The three-tier stronghold rides on L4: still "barons" (name, primary
+  ;; enemy, chase, BLUE lock) with the baron + demon mix, so difficulty +
+  ;; the lock gating are unchanged. Footprint is 44x28. The blue keycard +
+  ;; chainsaw drop (build-world seeds the chainsaw for L4) are preserved.
+  (rng/seed! 1)
+  (let [w     (build-world 4 5)
+        types (set (map :type (:enemies w)))]
+    (is (= "barons" (:level-name w)))
+    (is (= :baron   (:enemy w)))
+    (is (= 1.4      (:chase-speed w)))
+    (is (= :blue    (:door-lock w)) "blue lock preserved")
+    (is (contains? types :baron) "baron present")
+    (is (contains? types :demon) "demon escort present")
+    (is (= 44 (count (first (:grid w)))) "44 wide")
+    (is (= 28 (count (:grid w))) "28 tall")
+    (is (= 1 (count (:keycards w))) "blue keycard spawned")
+    (is (php/>= (count (filter (fn [p] (= :chainsaw (:weapon p))) (:weapon-pickups w))) 1)
+        "chainsaw drop preserved")))

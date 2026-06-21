@@ -1,44 +1,16 @@
 (ns phel-doom-tests.core.state-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.state :refer [new-player new-world move-player turn-player
-                                         rebuild-pgrid apply-floor-heights apply-ceil-heights
+                                         rebuild-pgrid
                                          toggle-map toggle-pause toggle-debug toggle-sound with-enemies
                                          advance-game-time at-backpack-cap?
                                          backpack-level gain-armor-shard gain-backpack
                                          gain-life gain-soulsphere decay-soul-overcap
                                          max-armor max-backpacks max-lives
                                          armor-shard-cap soul-overcap-decay-secs
-                                         soulsphere-cap clamp-pitch max-pitch
-                                         eye-height set-floor-z]))
+                                         soulsphere-cap clamp-pitch max-pitch]))
 
 (def grid [[1 1 1] [1 0 1] [1 1 1]])
-
-(deftest test-new-player-starts-grounded-with-eye-half-unit-up
-  ;; #233: fresh players spawn on the flat floor; eye sits eye-height
-  ;; above it so the default view matches the pre-Z-physics 0.5 constant.
-  (let [p (new-player 1.0 2.0 0.0)]
-    (is (= 0.0 (:floor-z p)))
-    (is (= 0.5 (:eye-z p)))
-    (is (= 0.5 eye-height))
-    (is (< (php/abs (- (:eye-z p) (php/+ (:floor-z p) eye-height))) 1.0e-9))))
-
-(deftest test-set-floor-z-rederives-eye-z
-  ;; set-floor-z is the single writer for the Z pair: writing :floor-z
-  ;; re-derives :eye-z = floor-z + eye-height so the two never drift.
-  (let [w  (new-world grid (new-player 1.5 1.5 0.0))
-        w' (set-floor-z w 1.25)
-        p  (:player w')]
-    (is (= 1.25 (:floor-z p)))
-    (is (< (php/abs (- (:eye-z p) 1.75)) 1.0e-9))))
-
-(deftest test-set-floor-z-back-to-ground-restores-defaults
-  ;; Returning to the ground restores the byte-identity defaults exactly.
-  (let [w (-> (new-world grid (new-player 1.5 1.5 0.0))
-              (set-floor-z 2.0)
-              (set-floor-z 0.0))
-        p (:player w)]
-    (is (= 0.0 (:floor-z p)))
-    (is (= 0.5 (:eye-z p)))))
 
 (deftest test-new-player-records-position-and-angle
   (let [p (new-player 1.0 2.0 0.5)]
@@ -149,107 +121,6 @@
         post (php/aget (php/aget (:pgrid w2) 1) 1)]
     (is (= 0 pre))
     (is (= 1 post))))
-
-;; ---------------------------------------------------------------------
-;; Per-cell floor heights (#232): :floor-pgrid is a PHP float[][] twin
-;; of :pgrid, all 0.0 by default; apply-floor-heights stamps a
-;; {[x y] height} map into it; rebuild-pgrid carries it along.
-;; ---------------------------------------------------------------------
-
-(deftest test-new-world-floor-pgrid-matches-grid-shape-all-zero
-  (let [w   (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
-        fpg (:floor-pgrid w)]
-    ;; Same shape as :pgrid (3 rows, 3 cols) ...
-    (is (= 3 (php/count fpg)))
-    (is (= 3 (php/count (php/aget fpg 0))))
-    ;; ... every cell 0.0 (flat world).
-    (is (= 0.0 (php/aget (php/aget fpg 1) 1)))
-    (is (= 0.0 (php/aget (php/aget fpg 0) 2)))))
-
-(deftest test-apply-floor-heights-stamps-cells
-  (let [w  (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
-        w' (apply-floor-heights w {[1 1] 0.5 [2 0] 1.0})]
-    (is (= 0.5 (php/aget (php/aget (:floor-pgrid w') 1) 1)))
-    (is (= 1.0 (php/aget (php/aget (:floor-pgrid w') 0) 2)))
-    ;; Untouched cell stays flat.
-    (is (= 0.0 (php/aget (php/aget (:floor-pgrid w') 0) 0)))))
-
-(deftest test-apply-floor-heights-empty-map-is-noop
-  ;; The flat-world contract: nil / empty leaves the all-zero grid so the
-  ;; renderer stays byte-identical.
-  (let [w  (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
-        w0 (apply-floor-heights w nil)
-        w1 (apply-floor-heights w {})]
-    (is (= 0.0 (php/aget (php/aget (:floor-pgrid w0) 1) 1)))
-    (is (= 0.0 (php/aget (php/aget (:floor-pgrid w1) 1) 1)))))
-
-(deftest test-rebuild-pgrid-carries-floor-pgrid
-  ;; Wall mutation (switch/secret) must not lose seeded floor heights.
-  (let [w0 (apply-floor-heights
-            (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
-            {[1 1] 0.5})
-        w1 (rebuild-pgrid (assoc w0 :grid (assoc-in (:grid w0) [1 1] 1)))]
-    (is (= 0.5 (php/aget (php/aget (:floor-pgrid w1) 1) 1)))))
-
-(deftest test-rebuild-pgrid-builds-zero-floor-when-absent
-  ;; A world without :floor-pgrid (loaded savegame) gets a fresh all-zero
-  ;; grid sized to :grid, never nil.
-  (let [w0 (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
-        w1 (rebuild-pgrid (dissoc w0 :floor-pgrid))]
-    (is (php/!== nil (:floor-pgrid w1)))
-    (is (= 3 (php/count (:floor-pgrid w1))))
-    (is (= 0.0 (php/aget (php/aget (:floor-pgrid w1) 1) 1)))))
-
-;; ---------------------------------------------------------------------
-;; Per-cell ceiling heights (#235): :ceil-pgrid is a PHP float[][] twin
-;; of :pgrid, all 1.0 by default (the flat ceiling at the top of a unit
-;; wall); apply-ceil-heights stamps a {[x y] height} map into it;
-;; rebuild-pgrid carries it along. Mirror of the floor-pgrid tests.
-;; ---------------------------------------------------------------------
-
-(deftest test-new-world-ceil-pgrid-matches-grid-shape-all-one
-  (let [w   (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
-        cpg (:ceil-pgrid w)]
-    ;; Same shape as :pgrid (3 rows, 3 cols) ...
-    (is (= 3 (php/count cpg)))
-    (is (= 3 (php/count (php/aget cpg 0))))
-    ;; ... every cell 1.0 (flat ceiling).
-    (is (= 1.0 (php/aget (php/aget cpg 1) 1)))
-    (is (= 1.0 (php/aget (php/aget cpg 0) 2)))))
-
-(deftest test-apply-ceil-heights-stamps-cells
-  (let [w  (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
-        w' (apply-ceil-heights w {[1 1] 0.6 [2 0] 1.5})]
-    (is (= 0.6 (php/aget (php/aget (:ceil-pgrid w') 1) 1)))
-    (is (= 1.5 (php/aget (php/aget (:ceil-pgrid w') 0) 2)))
-    ;; Untouched cell stays at the flat 1.0.
-    (is (= 1.0 (php/aget (php/aget (:ceil-pgrid w') 0) 0)))))
-
-(deftest test-apply-ceil-heights-empty-map-is-noop
-  ;; The flat-world contract: nil / empty leaves the all-1.0 grid so the
-  ;; renderer stays byte-identical.
-  (let [w  (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
-        w0 (apply-ceil-heights w nil)
-        w1 (apply-ceil-heights w {})]
-    (is (= 1.0 (php/aget (php/aget (:ceil-pgrid w0) 1) 1)))
-    (is (= 1.0 (php/aget (php/aget (:ceil-pgrid w1) 1) 1)))))
-
-(deftest test-rebuild-pgrid-carries-ceil-pgrid
-  ;; Wall mutation (switch/secret) must not lose seeded ceiling heights.
-  (let [w0 (apply-ceil-heights
-            (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
-            {[1 1] 0.6})
-        w1 (rebuild-pgrid (assoc w0 :grid (assoc-in (:grid w0) [1 1] 1)))]
-    (is (= 0.6 (php/aget (php/aget (:ceil-pgrid w1) 1) 1)))))
-
-(deftest test-rebuild-pgrid-builds-unit-ceil-when-absent
-  ;; A world without :ceil-pgrid (loaded savegame) gets a fresh all-1.0
-  ;; grid sized to :grid, never nil.
-  (let [w0 (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
-        w1 (rebuild-pgrid (dissoc w0 :ceil-pgrid))]
-    (is (php/!== nil (:ceil-pgrid w1)))
-    (is (= 3 (php/count (:ceil-pgrid w1))))
-    (is (= 1.0 (php/aget (php/aget (:ceil-pgrid w1) 1) 1)))))
 
 ;; ---------------------------------------------------------------------
 ;; Soulsphere (issue #68): pickup pushes lives over max-lives toward

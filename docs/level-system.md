@@ -70,6 +70,7 @@ Optional:
 | `:layout`      | Hand-authored ASCII grid (vector of strings) - bypasses `random-grid` |
 | `:floor-heights` | `{[x y] height}` map of per-cell floor `z` (#232) - raised cells render a step riser + cap, lowered cells a pit. Used by L2 / L3 / L5 / L7 (the verticality levels); omitted everywhere else (flat floor, byte-identical render) |
 | `:ceil-heights` | `{[x y] height}` map of per-cell ceiling `z` (#235, default 1.0) - cells with `z < 1.0` render a hanging ceiling + cap (a low tunnel); `z > 1.0` lifts the ceiling (a tall atrium, not drawn). Used by L2's low lintel; omitted everywhere else (flat ceiling, byte-identical render) |
+| `:handrails` | Set of directed `[hx hy lx ly]` downward-edge keys (#299) - blocks an entity from stepping OFF that edge (a fenced lip); an unrailed off-edge drop is a fall costing 1 life per tier (see [Handrails + fall damage](#handrails--fall-damage-299)). Used by L7; omitted everywhere else (no rails) |
 
 ### Mixed-monster rooms
 
@@ -141,8 +142,17 @@ The step rise is `0.375` (= 3/8) rather than `0.4`: it is exactly representable 
 | Upper stair C core | cols 6-8, rows 6 -> 4 | 0.75, 1.125, 1.5 |
 | Upper stair D core | cols 29-31, rows 6 -> 4 | 0.75, 1.125, 1.5 |
 | Open stair flanks (fall-off sides) | beside each core | drop to the tier below |
+| West stair-C plateau lips (railed) | `l7-handrails` (10 edges) | step-off blocked |
 
 L1 stays flat (it is the golden-frame render fixture), and the catalog stays 10 levels with the boss arena last.
+
+### Handrails + fall damage (#299)
+
+A tier or stair edge can carry a **handrail**: a low barrier you see over but can't pass, so an entity cannot step OFF that downward edge. Where there is no rail, walking off an edge with a drop bigger than `step-up-max` (0.4) is a **fall** to the tier below (the eye eases down under `tick-fall` gravity) that costs **1 life per tier dropped**. Both the player (`physics/try-move`) and enemies (`enemy/try-step`) obey the same rule; an enemy can die from the fall.
+
+- **Representation.** A level config's optional `:handrails` is a set of directed `[hx hy lx ly]` edge keys (high cell -> low cell). `build-world` threads it onto the world as `:handrails`; absent -> empty set, so every level but L7 is unaffected. The edge is directed and per-edge, so railing the plateau lip leaves the open stair side fall-off-able and never blocks climbing back UP the same cells.
+- **What counts as a fall.** Only a single move whose floor drops by MORE than `step-up-max`. A deliberate stair descent (each L7 tread is 0.375, below the limit) is a normal step-down, never a fall - no damage. The L7 tier gap is 0.75, so a one-tier off-edge drop costs 1 life and a two-tier drop (1.5) costs 2 (`physics/fall-tiers` = `round(drop / tier-gap)`, min 1). Fall damage is environmental: armor does not absorb it and it arms no i-frames.
+- **L7 layout.** Only the WEST upper-staircase (C) plateau lips are railed (`l7-handrails`), so you can't tumble off the top plateau onto the west stair flanks. The EAST staircase (D) plateau lips are left OPEN, so a step off the east lip is a real one-tier fall. All four stair cores stay un-railed, so every staircase is fully walkable up and down and the exit + yellow key (bottom tier) stay reachable. A railed edge blocks only its own direction; a chasing enemy whose straight step is railed can still slide off an unrailed neighbouring edge, so a lip is fully fenced only when each of its downward edges is listed.
 
 ### Adding a new room
 

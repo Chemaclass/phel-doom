@@ -37,6 +37,10 @@ Cadence and render-scale are **uniform at every terminal size**. The old "big-sc
 
 Wide terminals are render-bound, not cadence-bound: the cost is the per-column cast + wall-shade work, which scales with column count. The minimap still caps at 40 cols (see `layout`). Physics and input tick once per frame.
 
+### Resize poll is throttled (issue #280)
+
+`term-size` reads the terminal dimensions by forking + execing `stty size`. A fork + exec costs roughly 1ms plus scheduler jitter, and it ran once per loop iteration BEFORE the render-start timestamp, so its cost landed OUTSIDE the measured adaptive-sleep budget on a 5ms-target hot path. A resize is a human-timescale event, so ~5 of every 6 of those forks were pure waste. The loops now thread a `poll-frame` counter and sample `term-size` only on poll frames (`poll-size?`: frame 0, then every `resize-poll-frames` = 6 frames), reusing the last `[rows cols]` in between. That drops ~5/6 of the per-frame forks while still noticing a resize within ~6 frames, which `redraw-if-resized` and the auto-calibration already tolerate. The first frame stays eager so initial sizing is never delayed. Same throttle at the four size-polling loops (game loop, end screens, settings sub-loop, start menu). Fixed-size frames are byte-identical, so the golden `test-frame-bytes-pinned` hashes are unchanged.
+
 ```phel
 (def standard-frame-us 16667)   ; ~60fps, every size
 (def standard-scale     1)      ; crisp 1:1, every size

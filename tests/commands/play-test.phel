@@ -5,7 +5,8 @@
   (:require phel-doom.core.level  :refer [build-world])
   (:require phel-doom.core.rng    :as rng)
   (:require phel-doom.commands.play  :refer [tick-world resumed-pause? step-pause-menu
-                                             apply-mouse-look clamp-frame-ms adopt-loaded-world]))
+                                             apply-mouse-look clamp-frame-ms adopt-loaded-world
+                                             poll-size? resize-poll-frames]))
 
 (def open-grid
   (apply vector
@@ -374,3 +375,22 @@
   (let [w' (apply-mouse-look (player-at-angle 1.0 0.0)
                              {:yaw -0.4 :pitch 0.0})]
     (is (php/< (:angle (:player w')) 1.0) "negative yaw decreases the angle")))
+
+;; poll-size? (#280): the resize-poll throttle. Frame 0 always samples
+;; (initial sizing is never delayed); then only every resize-poll-frames'th
+;; frame re-forks `stty size`, the rest reuse the last dims.
+(deftest test-poll-size-samples-first-frame
+  (is (= true (poll-size? 0)) "frame 0 always samples so initial sizing is eager"))
+
+(deftest test-poll-size-skips-between-samples
+  (is (= false (poll-size? 1)) "frame 1 reuses last dims")
+  (is (= false (poll-size? 2)) "frame 2 reuses last dims")
+  (is (= false (poll-size? 3)) "frame 3 reuses last dims")
+  (is (= false (poll-size? 4)) "frame 4 reuses last dims")
+  (is (= false (poll-size? 5)) "frame 5 reuses last dims"))
+
+(deftest test-poll-size-samples-every-sixth-frame
+  (is (= 6 resize-poll-frames) "the throttle period is every 6th frame")
+  (is (= true (poll-size? 6)) "frame 6 re-samples term-size")
+  (is (= true (poll-size? 12)) "frame 12 re-samples term-size")
+  (is (= false (poll-size? 7)) "frame 7 reuses last dims again"))

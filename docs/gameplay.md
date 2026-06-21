@@ -9,7 +9,8 @@ Full controls, pickups, weapons, and CLI flags. The README has the short version
 | `w` / `s` | Forward / back |
 | `a` / `d` | Strafe left / right |
 | `←` / `→` | Turn left / right |
-| `↑` / `↓` | Look up / down |
+| `↑` / `↓` | Look up / down (pitch) |
+| mouse | Move to turn + look up/down, left-click to fire (on by default) |
 | `SHIFT` / `x` | Sprint (1.6x speed) |
 | `e` | About-face (180 degrees) |
 | `space` | Fire (hold to spray auto-fire) |
@@ -25,6 +26,10 @@ Full controls, pickups, weapons, and CLI flags. The README has the short version
 | `q` | Quit |
 
 Walk into doors to advance. Top-center compass tints the cardinal (E/S/W/N) toward target. Orange = exit. Blue/red = keycard needed.
+
+Mouselook (turn + look up/down, left-click fire) is **on by default**; flip it with the **Mouse** toggle on the Settings page (`p` or `s`), and tune turn speed with **Sensitivity** (50% = neutral 1.0x). The mouse is purely additive: every keyboard binding works the same with the mouse on or off. See [settings.md](settings.md#fields) and [input.md](input.md#mouse-look-issue-246).
+
+Look up/down (arrow keys or the mouse) tilts the camera and drives aim: a shot has to land on the enemy's drawn sprite, so aiming at the floor or sky misses (issue #243). On levels with raised floors you step up a low riser automatically and ease down off a drop; a riser taller than the step limit blocks like a wall (issue #233). See [combat.md](combat.md) and [game-loop.md](game-loop.md).
 
 Terminal quirks (kitty, tmux): [input.md](input.md).
 

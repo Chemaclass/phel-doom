@@ -32,7 +32,7 @@
                                           read-perf-snapshot scene-rows
                                           render-start-menu render-settings!
                                           render-death-screen render-victory-screen])
-  (:require phel-doom.io.input    :refer [init-input! restore! drain-keys]))
+  (:require phel-doom.io.input    :refer [init-input! restore! drain-keys rearm-mouse!]))
 
 ;; ---------------------------------------------------------------------
 ;; The play subcommand wires together:
@@ -97,6 +97,23 @@
   [frame]
   (or (php/=== frame 0)
       (php/=== 0 (php/% frame resize-poll-frames))))
+
+(def rearm-mouse-frames
+  "How often the play loop re-asserts the xterm mouse-reporting escapes
+   (#288). A focus loss / regain can silently drop mouse tracking; this
+   re-arm catches that without the player noticing. ~1s at 60fps is far
+   below a human-noticeable gap yet emits only one short idempotent escape
+   burst, so the frame budget is untouched."
+  60)
+
+(defn rearm-mouse?
+  "True when frame `frame` should re-assert the mouse-reporting escapes:
+   on a resize (`resized?`, the band where the terminal most often drops
+   tracking) or every `rearm-mouse-frames`th frame. Pure / unit-testable;
+   the caller still gates the actual emit on the Mouse setting."
+  [frame resized?]
+  (or resized?
+      (php/=== 0 (php/% frame rearm-mouse-frames))))
 
 ;; =====================================================================
 ;; § Per-frame tick orchestration (pure, exported for tests)
@@ -954,6 +971,12 @@
             [rows cols]   (cap-dims trows tcols max-rows max-cols)
             px2?          (and auto? (php/=== 2 (:px cal)))]
         (redraw-if-resized dims rows cols)
+        ;; Re-arm mouse reporting (#288) on a resize or on the periodic
+        ;; cadence so pointer reports recover after a focus loss / regain.
+        ;; Gated on the Mouse setting so an opted-out player is untouched.
+        (when (and (:mouse (:settings world))
+                   (rearm-mouse? poll-frame (not= [rows cols] dims)))
+          (rearm-mouse!))
         (let [render-start (php/microtime true)
               _draw        (draw-frame world fps frame-ms rows cols px2?)
               render-ms    (php/* (php/- (php/microtime true) render-start) 1000.0)
@@ -981,9 +1004,13 @@
                 ;; aims with the new heading); a left click ORs into the
                 ;; existing space-fire edges so a mouse click shoots exactly
                 ;; like space (held button feeds auto-fire weapons). `:pos`
-                ;; threads forward as the next frame's delta baseline.
+                ;; threads forward as the next frame's delta baseline. The
+                ;; live `[rows cols]` enables edge-turn continuation (#288):
+                ;; pushing the pointer into an edge keeps the camera turning
+                ;; so the pointer never needs to leave the terminal.
                 look      (mouse-look keys prev-mpos
-                                      (mouse-sensitivity (:settings world)))
+                                      (mouse-sensitivity (:settings world))
+                                      [rows cols])
                 edges     (assoc edges0
                                  :fire      (or (:fire edges0) (:fire? look))
                                  :fire-held (or (:fire-held edges0) (:fire-held? look)))]

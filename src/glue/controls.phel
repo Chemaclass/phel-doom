@@ -343,12 +343,21 @@
 ;; between consecutive position reports, summed across the frame. The
 ;; pointer saturates at the screen edges (coords clamp to 1..cols /
 ;; 1..rows), so a continuous drag into an edge yields a zero delta there
-;; - the terminal equivalent of running the mouse off the pad. This is a
-;; best-effort approximation of true mouselook, not a perfect one.
+;; - the terminal equivalent of running the mouse off the pad.
 ;;
-;; This stays PURE: it consumes the drained byte string + the previous
-;; pointer position and returns the per-frame angular delta + fire
-;; intent; io/input owns the escape emission + STDIN read.
+;; EDGE-TURN CONTINUATION (#288): because we cannot lock the pointer,
+;; mouse-look instead makes the pointer rarely NEED to reach the edge.
+;; When the latest pointer cell lands in the thin outer band an extra
+;; CONTINUOUS yaw is added on top of the (saturated) delta, ramped by edge
+;; depth x sensitivity, so a player pushing into an edge keeps turning a
+;; full 360 without the pointer leaving. The central region stays pure
+;; delta. A re-entry jump guard re-baselines if the pointer does leave and
+;; return. This is a best-effort approximation, not a true pointer lock.
+;;
+;; This stays PURE: it consumes the drained byte string, the previous
+;; pointer position and the live [rows cols] and returns the per-frame
+;; angular delta + fire intent; io/input owns the escape emission + STDIN
+;; read + the periodic mouse re-arm.
 ;; =====================================================================
 
 (def mouse-yaw-scale
@@ -366,6 +375,43 @@
    axis is a clamped fraction in [-1, 1] (state/clamp-pitch), so a few
    cells of vertical travel already covers a useful slice of the range."
   0.02)
+
+(def mouse-edge-margin-cells
+  "Floor width (in cells) of the edge band that triggers edge-turn
+   continuation (#288). The actual band is `max(this, frac*cols)` so a
+   tiny terminal still gets a usable band and a wide one scales up. Kept
+   thin so the central look region is unaffected: only the outer ~2 cells
+   nudge the camera on their own."
+  2)
+
+(def mouse-edge-margin-frac
+  "Fraction of the horizontal axis used for the edge band when it is
+   wider than `mouse-edge-margin-cells` (#288). ~8% on each side leaves
+   the central ~84% as pure delta look, identical to pre-#288 feel."
+  0.08)
+
+(def mouse-edge-turn-rate
+  "Radians of CONTINUOUS yaw per frame at full edge depth (pointer
+   pinned to the outermost cell), before the sensitivity multiplier
+   (#288). Ramps linearly from 0 at the band's inner edge to this at the
+   screen edge, so pushing the pointer hard into the edge keeps the
+   camera turning - a full 360 without the pointer ever leaving the
+   terminal. A terminal cannot truly lock the pointer; edge-turn means it
+   rarely needs to."
+  0.06)
+
+(def mouse-reentry-gap-cells
+  "Re-entry jump guard (#288). A position report whose Chebyshev distance
+   from the previous pointer cell exceeds this is treated as the pointer
+   leaving the terminal and re-entering elsewhere (no portable terminal
+   pointer-lock exists), so the frame RE-BASELINES instead of reading the
+   gap as one giant yaw jump. Under any-motion tracking the terminal emits
+   a report per cell crossed, so genuine continuous motion never steps
+   this far between consecutive reports - only the pointer leaving and
+   re-appearing somewhere far off does. Sized well above the width of any
+   realistic terminal so a fast full-width flick is never mistaken for a
+   re-entry."
+  256)
 
 (def mouse-motion-bit
   "Bit 5 of the SGR button code: set on a motion (drag / bare-move)
@@ -414,22 +460,50 @@
        (php/=== 0 (mouse-button b))
        (not (mouse-wheel? b))))
 
+(defn- reentry-gap
+  "Resolve the re-entry jump threshold (#288) for the live column count
+   `cols` (nil when no dims were threaded in). Uses the larger of the
+   static floor `mouse-reentry-gap-cells` and twice the terminal width, so
+   even a full-width flick on a very wide (4K / tiny-font) terminal stays
+   under the threshold and is read as real travel - only a genuine
+   leave-and-return lands beyond it."
+  [cols]
+  (if (some? cols)
+    (php/max mouse-reentry-gap-cells (php/* 2 cols))
+    mouse-reentry-gap-cells))
+
+(defn- reentry-jump?
+  "True when `[x y]` sits more than `gap` cells (Chebyshev) from `prev` -
+   the signature of the pointer leaving the terminal and re-entering
+   somewhere else (#288). Used to RE-BASELINE that frame so a re-entry
+   does not read as one giant yaw jump. `prev` nil (no prior report) is
+   never a jump - that path is the first-report baseline."
+  [prev x y gap]
+  (and (some? prev)
+       (php/> (php/max (php/abs (php/- x (get prev 0)))
+                       (php/abs (php/- y (get prev 1))))
+              gap)))
+
 (defn- fold-mouse-event
   "Fold one parsed SGR event [b x y final] into the running accumulator
    `{:dx :dy :fire? :held? :pos}`. Position reports advance the summed
    pointer delta against the last-seen position; a fresh left press sets
    :fire?; a left press / drag sets :held?. `:pos` always trails the most
    recent coordinate so the next frame measures from where the pointer
-   actually is. Two no-delta cases:
+   actually is. `gap` is the re-entry threshold (`reentry-gap`). Three
+   no-delta cases:
    - `:pos` nil (no prior report yet - first ever mouse byte of the
      session): the event only ESTABLISHES the baseline, so the pointer's
      initial absolute position can't be misread as one giant jump.
    - a scroll-WHEEL tick (`mouse-wheel?`): it carries no look intent, so
      its coordinate must not feed the yaw/pitch delta - but `:pos` still
-     advances to it so the next real motion measures from the true spot."
-  [acc b x y final]
+     advances to it so the next real motion measures from the true spot.
+   - a RE-ENTRY jump (`reentry-jump?`, #288): the pointer left the
+     terminal and came back far from where it was, so the gap is not real
+     travel - re-baseline to the new cell with no delta this frame."
+  [acc b x y final gap]
   (let [prev    (:pos acc)
-        [dx dy] (if (or (nil? prev) (mouse-wheel? b))
+        [dx dy] (if (or (nil? prev) (mouse-wheel? b) (reentry-jump? prev x y gap))
                   [0 0]
                   [(php/- x (get prev 0)) (php/- y (get prev 1))])]
     {:dx    (php/+ (:dx acc) dx)
@@ -437,6 +511,36 @@
      :fire? (or (:fire? acc) (left-press? b final))
      :held? (or (:held? acc) (left-down? b final))
      :pos   [x y]}))
+
+(defn- edge-band-cells
+  "Width in cells of the edge band for an axis `len` cells long (#288):
+   `max(mouse-edge-margin-cells, round(mouse-edge-margin-frac * len))`,
+   never exceeding half the axis so the two bands cannot overlap on a
+   tiny terminal."
+  [len]
+  (let [raw (php/max mouse-edge-margin-cells
+                     (php/round (php/* mouse-edge-margin-frac len)))]
+    (php/min raw (php// len 2.0))))
+
+(defn- edge-turn-yaw
+  "Continuous edge-turn yaw (#288) for a pointer at 1-based cell `x` on an
+   axis `len` cells wide. Zero in the central region; in the outer band it
+   ramps LINEARLY from 0 at the band's inner edge to `mouse-edge-turn-rate`
+   at the screen edge, signed toward whichever edge the pointer is in
+   (left edge -> negative / turn left, right edge -> positive / turn
+   right). Returns 0.0 when there are no dims (pure-delta callers) or the
+   pointer sits in the centre, so normal look feel is unchanged."
+  [x len]
+  (if (or (nil? len) (php/<= len 1))
+    0.0
+    (let [band  (edge-band-cells len)
+          ;; depth: 0 at the inner band edge, ->1 at the very edge cell.
+          left  (php/- band (php/- x 1))           ; >0 inside the left band
+          right (php/- band (php/- len x))]        ; >0 inside the right band
+      (cond
+        (php/> left 0)  (php/* (php/- 0 mouse-edge-turn-rate) (php// (php/min left band) band))
+        (php/> right 0) (php/* mouse-edge-turn-rate (php// (php/min right band) band))
+        :else           0.0))))
 
 (defn mouse-look
   "Pure SGR-mouse reader for FPS-style mouselook (issue #246). Parses the
@@ -462,11 +566,25 @@
    produce a zero delta and carry `prev-pos` forward unchanged, so the
    keyboard path is never disturbed.
 
-   Caveat: terminals report ABSOLUTE clamped cell coords with no pointer
-   lock, so the delta saturates to zero at the screen edges (see the
-   section header). This approximates mouselook within that limit."
-  [keys prev-pos ^float sensitivity]
+   `dims` (optional `[rows cols]`, #288) enables EDGE-TURN CONTINUATION:
+   when the latest pointer cell lands in the thin outer band an extra
+   CONTINUOUS yaw is added ON TOP OF the (saturated) delta, ramped by how
+   deep into the band the pointer is x sensitivity. A player pushing into
+   the left/right edge keeps turning a full 360 without the pointer ever
+   needing to leave the terminal. The central region is untouched (pure
+   delta). Omit `dims` (or pass nil) for the old pure-delta behaviour.
+
+   Caveat: terminals report ABSOLUTE clamped cell coords with NO pointer
+   lock and no portable mouse-warp, so the raw delta saturates to zero at
+   the screen edges (see the section header). Edge-turn is the best-effort
+   workaround - it means the pointer rarely needs to reach the edge at all
+   - not a true pointer lock."
+  [keys prev-pos ^float sensitivity & [dims]]
   (let [matches (php/array)
+        ;; Only cols is used: edge-turn is horizontal-only, and the
+        ;; re-entry gap scales off the terminal width. rows is unused.
+        cols    (when (some? dims) (get dims 1))
+        gap     (reentry-gap cols)
         ;; ESC [ < b ; Cx ; Cy (M|m) — SGR-extended (1006) mouse report.
         re      "/\\x1b\\[<(\\d+);(\\d+);(\\d+)([Mm])/"]
     (php/preg_match_all re keys matches)
@@ -477,19 +595,26 @@
           n      (php/count bs)]
       (loop [i 0 acc {:dx 0 :dy 0 :fire? false :held? false :pos prev-pos}]
         (if (php/>= i n)
-          {:yaw        (php/* (php/* (:dx acc) mouse-yaw-scale) sensitivity)
-           ;; Negate dy: screen y grows downward, so an UPWARD flick
-           ;; (decreasing y) must read as a positive (look-up) pitch.
-           :pitch      (php/* (php/* (php/- 0 (:dy acc)) mouse-pitch-scale) sensitivity)
-           :fire?      (:fire? acc)
-           :fire-held? (:held? acc)
-           :pos        (:pos acc)}
+          (let [pos      (:pos acc)
+                ;; Edge-turn rides on top of the saturated delta, keyed off
+                ;; the latest pointer x against the live column count.
+                edge-yaw (if (some? pos)
+                           (php/* (edge-turn-yaw (get pos 0) cols) sensitivity)
+                           0.0)]
+            {:yaw        (php/+ (php/* (php/* (:dx acc) mouse-yaw-scale) sensitivity) edge-yaw)
+             ;; Negate dy: screen y grows downward, so an UPWARD flick
+             ;; (decreasing y) must read as a positive (look-up) pitch.
+             :pitch      (php/* (php/* (php/- 0 (:dy acc)) mouse-pitch-scale) sensitivity)
+             :fire?      (:fire? acc)
+             :fire-held? (:held? acc)
+             :pos        pos})
           (recur (php/+ i 1)
                  (fold-mouse-event acc
                                    (php/intval (php/aget bs i))
                                    (php/intval (php/aget xs i))
                                    (php/intval (php/aget ys i))
-                                   (php/aget finals i))))))))
+                                   (php/aget finals i)
+                                   gap)))))))
 
 ;; =====================================================================
 ;; § Edge detection (one-shot actions)

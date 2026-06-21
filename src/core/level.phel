@@ -248,73 +248,111 @@
    (rect-heights 12 8 17 11 (* 2.0 dais-step-rise))))  ; z 0.8
 
 (def l7-step-rise
-  "Per-step floor rise on the L7 staircase, in world z. At or below
-   `physics/step-up-max` (0.4) so each step auto-climbs."
-  0.35)
+  "Per-step floor rise on the L7 stairs, in world z. Set to 3/8 = 0.375,
+   just below `physics/step-up-max` (0.4) so every step auto-climbs with
+   headroom. 0.375 is exactly representable in binary floating point, so a
+   stacked run (0.375 -> 0.75 -> 1.125 -> 1.5) never accumulates rounding
+   drift that could nudge an adjacent riser above 0.4 and silently block
+   the climb (e.g. `0.4 * 3` lands at 1.2000000000000002, whose 0.4 gap to
+   1.6 trips the strict `> step-up-max` gate). Keeping every authored z a
+   k/8 multiple guarantees the whole staircase stays walkable."
+  0.375)
+
+(def l7-tier1-z
+  "Floor z of the L7 middle tier: two `l7-step-rise` steps above tier 0."
+  (* 2.0 l7-step-rise)) ; 0.75
+
+(def l7-tier2-z
+  "Floor z of the L7 top tier: two `l7-step-rise` steps above tier 1."
+  (* 4.0 l7-step-rise)) ; 1.5
 
 (def l7-layout
-  "Flat 30x26 chamber for the L7 staircase + ledge + low-ceiling tunnel.
-   A three-step staircase on the room's west climbs north onto a raised
-   ledge running along the north wall; a low-ceiling tunnel hangs over the
-   staircase approach so the climb threads a cramped passage onto the
-   vantage. The east half stays open flat ground so the yellow-locked exit
-   is reachable without the climb. Spawn `@` is south-east (cell 22, row
-   22 -> centre 22.5, 22.5). The yellow-locked exit `Y` is on the east
-   wall at the flat spawn row (row 22, col 29), reachable across the open
-   east half without the climb. `l7-floor-heights` / `l7-ceil-heights`
-   index these cells."
-  ["##############################"
-   "#............................#"
-   "#............................#"
-   "#............................#"
-   "#............................#"
-   "#............................#"
-   "#............................#"
-   "#............................#"
-   "#............................#"
-   "#............................#"
-   "#............................#"
-   "#............................#"
-   "#............................#"
-   "#............................#"
-   "#............................#"
-   "#............................#"
-   "#............................#"
-   "#............................#"
-   "#............................#"
-   "#............................#"
-   "#............................#"
-   "#............................#"
-   "#.....................@......Y"
-   "#............................#"
-   "#............................#"
-   "##############################"])
+  "Spacious 42x26 three-tier chamber for the L7 stair room (#298). One
+   open arena split into three stacked floor tiers by two solid divider
+   walls (rows 6 and 16). Each divider is pierced by two stair mouths, so
+   four open-sided staircases connect the tiers:
+
+     tier 0 (bottom, rows 17-24)  -- z 0.0,  the spawn floor
+     tier 1 (middle, rows  7-15)  -- z 0.75, reached up stairs A / B
+     tier 2 (top,    rows  1- 5)  -- z 1.5,  reached up stairs C / D
+
+   The dividers (rows 6 and 16) are solid wall except the named mouths, so
+   a tier is reachable ONLY by walking up a stair run (no flat shortcut):
+
+     row 16 mouths: cols 6-12 (stair A) and 23-29 (stair B)  tier0 -> tier1
+     row  6 mouths: cols 4-10 (stair C) and 27-33 (stair D)  tier1 -> tier2
+
+   Each stair core is three cells wide with OPEN flanks (no side walls), so
+   the player/enemies can fall off the side of a run (#299), reinforcing
+   the spacious open-architecture feel. Spawn `@` is on the bottom tier
+   (col 19, row 22 -> centre 19.5, 22.5); the yellow-locked exit `Y` sits
+   on the east wall at the spawn row (row 22, col 41), reachable across the
+   open bottom tier with no climb. `l7-floor-heights` indexes the tier +
+   stair cells."
+  ["##########################################"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "####.......################.......########"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "######.......##########.......############"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#..................@.....................Y"
+   "#........................................#"
+   "#........................................#"
+   "##########################################"])
 
 (def l7-floor-heights
-  "Per-cell floor `z` for the L7 staircase + ledge. A three-step flight on
-   the west (cols 3-7) climbs north (rows 12 -> 10) by one `l7-step-rise`
-   (0.35) each, onto a ledge plateau (cols 3-11, rows 2-9) at the
-   top-step height. Ground 0 -> 0.35 -> 0.70 -> 1.05: each rise <=
-   step-up-max (0.4), so the flight auto-climbs; the ledge cap is
-   continuous with the top step. The east half stays flat ground (no
-   entry) so the exit stays reachable off the climb."
-  (merge
-   ;; Three ascending steps (south high-row -> north low-row), cols 3-7.
-   (rect-heights 3 12 7 12 (* 1.0 l7-step-rise))  ; z 0.35
-   (rect-heights 3 11 7 11 (* 2.0 l7-step-rise))  ; z 0.70
-   (rect-heights 3 10 7 10 (* 3.0 l7-step-rise))  ; z 1.05
-   ;; Ledge plateau at the top-step height (a raised vantage).
-   (rect-heights 3 2 11 9 (* 3.0 l7-step-rise)))) ; z 1.05
+  "Per-cell floor `z` for the L7 three-tier stair room (#298). Three flat
+   plateaus stacked by two `l7-step-rise` (0.375) steps each, plus four
+   three-cell-wide stair cores with OPEN flanks (the flank cells drop back
+   to the tier below, so a run is a real open-sided staircase you can fall
+   off):
 
-(def l7-ceil-heights
-  "Per-cell ceiling `z` for the L7 low tunnel: a hanging ceiling (z 0.6,
-   below the default 1.0) over the two rows just south of the staircase
-   foot (rows 13-14, cols 3-7), so the climb threads a low passage before
-   it opens onto the ledge. Only ceilings BELOW 1.0 render, so this reads
-   as a drop (a cramped tunnel), not a lift."
+     tier 0 -- z 0.0  (default, no entries): the bottom spawn floor.
+     tier 1 -- z 0.75 (rows 7-15): the middle plateau.
+     tier 2 -- z 1.5  (rows 1-5):  the top plateau.
+
+   Lower stairs A (cols 8-10) / B (cols 25-27) climb tier0 -> tier1 through
+   the row-16 mouths: 0.0 -> 0.375 -> 0.75 northward (rows 16 -> 14). Upper
+   stairs C (cols 6-8) / D (cols 29-31) climb tier1 -> tier2 through the
+   row-6 mouths: 0.75 -> 1.125 -> 1.5 northward (rows 6 -> 4). Every
+   successive rise is one 0.375 step (< step-up-max) so each run auto-climbs,
+   and the top of each run is continuous with the tier it lands on. The flank
+   cells beside each core stay at the lower tier's height, leaving the stair
+   sides open (a fall-off edge, not a wall)."
   (merge
-   (rect-heights 3 13 7 13 0.6)
-   (rect-heights 3 14 7 14 0.6)))
+   ;; Tier plateaus: tier 1 (middle) then tier 2 (top). Tier 0 is the z 0.0
+   ;; default (no entries). Later stair entries override the plateau cells.
+   (rect-heights 1 7 40 15 l7-tier1-z)
+   (rect-heights 1 1 40 5 l7-tier2-z)
+   ;; Lower stairs A (cols 8-10) / B (cols 25-27): tier0 -> tier1, rows 16 -> 14.
+   (rect-heights 8 16 10 16 0.0) (rect-heights 8 15 10 15 l7-step-rise) (rect-heights 8 14 10 14 l7-tier1-z)
+   (rect-heights 25 16 27 16 0.0) (rect-heights 25 15 27 15 l7-step-rise) (rect-heights 25 14 27 14 l7-tier1-z)
+   ;; Open flanks beside the lower stair cores: drop back to tier 0 (z 0.0)
+   ;; so the run sides are fall-off edges, not walls.
+   (rect-heights 6 14 7 16 0.0) (rect-heights 11 14 12 16 0.0)
+   (rect-heights 23 14 24 16 0.0) (rect-heights 28 14 29 16 0.0)
+   ;; Upper stairs C (cols 6-8) / D (cols 29-31): tier1 -> tier2, rows 6 -> 4.
+   (rect-heights 6 6 8 6 l7-tier1-z) (rect-heights 6 5 8 5 (* 3.0 l7-step-rise)) (rect-heights 6 4 8 4 l7-tier2-z)
+   (rect-heights 29 6 31 6 l7-tier1-z) (rect-heights 29 5 31 5 (* 3.0 l7-step-rise)) (rect-heights 29 4 31 4 l7-tier2-z)
+   ;; Open flanks beside the upper stair cores: drop back to tier 1 (z 0.75).
+   (rect-heights 4 4 5 6 l7-tier1-z) (rect-heights 9 4 10 6 l7-tier1-z)
+   (rect-heights 27 4 28 6 l7-tier1-z) (rect-heights 32 4 33 6 l7-tier1-z)))
 
 (def levels
   "Per-level configuration. Each entry is intentionally tiny — visuals
@@ -412,12 +450,13 @@
 
    ;; L7 — revenants (HP 4) leading a small demon escort, with a lone
    ;; baron lobbing fireballs to keep a ranged threat in the room.
-   ;; Hand-authored verticality (a staircase onto a ledge through a low
-   ;; tunnel): a three-step flight on the west climbs onto a raised ledge
-   ;; along the north wall, threading a low-ceiling tunnel on the way up -
-   ;; a cramped vantage. The yellow-locked exit stays reachable on the open
-   ;; flat east half. Keeps the L7 identity (name, revenant+demon+baron
-   ;; mix, chase 1.8, yellow lock, BFG drop); only the geometry is authored.
+   ;; Hand-authored verticality (#298): a spacious three-tier chamber split
+   ;; by two divider walls, each pierced by two open-sided staircases, so
+   ;; the player climbs four stair runs up and down between three stacked
+   ;; plateaus. The yellow-locked exit stays reachable on the open bottom
+   ;; tier without any climb. Keeps the L7 identity (name, revenant+demon+
+   ;; baron mix, chase 1.8, yellow lock, BFG drop); only the geometry is
+   ;; authored. No :ceil-heights: the room is open (flat 1.0 ceiling).
    {:enemy   :revenant
     :chase   1.8
     :name    "revenants"
@@ -426,8 +465,7 @@
               {:type :demon    :count 2}
               {:type :baron    :count 1}]
     :layout        l7-layout
-    :floor-heights l7-floor-heights
-    :ceil-heights  l7-ceil-heights}
+    :floor-heights l7-floor-heights}
 
    ;; L8 — archvile court: two casters backed by mixed mid-tier mass.
    {:size    [50 30]

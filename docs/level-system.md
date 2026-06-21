@@ -12,14 +12,14 @@
 | 4 | barons | random + blue lock | 3 barons + 3 demons |
 | 5 | cyberdemons | hand-authored verticality (central dais) + red lock | 5 cyberdemons + 2 imps |
 | 6 | spectres | random mix | 4 spectres + 2 imps + 1 caco |
-| 7 | revenants | hand-authored verticality (staircase + ledge + low tunnel) + yellow lock | 4 revenants + 2 demons + 1 baron |
+| 7 | revenants | hand-authored verticality (3-tier room, 4 open-sided stairs) + yellow lock | 4 revenants + 2 demons + 1 baron |
 | 8 | archvile court | random mix | 2 archviles + 3 cacos + 2 mancubi |
 | 9 | the brood | random mix | 3 pinkies + 3 barons + 2 mancubi |
 | 10 | the final | hand-authored boss arena | 1 cyberdemon boss (50 HP) + 2 imps (max 1 alive) |
 
 ## Catalog
 
-L1: single-type procgen tutorial (imps only). L2 / L3 / L5 / L7: hand-authored verticality (see [Verticality levels](#verticality-levels-floor-heights--ceil-heights) below) - L2 the showcase (staircase + raised platform + sunken pit), L3 a descending trench, L5 a central dais, L7 a staircase + ledge through a low tunnel. L4 / L6 / L8 / L9: mixed-monster procgen (melee secondary salted per level). L10: hand-authored arena with secrets + switches.
+L1: single-type procgen tutorial (imps only). L2 / L3 / L5 / L7: hand-authored verticality (see [Verticality levels](#verticality-levels-floor-heights--ceil-heights) below) - L2 the showcase (staircase + raised platform + sunken pit), L3 a descending trench, L5 a central dais, L7 a spacious three-tier room with four open-sided stairs. L4 / L6 / L8 / L9: mixed-monster procgen (melee secondary salted per level). L10: hand-authored arena with secrets + switches.
 
 Non-locked procgen levels seed up to 2 secret passages (see [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4) and hand-authored layouts (L2, L3, L5, L7, L10) skip seeding to prevent keycard bypass and keep the authored geometry explicit.
 
@@ -42,8 +42,8 @@ Non-locked procgen levels seed up to 2 secret passages (see [map.md](map.md)) th
    {:enemy :cyber :chase 1.6 :name "cyberdemons" :door-lock :red
     :enemies [{:type :cyber :count 5} {:type :imp :count 2}]
     :layout l5-layout :floor-heights l5-floor-heights}
-   ;; L6: mixed procgen. L7: hand-authored verticality (staircase + ledge
-   ;; + low tunnel) + yellow lock. L8-L9: mixed procgen.
+   ;; L6: mixed procgen. L7: hand-authored verticality (3-tier room, 4
+   ;; open-sided stairs) + yellow lock. L8-L9: mixed procgen.
    ;; L10: :layout + :switches, :door-lock :boss.
    ...])
 ```
@@ -69,7 +69,7 @@ Optional:
 | `:door-lock`   | `:blue` / `:red` / `:yellow` - adds a matching keycard pickup and locks the exit |
 | `:layout`      | Hand-authored ASCII grid (vector of strings) - bypasses `random-grid` |
 | `:floor-heights` | `{[x y] height}` map of per-cell floor `z` (#232) - raised cells render a step riser + cap, lowered cells a pit. Used by L2 / L3 / L5 / L7 (the verticality levels); omitted everywhere else (flat floor, byte-identical render) |
-| `:ceil-heights` | `{[x y] height}` map of per-cell ceiling `z` (#235, default 1.0) - cells with `z < 1.0` render a hanging ceiling + cap (a low tunnel); `z > 1.0` lifts the ceiling (a tall atrium, not drawn). Used by L2's low lintel + L7's low tunnel; omitted everywhere else (flat ceiling, byte-identical render) |
+| `:ceil-heights` | `{[x y] height}` map of per-cell ceiling `z` (#235, default 1.0) - cells with `z < 1.0` render a hanging ceiling + cap (a low tunnel); `z > 1.0` lifts the ceiling (a tall atrium, not drawn). Used by L2's low lintel; omitted everywhere else (flat ceiling, byte-identical render) |
 
 ### Mixed-monster rooms
 
@@ -127,13 +127,20 @@ Shared rules: every rise the player climbs is at or below `physics/step-up-max` 
 | Ramp (2 steps, south face) | cols 13-16, rows 13 + 12 | 0.4, 0.8 |
 | Dais plateau (vantage) | cols 12-17, rows 8-11 | 0.8 (ramp-top height, continuous) |
 
-**L7 - staircase + ledge + low tunnel** (`l7-floor-heights` / `l7-ceil-heights`), a flat 30x26 chamber. A three-step flight on the west climbs onto a ledge along the north wall, threading a low-ceiling tunnel on the way up. The open east half keeps the yellow exit `Y` reachable off the climb.
+**L7 - three-tier room, four open-sided stairs (#298)** (`l7-floor-heights`), a spacious flat 42x26 chamber. One open arena is split into three stacked floor tiers by two solid divider walls (rows 6 and 16), each pierced by two stair mouths. Four three-cell-wide staircases with OPEN flanks (no side walls, so you can fall off a run, #299) connect the tiers: lower stairs A / B climb tier 0 -> tier 1 through the row-16 mouths, upper stairs C / D climb tier 1 -> tier 2 through the row-6 mouths. A tier is reachable ONLY by walking up a run (the dividers are solid wall between the mouths). The yellow exit `Y` sits on the bottom tier so it stays reachable with zero climbs. No `:ceil-heights` (the room is open: flat 1.0 ceiling).
+
+The step rise is `0.375` (= 3/8) rather than `0.4`: it is exactly representable in binary floating point, so a stacked run never accumulates rounding drift that could nudge an adjacent riser above `step-up-max` and silently block the climb (e.g. `0.4 * 3 = 1.2000000000000002`, whose `0.4` gap to `1.6` trips the strict `> step-up-max` gate). Keeping every authored `z` a k/8 multiple guarantees the whole staircase stays walkable up and down to every tier.
 
 | Feature | Cells | Height `z` |
 |---|---|---|
-| Staircase (3 steps, climbs north) | cols 3-7, rows 12 -> 10 | 0.35, 0.70, 1.05 |
-| Ledge plateau (vantage) | cols 3-11, rows 2-9 | 1.05 (top-step height, continuous) |
-| Low ceiling tunnel (stair foot) | cols 3-7, rows 13-14 | 0.6 (a hanging ceiling) |
+| Tier 0 (bottom, spawn floor) | rows 17-24 | 0.0 (default) |
+| Tier 1 (middle plateau) | rows 7-15 | 0.75 |
+| Tier 2 (top plateau) | rows 1-5 | 1.5 |
+| Lower stair A core (climbs north) | cols 8-10, rows 16 -> 14 | 0.0, 0.375, 0.75 |
+| Lower stair B core | cols 25-27, rows 16 -> 14 | 0.0, 0.375, 0.75 |
+| Upper stair C core | cols 6-8, rows 6 -> 4 | 0.75, 1.125, 1.5 |
+| Upper stair D core | cols 29-31, rows 6 -> 4 | 0.75, 1.125, 1.5 |
+| Open stair flanks (fall-off sides) | beside each core | drop to the tier below |
 
 L1 stays flat (it is the golden-frame render fixture), and the catalog stays 10 levels with the boss arena last.
 

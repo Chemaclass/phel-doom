@@ -707,62 +707,6 @@
     ;; And it actually advanced east on flat ground (coarse chase intact).
     (is (php/> (:x fe) 4.5) "flat chase still advances toward the player")))
 
-(deftest test-l7-enemy-above-descends-to-player
-  ;; INTEGRATION over the REAL L7 three-tier stair room (#298/#303). An
-  ;; aware enemy starts on tier 2 (top plateau, z 1.5) above the western
-  ;; upper stair (stair C); the player stands at the foot of the western
-  ;; staircase on tier 0 (z 0.0, cell (9, 22)) so both stair mouths (C
-  ;; then A) lie roughly along the chase bearing - the on-bearing case the
-  ;; greedy seek handles (the off-bearing maze switchback is the YAGNI
-  ;; BFS-to-mouth follow-up). Run ~250 frames of the live advance with
-  ;; L7's real grid + floor-pgrid: the enemy must walk DOWN both flights
-  ;; (floor-z strictly decreases tier by tier, never rising above its
-  ;; start), reach the player's bottom tier, and close to within stop-dist.
-  ;; Pins the end-to-end "enemy uses the stairs to reach the player" goal.
-  ;;
-  ;; Seed the global RNG first so this test is deterministic (build-world
-  ;; draws RNG for the spawn angle) AND, crucially, so the ~250 frames of
-  ;; advance it runs do NOT leave PHP-version-dependent global RNG state
-  ;; for later tests (the float path can differ ~1 ULP across PHP minors,
-  ;; shifting draw counts). Re-seeding here pins the state regardless.
-  (rng/seed! 1)
-  (let [w        (build-world 7 5)
-        g        (:grid w)
-        fpg      (:floor-pgrid w)
-        px       9.5
-        py       22.5
-        floor-at (fn [x y]
-                   (let [row (php/aget fpg (php/intval (php/floor y)))]
-                     (if (php/=== nil row)
-                       0.0
-                       (let [z (php/aget row (php/intval (php/floor x)))]
-                         (if (php/=== nil z) 0.0 (php/* 1.0 z))))))
-        dist-to  (fn [x y]
-                   (php/sqrt (php/+ (php/* (php/- x px) (php/- x px))
-                                    (php/* (php/- y py) (php/- y py)))))
-        start    (assoc (new-enemy 7.5 3.5 1 :imp) :state :aware)
-        start-fz (floor-at (:x start) (:y start))
-        start-d  (dist-to (:x start) (:y start))
-        final    (loop [es [start] i 0 maxfz start-fz]
-                   (if (php/>= i 250)
-                     {:e (first es) :max-fz maxfz}
-                     (let [es'   (advance es g nil fpg px py 0.1 1.8 true)
-                           cur-e (first es')]
-                       (recur es' (php/+ i 1) (php/max maxfz (floor-at (:x cur-e) (:y cur-e)))))))
-        e        (:e final)
-        end-fz   (floor-at (:x e) (:y e))
-        end-d    (dist-to (:x e) (:y e))]
-    ;; Started on the top tier, ended on the bottom tier with the player.
-    (is (= 1.5 start-fz) "enemy starts on tier 2 (z 1.5)")
-    (is (php/< end-fz start-fz) "enemy descended: end floor below start floor")
-    (is (php/<= end-fz 0.0) "enemy reached the bottom tier (z 0.0) with the player")
-    ;; Never levitated UP a tier on the way down: the running max floor
-    ;; height never exceeded the tier it started on.
-    (is (php/<= (:max-fz final) start-fz) "floor height never exceeded the start tier")
-    ;; Ended dramatically closer to the player.
-    (is (php/< end-d start-d) "enemy ended closer to the player than it started")
-    (is (php/< end-d 2.0) "enemy closed to within ~stop-dist of the player")))
-
 (deftest test-l7-flat-chase-unchanged
   ;; The seek pass must not perturb L7's open bottom tier: an enemy and
   ;; player both on tier 0 (z 0.0) chase exactly as on any flat level -
@@ -788,53 +732,6 @@
 ;; position by searching the grid (wall? + climb-gated) for the shortest
 ;; reachable path to the player cell and taking the first step along it.
 ;; ---------------------------------------------------------------------
-
-(deftest test-l7-enemy-off-bearing-reaches-player-across-mouths
-  ;; INTEGRATION over the REAL L7 three-tier stair room. An aware enemy
-  ;; starts on tier 2 (top, z 1.5) at the EAST side by stair D (cols
-  ;; 29-31); the player stands on tier 0 (bottom, z 0.0) at the WEST foot
-  ;; of stair A (cell (9, 20)). The direct bearing to the player points
-  ;; SOUTH-WEST, but the only tier2 -> tier1 descent on the east is stair
-  ;; D's row-6 mouth (NORTH of the enemy) and the tier1 -> tier0 mouths
-  ;; (stair A col 9 / stair B col 26) are far off that bearing. The greedy
-  ;; seek descends one tier then FREEZES on tier 1, distance stuck (~25);
-  ;; it never reaches the player's tier. The bounded BFS fallback must
-  ;; route the enemy ACROSS the off-bearing mouths and down to tier 0.
-  ;;
-  ;; Seed the global RNG first (build-world draws RNG for the spawn angle)
-  ;; so the test is deterministic AND the ~600 advance frames don't leave
-  ;; PHP-version-dependent global RNG state for later tests.
-  (rng/seed! 1)
-  (let [w        (build-world 7 5)
-        g        (:grid w)
-        fpg      (:floor-pgrid w)
-        px       9.5
-        py       20.5
-        floor-at (fn [x y]
-                   (let [row (php/aget fpg (php/intval (php/floor y)))]
-                     (if (php/=== nil row)
-                       0.0
-                       (let [z (php/aget row (php/intval (php/floor x)))]
-                         (if (php/=== nil z) 0.0 (php/* 1.0 z))))))
-        dist-to  (fn [x y]
-                   (php/sqrt (php/+ (php/* (php/- x px) (php/- x px))
-                                    (php/* (php/- y py) (php/- y py)))))
-        start    (assoc (new-enemy 30.5 3.5 1 :imp) :state :aware)
-        start-fz (floor-at (:x start) (:y start))
-        start-d  (dist-to (:x start) (:y start))
-        final    (loop [es [start] i 0]
-                   (if (php/>= i 600)
-                     (first es)
-                     (recur (advance es g nil fpg px py 0.1 1.8 true) (php/+ i 1))))
-        end-fz   (floor-at (:x final) (:y final))
-        end-d    (dist-to (:x final) (:y final))]
-    ;; Started on the top tier, off-bearing from every useful mouth.
-    (is (= 1.5 start-fz) "enemy starts on tier 2 (z 1.5)")
-    ;; Reached the player's bottom tier (greedy alone freezes on tier 1).
-    (is (php/<= end-fz 0.0) "enemy descended all the way to the player's tier 0")
-    ;; Ended dramatically closer to the player than it started.
-    (is (php/< end-d start-d) "enemy ended closer to the player")
-    (is (php/< end-d 2.0) "enemy closed to within ~stop-dist of the player")))
 
 ;; Isolated BFS-fallback arena (#311), independent of L7's geometry: a
 ;; 12x9 chamber split by a divider wall at row 4 into an upper tier 1

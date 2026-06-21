@@ -26,79 +26,16 @@
   3.0)
 
 ;; ---------------------------------------------------------------------
-;; Stair / platform / pit showcase (issue #237). Turns the dormant
-;; variable-height feature (#232 floor / #235 ceiling / #233 Z physics)
-;; ON for players. Geometry is authored as a flat `:layout` room plus a
-;; `:floor-heights` map so every raised cell lands on a known floor cell
-;; (a procgen room could drop a step onto a wall). Lives on L2 so the
-;; player meets verticality right after the flat L1 tutorial; L1 itself
-;; stays flat (it is the golden-frame render fixture).
+;; Hand-authored flat campaign rooms (L2-L8). Each is a flat `:layout`
+;; chamber: walls + spawn + exit (and any keycard-locked door char) live
+;; in the ASCII; the floor is the classic flat ground. Each preserves its
+;; level's identity (name, enemy mix, chase, lock, weapon drop, rough
+;; size) while the geometry stays simple.
 ;; ---------------------------------------------------------------------
 
-(def showcase-step-rise
-  "Per-step floor rise on the showcase staircase, in world z. Kept at or
-   below `physics/step-up-max` (0.4) so each step auto-climbs when the
-   player walks into it instead of blocking like a wall."
-  0.3)
-
-(def showcase-pit-depth
-  "How far the showcase pit floor sits below the surrounding ground, in
-   world z (a negative floor). Set to one step-up so the player drops in
-   under gravity and can still walk back out (the 0.4 rise back to ground
-   is exactly `physics/step-up-max`)."
-  -0.4)
-
-(defn- rect-heights
-  "Build a `{[x y] h}` floor/ceiling-height map covering the inclusive
-   cell rectangle `[x0..x1] x [y0..y1]`, every cell set to height `h`.
-   Pure data helper for composing showcase geometry; the per-cell maps
-   `apply-floor-heights` / `apply-ceil-heights` consume have exactly this
-   `[x y] -> height` shape."
-  [^int x0 ^int y0 ^int x1 ^int y1 ^float h]
-  (loop [y   y0
-         acc {}]
-    (if (php/> y y1)
-      acc
-      (recur (php/+ y 1)
-             (loop [x x0 row-acc acc]
-               (if (php/> x x1)
-                 row-acc
-                 (recur (php/+ x 1) (assoc row-acc [x y] h))))))))
-
-(def showcase-floor-heights
-  "Per-cell floor `z` for the L2 showcase (#237): a four-step staircase
-   rising north (rows 8->5, cols 8-13) onto a raised platform plateau
-   (rows 2-4, same cols) that serves as a vantage, plus a sunken pit in
-   the south-west (rows 12-13, cols 4-7). Each stair is one
-   `showcase-step-rise`; the plateau holds the top stair height so the
-   step-top and platform read as one continuous walkable surface."
-  (merge
-   ;; Staircase: four ascending steps (south high-y -> north low-y).
-   (rect-heights 8 8 13 8 (* 1.0 showcase-step-rise))             ; z 0.3
-   (rect-heights 8 7 13 7 (* 2.0 showcase-step-rise))             ; z 0.6
-   (rect-heights 8 6 13 6 (* 3.0 showcase-step-rise))             ; z 0.9
-   (rect-heights 8 5 13 5 (* 4.0 showcase-step-rise))             ; z 1.2
-   ;; Platform plateau at the top-stair height (a raised vantage).
-   (rect-heights 8 2 13 4 (* 4.0 showcase-step-rise))             ; z 1.2
-   ;; Sunken pit (negative floor) the player drops into and climbs out of.
-   (rect-heights 4 12 7 13 showcase-pit-depth)))                  ; z -0.4
-
-(def showcase-ceil-heights
-  "Per-cell ceiling `z` for the L2 showcase (#237): a low lintel (z 0.7,
-   below the default 1.0) hanging over the landing row at the foot of the
-   staircase (row 9, cols 8-13), so the climb opens out of a low passage
-   onto the platform. Only ceilings BELOW 1.0 render (a hanging ceiling);
-   a higher value would be invisible, so the accent is a drop, not a lift."
-  (rect-heights 8 9 13 9 0.7))
-
 (def showcase-layout
-  "Flat 24x18 chamber for the L2 verticality showcase (#237). The walls +
-   spawn live here; the staircase / platform / pit are NOT layout chars -
-   they are stamped separately from `showcase-floor-heights` so each
-   raised cell lands on a known floor cell. Spawn `@` is south-of-centre
-   (cell 11, row 15 -> centre 11.5, 15.5), looking out across the room
-   toward the staircase to the north. `showcase-floor-heights` /
-   `showcase-ceil-heights` index these same cells."
+  "Flat 24x18 chamber for the L2 demon room. Spawn `@` is south-of-centre
+   (cell 11, row 15 -> centre 11.5, 15.5), looking out across the room."
   ["########################"
    "#......................#"
    "#......................#"
@@ -118,36 +55,10 @@
    "#......................#"
    "########################"])
 
-;; ---------------------------------------------------------------------
-;; Campaign verticality beyond the L2 showcase. Each of L3 / L5 / L7
-;; gets a DISTINCT walkable feature, authored the same way the showcase
-;; is: a flat `:layout` room plus a separate `{[x y] z}` height map, so
-;; every raised / lowered cell is guaranteed to land on a known floor
-;; cell (a procgen room could drop a step onto a wall). Every rise the
-;; player climbs is <= `physics/step-up-max` (0.4); pits are one step-up
-;; deep per tier so the player falls in under gravity and walks back out.
-;; The exit door + any keycard reachability is never gated by geometry
-;; (the surrounding ground stays flat and walkable around every feature).
-;; ---------------------------------------------------------------------
-
-(def trench-step-drop
-  "Per-tier floor DROP (negative world z) on the L3 descending trench.
-   Each tier is one `physics/step-up-max` deep, so the player descends a
-   tier at a time and the climb back UP each tier is exactly the 0.4
-   auto-climb ceiling - a stepped pit, walkable both ways."
-  -0.4)
-
 (def l3-layout
-  "Flat 28x24 chamber for the L3 descending-trench feature. A sunken
-   corridor runs east-west across the room's middle: the floor steps DOWN
-   one tier on its rim (rows 9 + 13), then a deeper tier at the bottom
-   (rows 10-12), so the player walks DOWN into the trench and climbs back
-   out the far side. Spawn `@` is south-of-centre (cell 13, row 20 ->
-   centre 13.5, 20.5). The exit `D` is on the east wall at the flat spawn
-   row (row 20, col 27), reachable by skirting the trench along the flat
-   flanking ground. The flanking columns (cols 1-4 + 23-26) stay flat
-   ground so the player can always skirt the trench to reach the exit;
-   `l3-floor-heights` indexes these same cells."
+  "Flat 28x24 chamber for the L3 cacodemon room. Spawn `@` is
+   south-of-centre (cell 13, row 20 -> centre 13.5, 20.5). The exit `D` is
+   on the east wall at the spawn row (row 20, col 27)."
   ["############################"
    "#..........................#"
    "#..........................#"
@@ -173,37 +84,10 @@
    "#..........................#"
    "############################"])
 
-(def l3-floor-heights
-  "Per-cell floor `z` for the L3 descending trench. The trench spans cols
-   5-22; its rim rows (9 + 13) sit one `trench-step-drop` down (-0.4) and
-   the three bottom rows (10-12) one tier deeper (-0.8). Walking south into
-   it: ground 0 -> rim -0.4 -> bottom -0.8, each a 0.4 step (auto-falls);
-   climbing back out reverses it, each 0.4 rise <= step-up-max so it is
-   walkable both directions. The flat flanking ground (cols 1-4, 23-26)
-   carries no entry, so it reads as the classic 0.0 floor a player can
-   skirt the trench on."
-  (merge
-   ;; Upper + lower rim: one tier down.
-   (rect-heights 5 9 22 9 (* 1.0 trench-step-drop))     ; z -0.4
-   (rect-heights 5 13 22 13 (* 1.0 trench-step-drop))   ; z -0.4
-   ;; Trench bottom: a second tier deeper.
-   (rect-heights 5 10 22 12 (* 2.0 trench-step-drop)))) ; z -0.8
-
-(def dais-step-rise
-  "Per-step floor rise on the L5 central dais ramp, in world z. At or
-   below `physics/step-up-max` (0.4) so each step auto-climbs."
-  0.4)
-
 (def l5-layout
-  "Flat 30x26 chamber for the L5 raised-dais feature. A raised square
-   platform sits dead-centre (a vantage in the cyberdemon arena) reached
-   by a short two-step ramp on its south face; the rest of the floor is
-   flat ground that rings the dais, so the red-locked exit is always
-   reachable around it. Spawn `@` is south (cell 14, row 22 -> centre
-   14.5, 22.5), facing the dais. The red-locked exit `R` is on the east
-   wall at the flat spawn row (row 22, col 29), reachable along the ground
-   ring without ever climbing the dais. `l5-floor-heights` indexes these
-   cells."
+  "Flat 30x26 chamber for the L5 cyberdemon arena. Spawn `@` is south
+   (cell 14, row 22 -> centre 14.5, 22.5). The red-locked exit `R` is on
+   the east wall at the spawn row (row 22, col 29)."
   ["##############################"
    "#............................#"
    "#............................#"
@@ -231,71 +115,17 @@
    "#............................#"
    "##############################"])
 
-(def l5-floor-heights
-  "Per-cell floor `z` for the L5 central dais: a 6x4 raised plateau (cols
-   12-17, rows 8-11) standing two `dais-step-rise` (0.8) above the ground,
-   reached by a two-step ramp on its south face (row 13 at z 0.4, row 12
-   at z 0.8) directly in front of the spawn. Ground 0 -> ramp 0.4 ->
-   ramp-top / plateau 0.8: each rise is one 0.4 step (<= step-up-max), and
-   the plateau cap is continuous with the ramp top (no lip). The
-   surrounding flat ground rings the dais so the exit + red keycard stay
-   reachable without ever climbing it."
-  (merge
-   ;; Two-step ramp up the dais south face (cols 13-16).
-   (rect-heights 13 13 16 13 (* 1.0 dais-step-rise))  ; z 0.4
-   (rect-heights 13 12 16 12 (* 2.0 dais-step-rise))  ; z 0.8
-   ;; Raised plateau (the dais top) at the ramp-top height.
-   (rect-heights 12 8 17 11 (* 2.0 dais-step-rise))))  ; z 0.8
-
-(def l7-step-rise
-  "Per-step floor rise on the L7 stairs, in world z. Set to 3/8 = 0.375,
-   just below `physics/step-up-max` (0.4) so every step auto-climbs with
-   headroom. 0.375 is exactly representable in binary floating point, so a
-   stacked run (0.375 -> 0.75 -> 1.125 -> 1.5) never accumulates rounding
-   drift that could nudge an adjacent riser above 0.4 and silently block
-   the climb (e.g. `0.4 * 3` lands at 1.2000000000000002, whose 0.4 gap to
-   1.6 trips the strict `> step-up-max` gate). Keeping every authored z a
-   k/8 multiple guarantees the whole staircase stays walkable."
-  0.375)
-
-(def l7-tier1-z
-  "Floor z of the L7 middle tier: two `l7-step-rise` steps above tier 0."
-  (* 2.0 l7-step-rise)) ; 0.75
-
-(def l7-tier2-z
-  "Floor z of the L7 top tier: two `l7-step-rise` steps above tier 1."
-  (* 4.0 l7-step-rise)) ; 1.5
-
 (def l7-layout
-  "Spacious 42x26 three-tier chamber for the L7 stair room (#298). One
-   open arena split into three stacked floor tiers by two solid divider
-   walls (rows 6 and 16). Each divider is pierced by two stair mouths, so
-   four open-sided staircases connect the tiers:
-
-     tier 0 (bottom, rows 17-24)  -- z 0.0,  the spawn floor
-     tier 1 (middle, rows  7-15)  -- z 0.75, reached up stairs A / B
-     tier 2 (top,    rows  1- 5)  -- z 1.5,  reached up stairs C / D
-
-   The dividers (rows 6 and 16) are solid wall except the named mouths, so
-   a tier is reachable ONLY by walking up a stair run (no flat shortcut):
-
-     row 16 mouths: cols 6-12 (stair A) and 23-29 (stair B)  tier0 -> tier1
-     row  6 mouths: cols 4-10 (stair C) and 27-33 (stair D)  tier1 -> tier2
-
-   Each stair core is three cells wide with OPEN flanks (no side walls), so
-   the player/enemies can fall off the side of a run (#299), reinforcing
-   the spacious open-architecture feel. Spawn `@` is on the bottom tier
-   (col 19, row 22 -> centre 19.5, 22.5); the yellow-locked exit `Y` sits
-   on the east wall at the spawn row (row 22, col 41), reachable across the
-   open bottom tier with no climb. `l7-floor-heights` indexes the tier +
-   stair cells."
+  "Flat 42x26 chamber for the L7 revenant room. Spawn `@` is south-of-centre
+   (col 19, row 22 -> centre 19.5, 22.5); the yellow-locked exit `Y` sits on
+   the east wall at the spawn row (row 22, col 41), reachable across the open
+   floor."
   ["##########################################"
    "#........................................#"
    "#........................................#"
    "#........................................#"
    "#........................................#"
    "#........................................#"
-   "####.......################.......########"
    "#........................................#"
    "#........................................#"
    "#........................................#"
@@ -305,7 +135,8 @@
    "#........................................#"
    "#........................................#"
    "#........................................#"
-   "######.......##########.......############"
+   "#........................................#"
+   "#........................................#"
    "#........................................#"
    "#........................................#"
    "#........................................#"
@@ -316,213 +147,55 @@
    "#........................................#"
    "##########################################"])
 
-(def l7-floor-heights
-  "Per-cell floor `z` for the L7 three-tier stair room (#298). Three flat
-   plateaus stacked by two `l7-step-rise` (0.375) steps each, plus four
-   three-cell-wide stair cores with OPEN flanks (the flank cells drop back
-   to the tier below, so a run is a real open-sided staircase you can fall
-   off):
-
-     tier 0 -- z 0.0  (default, no entries): the bottom spawn floor.
-     tier 1 -- z 0.75 (rows 7-15): the middle plateau.
-     tier 2 -- z 1.5  (rows 1-5):  the top plateau.
-
-   Lower stairs A (cols 8-10) / B (cols 25-27) climb tier0 -> tier1 through
-   the row-16 mouths: 0.0 -> 0.375 -> 0.75 northward (rows 16 -> 14). Upper
-   stairs C (cols 6-8) / D (cols 29-31) climb tier1 -> tier2 through the
-   row-6 mouths: 0.75 -> 1.125 -> 1.5 northward (rows 6 -> 4). Every
-   successive rise is one 0.375 step (< step-up-max) so each run auto-climbs,
-   and the top of each run is continuous with the tier it lands on. The flank
-   cells beside each core stay at the lower tier's height, leaving the stair
-   sides open (a fall-off edge, not a wall)."
-  (merge
-   ;; Tier plateaus: tier 1 (middle) then tier 2 (top). Tier 0 is the z 0.0
-   ;; default (no entries). Later stair entries override the plateau cells.
-   (rect-heights 1 7 40 15 l7-tier1-z)
-   (rect-heights 1 1 40 5 l7-tier2-z)
-   ;; Lower stairs A (cols 8-10) / B (cols 25-27): tier0 -> tier1, rows 16 -> 14.
-   (rect-heights 8 16 10 16 0.0) (rect-heights 8 15 10 15 l7-step-rise) (rect-heights 8 14 10 14 l7-tier1-z)
-   (rect-heights 25 16 27 16 0.0) (rect-heights 25 15 27 15 l7-step-rise) (rect-heights 25 14 27 14 l7-tier1-z)
-   ;; Open flanks beside the lower stair cores: drop back to tier 0 (z 0.0)
-   ;; so the run sides are fall-off edges, not walls.
-   (rect-heights 6 14 7 16 0.0) (rect-heights 11 14 12 16 0.0)
-   (rect-heights 23 14 24 16 0.0) (rect-heights 28 14 29 16 0.0)
-   ;; Upper stairs C (cols 6-8) / D (cols 29-31): tier1 -> tier2, rows 6 -> 4.
-   (rect-heights 6 6 8 6 l7-tier1-z) (rect-heights 6 5 8 5 (* 3.0 l7-step-rise)) (rect-heights 6 4 8 4 l7-tier2-z)
-   (rect-heights 29 6 31 6 l7-tier1-z) (rect-heights 29 5 31 5 (* 3.0 l7-step-rise)) (rect-heights 29 4 31 4 l7-tier2-z)
-   ;; Open flanks beside the upper stair cores: drop back to tier 1 (z 0.75).
-   (rect-heights 4 4 5 6 l7-tier1-z) (rect-heights 9 4 10 6 l7-tier1-z)
-   (rect-heights 27 4 28 6 l7-tier1-z) (rect-heights 32 4 33 6 l7-tier1-z)))
-
-(def l7-handrails
-  "Handrails on the L7 top-tier (z 1.5) plateau lip (#299). A handrail is a
-   directed `[hx hy lx ly]` edge (high cell -> low cell) that blocks an
-   entity from stepping OFF that downward edge (physics/try-move +
-   enemy/try-step treat it like a wall - a fence you see over but can't
-   cross). Only the WEST upper-staircase (stair C) plateau lips are railed,
-   so the player/enemy cannot tumble off the plateau onto the west stair
-   flanks; the EAST staircase (stair D) flank lips are left OPEN, so a step
-   off the east plateau lip is a real 1-tier fall (1 life). The stair
-   TREADS themselves are never railed, so all four staircases stay fully
-   walkable up and down - the reachability invariant (exit + yellow key on
-   the open bottom tier) is untouched. Every edge here is a z 1.5 -> 0.75
-   drop (one tier, > step-up-max), enumerated from `l7-floor-heights`."
-  ;; West stair-C plateau lips: the z1.5 plateau cells whose step down lands
-  ;; on the open z0.75 stair-C flank (cols 4-5 and 9-10).
-  #{[4 3 4 4] [5 3 5 4] [9 3 9 4] [10 3 10 4]
-    [3 4 4 4] [6 4 5 4] [8 4 9 4] [11 4 10 4]
-    [3 5 4 5] [11 5 10 5]})
-
-;; ---------------------------------------------------------------------
-;; L6 three-tier stair room (#310). The spectre level gets the same
-;; multi-tier-ROOM treatment as L7, but rotated onto the EAST->WEST axis
-;; so the campaign reads as a varied multi-level space, not a repeated
-;; showcase: where L7 stacks three tiers NORTH (climb up the rows through
-;; horizontal divider rows), L6 stacks them WEST (climb left through two
-;; vertical divider COLUMNS). The bottom spawn tier is the EAST third, and
-;; four open-sided runs climb west up to the middle then top tiers. Reuses
-;; the canonical 0.375 ladder (`l7-step-rise` / `l7-tier1-z` / `l7-tier2-z`)
-;; so the binary-exact tier z's (0.0 / 0.75 / 1.5) are a single source of
-;; truth - every run stays auto-climbable with no float drift.
-;; ---------------------------------------------------------------------
-
 (def l6-layout
-  "Spacious 42x26 three-tier chamber for the L6 spectre room (#310). One
-   open arena split into three stacked floor tiers by two solid divider
-   COLUMNS (cols 28 and 13). Each divider is pierced by two stair mouths,
-   so four open-sided staircases connect the tiers along the east->west
-   axis:
-
-     tier 0 (east,   cols 29-40)  -- z 0.0,  the spawn floor
-     tier 1 (middle, cols 14-27)  -- z 0.75, reached up stairs A / B
-     tier 2 (west,   cols  1-12)  -- z 1.5,  reached up stairs C / D
-
-   The dividers (cols 28 and 13) are solid wall except the named mouths, so
-   a tier is reachable ONLY by walking up a stair run (no flat shortcut):
-
-     col 28 mouths: rows 5-9 (stair A) and 16-20 (stair B)  tier0 -> tier1
-     col 13 mouths: rows 5-9 (stair C) and 16-20 (stair D)  tier1 -> tier2
-
-   Each stair core is three cells tall with OPEN flanks (no side walls), so
-   the player/enemies can fall off the side of a run (#314). Spawn `@` is on
-   the bottom (east) tier (col 35, row 12 -> centre 35.5, 12.5); the
-   unlocked exit `D` sits on the east wall at the spawn row (row 12, col 41),
-   reachable across the open bottom tier with no climb (L6 has no keycard).
-   `l6-floor-heights` indexes the tier + stair cells."
+  "Flat 42x26 chamber for the L6 spectre room. Spawn `@` is east-of-centre
+   (col 35, row 12 -> centre 35.5, 12.5); the unlocked exit `D` sits on the
+   east wall at the spawn row (row 12, col 41), reachable across the open
+   floor (L6 has no keycard)."
   ["##########################################"
-   "#............#..............#............#"
-   "#............#..............#............#"
-   "#............#..............#............#"
-   "#............#..............#............#"
    "#........................................#"
    "#........................................#"
    "#........................................#"
    "#........................................#"
    "#........................................#"
-   "#............#..............#............#"
-   "#............#..............#............#"
-   "#............#..............#......@.....D"
-   "#............#..............#............#"
-   "#............#..............#............#"
-   "#............#..............#............#"
    "#........................................#"
    "#........................................#"
    "#........................................#"
    "#........................................#"
    "#........................................#"
-   "#............#..............#............#"
-   "#............#..............#............#"
-   "#............#..............#............#"
-   "#............#..............#............#"
+   "#........................................#"
+   "#..................................@.....D"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
+   "#........................................#"
    "##########################################"])
 
-(def l6-floor-heights
-  "Per-cell floor `z` for the L6 three-tier stair room (#310). Three flat
-   plateaus stacked west by two `l7-step-rise` (0.375) steps each, plus four
-   three-cell-tall stair cores with OPEN flanks (the flank cells drop back to
-   the tier below, so a run is a real open-sided staircase you can fall off):
-
-     tier 0 -- z 0.0  (default, no entries): the bottom (east) spawn floor.
-     tier 1 -- z 0.75 (cols 14-27): the middle plateau.
-     tier 2 -- z 1.5  (cols 1-12):  the top (west) plateau.
-
-   Lower stairs A (rows 6-8) / B (rows 17-19) climb tier0 -> tier1 through the
-   col-28 mouths: 0.0 -> 0.375 -> 0.75 westward (cols 29 -> 27). Upper stairs
-   C (rows 6-8) / D (rows 17-19) climb tier1 -> tier2 through the col-13
-   mouths: 0.75 -> 1.125 -> 1.5 westward (cols 14 -> 12). Every successive
-   rise is one 0.375 step (< step-up-max) so each run auto-climbs, and the top
-   of each run is continuous with the tier it lands on. The flank cells beside
-   each core stay at the lower tier's height, leaving the stair sides open (a
-   fall-off edge, not a wall)."
-  (merge
-   ;; Tier plateaus: tier 1 (middle) then tier 2 (top/west). Tier 0 is the
-   ;; z 0.0 default (no entries). Later stair entries override plateau cells.
-   (rect-heights 14 1 27 24 l7-tier1-z)
-   (rect-heights 1 1 12 24 l7-tier2-z)
-   ;; Lower stairs A (rows 6-8) / B (rows 17-19): tier0 -> tier1, cols 29 -> 27.
-   (rect-heights 29 6 29 8 0.0) (rect-heights 28 6 28 8 l7-step-rise) (rect-heights 27 6 27 8 l7-tier1-z)
-   (rect-heights 29 17 29 19 0.0) (rect-heights 28 17 28 19 l7-step-rise) (rect-heights 27 17 27 19 l7-tier1-z)
-   ;; Open flanks beside the lower stair cores (cols 27-29 at the mouth edge
-   ;; rows): drop back to tier 0 (z 0.0) so the run sides are fall-off edges.
-   (rect-heights 27 5 29 5 0.0) (rect-heights 27 9 29 9 0.0)
-   (rect-heights 27 16 29 16 0.0) (rect-heights 27 20 29 20 0.0)
-   ;; Upper stairs C (rows 6-8) / D (rows 17-19): tier1 -> tier2, cols 14 -> 12.
-   (rect-heights 14 6 14 8 l7-tier1-z) (rect-heights 13 6 13 8 (* 3.0 l7-step-rise)) (rect-heights 12 6 12 8 l7-tier2-z)
-   (rect-heights 14 17 14 19 l7-tier1-z) (rect-heights 13 17 13 19 (* 3.0 l7-step-rise)) (rect-heights 12 17 12 19 l7-tier2-z)
-   ;; Open flanks beside the upper stair cores (cols 12-14 at the mouth edge
-   ;; rows): drop back to tier 1 (z 0.75).
-   (rect-heights 12 5 14 5 l7-tier1-z) (rect-heights 12 9 14 9 l7-tier1-z)
-   (rect-heights 12 16 14 16 l7-tier1-z) (rect-heights 12 20 14 20 l7-tier1-z)))
-
-;; ---------------------------------------------------------------------
-;; L8 three-tier archvile court (#310). The archvile court gets the same
-;; multi-tier-ROOM treatment in a grander 50x30 footprint: a wide southern
-;; court pit (the spawn floor) that climbs NORTH up two galleries to a
-;; throne band. Where L7's runs sit roughly aligned, L8 OFFSETS its lower
-;; and upper stairs to different columns, so the ascent to the throne is a
-;; longer court route (climb a lower run, cross the gallery, climb an upper
-;; run) - a third distinct multi-tier shape alongside L6 (east-west) and L7
-;; (aligned north-south). Reuses the canonical 0.375 ladder so the tier z's
-;; (0.0 / 0.75 / 1.5) stay binary-exact and every run auto-climbs.
-;; ---------------------------------------------------------------------
-
 (def l8-layout
-  "Grand 50x30 three-tier chamber for the L8 archvile court (#310). One
-   open arena split into three stacked floor tiers by two solid divider
-   rows (rows 11 and 5). Each divider is pierced by two stair mouths, so
-   four open-sided staircases climb NORTH from the court pit up to the
-   throne:
-
-     tier 0 (court, rows 12-28)  -- z 0.0,  the spawn floor (a wide pit)
-     tier 1 (gallery, rows 6-10) -- z 0.75, reached up stairs A / B
-     tier 2 (throne,  rows 1-4)  -- z 1.5,  reached up stairs C / D
-
-   The dividers (rows 11 and 5) are solid wall except the named mouths, so
-   a tier is reachable ONLY by walking up a stair run (no flat shortcut):
-
-     row 11 mouths: cols 10-16 (stair A) and 33-39 (stair B)  tier0 -> tier1
-     row  5 mouths: cols 14-20 (stair C) and 29-35 (stair D)  tier1 -> tier2
-
-   The lower and upper mouths sit at DIFFERENT columns, so reaching the
-   throne means crossing the gallery between runs. Each stair core is three
-   cells wide with OPEN flanks (no side walls), so the player/enemies can
-   fall off the side of a run (#314). Spawn `@` is in the court (col 25,
-   row 20 -> centre 25.5, 20.5); the unlocked exit `D` sits on the east
-   wall at the spawn row (row 20, col 49), reachable across the open court
-   with no climb (L8 has no keycard). `l8-floor-heights` indexes the tier +
-   stair cells."
+  "Flat 50x30 court for the L8 archvile room. Spawn `@` is in the court
+   centre (col 25, row 20 -> centre 25.5, 20.5); the unlocked exit `D` sits
+   on the east wall at the spawn row (row 20, col 49), reachable across the
+   open floor (L8 has no keycard)."
   ["##################################################"
    "#................................................#"
    "#................................................#"
    "#................................................#"
    "#................................................#"
-   "##############.......########.......##############"
    "#................................................#"
    "#................................................#"
    "#................................................#"
    "#................................................#"
    "#................................................#"
-   "##########.......################.......##########"
+   "#................................................#"
+   "#................................................#"
    "#................................................#"
    "#................................................#"
    "#................................................#"
@@ -542,97 +215,25 @@
    "#................................................#"
    "##################################################"])
 
-(def l8-floor-heights
-  "Per-cell floor `z` for the L8 three-tier archvile court (#310). Three flat
-   plateaus stacked north by two `l7-step-rise` (0.375) steps each, plus four
-   three-cell-wide stair cores with OPEN flanks (the flank cells drop back to
-   the tier below, so a run is a real open-sided staircase you can fall off):
-
-     tier 0 -- z 0.0  (default, no entries): the court (bottom) spawn floor.
-     tier 1 -- z 0.75 (rows 6-10):  the gallery plateau.
-     tier 2 -- z 1.5  (rows 1-4):   the throne plateau.
-
-   Lower stairs A (cols 11-13) / B (cols 34-36) climb tier0 -> tier1 through
-   the row-11 mouths: 0.0 -> 0.375 -> 0.75 northward (rows 11 -> 9). Upper
-   stairs C (cols 15-17) / D (cols 30-32) climb tier1 -> tier2 through the
-   row-5 mouths: 0.75 -> 1.125 -> 1.5 northward (rows 5 -> 3). The upper runs
-   sit at different columns than the lower ones, so the throne ascent crosses
-   the gallery. Every successive rise is one 0.375 step (< step-up-max) so
-   each run auto-climbs, and the top of each run is continuous with the tier
-   it lands on. The flank cells beside each core stay at the lower tier's
-   height, leaving the stair sides open (a fall-off edge, not a wall)."
-  (merge
-   ;; Tier plateaus: tier 1 (gallery) then tier 2 (throne). Tier 0 is the
-   ;; z 0.0 default (no entries). Later stair entries override plateau cells.
-   (rect-heights 1 6 48 10 l7-tier1-z)
-   (rect-heights 1 1 48 4 l7-tier2-z)
-   ;; Lower stairs A (cols 11-13) / B (cols 34-36): tier0 -> tier1, rows 11 -> 9.
-   (rect-heights 11 11 13 11 0.0) (rect-heights 11 10 13 10 l7-step-rise) (rect-heights 11 9 13 9 l7-tier1-z)
-   (rect-heights 34 11 36 11 0.0) (rect-heights 34 10 36 10 l7-step-rise) (rect-heights 34 9 36 9 l7-tier1-z)
-   ;; Open flanks beside the lower stair cores (mouth-edge cols at rows 9-11):
-   ;; drop back to tier 0 (z 0.0) so the run sides are fall-off edges.
-   (rect-heights 10 9 10 11 0.0) (rect-heights 14 9 16 11 0.0)
-   (rect-heights 33 9 33 11 0.0) (rect-heights 37 9 39 11 0.0)
-   ;; Upper stairs C (cols 15-17) / D (cols 30-32): tier1 -> tier2, rows 5 -> 3.
-   (rect-heights 15 5 17 5 l7-tier1-z) (rect-heights 15 4 17 4 (* 3.0 l7-step-rise)) (rect-heights 15 3 17 3 l7-tier2-z)
-   (rect-heights 30 5 32 5 l7-tier1-z) (rect-heights 30 4 32 4 (* 3.0 l7-step-rise)) (rect-heights 30 3 32 3 l7-tier2-z)
-   ;; Open flanks beside the upper stair cores (mouth-edge cols at rows 3-5):
-   ;; drop back to tier 1 (z 0.75).
-   (rect-heights 14 3 14 5 l7-tier1-z) (rect-heights 18 3 20 5 l7-tier1-z)
-   (rect-heights 29 3 29 5 l7-tier1-z) (rect-heights 33 3 35 5 l7-tier1-z)))
-
-;; ---------------------------------------------------------------------
-;; L4 three-tier baron stronghold (#310). The blue-locked baron level gets
-;; the multi-tier-ROOM treatment too, the ONLY locked one. A wide southern
-;; floor (the spawn tier) climbs NORTH up to two raised baron heights via
-;; two stair spines on the OUTER flanks (hugging the west + east walls), so
-;; the barons hold the wide central heights while the player funnels up the
-;; edges - a fourth distinct shape (outer-flank spines) alongside L6
-;; (east-west), L7 (centre-aligned north-south) and L8 (offset court). The
-;; blue-locked exit sits on the bottom tier (reachable with ZERO climbs)
-;; and every floor cell is reachable, so the randomly-seeded blue keycard
-;; is always fetchable. Reuses the canonical 0.375 ladder so the tier z's
-;; (0.0 / 0.75 / 1.5) stay binary-exact and every run auto-climbs.
-;; ---------------------------------------------------------------------
-
 (def l4-layout
-  "44x28 three-tier stronghold for the L4 baron room (#310). One open arena
-   split into three stacked floor tiers by two solid divider rows (rows 11
-   and 5). Each divider is pierced by two stair mouths on the OUTER flanks,
-   so four open-sided staircases climb NORTH up the side walls:
-
-     tier 0 (bottom, rows 12-26)  -- z 0.0,  the spawn floor (a wide hall)
-     tier 1 (middle, rows  6-10)  -- z 0.75, reached up stairs A / B
-     tier 2 (baron heights, 1-4)  -- z 1.5,  reached up stairs C / D
-
-   The dividers (rows 11 and 5) are solid wall except the named mouths, so
-   a tier is reachable ONLY by walking up a stair run (no flat shortcut):
-
-     row 11 mouths: cols 2-8 (west stair A) and 35-41 (east stair B)
-     row  5 mouths: cols 2-8 (west stair C) and 35-41 (east stair D)
-
-   The west + east stair spines are vertically aligned (A under C, B under
-   D) and hug the side walls, leaving the wide centre of the heights for the
-   barons. Each stair core is three cells wide with OPEN flanks (no side
-   walls), so the player/enemies can fall off the side of a run (#314).
-   Spawn `@` is south-of-centre (col 22, row 20 -> centre 22.5, 20.5); the
-   BLUE-locked exit `B` sits on the east wall at the spawn row (row 20, col
-   43), reachable across the open bottom tier with no climb. The blue
-   keycard is seeded at a random open cell (`maybe-spawn-keycard`); every
-   floor cell is reachable, so the key is fetchable wherever it lands.
-   `l4-floor-heights` indexes the tier + stair cells."
+  "Flat 44x28 hall for the L4 baron room. Spawn `@` is south-of-centre
+   (col 22, row 20 -> centre 22.5, 20.5); the BLUE-locked exit `B` sits on
+   the east wall at the spawn row (row 20, col 43), reachable across the
+   open floor. The blue keycard is seeded at a random open cell
+   (`maybe-spawn-keycard`); every floor cell is reachable, so the key is
+   fetchable wherever it lands."
   ["############################################"
    "#..........................................#"
    "#..........................................#"
    "#..........................................#"
    "#..........................................#"
-   "##.......##########################.......##"
    "#..........................................#"
    "#..........................................#"
    "#..........................................#"
    "#..........................................#"
    "#..........................................#"
-   "##.......##########################.......##"
+   "#..........................................#"
+   "#..........................................#"
    "#..........................................#"
    "#..........................................#"
    "#..........................................#"
@@ -649,46 +250,6 @@
    "#..........................................#"
    "#..........................................#"
    "############################################"])
-
-(def l4-floor-heights
-  "Per-cell floor `z` for the L4 three-tier baron stronghold (#310). Three
-   flat plateaus stacked north by two `l7-step-rise` (0.375) steps each, plus
-   four three-cell-wide stair cores on the OUTER flanks with OPEN sides (the
-   flank cells drop back to the tier below, so a run is a real open-sided
-   staircase you can fall off):
-
-     tier 0 -- z 0.0  (default, no entries): the bottom spawn floor.
-     tier 1 -- z 0.75 (rows 6-10):  the middle plateau.
-     tier 2 -- z 1.5  (rows 1-4):   the baron heights.
-
-   Lower stairs A (cols 3-5) / B (cols 37-39) climb tier0 -> tier1 through the
-   row-11 mouths: 0.0 -> 0.375 -> 0.75 northward (rows 11 -> 9). Upper stairs
-   C (cols 3-5) / D (cols 37-39) climb tier1 -> tier2 through the row-5 mouths:
-   0.75 -> 1.125 -> 1.5 northward (rows 5 -> 3). The west + east spines are
-   vertically aligned, so the climb runs straight up each side wall. Every
-   successive rise is one 0.375 step (< step-up-max) so each run auto-climbs,
-   and the top of each run is continuous with the tier it lands on. The flank
-   cells beside each core stay at the lower tier's height, leaving the stair
-   sides open (a fall-off edge, not a wall)."
-  (merge
-   ;; Tier plateaus: tier 1 (middle) then tier 2 (baron heights). Tier 0 is
-   ;; the z 0.0 default (no entries). Later stair entries override plateaus.
-   (rect-heights 1 6 42 10 l7-tier1-z)
-   (rect-heights 1 1 42 4 l7-tier2-z)
-   ;; Lower stairs A (cols 3-5) / B (cols 37-39): tier0 -> tier1, rows 11 -> 9.
-   (rect-heights 3 11 5 11 0.0) (rect-heights 3 10 5 10 l7-step-rise) (rect-heights 3 9 5 9 l7-tier1-z)
-   (rect-heights 37 11 39 11 0.0) (rect-heights 37 10 39 10 l7-step-rise) (rect-heights 37 9 39 9 l7-tier1-z)
-   ;; Open flanks beside the lower stair cores (mouth-edge cols at rows 9-11):
-   ;; drop back to tier 0 (z 0.0) so the run sides are fall-off edges.
-   (rect-heights 2 9 2 11 0.0) (rect-heights 6 9 8 11 0.0)
-   (rect-heights 35 9 36 11 0.0) (rect-heights 40 9 41 11 0.0)
-   ;; Upper stairs C (cols 3-5) / D (cols 37-39): tier1 -> tier2, rows 5 -> 3.
-   (rect-heights 3 5 5 5 l7-tier1-z) (rect-heights 3 4 5 4 (* 3.0 l7-step-rise)) (rect-heights 3 3 5 3 l7-tier2-z)
-   (rect-heights 37 5 39 5 l7-tier1-z) (rect-heights 37 4 39 4 (* 3.0 l7-step-rise)) (rect-heights 37 3 39 3 l7-tier2-z)
-   ;; Open flanks beside the upper stair cores (mouth-edge cols at rows 3-5):
-   ;; drop back to tier 1 (z 0.75).
-   (rect-heights 2 3 2 5 l7-tier1-z) (rect-heights 6 3 8 5 l7-tier1-z)
-   (rect-heights 35 3 36 5 l7-tier1-z) (rect-heights 40 3 41 5 l7-tier1-z)))
 
 (def levels
   "Per-level configuration. Each entry is intentionally tiny — visuals
@@ -722,61 +283,37 @@
   ;; where you learn move + shoot against the simplest foe before any
   ;; mixing starts.
   [{:size [22 16] :walls 12 :enemy :imp   :enemies 4 :chase 0.8 :name "imps"}
-   ;; L2 — the verticality showcase (issue #237). Hand-authored so the
-   ;; floor heights land on known cells: a flat south entrance, a
-   ;; four-step staircase climbing north onto a raised platform plateau
-   ;; (a vantage over the room), and a sunken pit in the south-west the
-   ;; player drops into and walks back out of. A low lintel hangs over
-   ;; the stair foot. Demons + an imp escort patrol the floor; one
-   ;; standing on the platform rises to stand on it (#234 enemy
-   ;; floor-anchor). Keeps the L2 identity (name, demon+imp mix, chase
-   ;; 1.0, shotgun drop) so progression + balance are unchanged - only
-   ;; the geometry is now authored verticality instead of procgen.
+   ;; L2 — the demon room. A flat 24x18 chamber; demons + an imp escort
+   ;; patrol the floor. Keeps the L2 identity (name, demon+imp mix, chase
+   ;; 1.0, shotgun drop).
    {:enemy :demon :chase 1.0 :name "demons"
     :enemies [{:type :demon :count 5}
               {:type :imp   :count 2}]
-    :layout        showcase-layout
-    :floor-heights showcase-floor-heights
-    :ceil-heights  showcase-ceil-heights}
+    :layout showcase-layout}
    ;; L3 introduces the cacodemon shooter; a 50/50 melee mix (demon +
    ;; imp callback) pressures the player up close while they learn to
-   ;; strafe the bolts. Hand-authored verticality (a descending trench
-   ;; corridor): the floor steps DOWN two tiers across the room's middle,
-   ;; so the player walks into a sunken corridor and climbs back out. Keeps
-   ;; the L3 identity (name, caco+demon+imp mix, chase 1.2, chaingun drop);
-   ;; only the geometry is now authored instead of procgen.
+   ;; strafe the bolts. A flat 28x24 chamber. Keeps the L3 identity
+   ;; (name, caco+demon+imp mix, chase 1.2, chaingun drop).
    {:enemy :caco :chase 1.2 :name "cacodemons"
     :enemies [{:type :caco  :count 4}
               {:type :demon :count 2}
               {:type :imp   :count 2}]
-    :layout        l3-layout
-    :floor-heights l3-floor-heights}
-   ;; L4 — the baron stronghold. Hand-authored verticality (#310): a 44x28
-   ;; three-tier stronghold, the ONLY locked multi-tier room - a wide
-   ;; southern hall (spawn) climbing NORTH up two stair spines on the outer
-   ;; flanks to two raised baron heights (a fourth distinct shape alongside
-   ;; L6 east-west, L7 centre north-south, L8 offset court). The blue-locked
-   ;; exit stays on the open bottom tier (reachable with zero climbs), and
-   ;; every floor cell is reachable so the randomly-seeded blue keycard is
-   ;; always fetchable. Keeps the L4 identity (name, baron+demon mix, chase
-   ;; 1.4, blue lock, chainsaw drop); only the geometry is authored. No
-   ;; :ceil-heights: the room is open (flat 1.0 ceiling).
+    :layout l3-layout}
+   ;; L4 — the baron stronghold. A flat 44x28 hall, the blue-locked level:
+   ;; the blue-locked exit `B` is on the east wall and the blue keycard is
+   ;; seeded at a random open cell. Keeps the L4 identity (name, baron+demon
+   ;; mix, chase 1.4, blue lock, chainsaw drop).
    {:enemy :baron :chase 1.4 :name "barons" :door-lock :blue
     :enemies [{:type :baron :count 3}
               {:type :demon :count 3}]
-    :layout        l4-layout
-    :floor-heights l4-floor-heights}
-   ;; L5 — the cyberdemon arena. Hand-authored verticality (a raised
-   ;; central dais): a square plateau stands at the room centre, reached by
-   ;; a two-step ramp on its south face - a vantage in the open arena. The
-   ;; red-locked exit + keycard stay reachable on the flat ground ringing
-   ;; the dais. Keeps the L5 identity (name, cyber+imp mix, chase 1.6, red
-   ;; lock, rocket drop); only the geometry is now authored.
+    :layout l4-layout}
+   ;; L5 — the cyberdemon arena. A flat 30x26 arena, red-locked: the
+   ;; red-locked exit `R` + keycard are reachable on the open floor. Keeps
+   ;; the L5 identity (name, cyber+imp mix, chase 1.6, red lock, rocket drop).
    {:enemy :cyber :chase 1.6 :name "cyberdemons" :door-lock :red
     :enemies [{:type :cyber :count 5}
               {:type :imp   :count 2}]
-    :layout        l5-layout
-    :floor-heights l5-floor-heights}
+    :layout l5-layout}
 
    ;; --- L6-L10 ----------------------------------------------------
    ;; Progressive mixed-monster rooms; L10 hand-authored boss arena.
@@ -786,32 +323,22 @@
 
    ;; L6 — spectres debut. Mostly spectres (HP 3, agile), a couple of
    ;; imps mixed in to keep the early-game vocabulary, plus one caco so
-   ;; ranged pressure doesn't vanish for the whole L5-L7 stretch.
-   ;; Hand-authored verticality (#310): a spacious three-tier chamber, the
-   ;; east->west counterpart of L7's north-stacked room - two solid divider
-   ;; COLUMNS each pierced by two open-sided staircases, so the player climbs
-   ;; four runs west across three stacked plateaus. The unlocked exit stays
-   ;; on the open bottom (east) tier, reachable with no climb. Keeps the L6
-   ;; identity (name, spectre+imp+caco mix, chase 1.7, no lock); only the
-   ;; geometry is authored. No :ceil-heights: the room is open (flat 1.0).
+   ;; ranged pressure doesn't vanish for the whole L5-L7 stretch. A flat
+   ;; 42x26 chamber, no lock. Keeps the L6 identity (name, spectre+imp+caco
+   ;; mix, chase 1.7).
    {:enemy   :spectre
     :chase   1.7
     :name    "spectres"
     :enemies [{:type :spectre :count 4}
               {:type :imp     :count 2}
               {:type :caco    :count 1}]
-    :layout        l6-layout
-    :floor-heights l6-floor-heights}
+    :layout l6-layout}
 
    ;; L7 — revenants (HP 4) leading a small demon escort, with a lone
-   ;; baron lobbing fireballs to keep a ranged threat in the room.
-   ;; Hand-authored verticality (#298): a spacious three-tier chamber split
-   ;; by two divider walls, each pierced by two open-sided staircases, so
-   ;; the player climbs four stair runs up and down between three stacked
-   ;; plateaus. The yellow-locked exit stays reachable on the open bottom
-   ;; tier without any climb. Keeps the L7 identity (name, revenant+demon+
-   ;; baron mix, chase 1.8, yellow lock, BFG drop); only the geometry is
-   ;; authored. No :ceil-heights: the room is open (flat 1.0 ceiling).
+   ;; baron lobbing fireballs to keep a ranged threat in the room. A flat
+   ;; 42x26 chamber, yellow-locked: the yellow-locked exit `Y` + keycard
+   ;; are reachable on the open floor. Keeps the L7 identity (name,
+   ;; revenant+demon+baron mix, chase 1.8, yellow lock, BFG drop).
    {:enemy   :revenant
     :chase   1.8
     :name    "revenants"
@@ -819,28 +346,18 @@
     :enemies [{:type :revenant :count 4}
               {:type :demon    :count 2}
               {:type :baron    :count 1}]
-    :layout        l7-layout
-    :floor-heights l7-floor-heights
-    :handrails     l7-handrails}
+    :layout l7-layout}
 
-   ;; L8 — archvile court: two casters backed by mixed mid-tier mass.
-   ;; Hand-authored verticality (#310): a grand three-tier court, the
-   ;; largest multi-tier room - a wide southern court pit (spawn) climbing
-   ;; NORTH up two galleries to a throne band, with the lower + upper stairs
-   ;; OFFSET so the throne ascent crosses the gallery (a third distinct
-   ;; shape alongside L6's east-west room and L7's aligned north-south one).
-   ;; The unlocked exit stays on the open court (bottom) tier, reachable
-   ;; with no climb. Keeps the L8 identity (name, archvile+caco+mancubus
-   ;; mix, chase 1.9, no lock); only the geometry is authored. No
-   ;; :ceil-heights: the room is open (flat 1.0 ceiling).
+   ;; L8 — archvile court: two casters backed by mixed mid-tier mass. A
+   ;; flat 50x30 court, no lock. Keeps the L8 identity (name,
+   ;; archvile+caco+mancubus mix, chase 1.9).
    {:enemy   :archvile
     :chase   1.9
     :name    "archvile court"
     :enemies [{:type :archvile :count 2}
               {:type :caco     :count 3}
               {:type :mancubus :count 2}]
-    :layout        l8-layout
-    :floor-heights l8-floor-heights}
+    :layout l8-layout}
 
    ;; L9 — the brood: pinkies (HP 2, very fast) flanking barons +
    ;; mancubi. Chaos pace — the player should feel surrounded.

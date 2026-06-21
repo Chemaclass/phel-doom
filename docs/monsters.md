@@ -118,6 +118,8 @@ Casters still melee on contact (touch ignores range), so cornering is dangerous.
 
 `step-toward`: heading = atan2(enemy→target), step `speed * dt` along heading, slide ±45° / ±90° / ±135° on wall collision. Stop at 0.6 units (no pile-up). Arrival at `:lkp` = 0.9 units → `:dormant`.
 
+**Riser-gated chase (#301)**: each candidate step is also gated by floor height, mirroring the player's `physics/resolve-step`. A step onto a cell whose `:floor-pgrid` height is more than `physics/step-up-max` (0.4) above the enemy's current floor is rejected like a wall, so a monster can no longer 2D-walk UP a stair flank or tier riser taller than a knee-high step (no levitating between tiers). Descents always pass: an enemy on a ledge walks down off it toward the player. The slide cascade still applies, so a chase that hits a tall flank slides along it and takes the open, climbable tread (the stair "mouth") instead of vaulting the side. Flat levels seed an all-0.0 `:floor-pgrid`, so the gate delta is always 0.0 < 0.4 and the chase stays wall-gated exactly as before (byte-identical). Stair-SEEKING navigation (actively routing toward a stair) is a separate follow-up; this is the gate only.
+
 ### Breaking contact
 
 Player ducks around corner:

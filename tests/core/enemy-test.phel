@@ -460,6 +460,131 @@
     (is (= 2.5 (:x e)))))
 
 ;; ---------------------------------------------------------------------
+;; Riser Z-gate (#301): enemies can no longer 2D-walk UP a stair flank
+;; taller than step-up-max (0.4). The 9-arity advance forwards the
+;; world's :floor-pgrid into step-toward -> pick-step -> try-step, which
+;; blocks any chase step onto a cell more than step-up-max above the
+;; enemy's current floor. Descents always pass; flat ground reads as
+;; nil-equivalent (all-0.0) and stays wall?-only. pgrid is nil here so
+;; observe is skipped and the enemy keeps its default :aware (chasing)
+;; state — the gate is isolated from the LOS pass.
+;; ---------------------------------------------------------------------
+
+(def east-tall-floor-pgrid
+  ;; Flat 0.0 everywhere except the east tier (columns x>=6) raised a
+  ;; full +0.8 above ground — twice step-up-max, so an enemy on the flat
+  ;; west side cannot climb into it.
+  (php/array
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.8 0.8 0.8 0.8)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.8 0.8 0.8 0.8)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.8 0.8 0.8 0.8)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.8 0.8 0.8 0.8)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.8 0.8 0.8 0.8)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.8 0.8 0.8 0.8)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.8 0.8 0.8 0.8)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.8 0.8 0.8 0.8)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.8 0.8 0.8 0.8)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.8 0.8 0.8 0.8)))
+
+(def east-step-floor-pgrid
+  ;; Same east tier but only a climbable +0.3 (<= step-up-max), so the
+  ;; chase steps up onto it normally.
+  (php/array
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.3 0.3 0.3 0.3)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.3 0.3 0.3 0.3)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.3 0.3 0.3 0.3)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.3 0.3 0.3 0.3)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.3 0.3 0.3 0.3)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.3 0.3 0.3 0.3)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.3 0.3 0.3 0.3)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.3 0.3 0.3 0.3)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.3 0.3 0.3 0.3)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.3 0.3 0.3 0.3)))
+
+(deftest test-zgate-blocks-tall-riser
+  ;; Enemy on the flat west tier (5.5, 5.5), player on the +0.8 east
+  ;; tier (8.5, 5.5). Every forward step rises 0.8 > step-up-max, so the
+  ;; gate rejects the move and the enemy never crosses into x>=6.
+  (let [es' (advance [(new-enemy 5.5 5.5)] open-grid nil east-tall-floor-pgrid
+                     8.5 5.5 0.5 0.75 true)
+        e   (first es')]
+    (is (php/< (:x e) 6.0) "enemy stays on the flat tier, never mounts the +0.8 riser")))
+
+(deftest test-zgate-allows-climbable-riser
+  ;; Same geometry but a knee-high +0.3 riser (<= step-up-max). The
+  ;; chase steps up onto it, so x advances east past the original cell.
+  (let [es' (advance [(new-enemy 5.5 5.5)] open-grid nil east-step-floor-pgrid
+                     8.5 5.5 0.5 0.75 true)
+        e   (first es')]
+    (is (php/> (:x e) 5.5) "enemy climbs the +0.3 step and advances east")))
+
+(deftest test-zgate-allows-descent
+  ;; Enemy standing ON the +0.8 east tier (6.5, 5.5), player on the flat
+  ;; west ground (2.5, 5.5). Walking west is a descent (0.0 - 0.8 < 0),
+  ;; which the gate always permits — the enemy steps down off the ledge.
+  (let [es' (advance [(new-enemy 6.5 5.5)] open-grid nil east-tall-floor-pgrid
+                     2.5 5.5 0.5 0.75 true)
+        e   (first es')]
+    (is (php/< (:x e) 6.5) "enemy walks DOWN off the +0.8 tier toward the player")))
+
+(def mouth-vs-flank-floor-pgrid
+  ;; A stair "mouth" in column x=6: cell (6,5) is the open tread at a
+  ;; climbable +0.375 (just under step-up-max); the flank above it (6,4)
+  ;; is a +0.75 stair side, too tall to mount. An enemy whose desired
+  ;; heading points at the flank must reject it and fall to the tread,
+  ;; not levitate up the +0.75 side.
+  (php/array
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0   0.0 0.0 0.0)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0   0.0 0.0 0.0)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0   0.0 0.0 0.0)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0   0.0 0.0 0.0)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.75  0.0 0.0 0.0)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.375 0.0 0.0 0.0)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.75  0.0 0.0 0.0)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0   0.0 0.0 0.0)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0   0.0 0.0 0.0)
+   (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0   0.0 0.0 0.0)))
+
+(deftest test-zgate-cannot-levitate-flank
+  ;; Enemy at (5.9, 5.1) hugging the SE corner of its flat cell, player
+  ;; to the NE at (8.5, 3.5) so the desired heading points up-and-right.
+  ;; The straight step would cross into the +0.75 flank cell (6,4),
+  ;; which the gate rejects; pick-step's offset cascade then finds the
+  ;; climbable +0.375 tread (6,5) and the enemy steps onto THAT — it
+  ;; never vaults the +0.75 flank. Proves the chase prefers the open
+  ;; mouth over levitating up a tall stair side.
+  (let [es' (advance [(new-enemy 5.9 5.1)] open-grid nil mouth-vs-flank-floor-pgrid
+                     8.5 3.5 0.5 0.75 true)
+        e   (first es')]
+    ;; Landed on the +0.375 tread cell (col 6, row 5), never the +0.75
+    ;; flank (col 6, row 4).
+    (is (php/>= (:x e) 6.0) "enemy crosses onto the open +0.375 tread column")
+    (is (php/>= (:y e) 5.0) "stays in the tread row (y>=5), not the +0.75 flank row (4)")
+    (is (php/< (:y e) 6.0))))
+
+(deftest test-zgate-nil-grid-equals-zero-grid
+  ;; A nil :floor-pgrid must read identically to an all-0.0 grid: both
+  ;; mean flat ground, so the gate is inert and the enemy positions are
+  ;; byte-identical. Pins the flat byte-identity guarantee (#301).
+  (let [zero-floor (php/array
+                    (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+                    (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+                    (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+                    (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+                    (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+                    (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+                    (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+                    (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+                    (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0)
+                    (php/array 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0))
+        nil-es     (advance [(new-enemy 5.0 5.0)] open-grid nil nil       8.0 5.0 0.5 0.75 true)
+        zero-es    (advance [(new-enemy 5.0 5.0)] open-grid nil zero-floor 8.0 5.0 0.5 0.75 true)
+        ne         (first nil-es)
+        ze         (first zero-es)]
+    (is (= (:x ne) (:x ze)) "nil floor-pgrid == all-0.0 grid: x identical")
+    (is (= (:y ne) (:y ze)) "nil floor-pgrid == all-0.0 grid: y identical")))
+
+;; ---------------------------------------------------------------------
 ;; tick-scare: fires the wide-eyed beat ONLY on the inbound crossing
 ;; past scare-trigger-dist (3.5). Tracks last frame's nearest enemy so
 ;; sitting inside the band doesn't keep refiring.

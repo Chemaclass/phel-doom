@@ -645,26 +645,61 @@
 ;; level config stamps are the ones under test. North is -y.
 ;; ---------------------------------------------------------------------
 
-(deftest test-l7-player-climbs-the-staircase
-  ;; Start on the flat foot of the L7 staircase (cell 5,13 = z0) and walk
-  ;; north one cell at a time: each of the three steps must be accepted
-  ;; (the player advances a row) AND floor-z must rise by one 0.35 step,
-  ;; ending on the ledge-height top step (1.05). Proves the whole flight is
-  ;; auto-climbable (every rise <= step-up-max).
-  (let [w0 (place-on-cell (build-world 7 5) 5 13)]
+(deftest test-l7-player-climbs-the-lower-staircase-onto-tier-1
+  ;; Start on the flat foot of L7 lower stair A (cell 9,16 = z0, the bottom
+  ;; tier) and walk north one cell at a time up the run: each step is
+  ;; accepted (the player advances a row) AND floor-z rises by one 0.375
+  ;; step, landing on the middle-tier plateau height (0.75). Proves the lower
+  ;; run is auto-climbable (every rise <= step-up-max) tier0 -> tier1.
+  (let [w0 (place-on-cell (build-world 7 5) 9 16)]
     (let [w1 (try-move w0 0.0 -1.0)
           p1 (:player w1)]
-      (is (< (php/abs (- (:y p1) 12.5)) 0.0001) "advanced onto step 1")
-      (is (< (php/abs (- (:floor-z p1) 0.35)) 1.0e-9) "climbed to z 0.35")
+      (is (< (php/abs (- (:y p1) 15.5)) 0.0001) "advanced onto step 1")
+      (is (< (php/abs (- (:floor-z p1) 0.375)) 1.0e-9) "climbed to z 0.375")
       (let [w2 (try-move w1 0.0 -1.0)
             p2 (:player w2)]
-        (is (< (php/abs (- (:y p2) 11.5)) 0.0001) "advanced onto step 2")
-        (is (< (php/abs (- (:floor-z p2) 0.70)) 1.0e-9) "climbed to z 0.70")
-        (let [w3 (try-move w2 0.0 -1.0)
-              p3 (:player w3)]
-          (is (< (php/abs (- (:y p3) 10.5)) 0.0001) "advanced onto the top step")
-          (is (< (php/abs (- (:floor-z p3) 1.05)) 1.0e-9) "climbed to z 1.05")
-          (is (< (php/abs (- (:eye-z p3) 1.55)) 1.0e-9) "eye = floor + 0.5"))))))
+        (is (< (php/abs (- (:y p2) 14.5)) 0.0001) "advanced onto the top step")
+        (is (< (php/abs (- (:floor-z p2) 0.75)) 1.0e-9) "climbed to z 0.75 (tier 1)")
+        (is (< (php/abs (- (:eye-z p2) 1.25)) 1.0e-9) "eye = floor + 0.5")))))
+
+(deftest test-l7-player-climbs-the-upper-staircase-onto-tier-2
+  ;; From the middle tier, walk north up L7 upper stair C (cell 7, rows
+  ;; 6 -> 4): floor-z rises 0.75 -> 1.125 -> 1.5, landing on the top-tier
+  ;; plateau (1.5). Proves the upper run is auto-climbable tier1 -> tier2 -
+  ;; the top step is reachable with NO epsilon fudge because 0.375 is an
+  ;; exact binary value (the 0.4-step version drifted 1.5 -> 1.5+e and the
+  ;; strict step-up gate blocked the last riser).
+  (let [w0 (place-on-cell (build-world 7 5) 7 6)]
+    (is (< (php/abs (- (:floor-z (:player w0)) 0.75)) 1.0e-9) "stands on tier 1 foot")
+    (let [w1 (try-move w0 0.0 -1.0)
+          p1 (:player w1)]
+      (is (< (php/abs (- (:y p1) 5.5)) 0.0001) "advanced onto the mid step")
+      (is (< (php/abs (- (:floor-z p1) 1.125)) 1.0e-9) "climbed to z 1.125")
+      (let [w2 (try-move w1 0.0 -1.0)
+            p2 (:player w2)]
+        (is (< (php/abs (- (:y p2) 4.5)) 0.0001) "advanced onto the top step")
+        (is (< (php/abs (- (:floor-z p2) 1.5)) 1.0e-9) "climbed to z 1.5 (tier 2)")
+        (is (< (php/abs (- (:eye-z p2) 2.0)) 1.0e-9) "eye = floor + 0.5")))))
+
+(deftest test-l7-player-walks-down-the-staircase-to-tier-0
+  ;; Descending the lower run A: stand on its top step (cell 9,14 = tier 1,
+  ;; z 0.75) and walk SOUTH (dy +1) one cell at a time down to the bottom
+  ;; tier (cell 9,16 = z 0.0). Each downward move is accepted (a drop is
+  ;; never gated like a riser) and the target floor steps down 0.75 ->
+  ;; 0.375 -> 0.0, so the visible flight is walkable DOWN as well as up.
+  ;; tick-fall then settles the eye onto the bottom tier without overshoot.
+  (let [w0 (place-on-cell (build-world 7 5) 9 14)]
+    (is (< (php/abs (- (:floor-z (:player w0)) 0.75)) 1.0e-9) "stands on tier 1 top step")
+    (let [w1 (try-move w0 0.0 1.0)
+          p1 (:player w1)]
+      (is (< (php/abs (- (:y p1) 15.5)) 0.0001) "stepped down onto the mid step")
+      (let [w2 (try-move w1 0.0 1.0)
+            p2 (:player w2)]
+        (is (< (php/abs (- (:y p2) 16.5)) 0.0001) "stepped down onto the bottom tier")
+        ;; gravity eases the eye down onto the z-0.0 bottom floor, no overshoot.
+        (let [landed (tick-fall w2 10.0)]
+          (is (< (php/abs (- (:floor-z (:player landed)) 0.0)) 1.0e-9)
+              "settled on the bottom tier (z 0.0)"))))))
 
 (deftest test-l5-player-climbs-the-dais-ramp
   ;; Start on the flat ground south of the L5 dais (cell 14,14 = z0) and

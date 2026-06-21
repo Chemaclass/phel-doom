@@ -1,6 +1,6 @@
 (ns phel-doom-tests.core.level-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.level :refer [ammo-box-count armor-shard-count config-for heart-count num-levels build-world place-secret-reward secret-trophies l7-layout l7-floor-heights l6-layout l6-floor-heights])
+  (:require phel-doom.core.level :refer [ammo-box-count armor-shard-count config-for heart-count num-levels build-world place-secret-reward secret-trophies l7-layout l7-floor-heights l6-layout l6-floor-heights l8-layout l8-floor-heights])
   (:require phel-doom.core.map :refer [cell-wall cell-floor cell-door cell-door-yellow])
   (:require phel-doom.core.physics :refer [step-up-max])
   (:require phel-doom.core.rng :as rng))
@@ -1039,4 +1039,237 @@
     (is (contains? types :caco)    "caco ranged pressure present")
     (is (= 42 (count (first (:grid w)))) "42 wide")
     (is (= 26 (count (:grid w))) "26 tall")
+    (is (= 0 (count (:keycards w))) "no keycard spawned")))
+
+;; ---------------------------------------------------------------------
+;; L8 three-tier archvile court (#310). The archvile court became a grand
+;; 50x30 chamber: a wide southern court pit (the spawn floor) that climbs
+;; NORTH up two galleries to a throne band, split into three stacked tiers
+;; (z 0.0 / 0.75 / 1.5) by two solid divider rows (rows 11 and 5), each
+;; pierced by two stair mouths. Unlike L7's roughly-aligned runs, L8's
+;; lower and upper stairs sit at DIFFERENT columns, so reaching the throne
+;; means climbing a lower run, crossing the gallery, then climbing an upper
+;; run - a longer court ascent. A tier is reachable ONLY by walking up a
+;; run; the unlocked exit `D` sits on the court (bottom) tier so it is
+;; reachable with zero climbs.
+;; ---------------------------------------------------------------------
+
+(deftest test-l8-layout-is-exactly-50-wide-30-tall
+  ;; parse-row silently pads short rows -> a ragged grid corrupts geometry.
+  ;; Pin the footprint: every authored row is exactly 50 chars, 30 rows.
+  (is (= 30 (count l8-layout)) "30 rows")
+  (loop [y 0]
+    (when (php/< y (count l8-layout))
+      (is (= 50 (php/strlen (get l8-layout y)))
+          (str "row " y " is 50 chars"))
+      (recur (php/+ y 1)))))
+
+(deftest test-l8-spawn-and-exit-parse-to-the-court-floor
+  ;; Spawn @ at col 25 row 20 -> centre (25.5, 20.5); unlocked exit D at the
+  ;; east wall col 49 row 20, both on the open court (bottom) tier.
+  (let [w (build-world 8 5)]
+    (is (= 25.5 (:x (:player w))) "spawn x")
+    (is (= 20.5 (:y (:player w))) "spawn y")
+    (is (= cell-door (php/aget (php/aget (:grid w) 20) 49))
+        "unlocked exit door at [49 20]")))
+
+(deftest test-l8-divider-rows-are-wall-except-the-named-mouths
+  ;; Row 11 mouths: cols 10-16 + 33-39. Row 5 mouths: cols 14-20 + 29-35.
+  ;; Everywhere else on those two rows is solid divider wall.
+  (let [w        (build-world 8 5)
+        grid     (:grid w)
+        mouth11? (fn [x] (or (and (php/>= x 10) (php/<= x 16))
+                             (and (php/>= x 33) (php/<= x 39))))
+        mouth5?  (fn [x] (or (and (php/>= x 14) (php/<= x 20))
+                             (and (php/>= x 29) (php/<= x 35))))]
+    (loop [x 1]
+      (when (php/< x 49)
+        (let [c11 (php/aget (php/aget grid 11) x)
+              c5  (php/aget (php/aget grid 5) x)]
+          (if (mouth11? x)
+            (is (= cell-floor c11) (str "row 11 col " x " is a mouth (floor)"))
+            (is (= cell-wall c11)  (str "row 11 col " x " is divider wall")))
+          (if (mouth5? x)
+            (is (= cell-floor c5)  (str "row 5 col " x " is a mouth (floor)"))
+            (is (= cell-wall c5)   (str "row 5 col " x " is divider wall"))))
+        (recur (php/+ x 1))))))
+
+(deftest test-l8-tier-plateaus-sit-at-0-0_75-and-1_5
+  ;; The three plateaus: court (bottom) z 0.0, gallery z 0.75, throne z 1.5
+  ;; (two 0.375 steps per tier gap). Sample centre + corners of each.
+  (let [w (build-world 8 5)]
+    ;; tier 0 (court floor)
+    (is (= 0.0 (floor-h w 25 20)) "tier 0 spawn cell")
+    (is (= 0.0 (floor-h w 2 27))  "tier 0 SW")
+    (is (= 0.0 (floor-h w 48 13)) "tier 0 NE corner of court")
+    ;; tier 1 (gallery)
+    (is (< (php/abs (- (floor-h w 25 8) 0.75)) 1.0e-9) "tier 1 centre")
+    (is (< (php/abs (- (floor-h w 1 6)  0.75)) 1.0e-9) "tier 1 NW")
+    (is (< (php/abs (- (floor-h w 48 10) 0.75)) 1.0e-9) "tier 1 SE")
+    ;; tier 2 (throne)
+    (is (< (php/abs (- (floor-h w 25 2) 1.5)) 1.0e-9) "tier 2 centre")
+    (is (< (php/abs (- (floor-h w 1 1)  1.5)) 1.0e-9) "tier 2 NW")
+    (is (< (php/abs (- (floor-h w 48 4) 1.5)) 1.0e-9) "tier 2 SE")))
+
+(deftest test-l8-stair-cores-climb-one-0_375-step-each
+  ;; Each stair core climbs by exactly one 0.375 step per row (< step-up-max),
+  ;; landing continuous with the tier above; the flanks beside it drop back to
+  ;; the tier below. The runs climb NORTH, so the core y decreases as z rises.
+  (let [w (build-world 8 5)]
+    ;; Lower stair A (col 12), tier0 -> tier1, rows 11 -> 9.
+    (is (= 0.0 (floor-h w 12 11)) "A foot 0.0 (tier 0)")
+    (is (< (php/abs (- (floor-h w 12 10) 0.375)) 1.0e-9) "A step 0.375")
+    (is (< (php/abs (- (floor-h w 12 9) 0.75)) 1.0e-9) "A top 0.75 (== tier 1)")
+    (is (< (php/abs (- (- (floor-h w 12 10) (floor-h w 12 11)) 0.375)) 1.0e-9) "A rise 1 = 0.375")
+    (is (< (php/abs (- (- (floor-h w 12 9) (floor-h w 12 10)) 0.375)) 1.0e-9) "A rise 2 = 0.375")
+    ;; Lower stair B (col 35).
+    (is (= 0.0 (floor-h w 35 11)) "B foot 0.0")
+    (is (< (php/abs (- (floor-h w 35 10) 0.375)) 1.0e-9) "B step 0.375")
+    (is (< (php/abs (- (floor-h w 35 9) 0.75)) 1.0e-9) "B top 0.75")
+    ;; Upper stair C (col 16), tier1 -> tier2, rows 5 -> 3.
+    (is (< (php/abs (- (floor-h w 16 5) 0.75)) 1.0e-9) "C foot 0.75 (== tier 1)")
+    (is (< (php/abs (- (floor-h w 16 4) 1.125)) 1.0e-9) "C step 1.125")
+    (is (< (php/abs (- (floor-h w 16 3) 1.5)) 1.0e-9) "C top 1.5 (== tier 2)")
+    (is (< (php/abs (- (- (floor-h w 16 4) (floor-h w 16 5)) 0.375)) 1.0e-9) "C rise 1 = 0.375")
+    (is (< (php/abs (- (- (floor-h w 16 3) (floor-h w 16 4)) 0.375)) 1.0e-9) "C rise 2 = 0.375")
+    ;; Upper stair D (col 31).
+    (is (< (php/abs (- (floor-h w 31 5) 0.75)) 1.0e-9) "D foot 0.75")
+    (is (< (php/abs (- (floor-h w 31 4) 1.125)) 1.0e-9) "D step 1.125")
+    (is (< (php/abs (- (floor-h w 31 3) 1.5)) 1.0e-9) "D top 1.5")
+    ;; Open flanks beside the lower cores drop back to tier 0 (a 0.75 fall).
+    (is (= 0.0 (floor-h w 10 10)) "A west flank open (tier 0)")
+    (is (= 0.0 (floor-h w 14 10)) "A east flank open (tier 0)")
+    (is (= 0.0 (floor-h w 33 10)) "B west flank open (tier 0)")
+    (is (= 0.0 (floor-h w 37 10)) "B east flank open (tier 0)")
+    ;; Open flanks beside the upper cores drop back to tier 1 (a 0.75 fall).
+    (is (< (php/abs (- (floor-h w 14 4) 0.75)) 1.0e-9) "C west flank open (tier 1)")
+    (is (< (php/abs (- (floor-h w 18 4) 0.75)) 1.0e-9) "C east flank open (tier 1)")
+    (is (< (php/abs (- (floor-h w 29 4) 0.75)) 1.0e-9) "D west flank open (tier 1)")
+    (is (< (php/abs (- (floor-h w 33 4) 0.75)) 1.0e-9) "D east flank open (tier 1)")))
+
+(deftest test-l8-no-floor-height-cell-lands-on-a-wall
+  ;; Every authored floor-height cell must sit on a walkable floor cell; a
+  ;; height dropped onto a wall would be an invisible un-steppable lip.
+  (let [w    (build-world 8 5)
+        grid (:grid w)]
+    (doseq [k (keys l8-floor-heights)]
+      (let [x (get k 0)
+            y (get k 1)]
+        (is (not= cell-wall (php/aget (php/aget grid y) x))
+            (str "floor-height cell [" x " " y "] is not a wall"))))))
+
+(deftest test-l8-all-three-tiers-and-exit-reachable-from-spawn
+  ;; Stair-gated flood fill from spawn reaches every tier + the exit cell.
+  ;; The throne (tier 2) requires the offset-stair ascent (climb a lower
+  ;; run, cross the gallery, climb an upper run), so this also proves the
+  ;; mismatched stair columns still connect the whole court.
+  (let [w    (build-world 8 5)
+        seen (riser-reach w 25 20 {})]
+    (is (reach? seen 25 20) "tier 0 (court spawn) reachable")
+    (is (reach? seen 25 8)  "tier 1 gallery reachable via a lower stair")
+    (is (reach? seen 25 2)  "tier 2 throne reachable via the offset upper stair")
+    (is (reach? seen 49 20) "unlocked exit cell reachable across the court")))
+
+(deftest test-l8-exit-reachable-with-zero-climbs
+  ;; The exit sits on the court (bottom) tier; restricting moves to FLAT
+  ;; ground (block every cell whose floor is above 0.0) must still reach it.
+  (let [w      (build-world 8 5)
+        grid   (:grid w)
+        h      (count grid)
+        wbar   (count (first grid))
+        raised (loop [y 0 acc {}]
+                 (if (php/>= y h)
+                   acc
+                   (recur (php/+ y 1)
+                          (loop [x 0 a acc]
+                            (if (php/>= x wbar)
+                              a
+                              (recur (php/+ x 1)
+                                     (if (php/> (floor-h w x y) 1.0e-9)
+                                       (assoc a (str x "," y) true)
+                                       a)))))))
+        seen   (riser-reach w 25 20 raised)]
+    (is (reach? seen 49 20) "exit reached on flat ground only (zero climbs)")
+    (is (not (reach? seen 25 8)) "tier 1 not reachable on flat ground")))
+
+(deftest test-l8-tier1-reachable-only-through-its-stair-mouths
+  ;; Sealing BOTH row-11 mouths (cols 10-16 + 33-39) isolates tier 1 (and
+  ;; tier 2 above it) - the only way up is the lower stairs. The exit on the
+  ;; court tier stays reachable.
+  (let [w       (build-world 8 5)
+        blocked (merge (block-cols 11 10 16) (block-cols 11 33 39))
+        seen    (riser-reach w 25 20 blocked)]
+    (is (not (reach? seen 25 8)) "tier 1 unreachable with both lower mouths sealed")
+    (is (not (reach? seen 25 2)) "tier 2 unreachable too (it sits above tier 1)")
+    (is (reach? seen 49 20)      "exit still reachable on the court tier")
+    ;; Sealing only ONE mouth leaves tier 1 reachable via the other stair.
+    (let [one (block-cols 11 10 16)
+          s1  (riser-reach w 25 20 one)]
+      (is (reach? s1 25 8) "tier 1 still reachable via the un-sealed lower stair"))))
+
+(deftest test-l8-tier2-reachable-only-through-its-stair-mouths
+  ;; Sealing BOTH row-5 mouths (cols 14-20 + 29-35) isolates tier 2 while
+  ;; tier 1 stays reachable - the only way to the throne is the upper stairs.
+  (let [w       (build-world 8 5)
+        blocked (merge (block-cols 5 14 20) (block-cols 5 29 35))
+        seen    (riser-reach w 25 20 blocked)]
+    (is (not (reach? seen 25 2)) "tier 2 unreachable with both upper mouths sealed")
+    (is (reach? seen 25 8)       "tier 1 still reachable below the sealed dividers")
+    ;; Sealing only ONE upper mouth leaves tier 2 reachable via the other.
+    (let [one (block-cols 5 14 20)
+          s1  (riser-reach w 25 20 one)]
+      (is (reach? s1 25 2) "tier 2 still reachable via the un-sealed upper stair"))))
+
+(deftest test-l8-stair-run-is-walkable-up-and-down-cell-by-cell
+  ;; Walk a lower run (A) and an upper run (C) cell-by-cell and assert the
+  ;; floor z rises tier-by-tier (0 -> 0.375 -> 0.75 then 0.75 -> 1.125 ->
+  ;; 1.5) and falls back symmetrically - a visible-but-unclimbable staircase
+  ;; can never ship. Each adjacent rise is strictly within step-up-max (0.4)
+  ;; with NO epsilon fudge. The runs climb NORTH (core y decreasing).
+  (let [w          (build-world 8 5)
+        a-up       [(floor-h w 12 11) (floor-h w 12 10) (floor-h w 12 9)]
+        c-up       [(floor-h w 16 5)  (floor-h w 16 4)  (floor-h w 16 3)]
+        climbable? (fn [lo hi] (not (php/> (php/- hi lo) step-up-max)))]
+    ;; Ascending A: 0 -> 0.375 -> 0.75.
+    (is (< (php/abs (- (get a-up 0) 0.0)) 1.0e-9) "A bottom = 0.0")
+    (is (< (php/abs (- (get a-up 1) 0.375)) 1.0e-9) "A mid = 0.375")
+    (is (< (php/abs (- (get a-up 2) 0.75)) 1.0e-9) "A top = 0.75")
+    (is (php/< (get a-up 0) (get a-up 1)) "A rises 0->1")
+    (is (php/< (get a-up 1) (get a-up 2)) "A rises 1->2")
+    (is (climbable? (get a-up 0) (get a-up 1)) "A step 1 within auto-climb")
+    (is (climbable? (get a-up 1) (get a-up 2)) "A step 2 within auto-climb")
+    ;; Ascending C: 0.75 -> 1.125 -> 1.5.
+    (is (< (php/abs (- (get c-up 0) 0.75)) 1.0e-9) "C bottom = 0.75")
+    (is (< (php/abs (- (get c-up 1) 1.125)) 1.0e-9) "C mid = 1.125")
+    (is (< (php/abs (- (get c-up 2) 1.5)) 1.0e-9) "C top = 1.5")
+    (is (php/< (get c-up 0) (get c-up 1)) "C rises 0->1")
+    (is (php/< (get c-up 1) (get c-up 2)) "C rises 1->2")
+    (is (climbable? (get c-up 0) (get c-up 1)) "C step 1 within auto-climb")
+    (is (climbable? (get c-up 1) (get c-up 2)) "C step 2 within auto-climb")
+    ;; Descending is the same run reversed: every transition is a DROP (<=0).
+    (is (php/<= (php/- (get a-up 1) (get a-up 2)) 0.0) "A drop 2->1 is free (<=0)")
+    (is (php/<= (php/- (get a-up 0) (get a-up 1)) 0.0) "A drop 1->0 is free (<=0)")
+    (is (climbable? (get a-up 2) (get a-up 1)) "A descent 2->1 never gated")
+    (is (climbable? (get a-up 1) (get a-up 0)) "A descent 1->0 never gated")
+    (is (php/<= (php/- (get c-up 1) (get c-up 2)) 0.0) "C drop 2->1 is free (<=0)")
+    (is (php/<= (php/- (get c-up 0) (get c-up 1)) 0.0) "C drop 1->0 is free (<=0)")
+    (is (php/> (get a-up 2) (get a-up 0)) "A walks back down to tier 0")
+    (is (php/> (get c-up 2) (get c-up 0)) "C walks back down to tier 1")))
+
+(deftest test-l8-court-keeps-identity-and-loads
+  ;; The three-tier court rides on L8: still "archvile court" (name, primary
+  ;; enemy, chase) with the archvile + caco + mancubus mix, so the difficulty
+  ;; curve is unchanged. No keycard lock (procgen L8 had none). Footprint is
+  ;; the grand 50x30 (wider + taller than the L6 / L7 rooms).
+  (let [w     (build-world 8 5)
+        types (set (map :type (:enemies w)))]
+    (is (= "archvile court" (:level-name w)))
+    (is (= :archvile        (:enemy w)))
+    (is (= 1.9              (:chase-speed w)))
+    (is (nil? (:door-lock w)) "no keycard lock (unchanged from procgen L8)")
+    (is (contains? types :archvile) "archvile present")
+    (is (contains? types :caco)     "caco present")
+    (is (contains? types :mancubus) "mancubus present")
+    (is (= 50 (count (first (:grid w)))) "50 wide")
+    (is (= 30 (count (:grid w))) "30 tall")
     (is (= 0 (count (:keycards w))) "no keycard spawned")))

@@ -12,16 +12,16 @@
 | 4 | barons | random + blue lock | 3 barons + 3 demons |
 | 5 | cyberdemons | hand-authored verticality (central dais) + red lock | 5 cyberdemons + 2 imps |
 | 6 | spectres | hand-authored verticality (3-tier room, 4 open-sided stairs, east-west axis) | 4 spectres + 2 imps + 1 caco |
-| 7 | revenants | hand-authored verticality (3-tier room, 4 open-sided stairs) + yellow lock | 4 revenants + 2 demons + 1 baron |
-| 8 | archvile court | random mix | 2 archviles + 3 cacos + 2 mancubi |
+| 7 | revenants | hand-authored verticality (3-tier room, 4 open-sided stairs, north-south axis) + yellow lock | 4 revenants + 2 demons + 1 baron |
+| 8 | archvile court | hand-authored verticality (3-tier court, 4 open-sided stairs, offset runs) | 2 archviles + 3 cacos + 2 mancubi |
 | 9 | the brood | random mix | 3 pinkies + 3 barons + 2 mancubi |
 | 10 | the final | hand-authored boss arena | 1 cyberdemon boss (50 HP) + 2 imps (max 1 alive) |
 
 ## Catalog
 
-L1: single-type procgen tutorial (imps only). L2 / L3 / L5 / L6 / L7: hand-authored verticality (see [Verticality levels](#verticality-levels-floor-heights--ceil-heights) below) - L2 the showcase (staircase + raised platform + sunken pit), L3 a descending trench, L5 a central dais, L6 a spacious three-tier room stacked east-west, L7 a spacious three-tier room stacked north-south. L4 / L8 / L9: mixed-monster procgen (melee secondary salted per level). L10: hand-authored arena with secrets + switches.
+L1: single-type procgen tutorial (imps only). L2 / L3 / L5 / L6 / L7 / L8: hand-authored verticality (see [Verticality levels](#verticality-levels-floor-heights--ceil-heights) below) - L2 the showcase (staircase + raised platform + sunken pit), L3 a descending trench, L5 a central dais, L6 a spacious three-tier room stacked east-west, L7 a spacious three-tier room stacked north-south, L8 the grand three-tier court with offset stair runs. L4 / L9: mixed-monster procgen (melee secondary salted per level). L10: hand-authored arena with secrets + switches.
 
-Non-locked procgen levels seed up to 2 secret passages (see [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4) and hand-authored layouts (L2, L3, L5, L6, L7, L10) skip seeding to prevent keycard bypass and keep the authored geometry explicit.
+Non-locked procgen levels seed up to 2 secret passages (see [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4) and hand-authored layouts (L2, L3, L5, L6, L7, L8, L10) skip seeding to prevent keycard bypass and keep the authored geometry explicit.
 
 ```phel
 (def levels
@@ -156,6 +156,19 @@ The step rise is `0.375` (= 3/8) rather than `0.4`: it is exactly representable 
 | Upper stair D core | cols 29-31, rows 6 -> 4 | 0.75, 1.125, 1.5 |
 | Open stair flanks (fall-off sides) | beside each core | drop to the tier below |
 | West stair-C plateau lips (railed) | `l7-handrails` (10 edges) | step-off blocked |
+
+**L8 - three-tier archvile court, four open-sided stairs, offset runs (#310)** (`l8-floor-heights`), the largest multi-tier room: a grand flat 50x30 chamber. A wide southern court pit (the spawn floor) climbs NORTH up two galleries to a throne band, split into three stacked tiers by two solid divider rows (rows 11 and 5), each pierced by two stair mouths. Four three-cell-wide staircases with OPEN flanks connect the tiers: lower stairs A / B climb tier 0 -> tier 1 through the row-11 mouths (cols 10-16 + 33-39), upper stairs C / D climb tier 1 -> tier 2 through the row-5 mouths (cols 14-20 + 29-35). Unlike L7's roughly-aligned runs, L8's lower and upper stairs sit at DIFFERENT columns, so reaching the throne means climbing a lower run, crossing the gallery, then climbing an upper run - a longer court ascent. A tier is reachable ONLY by walking up a run. The unlocked exit `D` sits on the court (bottom) tier (east wall, row 20), reachable with zero climbs (L8 has no keycard). It reuses the same binary-exact 0.375 ladder as L7 (see the L7 note above). No railed lips (all four stair flanks are open fall-offs). No `:ceil-heights` (the room is open: flat 1.0 ceiling).
+
+| Feature | Cells | Height `z` |
+|---|---|---|
+| Tier 0 (court, spawn floor) | rows 12-28 | 0.0 (default) |
+| Tier 1 (gallery plateau) | rows 6-10 | 0.75 |
+| Tier 2 (throne plateau) | rows 1-4 | 1.5 |
+| Lower stair A core (climbs north) | cols 11-13, rows 11 -> 9 | 0.0, 0.375, 0.75 |
+| Lower stair B core | cols 34-36, rows 11 -> 9 | 0.0, 0.375, 0.75 |
+| Upper stair C core | cols 15-17, rows 5 -> 3 | 0.75, 1.125, 1.5 |
+| Upper stair D core | cols 30-32, rows 5 -> 3 | 0.75, 1.125, 1.5 |
+| Open stair flanks (fall-off sides) | beside each core | drop to the tier below |
 
 L1 stays flat (it is the golden-frame render fixture), and the catalog stays 10 levels with the boss arena last.
 

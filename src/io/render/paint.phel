@@ -96,45 +96,61 @@
 ;; =====================================================================
 
 (defn paint-crosshair
-  "Centre reticle glyph, style from the Crosshair setting (`+` cross /
+  "Aim reticle glyph, style from the Crosshair setting (`+` cross /
    `·` dot / `○` open / hidden when `:off`). Jumps one row up + brightens
    while :fire-anim > 0 so the recoil feels like a kick; a live hit-fx
    overrides the idle glyph with a `✗`/`×` hit-marker (even when `:off`).
 
-   FPS-aim guarantee (#246): the screen-centre crosshair IS the mouse
-   aim point (the OS pointer stays hidden), so when mouselook is ON
-   (`:mouse` true) the `:off` style still paints a minimal centre dot
-   `·` rather than leaving the player with no aim indicator. With the
-   mouse off, `:off` keeps hiding the idle reticle as before (the
-   hit-marker still flashes on a hit regardless).
+   Movable crosshair (#324): the reticle is drawn at the world's reticle
+   cell `(:aim-col, :aim-row)` (0-based viewport cells the player moved the
+   mouse to), so the `+` is the aim point wherever it points. When the
+   reticle is absent (`:aim-col` nil - mouse off / not yet placed) it falls
+   back to the FIXED screen centre `(vw/2 + 1, vh/2)`, byte-identical to the
+   pre-#324 centre crosshair, so keyboard-only / mouse-off frames are
+   unchanged. The firing one-row jump + the hit-marker apply at the reticle
+   position.
+
+   FPS-aim guarantee (#246): the crosshair IS the mouse aim point (the OS
+   pointer stays hidden / unlockable), so when the mouse is ON (`:mouse`
+   true) the `:off` style still paints a minimal dot `·` rather than leaving
+   the player with no aim indicator. With the mouse off, `:off` keeps hiding
+   the idle reticle as before (the hit-marker still flashes on a hit).
 
    `center-bg` is the SGR-only prefix of the cell currently under the
-   crosshair (the wall/door body shade at the centre column). Painting
-   the `+` on that BG keeps the cell's real colour visible underneath
-   instead of clobbering it with the terminal default."
+   reticle (the wall/door body shade at the reticle column). Painting the
+   `+` on that BG keeps the cell's real colour visible underneath instead of
+   clobbering it with the terminal default."
   [parts stats vw vh center-bg]
-  (let [firing? (php/> (or (get stats :fire-anim) 0.0) 0.0)
-        ch-row  (php/+ (php/intdiv vh 2) (if firing? 0 1))
-        ch-col  (php/+ (php/intdiv vw 2) 1)
+  (let [firing?  (php/> (or (get stats :fire-anim) 0.0) 0.0)
+        ;; Reticle cell (0-based) the mouse moved to, or the fixed centre
+        ;; when absent. Cursor coords are 1-based, so add 1. The non-firing
+        ;; idle row is `+1` over the projected centre (centre default
+        ;; `vh/2 + 1`); firing lifts it one row.
+        aim-col  (get stats :aim-col)
+        aim-row  (get stats :aim-row)
+        base-col (if (php/=== nil aim-col) (php/+ (php/intdiv vw 2) 1) (php/+ aim-col 1))
+        base-row (if (php/=== nil aim-row) (php/+ (php/intdiv vh 2) 1) (php/+ aim-row 1))
+        ch-col   base-col
+        ch-row   (php/- base-row (if firing? 1 0))
         ;; Hit-marker (issue #201): a live :hit-fx overrides the reticle
         ;; for its brief ttl - a bold-red ✗ confirms a kill, a bold-yellow
         ;; × confirms a wound. Single-shot feedback (it does not strobe).
-        hit-fx  (get stats :hit-fx)
-        hit?    (and hit-fx (php/> (or (:ttl hit-fx) 0.0) 0.0))
-        kill?   (and hit? (:kill? hit-fx))
+        hit-fx   (get stats :hit-fx)
+        hit?     (and hit-fx (php/> (or (:ttl hit-fx) 0.0) 0.0))
+        kill?    (and hit? (:kill? hit-fx))
         ;; Idle reticle glyph from the crosshair-style setting (#203);
         ;; :off normally draws nothing when idle (nil glyph). But while
         ;; mouselook is on the centre reticle IS the aim point, so :off
         ;; falls back to a minimal dot so the player always has an aim
         ;; indicator (#246). The hit-marker overrides regardless so a hit
         ;; always confirms.
-        mouse?  (boolean (get stats :mouse))
-        style   (or (get stats :crosshair) :cross)
-        idle    (cond (= style :dot)  "·"
-                      (= style :open) "○"
-                      (= style :off)  (if mouse? "·" nil)
-                      :else           "+")
-        glyph   (cond kill? "✗" hit? "×" :else idle)
+        mouse?   (boolean (get stats :mouse))
+        style    (or (get stats :crosshair) :cross)
+        idle     (cond (= style :dot)  "·"
+                       (= style :open) "○"
+                       (= style :off)  (if mouse? "·" nil)
+                       :else           "+")
+        glyph    (cond kill? "✗" hit? "×" :else idle)
         ;; Idle: bold bright-white (NOT the old faint `2`, which read as a
         ;; translucent smudge against the busy half-block floor). Firing:
         ;; bold bright-yellow as a muzzle-kick flash, paired with the
@@ -144,10 +160,10 @@
         ;; hit almost always lands on the same frame the muzzle flash is
         ;; up, so the two yellows never perceptibly collide - a kill (red)
         ;; is the only state that needs to stand apart.
-        ch-att  (cond kill?   "\e[91;1m"
-                      hit?    "\e[93;1m"
-                      firing? "\e[93;1m"
-                      :else   "\e[97;1m")]
+        ch-att   (cond kill?   "\e[91;1m"
+                       hit?    "\e[93;1m"
+                       firing? "\e[93;1m"
+                       :else   "\e[97;1m")]
     (when glyph
       (buf-push parts
                 (str "\e[" ch-row ";" ch-col "H" center-bg ch-att glyph "\e[0m"))))

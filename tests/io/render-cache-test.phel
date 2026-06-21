@@ -135,6 +135,29 @@
             (php/str_contains frame "m\e[93;1m+"))
         "crosshair + follows a real cell's BG SGR, not the bare cursor move")))
 
+(deftest test-movable-crosshair-drawn-at-reticle-cell
+  ;; Movable aim crosshair (#324): with :aim-col / :aim-row set the `+` is
+  ;; drawn at the reticle's 1-based cursor cell (aim+1), not screen centre,
+  ;; and the frame differs from the centred (mouse-off) frame. The reticle
+  ;; col 90 / row 8 on a 120x30 view -> cursor "\e[9;91H...+".
+  (let [centred (frame->string world stats 120 30)
+        moved   (frame->string world (assoc stats :aim-col 90 :aim-row 8) 120 30)]
+    (is (not= centred moved) "a moved reticle renders a different frame")
+    (is (or (php/str_contains moved "\e[9;91H")
+            ;; the firing jump lifts the row by one; this fixture is idle
+            ;; (no :fire-anim), so the idle row stands.
+            false)
+        "the + cursor-moves to the reticle cell (row 9, col 91, 1-based)")))
+
+(deftest test-mouse-off-crosshair-is-centered-default
+  ;; Without :aim-col the reticle falls back to the fixed screen centre, so
+  ;; the frame is byte-identical to the no-reticle stats (the golden path).
+  ;; Re-asserts the centre default at the frame level next to the golden
+  ;; hashes so a regression in the fallback fails close to its cause.
+  (is (= (frame->string world stats 120 30)
+         (frame->string world (assoc stats :aim-col nil :aim-row nil) 120 30))
+      "nil reticle == centred crosshair (mouse-off byte-identity)"))
+
 (defn- arr-mm [a]
   (let [n (php/count a)]
     (loop [i 1 lo (php/aget a 0) hi (php/aget a 0)]

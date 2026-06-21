@@ -168,22 +168,6 @@
    wraps this with a paused-frame cache short-circuit."
   [world ^int width ^int scale]
   (let [pgrid               (:pgrid world)
-        ;; Parallel per-cell floor heights (#232). nil-safe: a world
-        ;; built before #232 (or a fixture without :floor-pgrid) reads as
-        ;; the flat all-zero floor, so the step accumulator below never
-        ;; fires and the cast stays byte-identical.
-        floor-pgrid         (:floor-pgrid world)
-        player-floor-z      (or (:floor-z (:player world)) 0.0)
-        ;; Parallel per-cell ceiling heights (#235), the mirror of
-        ;; floor-pgrid. nil-safe: a world built before #235 (or a fixture
-        ;; without :ceil-pgrid) reads as the flat all-1.0 ceiling, so the
-        ;; ceiling accumulator below never fires and the cast stays
-        ;; byte-identical. `viewer-ceil-z` is the viewer's own ceiling
-        ;; (1.0 today, the top of a unit wall); a cell whose ceiling
-        ;; DROPS below it is a hanging ceiling / low tunnel that the
-        ;; renderer paints from the top.
-        ceil-pgrid          (:ceil-pgrid world)
-        viewer-ceil-z       (or (:ceil-z (:player world)) 1.0)
         {:keys [x y angle]} (:player world)
         tables              (offset-tables-for width)
         offsets             (:offsets tables)
@@ -195,203 +179,66 @@
         hys                 (php/array)
         wallxs              (php/array)
         floordxs            (php/array)
-        floordys            (php/array)
-        ;; Step riser side-channel (#232), 5 parallel arrays per output
-        ;; column. nil sentinel in :step-dists marks "no riser crossed";
-        ;; every render branch keys off that, so a flat world leaves them
-        ;; all-nil and paints nothing new.
-        step-dists          (php/array)
-        step-fzs            (php/array)
-        step-hxs            (php/array)
-        step-hys            (php/array)
-        step-sides          (php/array)
-        ;; SECOND riser side-channel (#322): the next floor-height step
-        ;; ABOVE the first riser along the ray (the second tread of a stair
-        ;; run). L7/L6 runs are two 0.375 steps between adjacent tiers, and
-        ;; from any standing position a sightline crosses at most ~2-3 risers
-        ;; before a wall, so tracking the nearest TWO turns a run from "one
-        ;; step + flat" into a legible ascending staircase. Same nil-sentinel
-        ;; contract + 5 parallel arrays as the first riser; a flat world (and
-        ;; a run with only one step) leaves them all-nil so render stays dead
-        ;; and the golden hashes hold. Allocation-equivalent: a fixed +5
-        ;; arrays per cast (constant, not per-column), and the DDA fold gains
-        ;; ONE more accumulator slot (no per-column list churn, still one
-        ;; closure).
-        step2-dists         (php/array)
-        step2-fzs           (php/array)
-        step2-hxs           (php/array)
-        step2-hys           (php/array)
-        step2-sides         (php/array)
-        ;; Ceiling-drop side-channel (#235), 3 parallel arrays per output
-        ;; column. nil sentinel in :ceil-dists marks "no ceiling drop
-        ;; crossed"; every render branch keys off that, so a flat ceiling
-        ;; (all 1.0) leaves them all-nil and paints nothing new.
-        ceil-dists          (php/array)
-        ceil-czs            (php/array)
-        ceil-sides          (php/array)]
+        floordys            (php/array)]
      ;; DDA traversal is inlined: avoids one fn call per column AND
      ;; replaces the per-ray Phel-vector `[d h side hx hy]` return
      ;; with a cheap `php/array` so the hot loop allocates a plain
      ;; PHP array per ray instead of a persistent vector.
     (loop [col 0]
       (when (php/< col width)
-        (let [a         (php/+ angle (php/aget offsets col))
-              dirx      (php/cos a)
-              diry      (php/sin a)
-              stepx     (if (php/< dirx 0.0) -1 1)
-              stepy     (if (php/< diry 0.0) -1 1)
-              deltax    (if (php/=== dirx 0.0) dda-inf (php/abs (php// 1.0 dirx)))
-              deltay    (if (php/=== diry 0.0) dda-inf (php/abs (php// 1.0 diry)))
-              cx0       (php/intval (php/floor x))
-              cy0       (php/intval (php/floor y))
-              sidex0    (if (php/< dirx 0.0)
-                          (php/* (php/- x cx0) deltax)
-                          (php/* (php/- (php/+ cx0 1.0) x) deltax))
-              sidey0    (if (php/< diry 0.0)
-                          (php/* (php/- y cy0) deltay)
-                          (php/* (php/- (php/+ cy0 1.0) y) deltay))
-              ;; DDA march. `step-acc` accumulates the FIRST crossed floor
-              ;; cell whose floor height rises above the player's own floor
-              ;; (#232): nil until then, thereafter a php/array
-              ;; `[dist fh side cx cy]` pinned at that first riser. Once
-              ;; set it sticks (the nearest riser occludes farther ones).
-              ;; The `:else` floor-step arm reads the cell's height through
-              ;; a `let` (statement position - the cond-arm BODY, exactly
-              ;; like the existing wall `let [cx' dist hit]`), then folds the
-              ;; new accumulator into the `recur` arg as nested `if` (never
-              ;; `and`, never a binding VALUE). Both stay off the closure
-              ;; tax: the whole loop still compiles to the single `hit-arr`
-              ;; closure, no new ones (verify by diffing out/ do-cast). The
-              ;; flat all-zero floor never trips `(> fh player-floor-z)`, so
-              ;; the accumulator stays nil and the loop is allocation-
-              ;; equivalent to pre-#232.
-              ;;
-              ;; `ceil-acc` is the symmetric ceiling accumulator (#235):
-              ;; the FIRST crossed cell whose ceiling DROPS below the
-              ;; viewer's ceiling (a hanging ceiling / low tunnel), nil
-              ;; until then, thereafter `[dist ch side cx cy]` pinned at
-              ;; that first drop. Folded in the exact same nested-`if`
-              ;; tail-position style as `step-acc` (no `and`, no binding
-              ;; VALUE), reading the cell's ceiling height through the
-              ;; same `let` already present for the floor height, so the
-              ;; loop still compiles to the single `hit-arr` closure with
-              ;; no new ones. The flat all-1.0 ceiling never trips
-              ;; `(< ch viewer-ceil-z)`, so `ceil-acc` stays nil and the
-              ;; cast is allocation-equivalent to pre-#235.
-              hit-arr   (loop [cx cx0 cy cy0 sidex sidex0 sidey sidey0 step-acc nil ceil-acc nil step-acc2 nil]
-                          (if (php/< sidex sidey)
-                            (let [cx'  (php/+ cx stepx)
-                                  dist sidex
-                                  hit  (cell-at pgrid cx' cy)]
-                              (cond
-                                (php/> dist max-depth) (php/array max-depth 0 0 cx' cy step-acc ceil-acc step-acc2)
-                                (php/!== 0 hit)        (php/array dist hit 0 cx' cy step-acc ceil-acc step-acc2)
-                                :else
-                                (let [row  (if (php/=== nil floor-pgrid) nil (php/aget floor-pgrid cy))
-                                      fh   (if (php/=== nil row) player-floor-z (php/aget row cx'))
-                                      crow (if (php/=== nil ceil-pgrid) nil (php/aget ceil-pgrid cy))
-                                      ch   (if (php/=== nil crow) viewer-ceil-z (php/aget crow cx'))]
-                                  (recur cx' cy (php/+ sidex deltax) sidey
-                                         (if (php/=== nil step-acc)
-                                           (if (php/> fh player-floor-z) (php/array dist fh 0 cx' cy) nil)
-                                           step-acc)
-                                         (if (php/=== nil ceil-acc)
-                                           (if (php/< ch viewer-ceil-z) (php/array dist ch 0 cx' cy) nil)
-                                           ceil-acc)
-                                        ;; Second riser: the first cell PAST the
-                                        ;; first riser whose floor steps higher
-                                        ;; still (the next tread up). nil until
-                                        ;; the first riser is pinned, then nil
-                                        ;; until a strictly-higher floor appears,
-                                        ;; then it sticks. One nested-if in tail
-                                        ;; position (no `and`, no binding value),
-                                        ;; so the loop stays one closure.
-                                         (if (php/=== nil step-acc)
-                                           nil
-                                           (if (php/=== nil step-acc2)
-                                             (if (php/> fh (php/aget step-acc 1)) (php/array dist fh 0 cx' cy) nil)
-                                             step-acc2))))))
-                            (let [cy'  (php/+ cy stepy)
-                                  dist sidey
-                                  hit  (cell-at pgrid cx cy')]
-                              (cond
-                                (php/> dist max-depth) (php/array max-depth 0 1 cx cy' step-acc ceil-acc step-acc2)
-                                (php/!== 0 hit)        (php/array dist hit 1 cx cy' step-acc ceil-acc step-acc2)
-                                :else
-                                (let [row  (if (php/=== nil floor-pgrid) nil (php/aget floor-pgrid cy'))
-                                      fh   (if (php/=== nil row) player-floor-z (php/aget row cx))
-                                      crow (if (php/=== nil ceil-pgrid) nil (php/aget ceil-pgrid cy'))
-                                      ch   (if (php/=== nil crow) viewer-ceil-z (php/aget crow cx))]
-                                  (recur cx cy' sidex (php/+ sidey deltay)
-                                         (if (php/=== nil step-acc)
-                                           (if (php/> fh player-floor-z) (php/array dist fh 1 cx cy') nil)
-                                           step-acc)
-                                         (if (php/=== nil ceil-acc)
-                                           (if (php/< ch viewer-ceil-z) (php/array dist ch 1 cx cy') nil)
-                                           ceil-acc)
-                                         (if (php/=== nil step-acc)
-                                           nil
-                                           (if (php/=== nil step-acc2)
-                                             (if (php/> fh (php/aget step-acc 1)) (php/array dist fh 1 cx cy') nil)
-                                             step-acc2))))))))
-              rawd      (php/aget hit-arr 0)
-              d-corr    (php/* rawd (php/aget cos-offs col))
-              h         (php/aget hit-arr 1)
-              side      (php/aget hit-arr 2)
-              hx        (php/aget hit-arr 3)
-              hy        (php/aget hit-arr 4)
+        (let [a       (php/+ angle (php/aget offsets col))
+              dirx    (php/cos a)
+              diry    (php/sin a)
+              stepx   (if (php/< dirx 0.0) -1 1)
+              stepy   (if (php/< diry 0.0) -1 1)
+              deltax  (if (php/=== dirx 0.0) dda-inf (php/abs (php// 1.0 dirx)))
+              deltay  (if (php/=== diry 0.0) dda-inf (php/abs (php// 1.0 diry)))
+              cx0     (php/intval (php/floor x))
+              cy0     (php/intval (php/floor y))
+              sidex0  (if (php/< dirx 0.0)
+                        (php/* (php/- x cx0) deltax)
+                        (php/* (php/- (php/+ cx0 1.0) x) deltax))
+              sidey0  (if (php/< diry 0.0)
+                        (php/* (php/- y cy0) deltay)
+                        (php/* (php/- (php/+ cy0 1.0) y) deltay))
+              hit-arr (loop [cx cx0 cy cy0 sidex sidex0 sidey sidey0]
+                        (if (php/< sidex sidey)
+                          (let [cx'  (php/+ cx stepx)
+                                dist sidex
+                                hit  (cell-at pgrid cx' cy)]
+                            (cond
+                              (php/> dist max-depth) (php/array max-depth 0 0 cx' cy)
+                              (php/!== 0 hit)        (php/array dist hit 0 cx' cy)
+                              :else                  (recur cx' cy (php/+ sidex deltax) sidey)))
+                          (let [cy'  (php/+ cy stepy)
+                                dist sidey
+                                hit  (cell-at pgrid cx cy')]
+                            (cond
+                              (php/> dist max-depth) (php/array max-depth 0 1 cx cy')
+                              (php/!== 0 hit)        (php/array dist hit 1 cx cy')
+                              :else                  (recur cx cy' sidex (php/+ sidey deltay))))))
+              rawd    (php/aget hit-arr 0)
+              d-corr  (php/* rawd (php/aget cos-offs col))
+              h       (php/aget hit-arr 1)
+              side    (php/aget hit-arr 2)
+              hx      (php/aget hit-arr 3)
+              hy      (php/aget hit-arr 4)
               ;; Texture U: fractional position along the wall face where
               ;; the ray hit. Vertical face (side 0) → frac of world-y at
               ;; the hit; horizontal face (side 1) → frac of world-x.
               ;; Uses the raw (perpendicular) side distance, not the
               ;; fish-eye-corrected one. In [0, 1) → texture column.
-              wallx     (if (php/=== side 0)
-                          (let [wy (php/+ y (php/* rawd diry))] (php/- wy (php/floor wy)))
-                          (let [wx (php/+ x (php/* rawd dirx))] (php/- wx (php/floor wx))))
+              wallx   (if (php/=== side 0)
+                        (let [wy (php/+ y (php/* rawd diry))] (php/- wy (php/floor wy)))
+                        (let [wx (php/+ x (php/* rawd dirx))] (php/- wx (php/floor wx))))
               ;; Floor-cast basis for this column: the ray direction
               ;; divided by cos(offset). A floor cell at perpendicular
               ;; distance `dperp` (a per-ROW constant the renderer knows)
               ;; sits at world `player + dperp * (floordx, floordy)`, so
               ;; the renderer needs no per-cell trig — just two mul-adds.
-              inv-cos   (php// 1.0 (php/aget cos-offs col))
-              floordx   (php/* dirx inv-cos)
-              floordy   (php/* diry inv-cos)
-              ;; Unpack the first-riser accumulator (#232), index 5 of the
-              ;; terminal hit array. nil sentinel = no step crossed; the
-              ;; per-cell `if`s below are all pure expressions (no `let`/
-              ;; `and` in a binding value), so the closure-free contract
-              ;; holds. step-d is fisheye-corrected (raw side-distance ×
-              ;; cos-offset) just like the wall dist, so the riser projects
-              ;; on the same forward axis with no barrel bow.
-              step-hit  (php/aget hit-arr 5)
-              s-rawd    (if (php/=== nil step-hit) nil (php/aget step-hit 0))
-              step-d    (if (php/=== nil step-hit) nil (php/* s-rawd (php/aget cos-offs col)))
-              step-fz   (if (php/=== nil step-hit) nil (php/aget step-hit 1))
-              step-sd   (if (php/=== nil step-hit) nil (php/aget step-hit 2))
-              step-hx   (if (php/=== nil step-hit) nil (php/aget step-hit 3))
-              step-hy   (if (php/=== nil step-hit) nil (php/aget step-hit 4))
-              ;; Unpack the first ceiling-drop accumulator (#235), index 6
-              ;; of the terminal hit array. nil sentinel = no drop crossed.
-              ;; Pure `if` expressions only (no `let`/`and` in a binding
-              ;; value), so the closure-free contract holds. ceil-d is
-              ;; fisheye-corrected just like the wall + step distances, so
-              ;; the hanging ceiling projects on the same forward axis.
-              ceil-hit  (php/aget hit-arr 6)
-              c-rawd    (if (php/=== nil ceil-hit) nil (php/aget ceil-hit 0))
-              ceil-d    (if (php/=== nil ceil-hit) nil (php/* c-rawd (php/aget cos-offs col)))
-              ceil-cz   (if (php/=== nil ceil-hit) nil (php/aget ceil-hit 1))
-              ceil-sd   (if (php/=== nil ceil-hit) nil (php/aget ceil-hit 2))
-              ;; Unpack the second-riser accumulator (#322), index 7 of the
-              ;; terminal hit array. nil sentinel = no second tread crossed
-              ;; (flat world, or a run with a single step). Same pure-`if`
-              ;; fisheye-corrected unpack as the first riser.
-              step2-hit (php/aget hit-arr 7)
-              s2-rawd   (if (php/=== nil step2-hit) nil (php/aget step2-hit 0))
-              step2-d   (if (php/=== nil step2-hit) nil (php/* s2-rawd (php/aget cos-offs col)))
-              step2-fz  (if (php/=== nil step2-hit) nil (php/aget step2-hit 1))
-              step2-sd  (if (php/=== nil step2-hit) nil (php/aget step2-hit 2))
-              step2-hx  (if (php/=== nil step2-hit) nil (php/aget step2-hit 3))
-              step2-hy  (if (php/=== nil step2-hit) nil (php/aget step2-hit 4))]
+              inv-cos (php// 1.0 (php/aget cos-offs col))
+              floordx (php/* dirx inv-cos)
+              floordy (php/* diry inv-cos)]
            ;; Replicate this sample across the next `scale` output
            ;; columns. `scale` is 1 today (crisp 1:1 walls everywhere),
            ;; so this fills exactly one cell; the loop keeps the
@@ -411,33 +258,10 @@
               (php/aset wallxs c wallx)
               (php/aset floordxs c floordx)
               (php/aset floordys c floordy)
-              (php/aset step-dists c step-d)
-              (php/aset step-fzs c step-fz)
-              (php/aset step-sides c step-sd)
-              (php/aset step-hxs c step-hx)
-              (php/aset step-hys c step-hy)
-              (php/aset ceil-dists c ceil-d)
-              (php/aset ceil-czs c ceil-cz)
-              (php/aset ceil-sides c ceil-sd)
-              (php/aset step2-dists c step2-d)
-              (php/aset step2-fzs c step2-fz)
-              (php/aset step2-sides c step2-sd)
-              (php/aset step2-hxs c step2-hx)
-              (php/aset step2-hys c step2-hy)
               (recur (php/+ c 1) (php/+ fill 1))))
           (recur (php/+ col scale)))))
-    ;; Additive contract (#232/#235/#322): all pre-existing keys stay; the 5
-    ;; :step-* arrays (#232), 3 :ceil-* arrays (#235), and 5 :step2-* arrays
-    ;; (#322) are appended. Each holds nil per column when no riser / second
-    ;; riser / ceiling drop was crossed, so the renderer's step + ceiling
-    ;; branches stay dead on a flat world and the frame is byte-identical.
     {:dists dists :hits hits :sides sides :hxs hxs :hys hys :wallxs wallxs
-     :floordxs floordxs :floordys floordys
-     :step-dists step-dists :step-fzs step-fzs :step-sides step-sides
-     :step-hxs step-hxs :step-hys step-hys
-     :step2-dists step2-dists :step2-fzs step2-fzs :step2-sides step2-sides
-     :step2-hxs step2-hxs :step2-hys step2-hys
-     :ceil-dists ceil-dists :ceil-czs ceil-czs :ceil-sides ceil-sides}))
+     :floordxs floordxs :floordys floordys}))
 
 (def visit-radius
   "Square radius (cells) around the player scanned each frame for
@@ -562,36 +386,6 @@
            :hys    integer y coord of the hit cell
            :wallxs wall-hit fraction (texture U) in [0, 1)
            :floordxs/:floordys floor-cast basis (ray dir / cos offset)
-
-         Per-cell floor heights (#232) append 5 more parallel arrays,
-         each nil per column when the ray crossed no raised floor:
-           :step-dists fish-eye corrected distance to the FIRST riser
-                       (a floor cell taller than the player's own floor)
-           :step-fzs   that cell's floor height (world z)
-           :step-sides 0/1 face of the crossed riser boundary (EW shading)
-           :step-hxs/:step-hys integer coords of the riser cell
-
-         The SECOND riser (#322) appends 5 more parallel arrays, each nil
-         when the ray crossed at most one riser (flat world, or a stair run
-         with a single step). This is the next tread UP the staircase past
-         the first riser, so a multi-step run reads as ascending steps
-         rather than one step plus flat ground:
-           :step2-dists fish-eye corrected distance to the SECOND riser
-                        (the first floor cell taller than the first riser)
-           :step2-fzs   that cell's floor height (world z)
-           :step2-sides 0/1 face of the crossed boundary (EW shading)
-           :step2-hxs/:step2-hys integer coords of the second riser cell
-
-         Per-cell ceiling heights (#235) append 3 more parallel arrays,
-         each nil per column when the ray crossed no ceiling drop:
-           :ceil-dists fish-eye corrected distance to the FIRST ceiling
-                       that drops below the viewer's ceiling (a hanging
-                       ceiling / low tunnel)
-           :ceil-czs   that cell's ceiling height (world z)
-           :ceil-sides 0/1 face of the crossed ceiling boundary (EW shading)
-         The contract is additive: a flat (all-zero floor / all-1.0
-         ceiling) world leaves every :step-* and :ceil-* entry nil, so
-         consumers that ignore them are unaffected.
 
          `scale` controls the ray-replication factor (see `do-cast`).
 

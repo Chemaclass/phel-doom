@@ -238,7 +238,7 @@ Kept as-is (deliberate, not a random blink):
 - Single-shot feedback - the directional `paint-hit-vignette`, the kill flash, the `paint-empty-click` CLICK prompt, and the crosshair hit-marker (`paint-crosshair` swaps the `+` for a `✗`/`×` while `stats[:hit-fx]` is live, see [combat.md](combat.md)). These are one-shot confirmations of an event, not ambient strobes.
 - Interactive-pickup throb (hearts/ammo/spheres/keycards/etc.) - a gentle two-shade glow that draws the eye to an item, not an on/off blink.
 
-The `:reduced-motion` Settings toggle (and `PHEL_DOOM_REDUCED_MOTION=1`) still persists and is shown in the menu, but no longer needs to gate any render branch - the calm behaviour above is unconditional. All of this is a once-per-frame overlay branch, so the per-cell hot loop is untouched.
+The calm behaviour above is the default for everyone and gates no render branch. All of this is a once-per-frame overlay branch, so the per-cell hot loop is untouched.
 
 ## Accessibility: colorblind palettes
 

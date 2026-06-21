@@ -40,7 +40,6 @@
                       (core/adjust :timer 1)          ; -> true
                       (core/adjust :mouse 1)          ; on -> off (#246)
                       (core/adjust :sensitivity 3)    ; 50 -> 80 (#246)
-                      (core/adjust :reduced-motion 1) ; -> true
                       (core/adjust :high-contrast 1)  ; -> true
                       (core/adjust :colorblind 1))]   ; none -> deuteran
        (save-settings! custom)
@@ -53,7 +52,6 @@
          (is (= (:timer custom)          (:timer loaded))          "timer")
          (is (= (:mouse custom)          (:mouse loaded))          "mouse")
          (is (= (:sensitivity custom)    (:sensitivity loaded))    "sensitivity")
-         (is (= (:reduced-motion custom) (:reduced-motion loaded)) "reduced-motion")
          (is (= (:high-contrast custom)  (:high-contrast loaded))  "high-contrast")
          (is (= (:colorblind custom)     (:colorblind loaded))     "colorblind"))))))
 
@@ -85,3 +83,22 @@
        (is (= :cross  (:crosshair loaded)))
        (is (= :none   (:colorblind loaded)))
        (is (= :normal (:difficulty loaded)))))))
+
+(deftest test-old-file-with-dropped-reduced-motion-key-loads-clean
+  (with-temp-home
+   (fn []
+      ;; A settings file written before reduced-motion was removed still
+      ;; carries the now-unknown key. The whitelisting loader must ignore
+      ;; it (no crash) and leave it out of the loaded map.
+     (let [path (str (php/getenv "HOME") "/.phel-doom-settings.json")]
+       (php/file_put_contents
+        path
+        (php/json_encode
+         (let [a (php/array)]
+           (php/aset a "music" 80)
+           (php/aset a "reduced-motion" true)
+           a))))
+     (let [loaded (load-settings)]
+       (is (= 80 (:music loaded)) "known keys still load")
+       (is (not (contains? loaded :reduced-motion))
+           "the dropped key is gone from the loaded map")))))

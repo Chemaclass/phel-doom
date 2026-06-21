@@ -28,6 +28,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 ### Removed
 
 - Removed three decorative horror effects that flashed without carrying information, for a calmer 3D view: the lights-flicker overlay (dark scanlines), the blinking door-eye (hardware-blink red `ʘ`), and the jump-scare face flash (hardware-blink skull), plus their dead state and physics drivers (`tick-flicker`, `tick-door-face`).
+- Removed the `Reduced motion` setting: it became a no-op once the calm 3D view shipped as the default, so the toggle, the persisted `:reduced-motion` key and the `PHEL_DOOM_REDUCED_MOTION` env var are gone. Loading an old settings file that still carries the key is harmless (the unknown key is ignored).
 
 ### Fixed
 

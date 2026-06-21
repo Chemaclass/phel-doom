@@ -9,7 +9,7 @@
   (:require phel-doom.io.render.hud :refer [minimap-door-pulse minimap-rows minimap-frame hud-debug-line hud-line-str help-menu-string settings-menu-string pause-menu-string])
   (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-reload-ready paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-weapon-hud paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
-  (:require phel-doom.core.projection :refer [char-aspect wall-px pitch-rows project-height])
+  (:require phel-doom.core.projection :refer [char-aspect wall-px pitch-rows project-height sprite-feet-row])
   (:require phel-doom.core.perf :refer [render-scale])
   (:require phel-doom.core.format :refer [format-duration])
   (:require phel-doom.core.version :refer [version]))
@@ -1166,16 +1166,15 @@
         mini-row-lo                        (if map-shown? (php/max 0 (php/- map-row 2)) vh)
         mini-row-hi                        (if map-shown? (php/- (php/+ map-row visible-mh) 1) -1)]
     (doseq [proj enemy-projs]
-      (let [col       (if px2? (php/intdiv (:col proj) 2) (:col proj))
-            hw        (if px2? (php/max 1 (php/intdiv (:half-width proj) 2)) (:half-width proj))
-            d         (:dist proj)
-            dmg       (or (:damage-ratio proj) 0.0)
-            sc        (or (:scale proj) 1.0)
-            ;; #234: vertical lift so the sprite stands on its cell floor.
-            ;; :floor-offset is rows at full proj-dist, so halve it in px2
-            ;; exactly like :col / :half-width above. 0 on flat ground.
-            floor-off (let [fo (or (:floor-offset proj) 0)]
-                        (if px2? (php/intdiv fo 2) fo))]
+      (let [col (if px2? (php/intdiv (:col proj) 2) (:col proj))
+            hw  (if px2? (php/max 1 (php/intdiv (:half-width proj) 2)) (:half-width proj))
+            d   (:dist proj)
+            dmg (or (:damage-ratio proj) 0.0)
+            sc  (or (:scale proj) 1.0)
+            ;; #297: raw cell floor height; `sprite-feet-row` folds the
+            ;; raise into the projection so the feet land on the platform.
+            ;; 0 on flat ground -> projects the z=0 floor row.
+            fz  (or (:fz proj) 0.0)]
         (let [;; `sc` scales the sprite vertically in lockstep with
                    ;; :half-width so bosses (cyber, sc=2.0) stay
                    ;; proportional instead of stretching wide-but-flat.
@@ -1227,7 +1226,14 @@
                    ;; darkening) rather than level 8 (65%), keeping its
                    ;; shading bands visible against dark stone.
               sfade     (php/aget sprite-fade (sprite-fade-index body-fade))]
-          (let [e-top (php/- (php/+ (php/intdiv (php/- svh h) 2) pr) floor-off)]
+          ;; #297: anchor the billboard by its FEET on the projected floor
+          ;; (`sprite-feet-row`), then draw the body UPWARD by `h`. The cell
+          ;; floor height `fz` is folded into the projection, so a raised
+          ;; cell (L5 dais, L7 ledge) stands ON its platform without the
+          ;; separate `floor-off` term. `scene-pd` is halved in px2 mode, so
+          ;; the projection scales there automatically (no `intdiv fo 2`).
+          (let [feet-row (sprite-feet-row scene-pd svh d eye-z fz pr)
+                e-top    (php/- feet-row h)]
             (let [e-bot         (php/+ e-top h)
                   e-mid         (php/+ e-top (php/intdiv h 3))
                   e-lower       (php/+ e-top (php/intdiv (php/* h 2) 3))
@@ -1320,21 +1326,16 @@
     ;; silhouette, so a painted shadow under them just muddies the sprite.
     (when (not sprites-on)
       (doseq [proj enemy-projs]
-        (let [col       (if px2? (php/intdiv (:col proj) 2) (:col proj))
-              hw        (if px2? (php/max 1 (php/intdiv (:half-width proj) 2)) (:half-width proj))
-              d         (:dist proj)
-              sc        (or (:scale proj) 1.0)
-              h         (php/min svh (php/intval (php/* sc
-                                                        (php// scene-pd
-                                                               (php/* (php/max 0.5 d) char-aspect)))))
-              ;; #234: lift the grounding shadow by the same cell-floor
-              ;; offset the sprite uses so shadow + sprite rise together
-              ;; (halved in px2, matching the zone pass). 0 on flat ground.
-              floor-off (let [fo (or (:floor-offset proj) 0)]
-                          (if px2? (php/intdiv fo 2) fo))
-              e-bot     (php/- (php/+ (php/intdiv (php/- svh h) 2) pr h) floor-off)
-              c-from    (php/max 0 (php/- col hw))
-              c-to      (php/min (php/- svw 1) (php/+ col hw))]
+        (let [col    (if px2? (php/intdiv (:col proj) 2) (:col proj))
+              hw     (if px2? (php/max 1 (php/intdiv (:half-width proj) 2)) (:half-width proj))
+              d      (:dist proj)
+              fz     (or (:fz proj) 0.0)
+              ;; #297: the shadow sits on the SAME feet row the zone pass
+              ;; anchors the sprite to (`sprite-feet-row`), so shadow + feet
+              ;; track together on flat ground and on a raised cell.
+              e-bot  (sprite-feet-row scene-pd svh d eye-z fz pr)
+              c-from (php/max 0 (php/- col hw))
+              c-to   (php/min (php/- svw 1) (php/+ col hw))]
           (when (php/< e-bot svh)
             (loop [c c-from]
               (when (php/<= c c-to)

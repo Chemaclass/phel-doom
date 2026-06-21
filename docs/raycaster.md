@@ -119,10 +119,13 @@ Edge rays travel further than central rays to reach the same wall plane. Multipl
                                    ; z lands
 (pitch-rows pitch vh)              ; integer horizon shear (scene rows) for
                                    ; a look up/down fraction
+(sprite-feet-row pd svh dist       ; integer screen row where an enemy's
+                 eye-z fz pr)      ; FEET stand (the projected cell floor)
 ```
 
 - `wall-px num dist` = `num / ((max 0.3 dist) * char-aspect)`. `num` is `proj-dist` for a one-unit wall, or `n * proj-dist` for an n-sub-row half-block slice. The 0.3 floor stops a surface in the player's own cell projecting to an infinite slice. Both the cell-resolution wall path (`compute-wall-shades`) and the half-block sub-pixel path (`build-wall-sub-bounds`) call it, so they agree to the last bit.
 - `project-height pd vh dist eye-z z` = `vh/2 - (z - eye-z) * (wall-px pd dist)`. The horizon (z = eye-z) sits at `vh/2`; points above the eye rise, below sink. Today's flat wall is the special case `eye-z = 0.5` with `z = 1` (top) and `z = 0` (bottom). Variable heights pass other `z`; jump/crouch pass other `eye-z`.
+- `sprite-feet-row pd svh dist eye-z fz pr` = `round(project-height pd svh dist eye-z fz) + pr`. The screen row where an enemy billboard's FEET stand: the projection of its cell floor surface (world height `fz`) plus the pitch shear. On flat ground (`fz = 0`, `eye-z = 0.5`) this is the same row the floor texture meets the wall, so the sprite stands ON the floor. `project-height` at `z = fz` already folds in the raised floor, so callers must NOT also subtract a separate floor offset (doing so double-counts the lift). See "Sprite anchoring" below.
 - `char-aspect` (2.0) lives here too, as the canonical projection constant alongside `proj-dist`, so the kernel stays pure `core/` with no `io/` dependency.
 
 ## Look up/down (pitch): horizon shear
@@ -135,9 +138,33 @@ Looking up/down is a pure **vertical shear of the horizon**, not a re-projection
 - the sub-row seam bounds in `build-wall-sub-bounds` (`+ pr*n`, n sub-rows per scene cell)
 - the floor-cast distance tables `build-floor-dperp` / `build-floor-dperp-sub` (horizon `vh/2 + pr`, sub-row `vh + 2*pr`)
 - the sky/floor gradients and their code twins in `frame-math` (each gradient builder takes an optional `horizon-offset`; the gradient cache keys on `(vh, pr)`)
-- enemy sprite anchors (the billboard top + the face / HP-flash overlays add the same `pr` so sprites stay pinned to their feet)
+- enemy sprite anchors (`sprite-feet-row` carries the same `pr`, so the feet, the grounding shadow, and the face / HP-flash overlays all shear together with the floor; see "Sprite anchoring")
 
 The crosshair stays fixed (it is a weapon sight, not part of the world). Because every offset is **additive and 0 at `pitch = 0`**, a level gaze renders byte-for-byte identically to the no-pitch path (pinned by `render-cache-test/test-frame-bytes-pinned`).
+
+## Sprite anchoring (feet on the floor)
+
+Enemy billboards are anchored by their **feet**, not their centre (issue #297). The renderer stands each sprite on `sprite-feet-row` and draws the body UPWARD by its pixel height `h`:
+
+```
+feet-row = (sprite-feet-row scene-pd svh dist eye-z fz pr)   ; on the floor
+e-top    = feet-row - h                                       ; head
+body     = rows [e-top, feet-row]
+```
+
+`fz` is the enemy's cell floor height (read from `:floor-pgrid`, 0 on flat ground). A raised cell (the L5 dais `fz 0.8`, the L7 ledge `fz 1.05`) projects `feet-row` higher up the screen, so the monster stands ON its platform; the raise lives entirely inside `project-height`, so the renderer never adds a second floor offset. The grounding shadow, the face glyph, and the floating HP digit all derive from this one `feet-row`, so they track the feet on flat AND raised ground.
+
+The **old** anchor centred the billboard on the horizon (`(svh - h)/2 + pr - floor-off`), which left the feet hanging one row above the projected floor at most distances - the reported "enemies float" bug. The feet anchor lands the feet exactly on the floor surface row at every distance.
+
+### Hitscan agreement
+
+`enemy/vertical-hit?` reuses the SAME `sprite-feet-row`, so the vertical aim gate and the drawn pixels cannot disagree (issues #243 / #291 / #297). A shot connects when the FIXED screen-centre crosshair (`svh/2` - it does not shear with pitch) lands inside the drawn body:
+
+```
+hit?  =  (feet-row - h) <= svh/2 <= feet-row
+```
+
+Because `feet-row` carries `pr` but the crosshair does not, looking up slides a sprite DOWN past the centre and looking down lifts it UP, so a short far billboard slips off the crosshair (vertical aim) while a tall near one stays caught. On a raised cell the lift moves the body above the centre at level aim, so the player looks up to put the crosshair back on the drawn sprite.
 
 ## Performance
 

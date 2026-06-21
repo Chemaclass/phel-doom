@@ -3,7 +3,7 @@
   (:require phel-doom.core.map        :refer [random-spawn wall?])
   (:require phel-doom.core.enemies    :refer [resists? default-lives-for])
   (:require phel-doom.core.engine     :refer [proj-dist])
-  (:require phel-doom.core.projection :refer [sprite-half-rows floor-offset-rows])
+  (:require phel-doom.core.projection :refer [sprite-half-rows sprite-feet-row])
   (:require phel-doom.core.enemy-ai   :refer [apply-pain maybe-start-attack moves? observe start-wander target-pos tick-attack tick-pain tick-wander]))
 
 ;; ---------------------------------------------------------------------
@@ -179,31 +179,37 @@
 
 (defn- vertical-hit?
   "True when the screen-centre crosshair is vertically ON the enemy's
-   billboard. `pr` is the camera's pitch shear in scene rows
-   (`projection/pitch-rows`) and `floor-pgrid` is the world's `:floor-pgrid`
-   twin, from which the enemy's cell floor height is read. The renderer
-   draws the sprite centred on `svh/2 + pr - foff`, where `foff =
-   (floor-offset-rows proj-dist floor-z dist)` lifts a raised-floor enemy UP
-   the screen (main.phel `e-top`); the fixed crosshair at `svh/2` lands
-   inside the sprite iff `|pr - foff| <= sprite-half-rows`. Without the
-   `foff` term the gate hit empty floor below a raised enemy and rejected a
-   shot aimed at the drawn sprite (issue #291).
+   drawn billboard. The renderer anchors the sprite by its FEET on the
+   projected floor and draws the body upward, so it spans screen rows
+   `[feet-row - h, feet-row]`, where `feet-row = (sprite-feet-row proj-dist
+   svh dist eye-z fz pr)` and `h = 2 * sprite-half-rows` (issue #297). The
+   crosshair is painted at the FIXED screen centre `svh/2` (it does NOT
+   shear with pitch - see `paint-crosshair`), so a shot connects iff
+   `(feet-row - h) <= svh/2 <= feet-row`. Sharing `sprite-feet-row` with
+   the renderer keeps the gate and the drawn pixels in lockstep: a shot
+   aimed at the standing body hits and one aimed at the floor / sky below
+   or above it misses.
 
-   On FLAT floors `floor-z = 0` (or `floor-pgrid` nil) so `foff = 0` and
-   this collapses to the pre-#291 `|pr| <= half-rows`, keeping that path
-   byte-identical.
+   Because `feet-row` carries the `pr` shear but the crosshair does not,
+   looking UP (`pr > 0`) slides the whole sprite DOWN the screen past the
+   fixed centre, so a far enemy whose short billboard clears the crosshair
+   is missed - the vertical aim the player sees. `eye-z` is the camera eye
+   height (0.5 on flat ground) and `floor-pgrid` the world's `:floor-pgrid`
+   twin, from which the enemy's cell floor height `fz` is read; a raised
+   cell (L5 dais, L7 ledge) lifts `feet-row` UP so the gate tracks the
+   sprite onto its platform.
 
    `svh` nil disables the gate (legacy / test callers that pre-date
    vertical aim): with no scene height there is nothing to project
-   against, so the call behaves exactly like the old XY-only hitscan -
-   which is also the pitch=0 / flat-floor result (|0 - 0| <= half-rows
-   always), keeping every existing combat/enemy test green."
-  [enemy ^float dist svh ^int pr floor-pgrid]
+   against, so the call behaves exactly like the old XY-only hitscan."
+  [enemy ^float dist svh ^float eye-z ^int pr floor-pgrid]
   (or (nil? svh)
-      (let [floor-z (cell-floor-z floor-pgrid (:x enemy) (:y enemy))
-            foff    (floor-offset-rows proj-dist floor-z dist)]
-        (php/<= (php/abs (php/- pr foff))
-                (sprite-half-rows svh dist (sprite-scale-for enemy))))))
+      (let [fz       (cell-floor-z floor-pgrid (:x enemy) (:y enemy))
+            feet-row (sprite-feet-row proj-dist svh dist eye-z fz pr)
+            h        (php/intval (php/* 2.0 (sprite-half-rows svh dist (sprite-scale-for enemy))))
+            cross    (php/intdiv svh 2)]
+        (and (php/<= (php/- feet-row h) cross)
+             (php/<= cross feet-row)))))
 
 (defn shoot
   "Fire a hitscan from the player along their facing. Returns
@@ -220,16 +226,19 @@
    at the floor / sky misses. `floor-pgrid` (the world's `:floor-pgrid`,
    #291) anchors the gate to each target's cell floor height so a shot
    aimed at a raised-floor enemy connects with the lifted sprite; nil
-   reads as flat ground. `svh` nil (the short arities) disables the gate,
-   which is identical to looking level (pr=0) on flat floors - so legacy
-   callers and pitch=0 stay byte-for-byte unchanged."
+   reads as flat ground. `eye-z` (#297) is the camera eye height the feet
+   anchor projects against (0.5 default on flat ground). `svh` nil (the
+   short arities) disables the gate, which is identical to looking level
+   on flat floors - so legacy callers stay byte-for-byte unchanged."
   ([es0 ^float px0 ^float py0 ^float a0 ^float wd0 ^float hr0 ^float mr0]
-   (shoot es0 px0 py0 a0 wd0 hr0 mr0 1 nil nil 0 nil))
+   (shoot es0 px0 py0 a0 wd0 hr0 mr0 1 nil nil 0 nil 0.5))
   ([es1 ^float px1 ^float py1 ^float a1 ^float wd1 ^float hr1 ^float mr1 ^int dmg1 dtype1]
-   (shoot es1 px1 py1 a1 wd1 hr1 mr1 dmg1 dtype1 nil 0 nil))
+   (shoot es1 px1 py1 a1 wd1 hr1 mr1 dmg1 dtype1 nil 0 nil 0.5))
   ([es2 ^float px2 ^float py2 ^float a2 ^float wd2 ^float hr2 ^float mr2 ^int dmg2 dtype2 svh2 ^int pr2]
-   (shoot es2 px2 py2 a2 wd2 hr2 mr2 dmg2 dtype2 svh2 pr2 nil))
-  ([es' ^float x' ^float y' ^float a' ^float wd' ^float hr ^float max-r ^int damage damage-type svh ^int pr floor-pgrid]
+   (shoot es2 px2 py2 a2 wd2 hr2 mr2 dmg2 dtype2 svh2 pr2 nil 0.5))
+  ([es3 ^float px3 ^float py3 ^float a3 ^float wd3 ^float hr3 ^float mr3 ^int dmg3 dtype3 svh3 ^int pr3 floor-pgrid3]
+   (shoot es3 px3 py3 a3 wd3 hr3 mr3 dmg3 dtype3 svh3 pr3 floor-pgrid3 0.5))
+  ([es' ^float x' ^float y' ^float a' ^float wd' ^float hr ^float max-r ^int damage damage-type svh ^int pr floor-pgrid ^float eye-z]
    (let [cos-a (php/cos a')
          sin-a (php/sin a')]
      (let [best (loop [i      0
@@ -245,7 +254,7 @@
                                       (let [proj (php/+ (php/* dx cos-a) (php/* dy sin-a))]
                                         (when (and (php/> proj 0.0) (php/< proj best-d)
                                                    (php/< proj wd')
-                                                   (vertical-hit? e proj svh pr floor-pgrid))
+                                                   (vertical-hit? e proj svh eye-z pr floor-pgrid))
                                           (let [perp-x (php/- dx (php/* proj cos-a))
                                                 perp-y (php/- dy (php/* proj sin-a))]
                                             (let [perp2 (php/+ (php/* perp-x perp-x) (php/* perp-y perp-y))]
@@ -365,14 +374,16 @@
    `svh` + `pr` add the same vertical aim gate as `shoot` (issue #243):
    only enemies whose drawn billboard the screen-centre crosshair sits on
    are pierced. `floor-pgrid` (the world's `:floor-pgrid`, #291) anchors
-   the gate to each target's cell floor height. `svh` nil (the 9-arity
-   form) disables the gate, matching the old XY-only behaviour and the
-   pitch=0 / flat-floor result."
+   the gate to each target's cell floor height; `eye-z` (#297) is the
+   camera eye height the feet anchor projects against. `svh` nil (the
+   9-arity form) disables the gate, matching the old XY-only behaviour."
   ([es0 ^float px0 ^float py0 ^float a0 ^float wd0 ^float hr0 ^float mr0 ^int dmg0 dtype0]
-   (pierce es0 px0 py0 a0 wd0 hr0 mr0 dmg0 dtype0 nil 0 nil))
+   (pierce es0 px0 py0 a0 wd0 hr0 mr0 dmg0 dtype0 nil 0 nil 0.5))
   ([es1 ^float px1 ^float py1 ^float a1 ^float wd1 ^float hr1 ^float mr1 ^int dmg1 dtype1 svh1 ^int pr1]
-   (pierce es1 px1 py1 a1 wd1 hr1 mr1 dmg1 dtype1 svh1 pr1 nil))
-  ([enemies ^float px ^float py ^float angle ^float wall-dist ^float hit-radius ^float max-range ^int damage damage-type svh ^int pr floor-pgrid]
+   (pierce es1 px1 py1 a1 wd1 hr1 mr1 dmg1 dtype1 svh1 pr1 nil 0.5))
+  ([es2 ^float px2 ^float py2 ^float a2 ^float wd2 ^float hr2 ^float mr2 ^int dmg2 dtype2 svh2 ^int pr2 floor-pgrid2]
+   (pierce es2 px2 py2 a2 wd2 hr2 mr2 dmg2 dtype2 svh2 pr2 floor-pgrid2 0.5))
+  ([enemies ^float px ^float py ^float angle ^float wall-dist ^float hit-radius ^float max-range ^int damage damage-type svh ^int pr floor-pgrid ^float eye-z]
    (let [cos-a (php/cos angle)
          sin-a (php/sin angle)
          cap   (php/min wall-dist max-range)
@@ -389,7 +400,7 @@
                in?   (and (:alive e)
                           (php/> proj 0.0)
                           (php/< proj cap)
-                          (vertical-hit? e proj svh pr floor-pgrid)
+                          (vertical-hit? e proj svh eye-z pr floor-pgrid)
                           (php/<= (php/+ (php/* perpx perpx) (php/* perpy perpy)) hr2))]
            (if (not in?)
              (recur (php/+ i 1) (conj acc e) killed best-d hit-pos tough)
@@ -435,14 +446,16 @@
    an enemy must be drawn under the screen-centre crosshair to be the
    primary OR a graze, so a shot fired at the floor / sky whiffs the
    whole cone. `floor-pgrid` (the world's `:floor-pgrid`, #291) anchors
-   the gate to each target's cell floor height. `svh` nil (the 12-arity
-   form) disables the gate, matching the old cone-only behaviour and the
-   pitch=0 / flat-floor result."
+   the gate to each target's cell floor height; `eye-z` (#297) is the
+   camera eye height the feet anchor projects against. `svh` nil (the
+   12-arity form) disables the gate, matching the old cone-only behaviour."
   ([es0 ^float px0 ^float py0 ^float a0 ^float wd0 ^float ha0 ^float mr0 ^int pdmg0 ^int gdmg0 ^int mt0 dtype0]
-   (spread-shoot es0 px0 py0 a0 wd0 ha0 mr0 pdmg0 gdmg0 mt0 dtype0 nil 0 nil))
+   (spread-shoot es0 px0 py0 a0 wd0 ha0 mr0 pdmg0 gdmg0 mt0 dtype0 nil 0 nil 0.5))
   ([es1 ^float px1 ^float py1 ^float a1 ^float wd1 ^float ha1 ^float mr1 ^int pdmg1 ^int gdmg1 ^int mt1 dtype1 svh1 ^int pr1]
-   (spread-shoot es1 px1 py1 a1 wd1 ha1 mr1 pdmg1 gdmg1 mt1 dtype1 svh1 pr1 nil))
-  ([enemies ^float px ^float py ^float angle ^float wall-dist ^float half-angle ^float max-range ^int primary-dmg ^int graze-dmg ^int max-targets damage-type svh ^int pr floor-pgrid]
+   (spread-shoot es1 px1 py1 a1 wd1 ha1 mr1 pdmg1 gdmg1 mt1 dtype1 svh1 pr1 nil 0.5))
+  ([es2 ^float px2 ^float py2 ^float a2 ^float wd2 ^float ha2 ^float mr2 ^int pdmg2 ^int gdmg2 ^int mt2 dtype2 svh2 ^int pr2 floor-pgrid2]
+   (spread-shoot es2 px2 py2 a2 wd2 ha2 mr2 pdmg2 gdmg2 mt2 dtype2 svh2 pr2 floor-pgrid2 0.5))
+  ([enemies ^float px ^float py ^float angle ^float wall-dist ^float half-angle ^float max-range ^int primary-dmg ^int graze-dmg ^int max-targets damage-type svh ^int pr floor-pgrid ^float eye-z]
    (let [cos-a    (php/cos angle)
          sin-a    (php/sin angle)
          cos-half (php/cos half-angle)
@@ -452,7 +465,7 @@
          ;; projects against, so it doubles as the gate's `dist`.
          in-shot? (fn [e ^float dx ^float dy ^float proj]
                     (and (in-cone? dx dy cos-a sin-a cos-half cap)
-                         (vertical-hit? e proj svh pr floor-pgrid)))
+                         (vertical-hit? e proj svh eye-z pr floor-pgrid)))
          primary  (loop [i 0 best -1 best-d cap]
                     (if (php/>= i (count enemies))
                       best

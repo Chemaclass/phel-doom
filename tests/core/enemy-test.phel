@@ -201,6 +201,26 @@
     (is (= 0 k-level) "level aim pierces the empty floor below a raised enemy")
     (is (= 1 k-up) "aiming up onto the lifted sprite pierces it")))
 
+;; Feet anchor (issue #297): the renderer stands the sprite on the
+;; projected floor and draws it upward, so the body spans [feet-row - h,
+;; feet-row] and the FIXED screen-centre crosshair (svh/2) lands on it only
+;; when the body straddles the centre. The gate shares `sprite-feet-row`
+;; with the renderer, so a shot at the drawn body hits and one aimed at the
+;; bare floor below or sky above misses. Enemy at (9.5, 1.5) is d=8 from the
+;; player at (1.5, 1.5) facing +x: flat-ground feet=17, h=4, body=[13,17],
+;; crosshair=15 (svh=30). Looking down to pr=-3 drops feet to 14 / body
+;; [10,14] -> the centre now points at the bare floor above the head;
+;; looking up to pr=6 pushes feet to 23 / body [19,23] -> the centre points
+;; at the floor below the feet. Both miss the drawn sprite.
+(deftest test-shoot-297-feet-anchor-hits-body-misses-floor-and-sky
+  (let [enemy      [(new-enemy 9.5 1.5)]
+        [_ level?] (shoot enemy 1.5 1.5 0.0 12.0 0.5 12.0 1 nil 30 0 nil)
+        [_ up?]    (shoot enemy 1.5 1.5 0.0 12.0 0.5 12.0 1 nil 30 6 nil)
+        [_ down?]  (shoot enemy 1.5 1.5 0.0 12.0 0.5 12.0 1 nil 30 -3 nil)]
+    (is (= true level?) "level aim lands on the grounded body straddling centre")
+    (is (= false up?) "looking up slides the sprite down past centre -> floor below missed")
+    (is (= false down?) "looking down lifts the sprite -> bare floor above the head missed")))
+
 (deftest test-shoot-empty-list-returns-miss
   (let [[es' hit? hit-pos idx] (shoot [] 1.5 1.5 0.0 10.0 0.5 12.0)]
     (is (= false hit?))

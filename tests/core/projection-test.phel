@@ -1,6 +1,6 @@
 (ns phel-doom-tests.core.projection-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.projection :refer [wall-px project-height pitch-rows pitch-cap sprite-half-rows]))
+  (:require phel-doom.core.projection :refer [wall-px project-height pitch-rows pitch-cap sprite-half-rows sprite-feet-row]))
 
 ;; ---------------------------------------------------------------------
 ;; wall-px: the shared projection kernel. num / ((max 0.3 dist) * 2.0).
@@ -155,3 +155,47 @@
   ;; 1.5): the crosshair points at the floor/sky, not the body.
   (is (php/> (php/abs (pitch-rows 1.0 30))
              (sprite-half-rows 30 10.0 1.0))))
+
+;; ---------------------------------------------------------------------
+;; sprite-feet-row: the FEET anchor (issue #297). The renderer stands the
+;; enemy billboard on the projected floor at this row and draws the body
+;; upward, instead of centring it on the horizon (the old float). The feet
+;; therefore land exactly on the z=0 floor surface for the enemy's cell.
+;; ---------------------------------------------------------------------
+
+(deftest sprite-feet-row-equals-projected-floor-flat
+  ;; On flat ground (fz=0, eye-z=0.5) the feet land on the SAME row the
+  ;; floor surface (project-height at z=0) projects to, at every distance.
+  ;; This is the contract that keeps the sprite grounded, not floating.
+  (let [pd 70.0 svh 28 eye-z 0.5 pr 0]
+    (doseq [d [2.0 4.0 6.0 9.0]]
+      (is (= (php/+ (php/intval (php/round (project-height pd svh d eye-z 0.0))) pr)
+             (sprite-feet-row pd svh d eye-z 0.0 pr))
+          (str "feet on projected floor at d=" d)))))
+
+(deftest sprite-feet-row-below-horizon-flat
+  ;; A flat-ground enemy's feet always sit BELOW the horizon (svh/2): the
+  ;; floor in front of the camera projects downward. The old horizon-centred
+  ;; anchor put the feet above this row (the visible float).
+  (let [pd 70.0 svh 28 eye-z 0.5 pr 0]
+    (doseq [d [2.0 4.0 8.0]]
+      (is (php/> (sprite-feet-row pd svh d eye-z 0.0 pr) (php/intdiv svh 2))
+          (str "feet below horizon at d=" d)))))
+
+(deftest sprite-feet-row-raised-cell-stands-higher
+  ;; A raised cell (fz>0, e.g. the L5 dais at 0.8) projects the feet HIGHER
+  ;; up the screen (smaller row) than flat ground at the same distance, so
+  ;; the enemy stands ON its platform. The lift already lives inside
+  ;; project-height, so callers must NOT also subtract floor-offset-rows.
+  (let [pd 70.0 svh 28 eye-z 0.5 pr 0]
+    (doseq [d [3.0 5.0]]
+      (is (php/< (sprite-feet-row pd svh d eye-z 0.8 pr)
+                 (sprite-feet-row pd svh d eye-z 0.0 pr))
+          (str "raised feet above flat feet at d=" d)))))
+
+(deftest sprite-feet-row-pitch-shears-with-floor
+  ;; The feet carry the pitch shear: looking up (pr>0) slides the whole
+  ;; sprite down the screen by exactly pr, matching the wall/floor band.
+  (let [pd 70.0 svh 28 eye-z 0.5 d 4.0]
+    (is (= (php/+ (sprite-feet-row pd svh d eye-z 0.0 0) 5)
+           (sprite-feet-row pd svh d eye-z 0.0 5)))))

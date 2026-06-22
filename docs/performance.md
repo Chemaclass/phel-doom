@@ -156,6 +156,42 @@ PHP 8.4+ deprecates implicit float-to-int conversion. Hot-path numeric args use 
   (php/intval (php/* (php/- t-now t-then) 1000)))
 ```
 
+## Compiler call inlining (`^:pure` + opt level 2)
+
+`phel-config.php` builds at `withOptimizationLevel(2)`, which enables the
+compiler's `CallInliner`: a call to a single-expression `defn` can be spliced
+in at the call site, skipping one PHP frame and exposing the body to constant
+folding. `^:pure` on a `defn-` opts it into inlining trust (the author asserts
+the body is side-effect-free; see issue #166).
+
+Annotated so far:
+
+- `physics/contribution` (an `if` body) inlines at all 4 movement-integration
+  call sites (yaw, pitch, forward/back, strafe).
+- `physics/counter-on?` (a single `php/>` body) inlines at most call sites.
+
+Both run a handful of times per frame in the movement step, not in the cast
+loop, so the win is small and does not register on `/perf-bench` (which times
+cast + render only). Verified by diffing `out/`: the dispatch form
+`getDefinition(...)->__invoke(...)` is gone from the inlined sites.
+
+### Limitation: a `let` body blocks inlining
+
+`CallInliner`'s rebaser whitelists only Literal / GlobalVar / PhpVar / LocalVar
+/ Call / If / Vector / Set / Map return nodes. A `LetNode` is not on the list,
+so any `defn` whose body is a `let` (or an `if`/`cond` with a `let` branch)
+falls back to normal dispatch even with `^:pure`. This rules out the highest
+frequency helpers:
+
+- `map/cell` (the per-DDA cell read, ~600-1400 calls/frame) binds `row` in a
+  `let`.
+- `map/wall?`, `enemy/in-cone?` likewise bind in a `let`.
+
+Rewriting them to single expressions would duplicate the bound computation
+(`(get grid y)`, the projection) and regress every other caller, so they are
+left as-is pending an upstream `CallInliner` that handles `let` bodies
+(phel-lang). Until then, opt level 2 only reaches the let-free helpers above.
+
 ## DDA raycaster
 
 Grid-line-to-grid-line march via Wolfenstein DDA: precompute step direction and per-axis delta, advance the smaller side-distance, check the cell. ~5-8 iterations per ray instead of ~35 fixed steps. Side bit and hit-cell coords are free (no second pass). Issue #2.

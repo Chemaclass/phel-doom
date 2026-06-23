@@ -582,14 +582,29 @@
   (let [r (mouse-aim "\e[<0;60;15M" center-pos 0.0 look-dims)]
     (is (= true (:fire? r)) "click fires even at 0 sensitivity")))
 
-(deftest test-mouse-aim-edge-fallback-sustains-the-turn
-  ;; The terminal clamps the pointer at the border and stops reporting, so a
-  ;; parked pointer (NO new bytes) keeps turning via the edge fallback - the
-  ;; player can spin past the screen edge instead of freezing.
-  (is (php/> (:yaw (mouse-aim "" right-edge-pos 1.0 look-dims)) 0.0) "parked right edge keeps turning right")
-  (is (php/< (:yaw (mouse-aim "" left-edge-pos 1.0 look-dims)) 0.0) "parked left edge keeps turning left")
-  (is (php/> (:pitch (mouse-aim "" top-edge-pos 1.0 look-dims)) 0.0) "parked top keeps looking up")
-  (is (php/< (:pitch (mouse-aim "" bottom-edge-pos 1.0 look-dims)) 0.0) "parked bottom keeps looking down"))
+(deftest test-mouse-aim-edge-pan-needs-active-push
+  ;; A pointer RESTING in the edge band (no report this frame) adds NO spin,
+  ;; so an OS pointer that can't be hidden and sits near a border does NOT
+  ;; drift the camera on its own.
+  (is (= 0.0 (:yaw (mouse-aim "" right-edge-pos 1.0 look-dims))) "parked at right edge -> no spin")
+  (is (= 0.0 (:yaw (mouse-aim "" left-edge-pos 1.0 look-dims))) "parked at left edge -> no spin")
+  (is (= 0.0 (:pitch (mouse-aim "" top-edge-pos 1.0 look-dims))) "parked at top -> no spin")
+  (is (= 0.0 (:pitch (mouse-aim "" bottom-edge-pos 1.0 look-dims))) "parked at bottom -> no spin"))
+
+(deftest test-mouse-aim-edge-pan-fires-on-push-into-band
+  ;; Actively pushing DEEPER into the band adds the edge spin ON TOP of the
+  ;; delta (so you can turn past the view); retreating toward centre adds
+  ;; none (clean delta back). 110 / 118 are both in the right band (~101+).
+  (let [push-r     (:yaw (mouse-aim "\e[<35;118;15M" [110 15] 1.0 look-dims))
+        delta-only (php/* mouse-look-gain (php// 8.0 70.0))]
+    (is (php/> push-r delta-only) "pushing right into the band adds edge spin beyond the delta"))
+  (let [retreat (:yaw (mouse-aim "\e[<35;110;15M" [118 15] 1.0 look-dims))]
+    (is (php/< retreat 0.0) "retreating from the right edge turns back cleanly (no positive edge)"))
+  ;; Vertical twin: pushing down into the bottom band looks further down than
+  ;; the bare delta (24 is interior, 28 is in the band).
+  (let [push-d     (:pitch (mouse-aim "\e[<35;60;28M" [60 24] 1.0 look-dims))
+        delta-only (php/* mouse-look-gain (php// -4.0 12.0))]
+    (is (php/< push-d delta-only) "pushing down into the band looks further down than the delta")))
 
 (deftest test-mouse-aim-interior-has-no-edge-creep
   ;; A pointer resting in the centre region (no motion) adds NO turn: the

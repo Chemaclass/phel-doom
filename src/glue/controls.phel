@@ -349,10 +349,12 @@
 ;; A terminal offers NO pointer lock / warp / hide (#313): the OS clamps the
 ;; pointer at the window border and STOPS reporting there, so pure delta
 ;; would freeze the turn at the edge. An EDGE FALLBACK fixes that - while the
-;; pointer is parked in the outer band the same edge-pan rate sustains (and
-;; ramps) the turn, so the player keeps spinning past the screen edge:
-;;     yaw   +=  edge-pan-rate(x - 1, cols, mouse-yaw-rate-max)   * sens
-;;     pitch += -edge-pan-rate(y - 1, rows, mouse-pitch-rate-max) * sens
+;; pointer is actively pushed DEEPER into the outer band (delta same sign as
+;; the band side) the edge-pan rate adds (and ramps) the turn, so the player
+;; keeps turning past the screen edge. A RESTING or RETREATING pointer adds
+;; none, so an unhideable OS pointer parked near a border can't self-spin:
+;;     yaw   += (dx*rate>0) ? edge-pan-rate(x-1, cols, mouse-yaw-rate-max)   * sens : 0
+;;     pitch += (dy*rate>0) ? -edge-pan-rate(y-1, rows, mouse-pitch-rate-max) * sens : 0
 ;; First frame / post-resize the previous pointer is nil, so there is no
 ;; delta and the view holds steady until real motion arrives (no seed jolt).
 ;;
@@ -529,7 +531,7 @@
       :yaw        signed radians to add to the player's :angle THIS frame:
                   the pointer's horizontal travel since last frame (1:1
                   mouselook) PLUS an edge-pan rate while the pointer is
-                  parked in the outer band
+                  pushed deeper into the outer band
       :pitch      signed fraction to add to the player's :pitch (look up is
                   +, look down is -; clamp via state/clamp-pitch): the
                   vertical pointer travel plus the vertical edge-pan
@@ -545,9 +547,10 @@
    yaws / pitches the view 1:1 (`look-yaw-per-cell` / `look-pitch-per-cell`
    give one rendered column / row of turn per pointer column / row moved). A
    terminal cannot warp the pointer (#313), so the OS clamps it at the window
-   border and stops reporting; an EDGE FALLBACK (`edge-pan-rate` on how deep
-   the pointer sits in the outer band) sustains the turn there, so the player
-   keeps spinning past the edge. Pitch is NEGATED: rows grow DOWNWARD, so
+   border and stops reporting; an EDGE FALLBACK (`edge-pan-rate`) adds turn
+   ONLY while the pointer is actively pushed DEEPER into the outer band, so
+   you can keep turning past the view by pushing toward an edge while a
+   resting / retreating pointer never self-spins. Pitch is NEGATED: rows grow DOWNWARD, so
    pushing the pointer UP looks up (+pitch). First frame / post-resize
    `prev-pos` is nil, so there is no delta and the view holds steady until
    real motion arrives (no seed jolt).
@@ -574,9 +577,9 @@
           n      (php/count bs)]
       (loop [i 0 acc {:fire? false :held? false :pos prev-pos}]
         (if (php/>= i n)
-          (let [pos     (:pos acc)
-                x       (when (some? pos) (get pos 0))
-                y       (when (some? pos) (get pos 1))
+          (let [pos        (:pos acc)
+                x          (when (some? pos) (get pos 0))
+                y          (when (some? pos) (get pos 1))
                 ;; Fixed-centre crosshair: the gun fires dead-ahead, so the
                 ;; reticle never moves and aim-col/aim-row stay nil (the
                 ;; centre-aim sentinel the render + hitscan already honour).
@@ -585,26 +588,27 @@
                 ;; the previous frame; with no prev (first frame / post
                 ;; resize) or no report yet there is no delta, so the view
                 ;; never jolts away from the seed position.
-                moved?  (and (some? pos) (some? prev-pos) (some? cols) (some? rows))
-                dx      (if moved? (php/- x (get prev-pos 0)) 0)
-                dy      (if moved? (php/- y (get prev-pos 1)) 0)
+                moved?     (and (some? pos) (some? prev-pos) (some? cols) (some? rows))
+                dx         (if moved? (php/- x (get prev-pos 0)) 0)
+                dy         (if moved? (php/- y (get prev-pos 1)) 0)
                 ;; Guard on moved?: look-*-per-cell needs a non-nil axis, and
                 ;; `moved?` is false exactly when cols/rows (or prev) is nil.
-                yaw-d   (if moved? (php/* (php/* dx (look-yaw-per-cell cols)) sensitivity) 0.0)
-                pitch-d (if moved? (php/* (php/* (php/- 0 dy) (look-pitch-per-cell rows)) sensitivity) 0.0)
-                ;; Edge fallback: the terminal clamps the pointer at the
-                ;; window border and stops reporting there (#313), so a
-                ;; parked pointer yields dx/dy 0. edge-pan-rate on how deep
-                ;; the pointer sits in the outer band sustains (and ramps)
-                ;; the turn, so the player keeps spinning past the edge
-                ;; instead of the look freezing. `x`/`y` are 1-based; shift
-                ;; to the 0-based axis edge-pan-rate measures from centre.
-                yaw-e   (if (some? x)
-                          (php/* (edge-pan-rate (php/- x 1) cols mouse-yaw-rate-max) sensitivity)
-                          0.0)
-                pitch-e (if (some? y)
-                          (php/- 0 (php/* (edge-pan-rate (php/- y 1) rows mouse-pitch-rate-max) sensitivity))
-                          0.0)]
+                yaw-d      (if moved? (php/* (php/* dx (look-yaw-per-cell cols)) sensitivity) 0.0)
+                pitch-d    (if moved? (php/* (php/* (php/- 0 dy) (look-pitch-per-cell rows)) sensitivity) 0.0)
+                ;; Edge fallback: turning past the screen edge, but ONLY
+                ;; while the pointer is actively pushed DEEPER into the outer
+                ;; band (the delta points the same way as the band side, i.e.
+                ;; `dx * rate > 0`). A RESTING pointer (dx/dy 0) or one
+                ;; RETREATING toward centre adds no edge spin - so an OS
+                ;; pointer that can't be hidden (#295/#313) and happens to sit
+                ;; near a border does NOT drift the camera on its own. Push
+                ;; toward an edge to keep turning; stop to hold still. `x`/`y`
+                ;; are 1-based; shift to the 0-based axis edge-pan-rate
+                ;; measures from centre.
+                yaw-rate   (if (some? x) (edge-pan-rate (php/- x 1) cols mouse-yaw-rate-max) 0.0)
+                pitch-rate (if (some? y) (edge-pan-rate (php/- y 1) rows mouse-pitch-rate-max) 0.0)
+                yaw-e      (if (php/> (php/* dx yaw-rate) 0.0) (php/* yaw-rate sensitivity) 0.0)
+                pitch-e    (if (php/> (php/* dy pitch-rate) 0.0) (php/- 0 (php/* pitch-rate sensitivity)) 0.0)]
             {:aim-col    nil
              :aim-row    nil
              :yaw        (php/+ yaw-d yaw-e)

@@ -1,5 +1,7 @@
 (ns phel-doom.glue.controls
-  (:require phel.string :as str))
+  (:require phel.string :as str)
+  (:require phel-doom.core.engine :refer [fov-proj-dist])
+  (:require phel-doom.core.projection :refer [pitch-cap]))
 
 ;; ---------------------------------------------------------------------
 ;; Controls: drained terminal bytes -> direction counters + rising-edge
@@ -338,31 +340,26 @@
 ;;     bit  5   : motion (a drag / bare-move report, `b & 32`)
 ;;     bit  6   : wheel      (`b & 64`)
 ;;
-;; MOVABLE AIM CROSSHAIR (#324): a `+` reticle follows the pointer 1:1 and
-;; the gun fires toward wherever it points (the off-centre hitscan lives in
-;; core/combat, fed the reticle column). A terminal can only report
-;; ABSOLUTE cell coords and offers NO pointer lock / warp / hide (#313), so
-;; the reticle is the pointer's absolute cell CLAMPED to the viewport,
-;; tracked 1:1 (sens scales only the edge-pan rate below, not the reticle):
-;;     aim-col = reticle-axis(pointer_x, cols)
-;;     aim-row = reticle-axis(pointer_y, rows)
-;; Clamped-absolute is the whole point: when the OS pointer wanders off the
-;; window the reticle PINS at the border (it can't follow past the edge),
-;; and an EDGE-PAN turns the camera so the player can still aim beyond the
-;; current view - aiming never freezes mid-screen the way a raw 1:1
-;; mouselook would. The central region is pure 1:1 reticle movement with NO
-;; camera turn; only the OUTER BAND pans:
-;;     yaw   =  edge-pan-rate(aim-col, cols, mouse-yaw-rate-max)   * sens
-;;     pitch = -edge-pan-rate(aim-row, rows, mouse-pitch-rate-max) * sens
-;; Holding the reticle in the band keeps panning every frame with no new
-;; bytes, because the rate is read from the CACHED pointer position - so a
-;; pointer parked at (or past) an edge keeps the camera turning until the
-;; player brings it back.
+;; MOUSELOOK (#324): the `+` crosshair is fixed dead-centre and the gun
+;; fires straight ahead; moving the mouse turns the CAMERA instead. Classic
+;; FPS feel: the pointer DELTA since last frame yaws / pitches the view 1:1
+;; (move N columns -> the scene slides N columns under the centred `+`):
+;;     yaw   =  (x - prev_x) * look-yaw-per-cell(cols)   * sens
+;;     pitch = -(y - prev_y) * look-pitch-per-cell(rows) * sens
+;; A terminal offers NO pointer lock / warp / hide (#313): the OS clamps the
+;; pointer at the window border and STOPS reporting there, so pure delta
+;; would freeze the turn at the edge. An EDGE FALLBACK fixes that - while the
+;; pointer is parked in the outer band the same edge-pan rate sustains (and
+;; ramps) the turn, so the player keeps spinning past the screen edge:
+;;     yaw   +=  edge-pan-rate(x - 1, cols, mouse-yaw-rate-max)   * sens
+;;     pitch += -edge-pan-rate(y - 1, rows, mouse-pitch-rate-max) * sens
+;; First frame / post-resize the previous pointer is nil, so there is no
+;; delta and the view holds steady until real motion arrives (no seed jolt).
 ;;
 ;; This stays PURE: it consumes the drained byte string, the previous
-;; pointer position and the live [rows cols], and returns the reticle
-;; position + per-frame edge-pan yaw/pitch + fire intent; io/input owns the
-;; escape emission + STDIN read + the periodic mouse re-arm.
+;; pointer position and the live [rows cols], and returns a centred reticle
+;; (aim-col/aim-row nil) + the per-frame yaw/pitch + fire intent; io/input
+;; owns the escape emission + STDIN read + the periodic mouse re-arm.
 ;; =====================================================================
 
 (def mouse-edge-band-frac
@@ -390,6 +387,26 @@
    from level to fully-up (or down) in ~17 edge-held frames (~0.3s) and
    then saturates."
   0.06)
+
+(defn- look-yaw-per-cell
+  "Radians of yaw per pointer COLUMN moved, for true 1:1 mouselook: one
+   column of pointer travel turns the view by exactly one rendered column.
+   The engine's per-column ray spacing at screen centre is `1 / pd` (the
+   derivative of `atan((col - centre) / pd)`), with `pd = fov-proj-dist
+   cols`, so moving the pointer N columns slides the scene N columns under
+   the fixed-centre crosshair. Scales with `cols` via `fov-proj-dist`, so
+   the same hand sweep covers the same view fraction at any width."
+  [cols]
+  (php// 1.0 (fov-proj-dist cols)))
+
+(defn- look-pitch-per-cell
+  "Pitch FRACTION per pointer ROW moved, the vertical 1:1 twin of
+   `look-yaw-per-cell`. `projection/pitch-rows` shears the horizon by
+   `pitch * pitch-cap * vh` rows, so `1 / (pitch-cap * rows)` of fraction is
+   exactly one row of vertical travel - the scene scrolls one row per
+   pointer row until the pitch clamp saturates."
+  [rows]
+  (php// 1.0 (php/* pitch-cap rows)))
 
 (def mouse-motion-bit
   "Bit 5 of the SGR button code: set on a motion (drag / bare-move)
@@ -461,27 +478,6 @@
     (php/< n 0) -1.0
     :else       0.0))
 
-(defn reticle-axis
-  "Map a 1-based pointer cell `p` to the reticle's 0-based viewport cell on
-   an axis `len` cells long, CLAMPED into `[0, len-1]` (#324):
-     reticle = clamp(p - 1, 0, len - 1)
-   The reticle tracks the pointer 1:1 at EVERY sensitivity (a 20-cell
-   pointer move is always a 20-cell reticle move) and returns an INTEGER
-   cell - the pointer report is a whole cell, so `p - 1` has no fraction to
-   drift the painted `+` off the hitscan column or trip the render `intdiv`'s
-   float-to-int deprecation. Mouse Sensitivity scales only the edge-pan rate
-   (see `mouse-aim`), NOT this absolute mapping, so the `+` sits exactly
-   where the mouse points and the gun (which aims at the `+`) is 1:1 with the
-   pointer. The clamp PINS the reticle at the first / last cell when the
-   pointer sits at or beyond the window edge, so the OS pointer drifting out
-   of the window leaves the reticle on the border (where edge-pan takes over)
-   instead of losing it. Returns nil when `len` is nil or `<= 1` (a
-   degenerate axis has no viewport to place the reticle in)."
-  [p len]
-  (if (or (nil? len) (php/<= len 1))
-    nil
-    (php/max 0 (php/min (php/- len 1) (php/intval (php/- p 1))))))
-
 (defn edge-pan-rate
   "Edge-pan rate (#324) for a 0-based reticle cell `r` on an axis `len`
    cells long, ramping out to `max-rate` at the screen edge. The inner
@@ -511,20 +507,22 @@
           (php/* (php/* max-rate eased) (sign off)))))))
 
 (defn mouse-aim
-  "Pure SGR-mouse reader for the movable aim crosshair (#324, was #246).
+  "Pure SGR-mouse reader for fixed-centre mouselook (#324, was #246).
    Parses the drained byte string `keys` for xterm SGR mouse reports,
    caches the latest pointer position (carrying `prev-pos` `[x y]` forward
    when no report arrives this frame), and returns:
 
-     {:aim-col    reticle column (0-based viewport cell), the gun's aim
-                  point; nil when `dims` is omitted / nil
-      :aim-row    reticle row (0-based viewport cell); nil without `dims`
-      :yaw        signed radians to add to the player's :angle THIS frame,
-                  an edge-pan RATE that is non-zero only while the reticle
-                  sits in the outer band (0 in the centre region)
+     {:aim-col    nil - the crosshair is pinned dead-centre (the gun fires
+                  straight ahead); kept in the map so consumers read one
+                  shape whether the mouse is on or off
+      :aim-row    nil (same fixed-centre crosshair)
+      :yaw        signed radians to add to the player's :angle THIS frame:
+                  the pointer's horizontal travel since last frame (1:1
+                  mouselook) PLUS an edge-pan rate while the pointer is
+                  parked in the outer band
       :pitch      signed fraction to add to the player's :pitch (look up is
-                  +, look down is -; clamp via state/clamp-pitch), the
-                  vertical edge-pan
+                  +, look down is -; clamp via state/clamp-pitch): the
+                  vertical pointer travel plus the vertical edge-pan
       :fire?      true on a fresh left-button press (rising edge - a press
                   report arrives once, so this maps onto the space-fire
                   path directly)
@@ -532,26 +530,26 @@
                   auto-fire weapons like the :fire-held space path)
       :pos        the pointer position to thread into the next frame}
 
-   Movable crosshair (#324): a terminal offers NO pointer lock / warp /
-   hide, so the reticle is the pointer's ABSOLUTE cell clamped to the
-   viewport (`reticle-axis`), moving 1:1 with the pointer at every
-   sensitivity. Pushing the reticle into the outer band edge-pans the camera
-   (`edge-pan-rate`), applied EVERY frame from the cached `:pos` - so an
-   empty `keys` string still returns the edge-pan yaw/pitch from the last
-   known position, and a pointer that left the window at an edge keeps the
-   camera turning. Pitch y is NEGATED: screen rows grow DOWNWARD, so a
-   reticle near the TOP looks UP (+pitch).
+   Mouselook (#324): the crosshair is FIXED at screen centre and the gun
+   fires dead-ahead; the mouse turns the CAMERA. The per-frame pointer DELTA
+   yaws / pitches the view 1:1 (`look-yaw-per-cell` / `look-pitch-per-cell`
+   give one rendered column / row of turn per pointer column / row moved). A
+   terminal cannot warp the pointer (#313), so the OS clamps it at the window
+   border and stops reporting; an EDGE FALLBACK (`edge-pan-rate` on how deep
+   the pointer sits in the outer band) sustains the turn there, so the player
+   keeps spinning past the edge. Pitch is NEGATED: rows grow DOWNWARD, so
+   pushing the pointer UP looks up (+pitch). First frame / post-resize
+   `prev-pos` is nil, so there is no delta and the view holds steady until
+   real motion arrives (no seed jolt).
 
-   `sensitivity` is a positive scalar (1.0 = neutral) scaling the edge-pan
-   rate ONLY - the reticle itself stays 1:1 with the pointer regardless, so
-   sensitivity tunes how fast the camera swings when the reticle is parked in
-   the outer band, not where the `+` lands (0 disables the pan but still lets
-   a click fire). `dims` is the live `[rows cols]`; it supplies the axis
-   lengths the reticle + band need. Omitting it (or nil) yields a nil
-   reticle and zero yaw/pitch - the aim is inert without knowing the
-   viewport - while fire intent still parses, so non-loop callers are
-   unaffected. A non-mouse sequence (kitty CSI-u key, arrow, F-key) matches
-   nothing, so the keyboard path is never disturbed."
+   `sensitivity` is a positive scalar (1.0 = neutral) scaling the whole look
+   - both the 1:1 delta turn and the edge-pan rate (0 disables the look but
+   still lets a click fire). `dims` is the live `[rows cols]`; it supplies
+   the axis lengths the delta scaling + edge band need. Omitting it (or nil)
+   yields zero yaw/pitch - the look is inert without knowing the viewport -
+   while fire intent still parses, so non-loop callers are unaffected. A
+   non-mouse sequence (kitty CSI-u key, arrow, F-key) matches nothing, so the
+   keyboard path is never disturbed."
   [keys prev-pos ^float sensitivity & [dims]]
   (let [matches (php/array)
         rows    (when (some? dims) (get dims 0))
@@ -567,23 +565,40 @@
       (loop [i 0 acc {:fire? false :held? false :pos prev-pos}]
         (if (php/>= i n)
           (let [pos     (:pos acc)
-                ;; The reticle + edge-pan read the FINAL cached position, so
-                ;; a held (motionless) pointer keeps producing the same
-                ;; reticle + pan with no new bytes - the escape-proof model.
                 x       (when (some? pos) (get pos 0))
                 y       (when (some? pos) (get pos 1))
-                aim-col (when (some? pos) (reticle-axis x cols))
-                aim-row (when (some? pos) (reticle-axis y rows))]
-            {:aim-col    aim-col
-             :aim-row    aim-row
-             :yaw        (if (some? aim-col)
-                           (php/* (edge-pan-rate aim-col cols mouse-yaw-rate-max) sensitivity)
-                           0.0)
-             ;; Negate the pitch rate: a reticle near the TOP (smaller row)
-             ;; must look UP (+pitch) even though rows grow downward.
-             :pitch      (if (some? aim-row)
-                           (php/- 0 (php/* (edge-pan-rate aim-row rows mouse-pitch-rate-max) sensitivity))
-                           0.0)
+                ;; Fixed-centre crosshair: the gun fires dead-ahead, so the
+                ;; reticle never moves and aim-col/aim-row stay nil (the
+                ;; centre-aim sentinel the render + hitscan already honour).
+                ;; Mouse MOTION drives the camera instead - classic
+                ;; mouselook. dx/dy are the pointer columns/rows moved since
+                ;; the previous frame; with no prev (first frame / post
+                ;; resize) or no report yet there is no delta, so the view
+                ;; never jolts away from the seed position.
+                moved?  (and (some? pos) (some? prev-pos) (some? cols) (some? rows))
+                dx      (if moved? (php/- x (get prev-pos 0)) 0)
+                dy      (if moved? (php/- y (get prev-pos 1)) 0)
+                ;; Guard on moved?: look-*-per-cell needs a non-nil axis, and
+                ;; `moved?` is false exactly when cols/rows (or prev) is nil.
+                yaw-d   (if moved? (php/* (php/* dx (look-yaw-per-cell cols)) sensitivity) 0.0)
+                pitch-d (if moved? (php/* (php/* (php/- 0 dy) (look-pitch-per-cell rows)) sensitivity) 0.0)
+                ;; Edge fallback: the terminal clamps the pointer at the
+                ;; window border and stops reporting there (#313), so a
+                ;; parked pointer yields dx/dy 0. edge-pan-rate on how deep
+                ;; the pointer sits in the outer band sustains (and ramps)
+                ;; the turn, so the player keeps spinning past the edge
+                ;; instead of the look freezing. `x`/`y` are 1-based; shift
+                ;; to the 0-based axis edge-pan-rate measures from centre.
+                yaw-e   (if (some? x)
+                          (php/* (edge-pan-rate (php/- x 1) cols mouse-yaw-rate-max) sensitivity)
+                          0.0)
+                pitch-e (if (some? y)
+                          (php/- 0 (php/* (edge-pan-rate (php/- y 1) rows mouse-pitch-rate-max) sensitivity))
+                          0.0)]
+            {:aim-col    nil
+             :aim-row    nil
+             :yaw        (php/+ yaw-d yaw-e)
+             :pitch      (php/+ pitch-d pitch-e)
              :fire?      (:fire? acc)
              :fire-held? (:held? acc)
              :pos        pos})

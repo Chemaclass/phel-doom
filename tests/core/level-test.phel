@@ -1,6 +1,7 @@
 (ns phel-doom-tests.core.level-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.level :refer [ammo-box-count armor-shard-count config-for heart-count num-levels build-world place-secret-reward secret-trophies])
+  (:require phel-doom.core.map :refer [door? cell-floor])
   (:require phel-doom.core.rng :as rng))
 
 ;; ---------------------------------------------------------------------
@@ -324,3 +325,61 @@
     (is (= 18  (count (:grid w))))
     (is (= 11.5 (:x (:player w))))
     (is (= 15.5 (:y (:player w))))))
+
+;; ---------------------------------------------------------------------
+;; Progression invariant: every level (1..10, incl. the L10 boss room) must
+;; expose EXACTLY ONE exit door, REACHABLE from spawn, placed at a RANDOM
+;; spot that moves with the seed - so finding the way out is gameplay and no
+;; run can dead-end. map/place-exit owns this; layouts are geometry only.
+;; (L2 once shipped a layout with no door at all and stranded the run.)
+;; ---------------------------------------------------------------------
+
+(defn- exit-doors
+  "Every exit-door cell (via `map/door?`) in `grid` as `[x y reachable?]`,
+   where `reachable?` is whether the cell borders a floor cell reachable
+   from (sx, sy) by 4-way walking over floor. Test-only BFS."
+  [grid sx sy]
+  (let [h    (count grid)
+        wd   (count (first grid))
+        seen (php/array)
+        q    (php/array (php/array sx sy))
+        at   (fn [x y] (let [row (get grid y)] (when (some? row) (get row x))))]
+    (php/aset seen (str sx "," sy) true)
+    (loop [i 0]
+      (when (php/< i (php/count q))
+        (let [c (php/aget q i) cx (php/aget c 0) cy (php/aget c 1)]
+          (foreach [d [[1 0] [-1 0] [0 1] [0 -1]]]
+            (let [nx (php/+ cx (get d 0)) ny (php/+ cy (get d 1)) k (str nx "," ny)]
+              (when (and (php/=== cell-floor (at nx ny)) (php/=== nil (php/aget seen k)))
+                (php/aset seen k true)
+                (php/array_push q (php/array nx ny))))))
+        (recur (php/+ i 1))))
+    (let [seen? (fn [x y] (php/=== true (php/aget seen (str x "," y))))]
+      (loop [y 0 acc []]
+        (if (php/>= y h)
+          acc
+          (recur (php/+ y 1)
+                 (loop [x 0 a acc]
+                   (if (php/>= x wd)
+                     a
+                     (recur (php/+ x 1)
+                            (if (door? grid x y)
+                              (conj a [x y (or (seen? (php/+ x 1) y) (seen? (php/- x 1) y)
+                                               (seen? x (php/+ y 1)) (seen? x (php/- y 1)))])
+                              a))))))))))
+
+(deftest test-every-level-has-one-random-reachable-exit
+  (foreach [lv (range 1 (php/+ num-levels 1))]
+    (let [positions (php/array)]
+      (foreach [s [11 22 33 44 55 66]]
+        (rng/seed! (php/+ (php/* 1000 s) lv))
+        (let [world (build-world lv 8 0 :normal #{:pistol})
+              ds    (exit-doors (:grid world)
+                                (php/intval (:x (:player world)))
+                                (php/intval (:y (:player world))))]
+          (is (= 1 (count ds)) (str "level " lv " has exactly one exit door"))
+          (is (true? (get (first ds) 2)) (str "level " lv " exit is reachable from spawn"))
+          (php/array_push positions (str (get (first ds) 0) "," (get (first ds) 1)))))
+      ;; Random: the exit is not pinned to one spot across seeds.
+      (is (php/> (php/count (php/array_unique positions)) 1)
+          (str "level " lv " exit position varies with the seed")))))

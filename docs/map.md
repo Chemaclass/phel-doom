@@ -53,13 +53,13 @@ Every cell is one of these ints. Constants exported so no module uses raw `0/1/2
 
 `build-world` picks `n-blocks` per level so room size and obstacle density are independent.
 
-## Door seeding
+## Exit placement
 
 ```phel
-(seed-doors grid n)
+(place-exit grid [sx sy])
 ```
 
-Converts `n` random interior wall cells to doors. Candidate must be a wall with an adjacent floor cell (prevents doors hidden in 2x2 blobs that lock the room). Retries up to 400 times.
+Drops exactly ONE exit door at a random wall cell reachable from the spawn `(sx, sy)`, so every level (hand-authored or procgen) gets a different exit the player must find. Floods the floor reachable from spawn, then turns a random BORDER wall touching that floor into a door (an exit reads as a way out); falls back to any reachable-adjacent wall so a run can never dead-end. Seeded via `rng` (same seed produces the same door). `build-world` then applies the level's `:door-lock` via `lock-the-door`.
 
 ## Player spawn
 

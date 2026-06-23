@@ -85,11 +85,10 @@ When `:enemies` is a vector, each spec spawns its own count + HP and the enemy c
 |---|---|
 | `#` / `.` | wall / floor |
 | `@` | player spawn |
-| `D` / `B` / `R` / `Y` / `X` | unlocked / blue / red / yellow / boss-locked door |
 | `S` | secret wall (press F to reveal) |
 | `T` | switch (toggles target cells via `:switches` config) |
 
-`:layout` supplies all doors + locks directly; skips `random-grid`, `seed-doors`, `lock-the-door`. Enemy spawn still applies.
+`:layout` supplies GEOMETRY + spawn (+ secrets / switches) only; it does NOT author the exit. `map/place-exit` drops exactly one exit door at a random wall reachable from spawn on EVERY level (hand-authored and procgen alike), then `lock-the-door` applies the `:door-lock` - so the way out is randomised per run and finding it is part of the game. Enemy spawn still applies.
 
 Switches: `:switches [{:at [cx cy] :targets [[tx ty] ...]}]`. F near `:at` flips targets wall↔floor.
 

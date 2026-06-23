@@ -22,6 +22,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Rocket launcher ships with a usable reserve (issue #282): the L5 flagship arrived with a single rocket (`:reserve-start 0`) and auto-switched onto an effectively empty gun in the cyberdemon arena. It now carries 5 in reserve (6 shots with the loaded mag), matching the BFG and staying under the 30 reserve cap.
 - Shorter player-damage flash (issue #283): the all-white impact flash held ~3 frames (0.05s despite its "one frame" docstring) and briefly masked the gun, enemy and HUD even on armor-absorbed hits. Trimmed to ~2 frames (0.03s); the red i-frame wash and directional hurt-arrow still carry the hit.
 
+### Fixed
+
+- Mouse reticle snaps to a whole cell (issue #324 follow-up): at any non-neutral Sensitivity the `+` reticle landed on a fractional column, which drifted the painted crosshair off the column the gun fired along and spammed `Implicit conversion from float ... to int loses precision` warnings over the view (one per frame the pointer moved, from the render `intdiv`). The reticle is now rounded to the nearest integer cell at the source (`reticle-axis`), keeping the `+`, the scene highlight and the hitscan on one cell. At the default 50% sensitivity the mapping was already integral, so default play is unchanged.
+
 ### Performance
 
 - Compiler call inlining (issue #166): `^:pure` on the let-free per-frame movement helpers `physics/contribution` and `physics/counter-on?` lets opt level 2's `CallInliner` splice them at their call sites instead of dispatching through a PHP frame. Byte-identical output (tests + golden hashes unchanged); small win in the movement step (off the cast/render hot path), and `map/cell` / `map/wall?` stay on dispatch because their `let` bodies are outside the inliner's whitelist. See `docs/performance.md`.

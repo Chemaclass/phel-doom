@@ -465,8 +465,11 @@
    an axis `len` cells long, CLAMPED into `[0, len-1]` (#324). The reticle
    tracks the pointer's ABSOLUTE position scaled around the axis centre by
    `sens`:
-     center = (len - 1) / 2          ; 0-based middle cell
-     reticle = clamp(center + (p - 1 - center) * sens, 0, len - 1)
+     center  = (len - 1) / 2         ; 0-based middle cell
+     reticle = clamp(round(center + (p - 1 - center) * sens), 0, len - 1)
+   The result is ROUNDED to the nearest whole cell and returned as an int:
+   the reticle is a discrete terminal cell, and one integer column keeps the
+   painted `+`, the scene highlight and the hitscan angle on the SAME cell.
    At `sens` 1.0 this is 1:1 (pointer cell 60 -> reticle col 59, a 20-cell
    pointer move is a 20-cell reticle move); a higher `sens` moves the
    reticle further per pointer cell, a lower one less. The clamp PINS the
@@ -481,7 +484,15 @@
     (let [center (php// (php/- len 1) 2.0)
           off    (php/* (php/- (php/- p 1) center) sens)
           raw    (php/+ center off)]
-      (php/max 0.0 (php/min (php/* 1.0 (php/- len 1)) raw)))))
+      ;; A terminal reticle is a discrete CELL: round to the nearest whole
+      ;; column and return an int. A fractional value truncates differently
+      ;; in each consumer - the painted `+` (`aim-col + 1` cursor col), the
+      ;; scene-column highlight (`intdiv aim-col px-sc`) and the hitscan
+      ;; angle drift apart by the fraction, so the crosshair no longer sits
+      ;; where the gun shoots - and the render intdiv trips PHP's
+      ;; float->int "loses precision" deprecation. At sens 1.0 raw is
+      ;; already integral (p - 1), so the snap is a no-op there.
+      (php/max 0 (php/min (php/- len 1) (php/intval (php/round raw)))))))
 
 (defn edge-pan-rate
   "Edge-pan rate (#324) for a 0-based reticle cell `r` on an axis `len`

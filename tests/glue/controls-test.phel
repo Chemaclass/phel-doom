@@ -499,26 +499,35 @@
 (deftest test-reticle-axis-is-one-to-one-at-neutral-sensitivity
   ;; sens 1.0: the reticle tracks the pointer cell exactly (1-based ->
   ;; 0-based, so Cx 60 -> col 59), moving one cell per pointer cell.
-  (is (= 59.0 (reticle-axis 60 120 1.0)) "pointer cell 60 -> reticle col 59")
-  (is (= 79.0 (reticle-axis 80 120 1.0)) "pointer cell 80 -> reticle col 79")
+  ;; The reticle is a discrete cell, so the result is an integer column.
+  (is (= 59 (reticle-axis 60 120 1.0)) "pointer cell 60 -> reticle col 59")
+  (is (= 79 (reticle-axis 80 120 1.0)) "pointer cell 80 -> reticle col 79")
   ;; 1:1: a 20-cell pointer move is a 20-cell reticle move.
-  (is (= 20.0 (php/- (reticle-axis 80 120 1.0) (reticle-axis 60 120 1.0)))
+  (is (= 20 (php/- (reticle-axis 80 120 1.0) (reticle-axis 60 120 1.0)))
       "20 pointer cells -> 20 reticle cells (1:1)"))
 
 (deftest test-reticle-axis-clamps-to-viewport
   ;; The reticle never leaves the viewport: the right/left edges clamp to
   ;; the last/first cell, and a pointer PAST the window pins at that edge
   ;; (the pointer-drift robustness - aiming never freezes mid-screen).
-  (is (= 119.0 (reticle-axis 120 120 1.0)) "right edge clamps to col 119")
-  (is (= 0.0 (reticle-axis 1 120 1.0)) "left edge clamps to col 0")
-  (is (= 119.0 (reticle-axis 200 120 1.0)) "pointer past the window pins at the edge")
-  (is (= 0.0 (reticle-axis -50 120 1.0)) "pointer left of the window pins at col 0"))
+  (is (= 119 (reticle-axis 120 120 1.0)) "right edge clamps to col 119")
+  (is (= 0 (reticle-axis 1 120 1.0)) "left edge clamps to col 0")
+  (is (= 119 (reticle-axis 200 120 1.0)) "pointer past the window pins at the edge")
+  (is (= 0 (reticle-axis -50 120 1.0)) "pointer left of the window pins at col 0"))
 
 (deftest test-reticle-axis-scales-with-sensitivity
   ;; Sensitivity scales the reticle speed: at 2x the same pointer offset
-  ;; moves the reticle twice as far from centre; at 0.5x half as far.
-  (is (= 98.5 (reticle-axis 80 120 2.0)) "2x sensitivity doubles the offset from centre")
-  (is (= 69.25 (reticle-axis 80 120 0.5)) "0.5x sensitivity halves it"))
+  ;; moves the reticle twice as far from centre; at 0.5x half as far. The
+  ;; scaled position is rounded to the nearest whole cell (98.5 -> 99).
+  (is (= 99 (reticle-axis 80 120 2.0)) "2x sensitivity doubles the offset from centre")
+  (is (= 69 (reticle-axis 80 120 0.5)) "0.5x sensitivity halves it"))
+
+(deftest test-reticle-axis-returns-integer-cell
+  ;; A fractional sensitivity must still land on a whole cell - a float
+  ;; column trips PHP's float->int deprecation in the render intdiv and
+  ;; drifts the painted `+` off the hitscan column.
+  (is (php/is_int (reticle-axis 80 120 0.5)) "fractional sens -> integer cell")
+  (is (php/is_int (reticle-axis 73 120 1.4)) "fractional sens -> integer cell"))
 
 (deftest test-reticle-axis-degenerate-axis-is-nil
   ;; A nil / <=1 axis length has no viewport to clamp into.
@@ -559,8 +568,8 @@
   ;; Pointer cached at centre, no input this frame: the reticle sits at the
   ;; centre cell, no pan (centre region), no fire, pos carried forward.
   (let [r (mouse-aim "" center-pos 1.0 look-dims)]
-    (is (= 59.0 (:aim-col r)) "reticle at centre col")
-    (is (= 14.0 (:aim-row r)) "reticle at centre row")
+    (is (= 59 (:aim-col r)) "reticle at centre col")
+    (is (= 14 (:aim-row r)) "reticle at centre row")
     (is (= 0.0 (:yaw r)) "centre region -> no yaw")
     (is (= 0.0 (:pitch r)) "centre region -> no pitch")
     (is (= false (:fire? r)))
@@ -571,8 +580,8 @@
   ;; A hover (b=35) moves the reticle to the pointer's cell, 1:1, with no
   ;; pan while it stays in the centre region.
   (let [r (mouse-aim "\e[<35;80;15M" center-pos 1.0 look-dims)]
-    (is (= 79.0 (:aim-col r)) "reticle follows the pointer column 1:1")
-    (is (= 14.0 (:aim-row r)) "row unchanged at mid-screen")
+    (is (= 79 (:aim-col r)) "reticle follows the pointer column 1:1")
+    (is (= 14 (:aim-row r)) "row unchanged at mid-screen")
     (is (= 0.0 (:yaw r)) "still centre region -> no pan")
     (is (= [80 15] (:pos r)) "pos trails the latest report")))
 
@@ -581,27 +590,27 @@
   ;; last column AND edge-pans the camera right (the aim-beyond-view move).
   (let [edge (mouse-aim "\e[<35;120;15M" center-pos 1.0 look-dims)
         past (mouse-aim "\e[<35;200;15M" center-pos 1.0 look-dims)]
-    (is (= 119.0 (:aim-col edge)) "reticle pinned at the right edge col")
+    (is (= 119 (:aim-col edge)) "reticle pinned at the right edge col")
     (is (php/> (:yaw edge) 0.0) "right edge edge-pans the camera right")
-    (is (= 119.0 (:aim-col past)) "pointer past the window keeps the reticle pinned")
+    (is (= 119 (:aim-col past)) "pointer past the window keeps the reticle pinned")
     (is (php/> (:yaw past) 0.0) "and edge-pan keeps turning - aiming never freezes")))
 
 (deftest test-mouse-aim-left-edge-pans-left
   (let [r (mouse-aim "\e[<35;1;15M" center-pos 1.0 look-dims)]
-    (is (= 0.0 (:aim-col r)) "reticle pinned at the left edge col")
+    (is (= 0 (:aim-col r)) "reticle pinned at the left edge col")
     (is (php/< (:yaw r) 0.0) "left edge edge-pans the camera left")))
 
 (deftest test-mouse-aim-top-edge-looks-up
   ;; Pointer at the top band: reticle pins at row 0 and pitch is POSITIVE
   ;; (look up) - rows grow downward, so the top of the screen is +pitch.
   (let [r (mouse-aim "\e[<35;60;1M" center-pos 1.0 look-dims)]
-    (is (= 0.0 (:aim-row r)) "reticle pinned at the top row")
+    (is (= 0 (:aim-row r)) "reticle pinned at the top row")
     (is (php/> (:pitch r) 0.0) "top band looks UP (+pitch)")
     (is (= 0.0 (:yaw r)) "vertical pointer at mid-col -> no yaw")))
 
 (deftest test-mouse-aim-bottom-edge-looks-down
   (let [r (mouse-aim "\e[<35;60;30M" center-pos 1.0 look-dims)]
-    (is (= 29.0 (:aim-row r)) "reticle pinned at the bottom row")
+    (is (= 29 (:aim-row r)) "reticle pinned at the bottom row")
     (is (php/< (:pitch r) 0.0) "bottom band looks DOWN (-pitch)")))
 
 (deftest test-mouse-aim-held-at-edge-keeps-panning-without-bytes
@@ -622,7 +631,7 @@
   ;; Bringing the pointer back to centre re-centres the reticle and stops
   ;; the pan: precise 1:1 aim resumes with no camera drift.
   (let [r (mouse-aim "\e[<35;60;15M" right-edge-pos 1.0 look-dims)]
-    (is (= 59.0 (:aim-col r)) "reticle back at centre col")
+    (is (= 59 (:aim-col r)) "reticle back at centre col")
     (is (= 0.0 (:yaw r)) "back in the centre region -> pan stops")))
 
 (deftest test-mouse-aim-report-moves-cached-pointer
@@ -635,8 +644,8 @@
 
 (deftest test-mouse-aim-sensitivity-scales-reticle-and-pan
   ;; Sensitivity scales BOTH the reticle speed and the edge-pan rate.
-  (is (= 98.5 (:aim-col (mouse-aim "\e[<35;80;15M" center-pos 2.0 look-dims)))
-      "2x sensitivity moves the reticle twice as far")
+  (is (= 99 (:aim-col (mouse-aim "\e[<35;80;15M" center-pos 2.0 look-dims)))
+      "2x sensitivity moves the reticle twice as far (98.5 rounds to cell 99)")
   (is (approx? 0.32 (:yaw (mouse-aim "" right-edge-pos 2.0 look-dims)))
       "2x sensitivity doubles the edge-pan yaw")
   (is (= 0.0 (:yaw (mouse-aim "" right-edge-pos 0.0 look-dims)))
@@ -686,12 +695,12 @@
   (let [r (mouse-aim "\e[<32;120;15M" center-pos 1.0 look-dims)]
     (is (= false (:fire? r)) "a drag is not a fresh press edge")
     (is (= true (:fire-held? r)) "but it holds the trigger for auto-fire")
-    (is (= 119.0 (:aim-col r)) "and the reticle tracks the drag to the edge")))
+    (is (= 119 (:aim-col r)) "and the reticle tracks the drag to the edge")))
 
 (deftest test-mouse-aim-press-then-move-fires-and-tracks
   (let [r (mouse-aim "\e[<0;60;15M\e[<35;120;15M" center-pos 1.0 look-dims)]
     (is (= true (:fire? r)) "the press in the frame still fires")
-    (is (= 119.0 (:aim-col r)) "the reticle ends at the moved-to edge cell")))
+    (is (= 119 (:aim-col r)) "the reticle ends at the moved-to edge cell")))
 
 (deftest test-mouse-aim-wheel-tick-adds-no-fire
   ;; A scroll-wheel tick (b=64) carries no aim intent: no fire.
@@ -711,20 +720,20 @@
   ;; A truncated report (missing the y field) matches nothing, so the
   ;; reticle stays put and nothing fires.
   (let [r (mouse-aim "\e[<35;15M" center-pos 1.0 look-dims)]
-    (is (= 59.0 (:aim-col r)) "reticle holds the cached centre")
+    (is (= 59 (:aim-col r)) "reticle holds the cached centre")
     (is (= false (:fire? r)))))
 
 (deftest test-mouse-aim-ignores-kitty-key-event
   ;; A kitty CSI-u KEY event must not be mistaken for a mouse report.
   (let [r (mouse-aim "\e[97;1:1u" center-pos 1.0 look-dims)]
-    (is (= 59.0 (:aim-col r)) "kitty key leaves the reticle alone")
+    (is (= 59 (:aim-col r)) "kitty key leaves the reticle alone")
     (is (= false (:fire? r)) "kitty key 'a' does not fire")))
 
 (deftest test-mouse-aim-ignores-arrow-and-fkey
   ;; Arrow + F-key escapes are not SGR mouse reports.
   (let [arrow (mouse-aim "\e[C" center-pos 1.0 look-dims)
         fkey  (mouse-aim "\eOR" center-pos 1.0 look-dims)]
-    (is (= 59.0 (:aim-col arrow)) "arrow leaves the reticle alone")
+    (is (= 59 (:aim-col arrow)) "arrow leaves the reticle alone")
     (is (= false (:fire? arrow)))
     (is (= false (:fire? fkey)))))
 
@@ -732,7 +741,7 @@
   ;; A drain holding both WASD bytes and an SGR report: mouse-aim only
   ;; reads the SGR part; the 'w'/'d' are the keyboard path's job.
   (let [r (mouse-aim "w\e[<35;120;15Md" center-pos 1.0 look-dims)]
-    (is (= 119.0 (:aim-col r)) "the embedded report still moves the reticle")
+    (is (= 119 (:aim-col r)) "the embedded report still moves the reticle")
     (is (= [120 15] (:pos r)) "pos comes from the SGR part only")))
 
 (deftest test-mouse-aim-bytes-do-not-leak-into-key-parsing

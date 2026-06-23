@@ -337,6 +337,58 @@
             (recur (assoc-in g [y x] cell-door) (+ placed 1) (+ attempts 1))
             (recur g placed (+ attempts 1))))))))
 
+(defn place-exit
+  "Drop exactly ONE exit door (`cell-door`) at a RANDOM wall cell reachable
+   from `spawn`, so every level/run gets a different exit the player has to
+   find. Floods the floor reachable from spawn, then turns a random BORDER
+   wall touching that floor into a door (an exit reads as a way OUT); falls
+   back to ANY reachable-adjacent wall so a run can never dead-end. Seeded
+   via `rng` (same seed -> same door). Called once per level build - not a
+   hot path, so a plain flood + scan is fine. Layouts + procgen supply only
+   geometry; this owns the exit, replacing the old hand-placed / seed-doors
+   doors."
+  [grid [sx sy]]
+  (let [h    (count grid)
+        w    (count (first grid))
+        spx  (php/intval sx)
+        spy  (php/intval sy)
+        seen (php/array)
+        q    (php/array (php/array spx spy))]
+    (php/aset seen (str spx ":" spy) true)
+    ;; Flood the floor reachable from spawn (BFS over a mutable php-array
+    ;; queue + seen-set; both stay local so the fn is still pure given rng).
+    (loop [i 0]
+      (when (php/< i (php/count q))
+        (let [c (php/aget q i) cx (php/aget c 0) cy (php/aget c 1)]
+          (foreach [d [[1 0] [-1 0] [0 1] [0 -1]]]
+            (let [nx (php/+ cx (get d 0)) ny (php/+ cy (get d 1)) k (str nx ":" ny)]
+              (when (and (= cell-floor (cell grid nx ny)) (php/=== nil (php/aget seen k)))
+                (php/aset seen k true)
+                (php/array_push q (php/array nx ny))))))
+        (recur (php/+ i 1))))
+    ;; Candidate walls touch the reachable floor; prefer the border.
+    (let [reached? (fn [x y] (php/=== true (php/aget seen (str x ":" y))))
+          border   (php/array)
+          inner    (php/array)]
+      (loop [y 0]
+        (when (php/< y h)
+          (loop [x 0]
+            (when (php/< x w)
+              (when (and (= cell-wall (cell grid x y))
+                         (or (reached? (php/+ x 1) y) (reached? (php/- x 1) y)
+                             (reached? x (php/+ y 1)) (reached? x (php/- y 1))))
+                (if (or (= x 0) (= y 0) (= x (php/- w 1)) (= y (php/- h 1)))
+                  (php/array_push border (php/array x y))
+                  (php/array_push inner (php/array x y))))
+              (recur (php/+ x 1))))
+          (recur (php/+ y 1))))
+      (let [pool (if (php/> (php/count border) 0) border inner)
+            n    (php/count pool)]
+        (if (php/=== 0 n)
+          grid
+          (let [pick (php/aget pool (rng/int! n))]
+            (assoc-in grid [(php/aget pick 1) (php/aget pick 0)] cell-door)))))))
+
 (defn- border-row [w]
   (into [] (map (fn [_] cell-wall) (range 0 w))))
 

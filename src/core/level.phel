@@ -1,7 +1,7 @@
 (ns phel-doom.core.level
   (:require phel-doom.core.rng :as rng)
   (:require phel-doom.core.state      :refer [max-backpacks max-lives new-player new-world with-enemies])
-  (:require phel-doom.core.map        :refer [cell-door cell-door-blue cell-door-red cell-door-yellow count-secrets parse-layout random-grid random-spawn seed-doors seed-secrets])
+  (:require phel-doom.core.map        :refer [cell-door cell-door-blue cell-door-red cell-door-yellow count-secrets parse-layout place-exit random-grid random-spawn seed-secrets])
   (:require phel-doom.core.enemy      :refer [default-wander-fraction promote-wanderers spawn-enemies spawn-enemies-mixed])
   (:require phel-doom.core.enemy-ai   :refer [aggression-for])
   (:require phel-doom.core.enemies    :refer [enemy-types type-spec default-lives-for])
@@ -53,7 +53,7 @@
    "#......................#"
    "#......................#"
    "#......................#"
-   "#..........@...........D"
+   "#..........@...........#"
    "#......................#"
    "########################"])
 
@@ -81,7 +81,7 @@
    "#..........................#"
    "#..........................#"
    "#..........................#"
-   "#............@.............D"
+   "#............@.............#"
    "#..........................#"
    "#..........................#"
    "############################"])
@@ -112,7 +112,7 @@
    "#............................#"
    "#............................#"
    "#............................#"
-   "#.............@..............R"
+   "#.............@..............#"
    "#............................#"
    "#............................#"
    "##############################"])
@@ -144,7 +144,7 @@
    "#........................................#"
    "#........................................#"
    "#........................................#"
-   "#..................@.....................Y"
+   "#..................@.....................#"
    "#........................................#"
    "#........................................#"
    "##########################################"])
@@ -166,7 +166,7 @@
    "#........................................#"
    "#........................................#"
    "#........................................#"
-   "#..................................@.....D"
+   "#..................................@.....#"
    "#........................................#"
    "#........................................#"
    "#........................................#"
@@ -206,7 +206,7 @@
    "#................................................#"
    "#................................................#"
    "#................................................#"
-   "#........................@.......................D"
+   "#........................@.......................#"
    "#................................................#"
    "#................................................#"
    "#................................................#"
@@ -244,7 +244,7 @@
    "#..........................................#"
    "#..........................................#"
    "#..........................................#"
-   "#.....................@....................B"
+   "#.....................@....................#"
    "#..........................................#"
    "#..........................................#"
    "#..........................................#"
@@ -395,7 +395,7 @@
     ;; switches (issue #62) - pressing F adjacent to one toggles the
     ;; linked cells listed under `:switches` below.
     :layout    ["####################"
-                "#.........X........#"
+                "#.........#........#"
                 "#..................#"
                 "#..................#"
                 "#..................#"
@@ -697,21 +697,24 @@
   (spawn-unique-pickups grid n))
 
 (defn- build-grid
-  "Two paths: hand-authored `:layout` (parsed via map/parse-layout —
-   bypasses random + seed-doors + lock-the-door, the author put doors
-   + locks directly in the ASCII) OR random `random-grid + seed-doors
-   + lock-the-door` for the procedural path. Returns `{:grid :spawn}`."
+  "Build `{:grid :spawn}`. Geometry + spawn come from a hand-authored
+   `:layout` (parsed via map/parse-layout) or the procedural `random-grid`;
+   either way `map/place-exit` then drops ONE random reachable exit door,
+   locked per the level's `:door-lock`. Layouts define GEOMETRY ONLY - the
+   exit is always randomised so finding the way out is part of the game, the
+   same on a hand-authored room as on a procgen one."
   [cfg]
-  (if (:layout cfg)
-    (or (parse-layout (:layout cfg))
-        (throw (php/new php/InvalidArgumentException
-                        (str "Level layout missing player spawn '@': "
-                             (:name cfg)))))
-    (let [[w h] (:size cfg)
-          grid  (lock-the-door
-                 (seed-doors (random-grid w h (:walls cfg)) 1)
-                 (:door-lock cfg))]
-      {:grid grid :spawn (random-spawn grid)})))
+  (let [{:keys [grid spawn]}
+        (if (:layout cfg)
+          (or (parse-layout (:layout cfg))
+              (throw (php/new php/InvalidArgumentException
+                              (str "Level layout missing player spawn '@': "
+                                   (:name cfg)))))
+          (let [[w h] (:size cfg)
+                g     (random-grid w h (:walls cfg))]
+            {:grid g :spawn (random-spawn g)}))]
+    {:grid  (lock-the-door (place-exit grid spawn) (:door-lock cfg))
+     :spawn spawn}))
 
 (defn- normalise-enemies
   "Coerce the level's `:enemies` field into a vector of mixed specs

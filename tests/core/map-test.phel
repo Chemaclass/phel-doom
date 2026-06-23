@@ -2,14 +2,14 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.map :refer [default-grid wall? door?
                                        cell-floor cell-wall cell-door
-                                       cell-door-blue cell-door-red
                                        cell-secret cell-switch-off
                                        cell-switch-on count-secrets passable?
                                        reveal-secret secret? switch?
                                        switch-on? toggle-switch
                                        toggle-switch-cell toggle-target-cell
-                                       parse-layout
-                                       random-grid random-spawn seed-doors seed-secrets]))
+                                       parse-layout place-exit
+                                       random-grid random-spawn seed-secrets])
+  (:require phel-doom.core.rng :as rng))
 
 (deftest test-walls-on-perimeter
   (is (wall? default-grid 0 0))
@@ -62,58 +62,38 @@
                                             (php/array_slice (to-php-array g) 1 8))))]
       (is (= 0 interior-sum)))))
 
-(deftest test-seed-doors-only-places-on-touchable-walls
-  ;; The door must be adjacent to at least one floor cell, otherwise
-  ;; the room is unreachable. Build a grid with one interior wall
-  ;; isolated inside a 3×3 wall blob and one wall touching floor; the
-  ;; isolated wall should never be picked.
-  ;;
-  ;;   1 1 1 1 1 1 1
-  ;;   1 0 0 0 0 0 1     (1,1)-(5,1) all floor
-  ;;   1 0 1 1 1 0 1     (3,2) and (4,2) walls touching floor
-  ;;   1 0 1 1 1 0 1     (3,3) is fully enclosed by walls/border  <- never a door
-  ;;   1 0 1 1 1 0 1
-  ;;   1 0 0 0 0 0 1
-  ;;   1 1 1 1 1 1 1
-  (let [g [[1 1 1 1 1 1 1]
-           [1 0 0 0 0 0 1]
-           [1 0 1 1 1 0 1]
-           [1 0 1 1 1 0 1]
-           [1 0 1 1 1 0 1]
-           [1 0 0 0 0 0 1]
-           [1 1 1 1 1 1 1]]]
-    ;; Try 50 times to surface the bug if seed-doors picks the locked
-    ;; interior cell.
-    (let [oks (loop [i 0 acc 0]
-                (if (>= i 50)
-                  acc
-                  (let [g' (seed-doors g 1)]
-                    (recur (+ i 1)
-                           (if (= cell-door (php/aget (php/aget (to-php-array g') 3) 3))
-                             ;; landed in the unreachable centre -> bug
-                             (php/- acc 1)
-                             acc)))))]
-      (is (>= oks 0)))))
-
-(deftest test-seed-doors-converts-walls-into-doors
-  ;; Bordered open room with one floor-adjacent wall column inside.
-  ;; seed-doors needs interior walls that border floor cells to convert,
-  ;; otherwise it gives up. With plenty of qualifying candidates, 3
-  ;; doors should be placed.
-  (let [door-count
-        (apply + (apply concat
-                        (map (fn [row]
-                               (map (fn [c] (if (= c 2) 1 0)) row))
-                             (seed-doors
-                              (apply vector
-                                     (concat
-                                      [[1 1 1 1 1 1 1 1]]
-                                      (apply vector
-                                             (map (fn [_] [1 0 0 1 1 0 0 1])
-                                                  (range 0 6)))
-                                      [[1 1 1 1 1 1 1 1]]))
-                              3))))]
-    (is (= 3 door-count))))
+(deftest test-place-exit-drops-one-random-reachable-door
+  ;; place-exit converts exactly ONE wall into a door (the sole exit), at a
+  ;; spot that MOVES with the seed - the random reachable exit every level
+  ;; gets. Plain bordered box, spawn in the middle: any placed border door is
+  ;; reachable from there (full per-level reachability lives in level-test).
+  (let [box        [[1 1 1 1 1 1 1]
+                    [1 0 0 0 0 0 1]
+                    [1 0 0 0 0 0 1]
+                    [1 0 0 0 0 0 1]
+                    [1 1 1 1 1 1 1]]
+        door-count (fn [g] (apply + (apply concat
+                                           (map (fn [row]
+                                                  (map (fn [c] (if (= cell-door c) 1 0)) row))
+                                                g))))
+        door-pos   (fn [g]
+                     (loop [y 0]
+                       (if (>= y (count g))
+                         nil
+                         (let [dx (loop [x 0]
+                                    (cond
+                                      (>= x (count (first g)))        nil
+                                      (= cell-door (get (get g y) x)) x
+                                      :else                           (recur (+ x 1))))]
+                           (if (some? dx) [dx y] (recur (+ y 1)))))))]
+    (rng/seed! 1)
+    (is (= 1 (door-count (place-exit box [3.5 2.5]))) "exactly one exit door")
+    ;; Randomised: across seeds the exit lands in more than one spot.
+    (let [spots (php/array)]
+      (foreach [s [1 2 3 4 5 6]]
+        (rng/seed! s)
+        (php/array_push spots (str (door-pos (place-exit box [3.5 2.5])))))
+      (is (php/> (php/count (php/array_unique spots)) 1) "the exit moves with the seed"))))
 
 (deftest test-random-spawn-lands-on-floor
   (let [g     [[1 1 1 1 1]
@@ -129,11 +109,13 @@
 ;; ---------------------------------------------------------------------
 
 (deftest test-parse-layout-happy-path
+  ;; Layouts are GEOMETRY ONLY (walls / floor / spawn) - no door chars; the
+  ;; exit is placed at random by map/place-exit, never authored in the ASCII.
   (let [out (parse-layout ["#####"
                            "#...#"
                            "#.@.#"
                            "#...#"
-                           "####D"])]
+                           "#####"])]
     (is (not (nil? out)))
     (let [g       (:grid out)
           [sx sy] (:spawn out)]
@@ -145,18 +127,7 @@
       (is (= cell-floor (get-in g [2 2])))
       ;; Spawn coords centred on the '@' cell.
       (is (= 2.5 sx))
-      (is (= 2.5 sy))
-      ;; Door in the bottom-right corner.
-      (is (= cell-door (get-in g [4 4]))))))
-
-(deftest test-parse-layout-locked-doors
-  (let [out (parse-layout ["#####"
-                           "#.@.B"
-                           "#...R"
-                           "#####"])
-        g   (:grid out)]
-    (is (= cell-door-blue (get-in g [1 4])))
-    (is (= cell-door-red  (get-in g [2 4])))))
+      (is (= 2.5 sy)))))
 
 (deftest test-parse-layout-no-spawn-returns-nil
   ;; Missing '@' = malformed layout. parse-layout returns nil so the

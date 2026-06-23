@@ -85,7 +85,6 @@ When `:enemies` is a vector, each spec spawns its own count + HP and the enemy c
 |---|---|
 | `#` / `.` | wall / floor |
 | `@` | player spawn |
-| `D` / `B` / `R` / `Y` / `X` | unlocked / blue / red / yellow / boss-locked door |
 | `S` | secret wall (press F to reveal) |
 | `T` | switch (toggles target cells via `:switches` config) |
 

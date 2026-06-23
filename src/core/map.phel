@@ -171,9 +171,9 @@
 (defn find-door-cell
   "Scan `grid` for the first door cell (any variant: unlocked or any
    locked colour) and return its `[x y]`. nil when no
-   door is present — never happens for a valid level, but the
-   defensive path keeps the renderer crash-safe on test fixtures
-   that skip seed-doors."
+   door is present — never happens for a valid level (place-exit always
+   drops one), but the defensive path keeps the renderer crash-safe on test
+   fixtures that build a grid without an exit."
   [grid]
   (let [h (count grid)]
     (loop [y 0]
@@ -305,38 +305,6 @@
       lock
       nil)))
 
-(defn- has-floor-neighbour?
-  "True when at least one of the four orthogonal neighbours of (x, y) is
-   walkable floor. Used by seed-doors to avoid placing an unreachable
-   door inside a wall blob."
-  [grid x y]
-  (or (= cell-floor (cell grid (- x 1) y))
-      (= cell-floor (cell grid (+ x 1) y))
-      (= cell-floor (cell grid x (- y 1)))
-      (= cell-floor (cell grid x (+ y 1)))))
-
-(defn seed-doors
-  "Convert `n` random interior wall cells into closed doors. A
-   candidate cell must (a) currently be a wall and (b) sit next to at
-   least one floor cell so the player can actually touch the door —
-   without that check a door can get hidden inside a 2×2 wall blob
-   and the room becomes inescapable. Gives up quietly after 400
-   attempts when the interior runs out of candidates."
-  [grid n]
-  (let [w (count (first grid))
-        h (count grid)]
-    (loop [g grid placed 0 attempts 0]
-      (cond
-        (>= placed n)     g
-        (>= attempts 400) g
-        :else
-        (let [x (+ 2 (rng/int! (- w 4)))
-              y (+ 2 (rng/int! (- h 4)))]
-          (if (and (= cell-wall (cell g x y))
-                   (has-floor-neighbour? g x y))
-            (recur (assoc-in g [y x] cell-door) (+ placed 1) (+ attempts 1))
-            (recur g placed (+ attempts 1))))))))
-
 (defn place-exit
   "Drop exactly ONE exit door (`cell-door`) at a RANDOM wall cell reachable
    from `spawn`, so every level/run gets a different exit the player has to
@@ -345,8 +313,7 @@
    back to ANY reachable-adjacent wall so a run can never dead-end. Seeded
    via `rng` (same seed -> same door). Called once per level build - not a
    hot path, so a plain flood + scan is fine. Layouts + procgen supply only
-   geometry; this owns the exit, replacing the old hand-placed / seed-doors
-   doors."
+   geometry; this owns the sole exit on every level."
   [grid [sx sy]]
   (let [h    (count grid)
         w    (count (first grid))
@@ -461,15 +428,13 @@
 ;; when a level entry carries :layout to bypass the random-grid path.
 ;; ---------------------------------------------------------------------
 
+;; Layout ASCII -> cell value. Layouts are GEOMETRY ONLY (walls, floor,
+;; spawn, secrets, switches); the exit door is dropped at a random reachable
+;; wall by place-exit (never authored), so there is no door char here.
 (def ^:private layout-char->cell
   {"#" cell-wall
    "." cell-floor
    "@" cell-floor
-   "D" cell-door
-   "B" cell-door-blue
-   "R" cell-door-red
-   "X" cell-door-boss
-   "Y" cell-door-yellow
    "S" cell-secret
    "T" cell-switch-off})
 

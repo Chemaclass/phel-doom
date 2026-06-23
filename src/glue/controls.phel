@@ -342,9 +342,10 @@
 ;; the gun fires toward wherever it points (the off-centre hitscan lives in
 ;; core/combat, fed the reticle column). A terminal can only report
 ;; ABSOLUTE cell coords and offers NO pointer lock / warp / hide (#313), so
-;; the reticle is the pointer's absolute cell CLAMPED to the viewport:
-;;     aim-col = reticle-axis(pointer_x, cols, sens)
-;;     aim-row = reticle-axis(pointer_y, rows, sens)
+;; the reticle is the pointer's absolute cell CLAMPED to the viewport,
+;; tracked 1:1 (sens scales only the edge-pan rate below, not the reticle):
+;;     aim-col = reticle-axis(pointer_x, cols)
+;;     aim-row = reticle-axis(pointer_y, rows)
 ;; Clamped-absolute is the whole point: when the OS pointer wanders off the
 ;; window the reticle PINS at the border (it can't follow past the edge),
 ;; and an EDGE-PAN turns the camera so the player can still aim beyond the
@@ -462,37 +463,24 @@
 
 (defn reticle-axis
   "Map a 1-based pointer cell `p` to the reticle's 0-based viewport cell on
-   an axis `len` cells long, CLAMPED into `[0, len-1]` (#324). The reticle
-   tracks the pointer's ABSOLUTE position scaled around the axis centre by
-   `sens`:
-     center  = (len - 1) / 2         ; 0-based middle cell
-     reticle = clamp(round(center + (p - 1 - center) * sens), 0, len - 1)
-   The result is ROUNDED to the nearest whole cell and returned as an int:
-   the reticle is a discrete terminal cell, and one integer column keeps the
-   painted `+`, the scene highlight and the hitscan angle on the SAME cell.
-   At `sens` 1.0 this is 1:1 (pointer cell 60 -> reticle col 59, a 20-cell
-   pointer move is a 20-cell reticle move); a higher `sens` moves the
-   reticle further per pointer cell, a lower one less. The clamp PINS the
-   reticle at the first / last cell when the pointer sits at or beyond the
-   window edge, so the OS pointer drifting out of the window leaves the
-   reticle on the border (where edge-pan takes over) instead of losing it.
-   Returns nil when `len` is nil or `<= 1` (a degenerate axis has no
-   viewport to place the reticle in)."
-  [p len ^float sens]
+   an axis `len` cells long, CLAMPED into `[0, len-1]` (#324):
+     reticle = clamp(p - 1, 0, len - 1)
+   The reticle tracks the pointer 1:1 at EVERY sensitivity (a 20-cell
+   pointer move is always a 20-cell reticle move) and returns an INTEGER
+   cell - the pointer report is a whole cell, so `p - 1` has no fraction to
+   drift the painted `+` off the hitscan column or trip the render `intdiv`'s
+   float-to-int deprecation. Mouse Sensitivity scales only the edge-pan rate
+   (see `mouse-aim`), NOT this absolute mapping, so the `+` sits exactly
+   where the mouse points and the gun (which aims at the `+`) is 1:1 with the
+   pointer. The clamp PINS the reticle at the first / last cell when the
+   pointer sits at or beyond the window edge, so the OS pointer drifting out
+   of the window leaves the reticle on the border (where edge-pan takes over)
+   instead of losing it. Returns nil when `len` is nil or `<= 1` (a
+   degenerate axis has no viewport to place the reticle in)."
+  [p len]
   (if (or (nil? len) (php/<= len 1))
     nil
-    (let [center (php// (php/- len 1) 2.0)
-          off    (php/* (php/- (php/- p 1) center) sens)
-          raw    (php/+ center off)]
-      ;; A terminal reticle is a discrete CELL: round to the nearest whole
-      ;; column and return an int. A fractional value truncates differently
-      ;; in each consumer - the painted `+` (`aim-col + 1` cursor col), the
-      ;; scene-column highlight (`intdiv aim-col px-sc`) and the hitscan
-      ;; angle drift apart by the fraction, so the crosshair no longer sits
-      ;; where the gun shoots - and the render intdiv trips PHP's
-      ;; float->int "loses precision" deprecation. At sens 1.0 raw is
-      ;; already integral (p - 1), so the snap is a no-op there.
-      (php/max 0 (php/min (php/- len 1) (php/intval (php/round raw)))))))
+    (php/max 0 (php/min (php/- len 1) (php/intval (php/- p 1))))))
 
 (defn edge-pan-rate
   "Edge-pan rate (#324) for a 0-based reticle cell `r` on an axis `len`
@@ -546,17 +534,19 @@
 
    Movable crosshair (#324): a terminal offers NO pointer lock / warp /
    hide, so the reticle is the pointer's ABSOLUTE cell clamped to the
-   viewport (`reticle-axis`), moving 1:1 (scaled by `sensitivity`). Pushing
-   the reticle into the outer band edge-pans the camera
+   viewport (`reticle-axis`), moving 1:1 with the pointer at every
+   sensitivity. Pushing the reticle into the outer band edge-pans the camera
    (`edge-pan-rate`), applied EVERY frame from the cached `:pos` - so an
    empty `keys` string still returns the edge-pan yaw/pitch from the last
    known position, and a pointer that left the window at an edge keeps the
    camera turning. Pitch y is NEGATED: screen rows grow DOWNWARD, so a
    reticle near the TOP looks UP (+pitch).
 
-   `sensitivity` is a positive scalar (1.0 = neutral) scaling both the
-   reticle speed and the edge-pan rate (0 disables the look but still lets a
-   click fire). `dims` is the live `[rows cols]`; it supplies the axis
+   `sensitivity` is a positive scalar (1.0 = neutral) scaling the edge-pan
+   rate ONLY - the reticle itself stays 1:1 with the pointer regardless, so
+   sensitivity tunes how fast the camera swings when the reticle is parked in
+   the outer band, not where the `+` lands (0 disables the pan but still lets
+   a click fire). `dims` is the live `[rows cols]`; it supplies the axis
    lengths the reticle + band need. Omitting it (or nil) yields a nil
    reticle and zero yaw/pitch - the aim is inert without knowing the
    viewport - while fire intent still parses, so non-loop callers are
@@ -582,8 +572,8 @@
                 ;; reticle + pan with no new bytes - the escape-proof model.
                 x       (when (some? pos) (get pos 0))
                 y       (when (some? pos) (get pos 1))
-                aim-col (when (some? pos) (reticle-axis x cols sensitivity))
-                aim-row (when (some? pos) (reticle-axis y rows sensitivity))]
+                aim-col (when (some? pos) (reticle-axis x cols))
+                aim-row (when (some? pos) (reticle-axis y rows))]
             {:aim-col    aim-col
              :aim-row    aim-row
              :yaw        (if (some? aim-col)

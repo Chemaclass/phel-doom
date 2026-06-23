@@ -496,43 +496,38 @@
 
 ;; --- reticle-axis: 1-based pointer cell -> 0-based clamped reticle cell ---
 
-(deftest test-reticle-axis-is-one-to-one-at-neutral-sensitivity
-  ;; sens 1.0: the reticle tracks the pointer cell exactly (1-based ->
-  ;; 0-based, so Cx 60 -> col 59), moving one cell per pointer cell.
-  ;; The reticle is a discrete cell, so the result is an integer column.
-  (is (= 59 (reticle-axis 60 120 1.0)) "pointer cell 60 -> reticle col 59")
-  (is (= 79 (reticle-axis 80 120 1.0)) "pointer cell 80 -> reticle col 79")
+(deftest test-reticle-axis-is-one-to-one
+  ;; The reticle tracks the pointer cell exactly (1-based -> 0-based, so
+  ;; Cx 60 -> col 59), moving one cell per pointer cell - 1:1, with NO
+  ;; sensitivity scaling. The reticle is a discrete cell, so the result is
+  ;; an integer column.
+  (is (= 59 (reticle-axis 60 120)) "pointer cell 60 -> reticle col 59")
+  (is (= 79 (reticle-axis 80 120)) "pointer cell 80 -> reticle col 79")
   ;; 1:1: a 20-cell pointer move is a 20-cell reticle move.
-  (is (= 20 (php/- (reticle-axis 80 120 1.0) (reticle-axis 60 120 1.0)))
+  (is (= 20 (php/- (reticle-axis 80 120) (reticle-axis 60 120)))
       "20 pointer cells -> 20 reticle cells (1:1)"))
 
 (deftest test-reticle-axis-clamps-to-viewport
   ;; The reticle never leaves the viewport: the right/left edges clamp to
   ;; the last/first cell, and a pointer PAST the window pins at that edge
   ;; (the pointer-drift robustness - aiming never freezes mid-screen).
-  (is (= 119 (reticle-axis 120 120 1.0)) "right edge clamps to col 119")
-  (is (= 0 (reticle-axis 1 120 1.0)) "left edge clamps to col 0")
-  (is (= 119 (reticle-axis 200 120 1.0)) "pointer past the window pins at the edge")
-  (is (= 0 (reticle-axis -50 120 1.0)) "pointer left of the window pins at col 0"))
-
-(deftest test-reticle-axis-scales-with-sensitivity
-  ;; Sensitivity scales the reticle speed: at 2x the same pointer offset
-  ;; moves the reticle twice as far from centre; at 0.5x half as far. The
-  ;; scaled position is rounded to the nearest whole cell (98.5 -> 99).
-  (is (= 99 (reticle-axis 80 120 2.0)) "2x sensitivity doubles the offset from centre")
-  (is (= 69 (reticle-axis 80 120 0.5)) "0.5x sensitivity halves it"))
+  (is (= 119 (reticle-axis 120 120)) "right edge clamps to col 119")
+  (is (= 0 (reticle-axis 1 120)) "left edge clamps to col 0")
+  (is (= 119 (reticle-axis 200 120)) "pointer past the window pins at the edge")
+  (is (= 0 (reticle-axis -50 120)) "pointer left of the window pins at col 0"))
 
 (deftest test-reticle-axis-returns-integer-cell
-  ;; A fractional sensitivity must still land on a whole cell - a float
-  ;; column trips PHP's float->int deprecation in the render intdiv and
-  ;; drifts the painted `+` off the hitscan column.
-  (is (php/is_int (reticle-axis 80 120 0.5)) "fractional sens -> integer cell")
-  (is (php/is_int (reticle-axis 73 120 1.4)) "fractional sens -> integer cell"))
+  ;; The reticle column must be a whole cell - a float trips PHP's
+  ;; float->int deprecation in the render intdiv and drifts the painted
+  ;; `+` off the hitscan column.
+  (is (php/is_int (reticle-axis 80 120)) "reticle col is an int")
+  (is (php/is_int (reticle-axis 73 120)) "reticle col is an int")
+  (is (php/is_int (reticle-axis 200 120)) "clamped reticle col is an int"))
 
 (deftest test-reticle-axis-degenerate-axis-is-nil
   ;; A nil / <=1 axis length has no viewport to clamp into.
-  (is (nil? (reticle-axis 60 nil 1.0)) "nil len -> nil")
-  (is (nil? (reticle-axis 60 1 1.0)) "len 1 -> nil"))
+  (is (nil? (reticle-axis 60 nil)) "nil len -> nil")
+  (is (nil? (reticle-axis 60 1)) "len 1 -> nil"))
 
 ;; --- edge-pan-rate: 0-based reticle cell -> per-frame pan rate ---
 
@@ -642,10 +637,15 @@
   (let [r (mouse-aim "\e[<35;90;15M\e[<35;120;15M" center-pos 1.0 look-dims)]
     (is (= [120 15] (:pos r)) "the last report in the frame wins")))
 
-(deftest test-mouse-aim-sensitivity-scales-reticle-and-pan
-  ;; Sensitivity scales BOTH the reticle speed and the edge-pan rate.
-  (is (= 99 (:aim-col (mouse-aim "\e[<35;80;15M" center-pos 2.0 look-dims)))
-      "2x sensitivity moves the reticle twice as far (98.5 rounds to cell 99)")
+(deftest test-mouse-aim-sensitivity-scales-pan-not-reticle
+  ;; Sensitivity scales ONLY the edge-pan rate; the reticle tracks the
+  ;; pointer 1:1 at EVERY sensitivity, so the `+` lands on the same cell
+  ;; (pointer Cx 80 -> col 79) whether sens is 0.5, 1.0 or 2.0.
+  (is (= 79 (:aim-col (mouse-aim "\e[<35;80;15M" center-pos 2.0 look-dims)))
+      "2x sensitivity does NOT move the reticle (still col 79, 1:1)")
+  (is (= (:aim-col (mouse-aim "\e[<35;80;15M" center-pos 0.5 look-dims))
+         (:aim-col (mouse-aim "\e[<35;80;15M" center-pos 2.0 look-dims)))
+      "reticle column is identical across sensitivities")
   (is (approx? 0.32 (:yaw (mouse-aim "" right-edge-pos 2.0 look-dims)))
       "2x sensitivity doubles the edge-pan yaw")
   (is (= 0.0 (:yaw (mouse-aim "" right-edge-pos 0.0 look-dims)))

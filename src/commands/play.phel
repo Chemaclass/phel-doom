@@ -5,7 +5,7 @@
                                             clamp-pitch decay-soul-overcap gain-armor-shard gain-backpack
                                             gain-life gain-soulsphere
                                             max-armor max-lives max-stamina turn-player
-                                            rebuild-pgrid reset-reticle set-reticle
+                                            rebuild-pgrid reset-reticle
                                             toggle-debug toggle-map toggle-pause toggle-sound])
   (:require phel-doom.core.map      :refer [door? reveal-secret secret? switch? toggle-switch])
   (:require phel-doom.glue.controls :refer [refresh-from-keys key-states rising-edges
@@ -33,7 +33,7 @@
                                           read-perf-snapshot scene-rows
                                           render-start-menu render-settings!
                                           render-death-screen render-victory-screen])
-  (:require phel-doom.io.input    :refer [init-input! restore! drain-keys rearm-mouse!]))
+  (:require phel-doom.io.input    :refer [init-input! restore! drain-keys rearm-mouse! announce-pointer-limit!]))
 
 ;; ---------------------------------------------------------------------
 ;; The play subcommand wires together:
@@ -127,12 +127,12 @@
   (update-in world [:player :angle] (fn [a] (php/+ a php/M_PI))))
 
 (defn apply-mouse-look
-  "Apply one frame's mouse edge-pan (#324, was positional steer #318) to the
-   player. `look` is the `controls/mouse-aim` result; `:yaw` rotates
-   `:angle` (same path as a keyboard turn) and `:pitch` shears `:pitch`
-   clamped to [-1, 1] via `clamp-pitch` (same saturation as the ↑/↓ keys).
-   Both are non-zero only while the reticle sits in the outer edge band, so
-   a reticle in the centre region (zero yaw/pitch) is a no-op and the
+  "Apply one frame's mouselook (#324) to the player. `look` is the
+   `controls/mouse-aim` result; `:yaw` rotates `:angle` (same path as a
+   keyboard turn) and `:pitch` shears `:pitch` clamped to [-1, 1] via
+   `clamp-pitch` (same saturation as the ↑/↓ keys). Both come from the
+   pointer's per-frame motion (the delta turn) plus the edge-pan fallback,
+   so a still pointer in the screen interior (zero yaw/pitch) is a no-op and the
    keyboard look is untouched. Pure; the game loop calls it only on an
    unpaused frame so the camera can't drift while a menu is up."
   [world look]
@@ -1005,26 +1005,22 @@
                 ms        (or (:ms frame) live-ms)
                 now-keys  (key-states keys)
                 edges0    (rising-edges now-keys prev-keys)
-                ;; Movable aim crosshair (#324): parse the same drained byte
-                ;; string for SGR mouse reports. `:aim-col`/`:aim-row` are the
-                ;; reticle cell the gun aims at (stamped on the world below so
-                ;; this frame's off-centre hitscan + crosshair use it);
-                ;; `:yaw`/`:pitch` edge-pan the camera when the reticle is in
-                ;; the outer band (applied before the tick so the frame aims +
+                ;; Mouselook (#324): parse the same drained byte string for
+                ;; SGR mouse reports. The crosshair is fixed dead-centre
+                ;; (`:aim-col`/`:aim-row` nil) and the gun fires straight
+                ;; ahead; `:yaw`/`:pitch` turn the CAMERA from the pointer's
+                ;; per-frame motion (applied before the tick so the frame
                 ;; renders with the new heading). A left click ORs into the
                 ;; existing space-fire edges so a mouse click shoots exactly
                 ;; like space (held button feeds auto-fire weapons). `:pos`
-                ;; threads forward as the next frame's cached pointer. Seed it
-                ;; to CENTER at game start (prev-mpos nil) and reset it on a
-                ;; resize: a centred pointer places the reticle dead centre
-                ;; (no edge-pan) so nothing auto-spins before a real report or
-                ;; when the absolute coords shift meaning under a new terminal
-                ;; size. The live `[rows cols]` gives mouse-aim the axis
-                ;; lengths the reticle clamp + edge band need.
+                ;; threads forward as the next frame's cached pointer; seed it
+                ;; to nil at game start AND on a resize so the first frame
+                ;; re-baselines (zero delta) instead of jolting the view from
+                ;; a stale or coordinate-shifted position. The live `[rows
+                ;; cols]` gives mouse-aim the axis lengths the delta scaling +
+                ;; edge band need.
                 mouse-on? (boolean (:mouse (:settings world)))
-                mpos      (if (or (nil? prev-mpos) (not= [rows cols] dims))
-                            [(php// (php/+ 1 cols) 2.0) (php// (php/+ 1 rows) 2.0)]
-                            prev-mpos)
+                mpos      (if (not= [rows cols] dims) nil prev-mpos)
                 look      (mouse-aim keys mpos
                                      (mouse-sensitivity (:settings world))
                                      [rows cols])
@@ -1049,16 +1045,15 @@
               (let [scened   (assoc world
                                     :scene-rows (scene-rows rows {:debug? (:debug? world)})
                                     :scene-cols cols)
-                    ;; Place the reticle + apply the edge-pan BEFORE the tick
-                    ;; so this frame's hitscan + crosshair use them. With the
-                    ;; mouse ON: stamp the reticle cell from mouse-aim and
-                    ;; (unpaused) edge-pan the camera. With the mouse OFF or
-                    ;; while paused: reset the reticle to centre (nil) so the
-                    ;; hitscan fires dead ahead + the crosshair sits centre,
-                    ;; exactly like keyboard-only play, and skip the edge-pan.
-                    reticled (if mouse-on?
-                               (set-reticle scened (:aim-col look) (:aim-row look))
-                               (reset-reticle scened))
+                    ;; Crosshair fixed dead-centre (#324 mouselook): the
+                    ;; reticle is always centred (reset-reticle's nil
+                    ;; sentinel), so the hitscan fires dead ahead and the `+`
+                    ;; sits centre, exactly like keyboard-only play. The mouse
+                    ;; contributes the camera turn (yaw/pitch) below, not a
+                    ;; reticle cell - applied BEFORE the tick so this frame
+                    ;; renders + fires with the new heading, gated on not
+                    ;; paused so a menu can't drift the view.
+                    reticled (reset-reticle scened)
                     aimed    (if (and mouse-on? (not (:paused world)))
                                (apply-mouse-look reticled look)
                                reticled)
@@ -1491,6 +1486,11 @@
         ;; Apply the volumes up front so the start menu + OST loop
         ;; honour them before the first frame.
         settings0   (load-settings)]
+    ;; Identify the terminal BEFORE the alt screen (#295): on terminals that
+    ;; can't hide the OS pointer (iTerm2 et al.), print a one-line notice that
+    ;; the centred crosshair is the aim. Skipped on replay (no interactive
+    ;; player to read it / keep the run timing clean).
+    (when (not replay) (announce-pointer-limit! (:mouse settings0)))
     ;; init-input! after loading settings so the Mouse setting (#246)
     ;; gates the xterm mouse-reporting escapes: off = the terminal never
     ;; captures the pointer. load-settings is plain file IO, so it is

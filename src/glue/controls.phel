@@ -388,25 +388,35 @@
    then saturates."
   0.06)
 
+(def mouse-look-gain
+  "Base mouselook speed multiplier (#324) on top of the raw 1:1 pointer ->
+   view mapping. The bare 1:1 (`1 / fov-proj-dist`) turns the view one
+   rendered column per pointer column - which reads SLOW for an FPS (you
+   drag the pointer most of the way across the screen for a 90-degree turn).
+   This gain speeds the whole interior turn up to a brisk default; the
+   Sensitivity slider then scales further on top (0.33x..3x), so the live
+   turn rate is `mouse-look-gain * sensitivity` times 1:1. Tune this one
+   number for the default feel."
+  3.0)
+
 (defn- look-yaw-per-cell
-  "Radians of yaw per pointer COLUMN moved, for true 1:1 mouselook: one
-   column of pointer travel turns the view by exactly one rendered column.
-   The engine's per-column ray spacing at screen centre is `1 / pd` (the
-   derivative of `atan((col - centre) / pd)`), with `pd = fov-proj-dist
-   cols`, so moving the pointer N columns slides the scene N columns under
-   the fixed-centre crosshair. Scales with `cols` via `fov-proj-dist`, so
-   the same hand sweep covers the same view fraction at any width."
+  "Radians of yaw per pointer COLUMN moved. The engine's per-column ray
+   spacing at screen centre is `1 / pd` (the derivative of `atan((col -
+   centre) / pd)`, `pd = fov-proj-dist cols`) - the 1:1 rate that slides the
+   scene one column per pointer column; `mouse-look-gain` scales it up for a
+   faster FPS feel. Scales with `cols` via `fov-proj-dist`, so the same hand
+   sweep covers the same view fraction at any width."
   [cols]
-  (php// 1.0 (fov-proj-dist cols)))
+  (php// mouse-look-gain (fov-proj-dist cols)))
 
 (defn- look-pitch-per-cell
-  "Pitch FRACTION per pointer ROW moved, the vertical 1:1 twin of
+  "Pitch FRACTION per pointer ROW moved, the vertical twin of
    `look-yaw-per-cell`. `projection/pitch-rows` shears the horizon by
    `pitch * pitch-cap * vh` rows, so `1 / (pitch-cap * rows)` of fraction is
-   exactly one row of vertical travel - the scene scrolls one row per
-   pointer row until the pitch clamp saturates."
+   one row of vertical travel; scaled by `mouse-look-gain` to match the yaw
+   speed-up."
   [rows]
-  (php// 1.0 (php/* pitch-cap rows)))
+  (php// mouse-look-gain (php/* pitch-cap rows)))
 
 (def mouse-motion-bit
   "Bit 5 of the SGR button code: set on a motion (drag / bare-move)

@@ -75,11 +75,11 @@ A terminal **cannot lock, warp, or hide the pointer** on most terminals (iTerm2 
 ```
 delta-col = pointer_col - prev-pointer_col    ; columns moved since last frame
 delta-row = pointer_row - prev-pointer_row    ; rows moved since last frame
-yaw   = ( delta-col / fov-proj-dist(cols)      + edge-pan-rate(pointer_col, cols, mouse-yaw-rate-max) )   * sensitivity
-pitch = ( -delta-row / (pitch-cap * rows)      - edge-pan-rate(pointer_row, rows, mouse-pitch-rate-max) ) * sensitivity
+yaw   = ( mouse-look-gain * delta-col / fov-proj-dist(cols)      + edge-pan-rate(pointer_col, cols, mouse-yaw-rate-max) )   * sensitivity
+pitch = ( -mouse-look-gain * delta-row / (pitch-cap * rows)      - edge-pan-rate(pointer_row, rows, mouse-pitch-rate-max) ) * sensitivity
 ```
 
-- **Delta-driven turn (interior region).** When the pointer moves N columns in the interior (not at the window edge), the yaw turn is `delta-col / fov-proj-dist(cols)` - exactly the ray-per-column scale the raycaster uses, so the view rotates 1:1 with pointer motion. Same for pitch rows: `delta-row / (pitch-cap * rows)`. Sensitivity scales both.
+- **Delta-driven turn (interior region).** When the pointer moves N columns in the interior (not at the window edge), the yaw turn is `mouse-look-gain * delta-col / fov-proj-dist(cols)`. The `delta-col / fov-proj-dist(cols)` part is the raw ray-per-column scale (one rendered column of turn per pointer column); a bare 1:1 reads SLOW for an FPS (you drag the pointer most of the way across the screen for a 90-degree turn), so `mouse-look-gain` (3.0) speeds the whole interior turn up to a brisk default. Same for pitch rows: `mouse-look-gain * delta-row / (pitch-cap * rows)`. Sensitivity scales both further (0.33x..3x), so the live rate is `mouse-look-gain * sensitivity` times 1:1.
 - **`edge-pan-rate(p, len, max-rate)`** for a pointer cell `p` in the edge band (`mouse-edge-band-frac` = 30% of each half-axis): the outer band produces an **ease-in** ramp (the fraction into the band, squared - gentle at the band lip) reaching `max-rate` at the far edge cell, signed by which side of centre `p` is on. Returns 0 in the interior region. This ramp fires every frame while the pointer sits at or past the window border, sustaining the turn when delta reports stop.
 - **Rate constants** (per frame at sensitivity 1.0): `mouse-yaw-rate-max` 0.16 rad/frame at the far left/right edge (a full 360 in ~0.65s held there), `mouse-pitch-rate-max` 0.06 pitch-fraction/frame at the top/bottom edge. Pitch is the clamped [-1, 1] fraction via `state/clamp-pitch`, so holding the pointer at the top ramps the view fully up (then saturates).
 - **Pointer right of centre -> +yaw** (pan right), **left -> -yaw**. **Pointer above centre -> +pitch** (look up): rows grow DOWNWARD, so moving the pointer up (fewer rows) increases pitch.

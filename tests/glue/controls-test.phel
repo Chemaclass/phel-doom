@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.glue.controls
             :refer [key-states refresh-from-keys rising-edges initial-key-snapshot
-                    nav-deltas refresh-move mouse-aim edge-pan-rate]))
+                    nav-deltas refresh-move mouse-aim edge-pan-rate mouse-look-gain]))
 
 (def blank-moves
   {:fwd          0
@@ -541,26 +541,27 @@
 
 (deftest test-mouse-aim-delta-turns-camera-1to1
   ;; Moving the pointer RIGHT yaws right (+), LEFT yaws left (-), by the
-  ;; columns moved: 20 columns from centre -> 20/70 rad (one rendered column
-  ;; of turn per pointer column; fov-proj-dist 120 = proj-dist 70).
+  ;; columns moved scaled by mouse-look-gain: 20 columns from centre ->
+  ;; gain*20/70 rad (the raw 1:1 is 20/70; fov-proj-dist 120 = proj-dist 70).
   (let [right (mouse-aim "\e[<35;80;15M" center-pos 1.0 look-dims)
         left  (mouse-aim "\e[<35;40;15M" center-pos 1.0 look-dims)]
     (is (php/> (:yaw right) 0.0) "pointer right -> yaw right")
-    (is (approx? (php// 20.0 70.0) (:yaw right)) "20 columns -> 20/70 rad (1:1)")
+    (is (approx? (php/* mouse-look-gain (php// 20.0 70.0)) (:yaw right)) "20 columns -> gain*20/70 rad")
     (is (php/< (:yaw left) 0.0) "pointer left -> yaw left")
-    (is (approx? (php// -20.0 70.0) (:yaw left)) "left is the mirror")
+    (is (approx? (php/* mouse-look-gain (php// -20.0 70.0)) (:yaw left)) "left is the mirror")
     (is (= 0.0 (:pitch right)) "horizontal move at mid-row -> no pitch")))
 
 (deftest test-mouse-aim-delta-pitch-1to1
   ;; Moving the pointer DOWN looks down (-pitch), UP looks up (+pitch), by
-  ;; the rows moved: 5 rows -> 5/12 fraction (rows grow downward, so down is
-  ;; negative). y 20 / y 10 stay inside the row band, so no edge contamination.
+  ;; the rows moved scaled by mouse-look-gain: 5 rows -> gain*5/12 fraction
+  ;; (rows grow downward, so down is negative). y 20 / y 10 stay inside the
+  ;; row band, so no edge contamination.
   (let [down (mouse-aim "\e[<35;60;20M" center-pos 1.0 look-dims)
         up   (mouse-aim "\e[<35;60;10M" center-pos 1.0 look-dims)]
     (is (php/< (:pitch down) 0.0) "pointer down -> look down (-pitch)")
-    (is (approx? (php// -5.0 12.0) (:pitch down)) "5 rows down -> -5/12")
+    (is (approx? (php/* mouse-look-gain (php// -5.0 12.0)) (:pitch down)) "5 rows down -> -gain*5/12")
     (is (php/> (:pitch up) 0.0) "pointer up -> look up (+pitch)")
-    (is (approx? (php// 5.0 12.0) (:pitch up)) "5 rows up -> +5/12")
+    (is (approx? (php/* mouse-look-gain (php// 5.0 12.0)) (:pitch up)) "5 rows up -> +gain*5/12")
     (is (= 0.0 (:yaw down)) "vertical move at mid-col -> no yaw")))
 
 (deftest test-mouse-aim-delta-is-linear
@@ -615,7 +616,7 @@
   ;; edge component muddies the value).
   (let [r (mouse-aim "\e[<35;90;15M\e[<35;100;15M" center-pos 1.0 look-dims)]
     (is (= [100 15] (:pos r)) "the last report in the frame wins")
-    (is (approx? (php// 40.0 70.0) (:yaw r)) "delta is centre(60)->100 = 40 columns")))
+    (is (approx? (php/* mouse-look-gain (php// 40.0 70.0)) (:yaw r)) "delta is centre(60)->100 = 40 columns")))
 
 (deftest test-mouse-aim-no-dims-is-inert
   ;; Without [rows cols] there is no viewport to scale the delta or band, so

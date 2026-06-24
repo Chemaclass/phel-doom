@@ -308,12 +308,13 @@
 (defn place-exit
   "Drop exactly ONE exit door (`cell-door`) at a RANDOM wall cell reachable
    from `spawn`, so every level/run gets a different exit the player has to
-   find. Floods the floor reachable from spawn, then turns a random BORDER
-   wall touching that floor into a door (an exit reads as a way OUT); falls
-   back to ANY reachable-adjacent wall so a run can never dead-end. Seeded
-   via `rng` (same seed -> same door). Called once per level build - not a
-   hot path, so a plain flood + scan is fine. Layouts + procgen supply only
-   geometry; this owns the sole exit on every level."
+   find. Floods the floor reachable from spawn, then turns a random wall
+   touching that floor into a door - ANY wall, an interior pillar or a border
+   edge, so the way out can be anywhere the player can reach (it is never
+   pinned to the screen sides). Seeded via `rng` (same seed -> same door).
+   Called once per level build - not a hot path, so a plain flood + scan is
+   fine. Layouts + procgen supply only geometry; this owns the sole exit on
+   every level."
   [grid [sx sy]]
   (let [h    (count grid)
         w    (count (first grid))
@@ -333,10 +334,10 @@
                 (php/aset seen k true)
                 (php/array_push q (php/array nx ny))))))
         (recur (php/+ i 1))))
-    ;; Candidate walls touch the reachable floor; prefer the border.
+    ;; Any wall touching the reachable floor is a candidate - border edge or
+    ;; interior pillar alike - so the exit can land anywhere accessible.
     (let [reached? (fn [x y] (php/=== true (php/aget seen (str x ":" y))))
-          border   (php/array)
-          inner    (php/array)]
+          cands    (php/array)]
       (loop [y 0]
         (when (php/< y h)
           (loop [x 0]
@@ -344,16 +345,13 @@
               (when (and (= cell-wall (cell grid x y))
                          (or (reached? (php/+ x 1) y) (reached? (php/- x 1) y)
                              (reached? x (php/+ y 1)) (reached? x (php/- y 1))))
-                (if (or (= x 0) (= y 0) (= x (php/- w 1)) (= y (php/- h 1)))
-                  (php/array_push border (php/array x y))
-                  (php/array_push inner (php/array x y))))
+                (php/array_push cands (php/array x y)))
               (recur (php/+ x 1))))
           (recur (php/+ y 1))))
-      (let [pool (if (php/> (php/count border) 0) border inner)
-            n    (php/count pool)]
+      (let [n (php/count cands)]
         (if (php/=== 0 n)
           grid
-          (let [pick (php/aget pool (rng/int! n))]
+          (let [pick (php/aget cands (rng/int! n))]
             (assoc-in grid [(php/aget pick 1) (php/aget pick 0)] cell-door)))))))
 
 (defn- border-row [w]
@@ -397,6 +395,62 @@
                             (+ 1 (rng/int! 2))
                             (+ 1 (rng/int! 2)))
                (+ i 1))))))
+
+(defn- seal-pockets
+  "Flood the floor reachable from (sx, sy); any floor cell NOT reached gets
+   walled off, so the remaining floor is ONE connected region. Keeps every
+   placeable cell (pickups, enemies, the exit) reachable from spawn after
+   scattered walls might have cut a pocket loose."
+  [grid sx sy]
+  (let [w    (count (first grid))
+        h    (count grid)
+        seen (php/array)
+        q    (php/array (php/array sx sy))]
+    (php/aset seen (str sx ":" sy) true)
+    (loop [i 0]
+      (when (php/< i (php/count q))
+        (let [c (php/aget q i) cx (php/aget c 0) cy (php/aget c 1)]
+          (foreach [d [[1 0] [-1 0] [0 1] [0 -1]]]
+            (let [nx (php/+ cx (get d 0)) ny (php/+ cy (get d 1)) k (str nx ":" ny)]
+              (when (and (= cell-floor (cell grid nx ny)) (php/=== nil (php/aget seen k)))
+                (php/aset seen k true)
+                (php/array_push q (php/array nx ny))))))
+        (recur (php/+ i 1))))
+    (loop [y 0 g grid]
+      (if (php/>= y h)
+        g
+        (recur (php/+ y 1)
+               (loop [x 0 gg g]
+                 (if (php/>= x w)
+                   gg
+                   (recur (php/+ x 1)
+                          (if (and (= cell-floor (cell gg x y))
+                                   (php/=== nil (php/aget seen (str x ":" y))))
+                            (assoc-in gg [y x] cell-wall)
+                            gg)))))))))
+
+(defn scatter-walls
+  "Scatter `n` random 1x1-2x2 wall blobs across `grid`'s interior for varied
+   room layouts, then `seal-pockets` so any floor the blobs cut off stays one
+   connected region reachable from `spawn` (the spawn cell is kept clear).
+   Rooms get random interior obstacles WITHOUT ever trapping the player or
+   stranding a keycard / exit. Seeded via `rng`; one level-build call, not a
+   hot path."
+  [grid [sx sy] n]
+  (let [w     (count (first grid))
+        h     (count grid)
+        spx   (php/intval sx)
+        spy   (php/intval sy)
+        blobs (loop [g grid i 0]
+                (if (php/>= i n)
+                  g
+                  (recur (place-block g w h
+                                      (+ 2 (rng/int! (php/max 1 (- w 5))))
+                                      (+ 2 (rng/int! (php/max 1 (- h 5))))
+                                      (+ 1 (rng/int! 2))
+                                      (+ 1 (rng/int! 2)))
+                         (+ i 1))))]
+    (seal-pockets (assoc-in blobs [spy spx] cell-floor) spx spy)))
 
 (defn random-spawn
   "Return [x y] floats at the centre of a random open cell. The

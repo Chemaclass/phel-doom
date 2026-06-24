@@ -1,7 +1,7 @@
 (ns phel-doom-tests.core.level-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.level :refer [ammo-box-count armor-shard-count config-for heart-count num-levels build-world place-secret-reward secret-trophies])
-  (:require phel-doom.core.map :refer [door? cell-floor])
+  (:require phel-doom.core.map :refer [door? cell-floor cell-wall])
   (:require phel-doom.core.rng :as rng))
 
 ;; ---------------------------------------------------------------------
@@ -368,17 +368,35 @@
                                                (seen? x (php/+ y 1)) (seen? x (php/- y 1)))])
                               a))))))))))
 
+(defn- interior-wall-count
+  "Wall cells NOT on the grid border - the random obstacles scattered into
+   the room (so every level reads as a varied room, not an empty box)."
+  [grid]
+  (let [h (count grid) w (count (first grid))]
+    (loop [y 1 a 0]
+      (if (>= y (- h 1))
+        a
+        (recur (+ y 1)
+               (loop [x 1 aa a]
+                 (if (>= x (- w 1))
+                   aa
+                   (recur (+ x 1)
+                          (if (= cell-wall (get (get grid y) x)) (+ aa 1) aa)))))))))
+
 (deftest test-every-level-has-one-random-reachable-exit
   (foreach [lv (range 1 (php/+ num-levels 1))]
     (let [positions (php/array)]
       (foreach [s [11 22 33 44 55 66]]
         (rng/seed! (php/+ (php/* 1000 s) lv))
         (let [world (build-world lv 8 0 :normal #{:pistol})
-              ds    (exit-doors (:grid world)
+              grid  (:grid world)
+              ds    (exit-doors grid
                                 (php/intval (:x (:player world)))
                                 (php/intval (:y (:player world))))]
           (is (= 1 (count ds)) (str "level " lv " has exactly one exit door"))
           (is (true? (get (first ds) 2)) (str "level " lv " exit is reachable from spawn"))
+          ;; Varied room: random interior walls (obstacles) are present.
+          (is (php/> (interior-wall-count grid) 0) (str "level " lv " has interior walls"))
           (php/array_push positions (str (get (first ds) 0) "," (get (first ds) 1)))))
       ;; Random: the exit is not pinned to one spot across seeds.
       (is (php/> (php/count (php/array_unique positions)) 1)

@@ -52,7 +52,7 @@ Required fields:
 | Field | Meaning |
 |---|---|
 | `:size`     | `[width height]` of grid in cells |
-| `:walls`    | Random wall blobs (procedural path only) |
+| `:walls`    | Random interior wall-blob count - scattered into procgen rooms AND hand-authored `:layout` rooms (skipped only when `:switches` is set) |
 | `:enemy`    | Catalog kw - see [monsters.md](monsters.md) for the type list |
 | `:enemies`  | Int (count of `:enemy`) OR vector of mixed specs (see below) |
 | `:chase`    | Chase AI speed (units/sec) |
@@ -79,7 +79,7 @@ When `:enemies` is a vector, each spec spawns its own count + HP and the enemy c
 
 ### Hand-authored arenas (`:layout`)
 
-`[" ###### " " #....# " " #..@.# " " #....D " " ###### "]` parses via `map/parse-layout`:
+`[" ###### " " #....# " " #..@.# " " #....# " " ###### "]` parses via `map/parse-layout`:
 
 | Char | Meaning |
 |---|---|

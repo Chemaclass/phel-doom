@@ -170,17 +170,18 @@
   (not (php/=== "1" (php/getenv "PHEL_DOOM_NO_SUBPIXEL"))))
 
 (defn- flat-walltex-on?
-  "Dev / bench override for the `Fast walls` player setting (fidelity-for-speed,
-   crisp-edge): PHEL_DOOM_FLAT_WALLTEX=1 forces the flat-wall path on without
+  "Dev / bench override for the `Low detail` player setting (fidelity-for-speed,
+   crisp-edge): PHEL_DOOM_FLAT_WALLTEX=1 forces the low-detail path on without
    touching saved settings, so local/bench.phel + an A/B compare can toggle it.
-   The player path is the `:fast-walls` setting threaded via stats; frame->string
-   ORs the two. Flat-wall mode paints the wall INTERIOR as one flat colour
-   (single texel) instead of a two-sample ▀ half-block, removing the bulk of the
-   per-sub-row wall-texture sampling on the hottest render path. The seam mixer
-   still runs, so the wall SILHOUETTE / top-bottom edges keep their sub-pixel
-   precision - only the interior texture loses vertical half-row detail. Sky,
-   floor and sprites are untouched. Both unset = byte-identical to the shipped
-   renderer (golden frame hashes unchanged). Full-detail (non-px2) only.
+   The player path is the `:fast-walls` setting (kept that key name for
+   save-file back-compat) threaded via stats; frame->string ORs the two. Low
+   detail paints both the wall AND the floor INTERIOR as one flat colour (single
+   texel) instead of a two-sample ▀ half-block, removing the bulk of the
+   per-sub-row wall + floor texture sampling on the hottest render path. The wall
+   seam mixer still runs, so the wall SILHOUETTE / top-bottom edges keep their
+   sub-pixel precision - only the interior textures lose vertical half-row
+   detail. Sky and sprites are untouched. Both unset = byte-identical to the
+   shipped renderer (golden frame hashes unchanged). Full-detail (non-px2) only.
    Resolved once per frame."
   []
   (php/=== "1" (php/getenv "PHEL_DOOM_FLAT_WALLTEX")))
@@ -1841,10 +1842,12 @@
                           (php/>= row (if mixw? (php/aget wsub-floorfrom col) bot))
                           (if (if in-blood? true floor-flat?)
                             (php/aset cell-reg 0 (if in-blood? blood-flr-row flr-plain))
-                            (if subpixel?
+                            (if (and subpixel? (not flat-walltex?))
                               ;; Half-block floor: two stacked ground
                               ;; samples (top sub-row = farther) packed
-                              ;; into one ▀ cell.
+                              ;; into one ▀ cell. flat-walltex? (the Fast
+                              ;; render setting) drops to the single-sample
+                              ;; flat cell below, halving floor texel work.
                               (let [fdx (buf-get floordxs col)
                                     fdy (buf-get floordys col)
                                     fxt (php/+ pfx (php/* dpt fdx))

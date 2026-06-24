@@ -1,6 +1,6 @@
 # Settings
 
-Player options across audio, gameplay defaults, input, and accessibility (the full set is the Fields table below). Persisted to `$HOME/.phel-doom-settings.json` (plain JSON, editable by hand) so choices survive restarts.
+Player options across audio, gameplay defaults, input, accessibility, and performance (the full set is the Fields table below). Persisted to `$HOME/.phel-doom-settings.json` (plain JSON, editable by hand) so choices survive restarts.
 
 ## Architecture
 
@@ -22,6 +22,7 @@ Player options across audio, gameplay defaults, input, and accessibility (the fu
 | Run timer | bool | on / off | Append the elapsed run time (`M:SS`) to the row-2 HUD strip. |
 | High contrast | bool | on / off | Accessibility. Un-dims the dim/grey HUD elements - compass non-facing letters, empty heart pips, and a healthy ammo-reserve count render bold white instead of SGR-dim/grey so the HUD reads on washed-out or low-quality terminals. |
 | Colorblind | enum | none / deuteran / protan / tritan | Accessibility (colour-vision deficiency). The minimap keycard (`k`) and door (`▌`) markers are the only glyphs distinguished by colour alone (blue / red / yellow share a glyph each), so a CVD player can confuse which key opens which door. Non-`none` modes remap that triad to a brightness-plus-hue-separated, CVD-safe set (the same code on a key and its matching door): `deuteran` + `protan` (red-green) use sky-blue / orange / white; `tritan` (blue-yellow) uses blue / red / white. Overlay-only palette swap selected once per frame, so zero hot-3D-path cost. Every other marker already carries a distinct glyph (shape-not-colour). |
+| Fast walls | bool | on / off | Performance. Paints each wall cell as one flat colour instead of a two-sample `▀` half-block, trading wall-interior vertical detail for render speed: ~6-14% less render time (scaling up with screen size) and ~17% fewer bytes per frame. The wall silhouette and top/bottom edges keep their sub-pixel precision (the seam mixer still runs); floor, sky and sprites are untouched. Off by default, so the shipped look is unchanged (golden frame hashes identical). Aimed at large terminals and slower hardware where the per-cell render loop dominates. Dev / bench override: `PHEL_DOOM_FLAT_WALLTEX=1` forces it without touching saved settings. |
 
 ## Access
 

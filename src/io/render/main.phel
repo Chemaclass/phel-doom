@@ -169,6 +169,22 @@
   []
   (not (php/=== "1" (php/getenv "PHEL_DOOM_NO_SUBPIXEL"))))
 
+(defn- flat-walltex-on?
+  "Dev / bench override for the `Fast walls` player setting (fidelity-for-speed,
+   crisp-edge): PHEL_DOOM_FLAT_WALLTEX=1 forces the flat-wall path on without
+   touching saved settings, so local/bench.phel + an A/B compare can toggle it.
+   The player path is the `:fast-walls` setting threaded via stats; frame->string
+   ORs the two. Flat-wall mode paints the wall INTERIOR as one flat colour
+   (single texel) instead of a two-sample ▀ half-block, removing the bulk of the
+   per-sub-row wall-texture sampling on the hottest render path. The seam mixer
+   still runs, so the wall SILHOUETTE / top-bottom edges keep their sub-pixel
+   precision - only the interior texture loses vertical half-row detail. Sky,
+   floor and sprites are untouched. Both unset = byte-identical to the shipped
+   renderer (golden frame hashes unchanged). Full-detail (non-px2) only.
+   Resolved once per frame."
+  []
+  (php/=== "1" (php/getenv "PHEL_DOOM_FLAT_WALLTEX")))
+
 (def floor-cast-k
   "Numerator of the floor-cast perpendicular distance: a floor cell `p`
    pixels below the horizon sits at perp-distance `floor-cast-k / p`.
@@ -740,6 +756,7 @@
         ;; walls / sky. Resolved once; PHEL_DOOM_NO_SUBPIXEL=1 forces the
         ;; old one-colour-per-cell paths.
         subpixel?                          (subpixel-enabled?)
+        flat-walltex?                      (or (flat-walltex-on?) (boolean (get stats :fast-walls)))
         ;; Floor-cast inputs: player position + per-row perpendicular
         ;; distance / fog level for the textured ground plane. The cell-
         ;; res arrays drive the legacy single-texel floor; the sub arrays
@@ -1897,9 +1914,17 @@
                                   s2b    (php/+ s2 1)
                                   rel    (php/- s2 ts-sub)]
                               (if (if (php/> rel 0) (php/< s2b (php/- bs-sub 2)) false)
-                                (php/aset cell-reg 0
-                                          (halfblock (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u)))
-                                                     (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u)))))
+                                ;; Wall INTERIOR (fully inside the wall). flat-walltex?
+                                ;; (crisp-edge prototype) paints it as one flat cell from
+                                ;; a single texel - the seam/silhouette cells below keep
+                                ;; their sub-pixel resolution, so only the interior texture
+                                ;; loses vertical half-row detail. Default: 2-sample ▀.
+                                (if flat-walltex?
+                                  (php/aset cell-reg 0
+                                            (php/aget bg-cell-cache (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u)))))
+                                  (php/aset cell-reg 0
+                                            (halfblock (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u)))
+                                                       (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u))))))
                                 ;; Seam accents: graduated dark border
                                 ;; tracing the exact wall/floor + wall/sky
                                 ;; diagonals - near-black wall base

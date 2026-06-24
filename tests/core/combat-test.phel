@@ -279,8 +279,9 @@
     (is (pos? (count (:sfx w'))) "fire report queued")))
 
 ;; ---------------------------------------------------------------------
-;; Fire-report volume is distance-attenuated by the struck enemy:
-;; close hit -> near full, far hit -> quieter, miss -> full (gun in hand).
+;; Fire-report volume is distance-attenuated by the collision target:
+;; close hit -> near full, far hit -> quieter; a miss attenuates by the
+;; WALL the shot hits (near wall loud, far wall / open level quiet).
 ;; The chaingun is single-target (no pierce/spread/splash) so it exercises
 ;; the primary hitscan path. Player at (1.5,1.5) faces +x down a corridor.
 ;; ---------------------------------------------------------------------
@@ -314,10 +315,16 @@
     (is (php/<= close 1.0))
     (is (php/> far 0.1) "still above the audible floor at range")))
 
-(deftest test-fire-report-full-volume-on-miss
-  ;; No enemy on the axis: the gun is in your hands, plays at full SFX
-  ;; volume (the global scalar is applied later in io/sound).
-  (let [base (new-world corridor-grid (new-player 1.5 1.5 0.0))
+(def near-wall-grid
+  ;; Player at (1.5,1.5) faces +x; wall at col 4 -> a short ~2.5u throw.
+  [[1 1 1 1 1]
+   [1 0 0 0 1]
+   [1 1 1 1 1]])
+
+(defn- shoot-miss-wall [grid]
+  ;; Fire the chaingun once into a wall with NO enemy on the axis; return
+  ;; the queued :shoot-chaingun vol (attenuated by the wall distance).
+  (let [base (new-world grid (new-player 1.5 1.5 0.0))
         w    (assoc base
                     :weapon        :chaingun
                     :owned-weapons #{:chaingun}
@@ -325,7 +332,18 @@
                     :fire-cooldown 0.0 :reload-cooldown 0.0
                     :jam-secs 0.0 :iframes 0.0 :enemies [])
         w'   (tick-shooting w true)]
-    (is (= 1.0 (:vol (first (sfx-named w' :shoot-chaingun)))))))
+    (:vol (first (sfx-named w' :shoot-chaingun)))))
+
+(deftest test-fire-report-attenuates-by-wall-on-miss
+  ;; A miss has no enemy, but the shot still collides with a wall. The
+  ;; report attenuates by that wall distance (not a flat full volume): a
+  ;; near wall reads loud, a far wall (or an open level) reads quiet - the
+  ;; same proximity feedback as an enemy hit.
+  (let [near (shoot-miss-wall near-wall-grid)   ; wall ~2.5u
+        far  (shoot-miss-wall corridor-grid)]   ; wall ~9.5u
+    (is (php/> near far) "near wall => louder miss than far wall")
+    (is (php/<= near 1.0))
+    (is (php/>= far 0.1) "never below the audible floor")))
 
 ;; ---------------------------------------------------------------------
 ;; Hit-marker FX (issue #201): a connecting shot stamps `:hit-fx`

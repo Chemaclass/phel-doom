@@ -20,7 +20,7 @@ Each weapon-fire event prefers a baked Freedoom sound over the system map, so gu
 
 ## Per-weapon fire report
 
-Every shot plays the weapon's `:fire-sfx` (hit or miss). Report volume attenuates by struck enemy distance: point-blank plays full volume, far drops toward floor (about 0.1), miss plays full volume (no enemy reference). Kill cue (`:kill`) layers on top at same distance volume. Wounds ride the fire report with floating HP and blood, no separate sound. All volumes scale by global SFX scalar (settings page control).
+Every shot plays the weapon's `:fire-sfx` (hit or miss). Report volume attenuates by the collision-target distance: point-blank plays full volume, far drops toward the floor (about 0.1). On a hit the target is the struck enemy; on a miss it is the wall the shot collides with (`cast-wall-dist`), so a near wall reads loud and a far wall or an open level reads quiet - the report tells you how close the thing you hit is. Kill cue (`:kill`) layers on top at the same distance volume. Wounds ride the fire report with floating HP and blood, no separate sound. All volumes scale by global SFX scalar (settings page control).
 
 ## Async firing and control
 

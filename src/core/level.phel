@@ -1,7 +1,7 @@
 (ns phel-doom.core.level
   (:require phel-doom.core.rng :as rng)
   (:require phel-doom.core.state      :refer [max-backpacks max-lives new-player new-world with-enemies])
-  (:require phel-doom.core.map        :refer [cell-door cell-door-blue cell-door-red cell-door-yellow count-secrets parse-layout place-exit random-grid random-spawn seed-secrets])
+  (:require phel-doom.core.map        :refer [cell-door cell-door-blue cell-door-red cell-door-yellow count-secrets parse-layout place-exit random-grid random-spawn scatter-walls seed-secrets])
   (:require phel-doom.core.enemy      :refer [default-wander-fraction promote-wanderers spawn-enemies spawn-enemies-mixed])
   (:require phel-doom.core.enemy-ai   :refer [aggression-for])
   (:require phel-doom.core.enemies    :refer [enemy-types type-spec default-lives-for])
@@ -291,7 +291,7 @@
    {:enemy :demon :chase 1.0 :name "demons"
     :enemies [{:type :demon :count 5}
               {:type :imp   :count 2}]
-    :layout showcase-layout}
+    :layout showcase-layout :walls 12}
    ;; L3 introduces the cacodemon shooter; a 50/50 melee mix (demon +
    ;; imp callback) pressures the player up close while they learn to
    ;; strafe the bolts. A flat 28x24 chamber. Keeps the L3 identity
@@ -300,22 +300,23 @@
     :enemies [{:type :caco  :count 4}
               {:type :demon :count 2}
               {:type :imp   :count 2}]
-    :layout l3-layout}
-   ;; L4 — the baron stronghold. A flat 44x28 hall, the blue-locked level:
-   ;; the blue-locked exit `B` is on the east wall and the blue keycard is
-   ;; seeded at a random open cell. Keeps the L4 identity (name, baron+demon
-   ;; mix, chase 1.4, blue lock, chainsaw drop).
+    :layout l3-layout :walls 18}
+   ;; L4 — the baron stronghold. A flat 44x28 hall with random interior
+   ;; walls, the blue-locked level: the blue-locked exit + the blue keycard
+   ;; are both placed at random reachable spots. Keeps the L4 identity (name,
+   ;; baron+demon mix, chase 1.4, blue lock, chainsaw drop).
    {:enemy :baron :chase 1.4 :name "barons" :door-lock :blue
     :enemies [{:type :baron :count 3}
               {:type :demon :count 3}]
-    :layout l4-layout}
-   ;; L5 — the cyberdemon arena. A flat 30x26 arena, red-locked: the
-   ;; red-locked exit `R` + keycard are reachable on the open floor. Keeps
-   ;; the L5 identity (name, cyber+imp mix, chase 1.6, red lock, rocket drop).
+    :layout l4-layout :walls 34}
+   ;; L5 — the cyberdemon arena. A flat 30x26 arena with random interior
+   ;; walls, red-locked: the red-locked exit + keycard are placed at random
+   ;; reachable spots. Keeps the L5 identity (name, cyber+imp mix, chase 1.6,
+   ;; red lock, rocket drop).
    {:enemy :cyber :chase 1.6 :name "cyberdemons" :door-lock :red
     :enemies [{:type :cyber :count 5}
               {:type :imp   :count 2}]
-    :layout l5-layout}
+    :layout l5-layout :walls 22}
 
    ;; --- L6-L10 ----------------------------------------------------
    ;; Progressive mixed-monster rooms; L10 hand-authored boss arena.
@@ -334,13 +335,14 @@
     :enemies [{:type :spectre :count 4}
               {:type :imp     :count 2}
               {:type :caco    :count 1}]
-    :layout l6-layout}
+    :layout l6-layout :walls 30}
 
    ;; L7 — revenants (HP 4) leading a small demon escort, with a lone
    ;; baron lobbing fireballs to keep a ranged threat in the room. A flat
-   ;; 42x26 chamber, yellow-locked: the yellow-locked exit `Y` + keycard
-   ;; are reachable on the open floor. Keeps the L7 identity (name,
-   ;; revenant+demon+baron mix, chase 1.8, yellow lock, BFG drop).
+   ;; 42x26 chamber with random interior walls, yellow-locked: the
+   ;; yellow-locked exit + keycard are placed at random reachable spots.
+   ;; Keeps the L7 identity (name, revenant+demon+baron mix, chase 1.8,
+   ;; yellow lock, BFG drop).
    {:enemy   :revenant
     :chase   1.8
     :name    "revenants"
@@ -348,7 +350,7 @@
     :enemies [{:type :revenant :count 4}
               {:type :demon    :count 2}
               {:type :baron    :count 1}]
-    :layout l7-layout}
+    :layout l7-layout :walls 30}
 
    ;; L8 — archvile court: two casters backed by mixed mid-tier mass. A
    ;; flat 50x30 court, no lock. Keeps the L8 identity (name,
@@ -359,7 +361,7 @@
     :enemies [{:type :archvile :count 2}
               {:type :caco     :count 3}
               {:type :mancubus :count 2}]
-    :layout l8-layout}
+    :layout l8-layout :walls 42}
 
    ;; L9 — the brood: pinkies (HP 2, very fast) flanking barons +
    ;; mancubi. Chaos pace — the player should feel surrounded.
@@ -698,11 +700,13 @@
 
 (defn- build-grid
   "Build `{:grid :spawn}`. Geometry + spawn come from a hand-authored
-   `:layout` (parsed via map/parse-layout) or the procedural `random-grid`;
-   either way `map/place-exit` then drops ONE random reachable exit door,
-   locked per the level's `:door-lock`. Layouts define GEOMETRY ONLY - the
-   exit is always randomised so finding the way out is part of the game, the
-   same on a hand-authored room as on a procgen one."
+   `:layout` (parsed via map/parse-layout) or the procedural `random-grid`.
+   For varied rooms, `:walls` random interior wall blobs are scattered in:
+   procgen gets them from `random-grid`; a hand-authored room gets them via
+   `map/scatter-walls` (which seals any cut-off pocket so the floor stays
+   connected), UNLESS it pins `:switches` (whose target cells are
+   hand-placed). `map/place-exit` then drops ONE random reachable exit door
+   on any wall, locked per `:door-lock` - the way out differs every run."
   [cfg]
   (let [{:keys [grid spawn]}
         (if (:layout cfg)
@@ -712,8 +716,11 @@
                                    (:name cfg)))))
           (let [[w h] (:size cfg)
                 g     (random-grid w h (:walls cfg))]
-            {:grid g :spawn (random-spawn g)}))]
-    {:grid  (lock-the-door (place-exit grid spawn) (:door-lock cfg))
+            {:grid g :spawn (random-spawn g)}))
+        varied               (if (and (:layout cfg) (not (:switches cfg)) (:walls cfg))
+                               (scatter-walls grid spawn (:walls cfg))
+                               grid)]
+    {:grid  (lock-the-door (place-exit varied spawn) (:door-lock cfg))
      :spawn spawn}))
 
 (defn- normalise-enemies

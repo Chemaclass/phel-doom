@@ -19,7 +19,7 @@
 
 ## Catalog
 
-L1: single-type procgen tutorial (imps only). L2-L8: hand-authored flat chambers, each with a distinctive layout - L2 a showcase with varied geometry, L3 a distinctive trench-style layout, L4 a stronghold, L5 a dais chamber, L6 a spacious room, L7 a distinct design, L8 a grand court. L9: mixed-monster procgen (melee secondary salted per level). L10: hand-authored arena with secrets + switches.
+L1: single-type procgen tutorial (imps only). L2-L8: hand-authored flat chambers, each seeded with random interior walls (`:walls` count) so the room disposition varies every run. L9: mixed-monster procgen (melee secondary salted per level). L10: hand-authored boss arena with secrets + switches (designed - no random walls, since switch targets are hand-placed).
 
 Non-locked procgen levels seed up to 2 secret passages (see [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4) and hand-authored layouts (L2, L3, L4, L5, L6, L7, L8, L10) skip seeding to prevent keycard bypass and keep the authored geometry explicit.
 
@@ -88,7 +88,7 @@ When `:enemies` is a vector, each spec spawns its own count + HP and the enemy c
 | `S` | secret wall (press F to reveal) |
 | `T` | switch (toggles target cells via `:switches` config) |
 
-`:layout` supplies GEOMETRY + spawn (+ secrets / switches) only; it does NOT author the exit. `map/place-exit` drops exactly one exit door at a random wall reachable from spawn on EVERY level (hand-authored and procgen alike), then `lock-the-door` applies the `:door-lock` - so the way out is randomised per run and finding it is part of the game. Enemy spawn still applies.
+`:layout` supplies GEOMETRY + spawn (+ secrets / switches) only; it authors neither the interior walls nor the exit. `map/scatter-walls` seeds `:walls` random interior wall blobs into each hand-authored room (skipped on `:switches` levels) and seals any cut-off pocket so the floor stays connected; `map/place-exit` then drops exactly one exit door at a random reachable wall - interior pillar or border edge - on EVERY level, and `lock-the-door` applies the `:door-lock`. So the room disposition AND the way out are randomised per run, and finding the exit is part of the game. Enemy spawn still applies.
 
 Switches: `:switches [{:at [cx cy] :targets [[tx ty] ...]}]`. F near `:at` flips targets wall↔floor.
 

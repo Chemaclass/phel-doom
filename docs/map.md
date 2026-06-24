@@ -53,13 +53,21 @@ Every cell is one of these ints. Constants exported so no module uses raw `0/1/2
 
 `build-world` picks `n-blocks` per level so room size and obstacle density are independent.
 
+## Random interior walls
+
+```phel
+(scatter-walls grid [sx sy] n)
+```
+
+Scatters `n` random 1×1-2×2 wall blobs into a grid's interior for varied room layouts, then `seal-pockets` walls off any floor the blobs cut off from spawn, so the playable area stays ONE connected region (pickups, enemies and the exit are never stranded; the spawn cell is kept clear). Seeded via `rng`. `build-world` applies it to hand-authored rooms (procgen already gets blobs from `random-grid`); a level that pins `:switches` keeps its authored geometry untouched.
+
 ## Exit placement
 
 ```phel
 (place-exit grid [sx sy])
 ```
 
-Drops exactly ONE exit door at a random wall cell reachable from the spawn `(sx, sy)`, so every level (hand-authored or procgen) gets a different exit the player must find. Floods the floor reachable from spawn, then turns a random BORDER wall touching that floor into a door (an exit reads as a way out); falls back to any reachable-adjacent wall so a run can never dead-end. Seeded via `rng` (same seed produces the same door). `build-world` then applies the level's `:door-lock` via `lock-the-door`.
+Drops exactly ONE exit door at a random wall cell reachable from the spawn `(sx, sy)`, so every level (hand-authored or procgen) gets a different exit the player must find. Floods the floor reachable from spawn, then turns a random wall touching that floor into a door - **any** wall, an interior pillar or a border edge, so the way out can be anywhere the player can reach (never pinned to the screen sides). Seeded via `rng` (same seed produces the same door). `build-world` then applies the level's `:door-lock` via `lock-the-door`.
 
 ## Player spawn
 

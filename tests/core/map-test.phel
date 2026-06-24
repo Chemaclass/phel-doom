@@ -7,7 +7,7 @@
                                        reveal-secret secret? switch?
                                        switch-on? toggle-switch
                                        toggle-switch-cell toggle-target-cell
-                                       parse-layout place-exit
+                                       parse-layout place-exit scatter-walls
                                        random-grid random-spawn seed-secrets])
   (:require phel-doom.core.rng :as rng))
 
@@ -94,6 +94,40 @@
         (rng/seed! s)
         (php/array_push spots (str (door-pos (place-exit box [3.5 2.5])))))
       (is (php/> (php/count (php/array_unique spots)) 1) "the exit moves with the seed"))))
+
+(deftest test-scatter-walls-adds-connected-random-walls
+  ;; scatter-walls drops random interior walls for varied rooms, then seals
+  ;; any cut-off pocket so EVERY remaining floor cell stays reachable from
+  ;; spawn (pickups / enemies / exit never stranded). The spawn cell stays
+  ;; clear, and the layout moves with the seed.
+  (let [box      (random-grid 20 14 0)
+        floors   (fn [g] (apply + (apply concat
+                                         (map (fn [r] (map (fn [c] (if (= cell-floor c) 1 0)) r)) g))))
+        reach-ct (fn [g sx sy]
+                   (let [seen (php/array)
+                         q    (php/array (php/array sx sy))]
+                     (php/aset seen (str sx ":" sy) true)
+                     (loop [i 0]
+                       (when (php/< i (php/count q))
+                         (let [c (php/aget q i) cx (php/aget c 0) cy (php/aget c 1)]
+                           (foreach [d [[1 0] [-1 0] [0 1] [0 -1]]]
+                             (let [nx (php/+ cx (get d 0)) ny (php/+ cy (get d 1)) k (str nx ":" ny)]
+                               (when (and (= cell-floor (get (get g ny) nx)) (php/=== nil (php/aget seen k)))
+                                 (php/aset seen k true)
+                                 (php/array_push q (php/array nx ny))))))
+                         (recur (php/+ i 1))))
+                     (php/count seen)))]
+    (rng/seed! 3)
+    (let [g (scatter-walls box [10.5 6.5] 14)]
+      (is (php/< (floors g) (floors box)) "interior walls were added")
+      (is (= cell-floor (get-in g [6 10])) "the spawn cell stays clear")
+      (is (= (floors g) (reach-ct g 10 6)) "every floor cell stays reachable from spawn"))
+    ;; Varies with the seed.
+    (let [shapes (php/array)]
+      (foreach [s [1 2 3 4]]
+        (rng/seed! s)
+        (php/array_push shapes (php/md5 (str (scatter-walls box [10.5 6.5] 14)))))
+      (is (php/> (php/count (php/array_unique shapes)) 1) "the walls vary with the seed"))))
 
 (deftest test-random-spawn-lands-on-floor
   (let [g     [[1 1 1 1 1]

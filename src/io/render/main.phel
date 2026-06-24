@@ -474,6 +474,12 @@
 ;; engine's offset-cache.
 (def- gradient-cache (atom {:vh -1 :pr 0}))
 
+;; Single-slot memo for the full-resolution weapon-sprite floor gradient
+;; (pixel-doubled mode only). Keyed on terminal height `vh` alone - it
+;; carries no pitch shear and `vh` only changes on resize, so the lookup
+;; is a per-frame O(1) hit instead of a ~0.2ms rebuild every frame.
+(def- floor-full-cache (atom {:vh -1 :grad nil}))
+
 (defn- build-wall-sub-bounds
   "Per-column seam data for the sub-row wall mixers, all
    column-constant so the cell loops read plain agets. Returns a
@@ -516,9 +522,15 @@
               whs  (php/min cap (php/intval (wall-px (php/* nf pd) dist)))
               t    (php/+ (php/intdiv (php/- cap whs) 2) prn)
               b    (php/+ t whs)
-              mix? (and tex-on?
-                        (php/>= (buf-get tex-levels c) 0)
-                        (or sprites-on (php/=== nil (buf-get emask c))))]
+              ;; Plain nested `if` (ternary) instead of `and`/`or`: those
+              ;; macro forms compile to a per-column IIFE closure capturing
+              ;; the whole frame scope (svw calls/frame); the ternary inlines
+              ;; with no capture. Same boolean, runs in the wall-bounds loop.
+              mix? (if tex-on?
+                     (if (php/>= (buf-get tex-levels c) 0)
+                       (if sprites-on true (php/=== nil (buf-get emask c)))
+                       false)
+                     false)]
           (php/aset ts c t)
           (php/aset bs c b)
           (php/aset mx c (if mix? 1 0))
@@ -580,6 +592,20 @@
                     :blood-sky-code (build-horizon-gradient-codes vh shade-code-table-blood pr)}]
         (reset! gradient-cache bundle)
         bundle))))
+
+(defn- floor-gradient-full-for
+  "Memoized full-resolution (terminal-height `vh`, no pitch shear) floor
+   gradient for the weapon-sprite painter. In pixel-doubled mode the scene
+   gradient is half-res, so the viewmodel needs its own vh-keyed gradient;
+   `vh` changes only on resize, so the single-slot cache turns a per-frame
+   rebuild into an O(1) hit. Output is byte-identical to the inline build."
+  [^int vh]
+  (let [c @floor-full-cache]
+    (if (php/=== vh (:vh c))
+      (:grad c)
+      (let [g (build-themed-gradient vh 239 true)]
+        (reset! floor-full-cache {:vh vh :grad g})
+        g))))
 
 (defn frame->string
   "Render the world sized to cols x rows. Walls project at a constant
@@ -1253,7 +1279,7 @@
           ;; (it paints at terminal coordinates; the scene gradient is
           ;; half-res in pixel-doubled mode).
           floor-gradient-full (if px2?
-                                (build-themed-gradient vh 239 true)
+                                (floor-gradient-full-for vh)
                                 floor-gradient)
           ;; SUB-row wall bounds for BOTH emitters (half a terminal row
           ;; of precision: 4 sub-rows per 2-terminal-row scene cell in

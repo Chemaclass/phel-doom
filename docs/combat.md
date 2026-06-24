@@ -73,7 +73,7 @@ The crosshair is fixed at screen-centre (`svh/2`). An enemy at distance `d` proj
 
 Every connecting shot stamps `:hit-fx {:kill? :ttl}` on the world via `stamp-hit-fx`: `:kill?` is true on a killing blow, false on a wound, and `:ttl` starts at `hit-marker-seconds` (0.12 s). `decay-timers` ticks the ttl down each frame and clears the field at 0. All three hit tails set it - `on-shot-hit` (single-target), `finish-multikill` (pierce/spread, one stamp for the aggregate volley), and `bfg-fire` (kill is the hit proxy: splash has no wound-only signal). The render layer reads it through `stats[:hit-fx]`; `paint-crosshair` swaps the `+` reticle for a bold-red `✗` on a kill or a bold-yellow `×` on a wound for the ttl window. It is single-shot feedback (no strobe), so it is kept in the calm 3D view (see [rendering.md](rendering.md#calm-3d-view-no-decorative-blinks)).
 
-On miss: weapon report only.
+On miss: weapon report only, attenuated by the distance to the wall the shot hits (near wall loud, far wall / open level quiet).
 
 Killed enemy stays in vector with `:respawn-after` timer. See [monsters.md](monsters.md).
 

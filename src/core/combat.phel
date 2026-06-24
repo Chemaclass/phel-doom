@@ -814,14 +814,17 @@
   "Append the shot's sound events to `out`'s :sfx queue and return it.
    `src` is the pre-shot world (active weapon spec + player position).
 
-   The fire report is distance-attenuated by how far the struck enemy is
-   from the player (`distance-volume`): a point-blank hit plays at full
+   The fire report is distance-attenuated by how far the COLLISION TARGET
+   is from the player (`distance-volume`): a point-blank hit plays at full
    volume, a far hit drops toward the ~0.1 floor so a distant firefight
-   reads quieter than one in your face. A MISS (`hit?` false) has no
-   enemy to reference, so the gun plays at full volume — it is in your
-   hands. Every volume here is later multiplied by the player's global
-   SFX scalar in io/sound, so it stays relative to the SFX max set in
-   options.
+   reads quieter than one in your face. On a hit the target is the struck
+   enemy; on a MISS (`hit?` false) there is no enemy, so the shot still
+   collides with a WALL and the report attenuates by that wall distance
+   (`cast-wall-dist`) — a near wall reads loud, a far wall or an open
+   level drops toward the floor. Either way the volume tells you how close
+   the thing the shot hit is. Every volume here is later multiplied by the
+   player's global SFX scalar in io/sound, so it stays relative to the SFX
+   max set in options.
 
    Always queue the ACTIVE weapon's own report so every trigger pull
    sounds like the gun going off — hit or miss. Per-weapon `:fire-sfx`
@@ -840,7 +843,12 @@
             vol   (distance-volume d)
             fired (push-sfx out fire-sfx vol)]
         (if killed? (push-sfx fired :kill vol) fired))
-      (push-sfx out fire-sfx 1.0))))
+      ;; MISS: no enemy struck, but the shot still collides with a wall.
+      ;; Attenuate by that wall distance so a near wall reads loud and a
+      ;; far wall / open level reads quiet, matching the enemy-hit path.
+      ;; cast-wall-dist re-probes the aim ray (cheap, off the per-frame
+      ;; path) and reproduces the same wall-d the fire path used.
+      (push-sfx out fire-sfx (distance-volume (cast-wall-dist src))))))
 
 (defn can-fire?
   "True when the active weapon is ready: cooldown elapsed, not jammed,

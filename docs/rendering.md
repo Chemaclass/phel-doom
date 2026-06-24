@@ -190,6 +190,17 @@ The cost that killed the earlier full-frame attempt was the per-cell string buil
 
 (Caveat for `def-`: it does NOT accept a string docstring - the string is stored AS the value. `half-cell-cache` keeps its doc in a `;;` comment for this reason.)
 
+### macOS Terminal.app compatibility
+
+`▀` half-blocks render pixel-tight in iTerm2, kitty, WezTerm and Ghostty, but **macOS Terminal.app draws block / box glyphs with anti-aliasing and inter-row line gaps**, so the half-block illusion breaks into visible horizontal **row seams** in the 3D view and gappy HUD borders (#332). The colour path is fine: the renderer is 256-colour only (`\e[38;5;Nm` / `\e[48;5;Nm`), which Terminal.app supports, so the gap is glyph rendering, not colour depth.
+
+Two fixes, either one helps:
+
+1. **`Sub-pixel` setting OFF** (or `PHEL_DOOM_NO_SUBPIXEL=1`): drops to one solid colour per cell, so there are no `▀` sub-pixels to seam. Lower vertical fidelity but clean on Terminal.app. Wired as a persisted player setting (see [settings.md](settings.md)) and ANDed with the env override in `frame->string`'s `subpixel?` gate.
+2. **Terminal.app settings**: Preferences -> Profiles -> Text - set **line spacing to 1.0** (the default above 1.0 is what opens the row gaps) and use a tight monospace font (SF Mono, Menlo, Fira Code). Tightening line height alone removes most seams with Sub-pixel left ON.
+
+Recommended order: try line spacing 1.0 first (keeps full fidelity); if seams persist, turn Sub-pixel off. iTerm2 / kitty / WezTerm / Ghostty need neither.
+
 ## Pixel-doubled mode (auto, big screens on slow machines)
 
 When the game-loop's startup calibration finds full detail too slow for a smooth framerate on a big screen (cell area beyond 200x45 - a terminal at or below that size always keeps full detail; see `docs/game-loop.md`), `frame->string` gets `:px2? true` in stats: the scene renders at half resolution (svw x svh) and each scene cell paints a 2x2 terminal block - quarter the per-cell work, still the whole terminal. Key invariants:

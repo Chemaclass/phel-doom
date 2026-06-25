@@ -3,7 +3,7 @@
 (ns phel-doom.io.render.main
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
   (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright shade-table shade-code-table shade-table-blood shade-code-table-blood])
-  (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table tex-fade-tc bg-cell-cache halfblock halfblock-tc paint-bg build-sky-halfblock build-sky-codes-sub seam-darken-16 seam-darken-8 seam-darken-5 collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
+  (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table tex-fade-tc bg-cell-cache halfblock halfblock-tc paint-bg quadblock build-sky-halfblock build-sky-codes-sub seam-darken-16 seam-darken-8 seam-darken-5 collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.wall-texture-data :refer [wall-tex])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type-lod sprite-fade sprite-fade-index sprite-col-x sprite-subcol-x enemy-sprite-cell enemy-sprite-quad])
   (:require phel-doom.io.render.hud :refer [minimap-door-pulse minimap-rows minimap-frame hud-debug-line hud-line-str help-menu-string settings-menu-string pause-menu-string])
@@ -181,6 +181,18 @@
    saved settings (A/B compare, screenshots). Resolved per frame."
   []
   (php/=== "1" (php/getenv "PHEL_DOOM_TRUECOLOR")))
+
+(defn- no-quad?
+  "PHEL_DOOM_NO_QUAD=1 hard-disables the 2×2 quadrant floor regardless of
+   the :quad-floor setting (escape hatch / perf baseline). Per frame."
+  []
+  (php/=== "1" (php/getenv "PHEL_DOOM_NO_QUAD")))
+
+(defn- force-quad?
+  "PHEL_DOOM_QUAD=1 forces the quadrant floor on without touching saved
+   settings (A/B compare, screenshots). Per frame."
+  []
+  (php/=== "1" (php/getenv "PHEL_DOOM_QUAD")))
 
 (defn- flat-walltex-on?
   "Dev / bench override for the `Low detail` player setting (fidelity-for-speed,
@@ -782,6 +794,14 @@
                                                 (if (force-truecolor?)
                                                   true
                                                   (boolean (get stats :truecolor))))
+        ;; Quad floor: pack a 2×2 quadrant glyph per floor cell (2× the
+        ;; horizontal floor detail of the ▀ half-block) where the four
+        ;; ground texels actually differ. OFF by default; honoured only with
+        ;; sub-pixel on, full-detail px1, textured (non-flat) floor.
+        quad-floor?                        (and (not (no-quad?))
+                                                (if (force-quad?)
+                                                  true
+                                                  (boolean (get stats :quad-floor))))
         flat-walltex?                      (or (flat-walltex-on?) (boolean (get stats :fast-walls)))
         ;; Floor-cast inputs: player position + per-row perpendicular
         ;; distance / fog level for the textured ground plane. The cell-
@@ -1874,26 +1894,56 @@
                           (if (if in-blood? true floor-flat?)
                             (php/aset cell-reg 0 (if in-blood? blood-flr-row flr-plain))
                             (if (and subpixel? (not flat-walltex?))
+                              (if quad-floor?
+                              ;; Quad floor: 2×2 ground texels per cell at
+                              ;; sub-column precision (the per-column cast has
+                              ;; no sub-column ray, so the left/right basis is
+                              ;; lerped 0.25 toward each neighbour). Collapses
+                              ;; to the ▀ cell when left==right so flat / far
+                              ;; floor still RLE-coalesces; quadblock only fires
+                              ;; where the extra horizontal detail is real.
+                                (let [fdx  (buf-get floordxs col)
+                                      fdy  (buf-get floordys col)
+                                      fdxl (if (php/> col 0)
+                                             (php/+ (php/* 0.75 fdx) (php/* 0.25 (buf-get floordxs (php/- col 1)))) fdx)
+                                      fdyl (if (php/> col 0)
+                                             (php/+ (php/* 0.75 fdy) (php/* 0.25 (buf-get floordys (php/- col 1)))) fdy)
+                                      fdxr (if (php/< col (php/- vw 1))
+                                             (php/+ (php/* 0.75 fdx) (php/* 0.25 (buf-get floordxs (php/+ col 1)))) fdx)
+                                      fdyr (if (php/< col (php/- vw 1))
+                                             (php/+ (php/* 0.75 fdy) (php/* 0.25 (buf-get floordys (php/+ col 1)))) fdy)
+                                      fxtl (php/+ pfx (php/* dpt fdxl)) fytl (php/+ pfy (php/* dpt fdyl))
+                                      fxtr (php/+ pfx (php/* dpt fdxr)) fytr (php/+ pfy (php/* dpt fdyr))
+                                      fxbl (php/+ pfx (php/* dpb fdxl)) fybl (php/+ pfy (php/* dpb fdyl))
+                                      fxbr (php/+ pfx (php/* dpb fdxr)) fybr (php/+ pfy (php/* dpb fdyr))
+                                      ftl  (php/aget flr-fade-top (php/aget floor-tex-px (php/+ (php/* (php/intval (php/* (php/- fytl (php/floor fytl)) 64)) 64) (php/intval (php/* (php/- fxtl (php/floor fxtl)) 64)))))
+                                      ftr  (php/aget flr-fade-top (php/aget floor-tex-px (php/+ (php/* (php/intval (php/* (php/- fytr (php/floor fytr)) 64)) 64) (php/intval (php/* (php/- fxtr (php/floor fxtr)) 64)))))
+                                      fbl  (php/aget flr-fade-bot (php/aget floor-tex-px (php/+ (php/* (php/intval (php/* (php/- fybl (php/floor fybl)) 64)) 64) (php/intval (php/* (php/- fxbl (php/floor fxbl)) 64)))))
+                                      fbr  (php/aget flr-fade-bot (php/aget floor-tex-px (php/+ (php/* (php/intval (php/* (php/- fybr (php/floor fybr)) 64)) 64) (php/intval (php/* (php/- fxbr (php/floor fxbr)) 64)))))]
+                                  (php/aset cell-reg 0
+                                            (if (if (php/=== ftl ftr) (php/=== fbl fbr) false)
+                                              (hb ftl fbl)
+                                              (quadblock ftl ftr fbl fbr))))
                               ;; Half-block floor: two stacked ground
                               ;; samples (top sub-row = farther) packed
                               ;; into one ▀ cell. flat-walltex? (the Fast
                               ;; render setting) drops to the single-sample
                               ;; flat cell below, halving floor texel work.
-                              (let [fdx (buf-get floordxs col)
-                                    fdy (buf-get floordys col)
-                                    fxt (php/+ pfx (php/* dpt fdx))
-                                    fyt (php/+ pfy (php/* dpt fdy))
-                                    fxb (php/+ pfx (php/* dpb fdx))
-                                    fyb (php/+ pfy (php/* dpb fdy))
-                                    txt (php/intval (php/* (php/- fxt (php/floor fxt)) 64))
-                                    tyt (php/intval (php/* (php/- fyt (php/floor fyt)) 64))
-                                    txb (php/intval (php/* (php/- fxb (php/floor fxb)) 64))
-                                    tyb (php/intval (php/* (php/- fyb (php/floor fyb)) 64))
-                                    tct (php/aget floor-tex-px (php/+ (php/* tyt 64) txt))
-                                    tcb (php/aget floor-tex-px (php/+ (php/* tyb 64) txb))]
-                                (php/aset cell-reg 0
-                                          (hb (php/aget flr-fade-top tct)
-                                              (php/aget flr-fade-bot tcb))))
+                                (let [fdx (buf-get floordxs col)
+                                      fdy (buf-get floordys col)
+                                      fxt (php/+ pfx (php/* dpt fdx))
+                                      fyt (php/+ pfy (php/* dpt fdy))
+                                      fxb (php/+ pfx (php/* dpb fdx))
+                                      fyb (php/+ pfy (php/* dpb fdy))
+                                      txt (php/intval (php/* (php/- fxt (php/floor fxt)) 64))
+                                      tyt (php/intval (php/* (php/- fyt (php/floor fyt)) 64))
+                                      txb (php/intval (php/* (php/- fxb (php/floor fxb)) 64))
+                                      tyb (php/intval (php/* (php/- fyb (php/floor fyb)) 64))
+                                      tct (php/aget floor-tex-px (php/+ (php/* tyt 64) txt))
+                                      tcb (php/aget floor-tex-px (php/+ (php/* tyb 64) txb))]
+                                  (php/aset cell-reg 0
+                                            (hb (php/aget flr-fade-top tct)
+                                                (php/aget flr-fade-bot tcb)))))
                               (let [fx (php/+ pfx (php/* dp-cell (buf-get floordxs col)))
                                     fy (php/+ pfy (php/* dp-cell (buf-get floordys col)))
                                     tx (php/intval (php/* (php/- fx (php/floor fx)) 64))

@@ -342,6 +342,72 @@
           (php/aset bg-cell-cache-tc v s)
           s)))))
 
+;; ---------------------------------------------------------------------
+;; 2×2 quadrant sub-pixels (#? quad floor). The ▀ half-block already gives
+;; 2× VERTICAL resolution; quadrant Block-Elements glyphs add a 2nd
+;; HORIZONTAL sample per cell, so a floor cell can show four texels packed
+;; into the two colours an ANSI cell allows. A cell quantises its 4 samples
+;; to brightest (FG) + darkest (BG) and picks the glyph whose mask paints
+;; each quadrant with the nearer colour. Caller collapses the no-horizontal-
+;; detail case (left==right) to a ▀ halfblock so flat/far floor still
+;; RLE-coalesces — quadblock only fires where the extra detail is real.
+(def- paint-lum256
+  ;; 256-code -> rough luminance (r+g+b) for the quad quantizer.
+  (let [a (php/array)]
+    (loop [c 0]
+      (when (php/< c 256)
+        (php/aset a c (php/+ (php/aget code-r c) (php/+ (php/aget code-g c) (php/aget code-b c))))
+        (recur (php/+ c 1))))
+    a))
+
+(defn- paint-lum
+  ;; Luminance of a paint value (256 code via LUT, tagged truecolor via unpack).
+  [^int v]
+  (if (php/< v tc-tag)
+    (php/aget paint-lum256 v)
+    (let [p (php/- v tc-tag)]
+      (php/+ (php/intdiv p 65536) (php/+ (php/intdiv (php/% p 65536) 256) (php/% p 256))))))
+
+(def- quad-glyphs
+  ;; pattern (TL<<3 | TR<<2 | BL<<1 | BR) -> Block-Elements glyph; FG paints
+  ;; the set bits, BG the clear bits. Universal (Unicode 1.0) coverage.
+  (php/array " " "▗" "▖" "▄" "▝" "▐" "▞" "▟" "▘" "▚" "▌" "▙" "▀" "▜" "▛" "█"))
+
+(def- quad-cell-cache (php/array))
+
+(defn quadblock
+  "2×2 quadrant paint cell for the four sub-pixel paint values TL/TR/BL/BR
+   (256 codes or tagged truecolor — resolved per channel like halfblock-tc).
+   Quantises to the brightest (FG) + darkest (BG) sample by luminance,
+   assigns each quadrant to the nearer of the two, and looks up the
+   Block-Elements glyph for that 2×2 mask. Memoised by (fg, bg, pattern) so
+   only the string build is cached; the cheap quantise re-runs per cell.
+   Callers must first collapse the no-horizontal-detail case
+   (TL==TR & BL==BR) to a ▀ halfblock — this is the genuinely 2-wide path."
+  [^int tl ^int tr ^int bl ^int br]
+  (let [llt  (paint-lum tl) lrt  (paint-lum tr) llb  (paint-lum bl) lrb  (paint-lum br)
+        ;; brightest of each row, then brightest overall -> FG; darkest -> BG.
+        topv (if (php/>= llt lrt) tl tr)  topl (if (php/>= llt lrt) llt lrt)
+        botv (if (php/>= llb lrb) bl br)  botl (if (php/>= llb lrb) llb lrb)
+        fg   (if (php/>= topl botl) topv botv)
+        fgl  (if (php/>= topl botl) topl botl)
+        ntpv (if (php/< llt lrt) tl tr)   ntpl (if (php/< llt lrt) llt lrt)
+        nbtv (if (php/< llb lrb) bl br)   nbtl (if (php/< llb lrb) llb lrb)
+        bg   (if (php/<= ntpl nbtl) ntpv nbtv)
+        bgl  (if (php/<= ntpl nbtl) ntpl nbtl)
+        mid  (php/+ fgl bgl)              ; compare 2*lum vs fgl+bgl
+        pat  (php/+ (php/+ (if (php/>= (php/* 2 llt) mid) 8 0)
+                           (if (php/>= (php/* 2 lrt) mid) 4 0))
+                    (php/+ (if (php/>= (php/* 2 llb) mid) 2 0)
+                           (if (php/>= (php/* 2 lrb) mid) 1 0)))
+        k    (php/+ (php/* (php/+ (php/* fg tc-key-base) bg) 16) pat)
+        hit  (php/aget quad-cell-cache k)]
+    (if hit
+      hit
+      (let [s (str "\e[" (tc-fg fg) ";" (tc-bg bg) "m" (php/aget quad-glyphs pat))]
+        (php/aset quad-cell-cache k s)
+        s))))
+
 (defn build-sky-halfblock
   "Per-row ▀ half-block sky cells at 2× vertical resolution. Each screen
    cell row stacks two sub-rows of the horizon gradient (top fg, bottom

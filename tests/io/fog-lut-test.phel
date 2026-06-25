@@ -3,7 +3,7 @@
   (:require phel-doom.io.render.palette :refer [code-r code-g code-b nearest-256])
   (:require phel-doom.io.render.frame-math
             :refer [tex-fade-table tex-fade-tc bg-cell-cache
-                    halfblock halfblock-tc paint-bg
+                    halfblock halfblock-tc paint-bg quadblock
                     seam-darken-16 seam-darken-8 seam-darken-5]))
 
 ;; ---------------------------------------------------------------------
@@ -188,3 +188,29 @@
   (is (= (php/aget bg-cell-cache 196) (paint-bg 196)) "256 code -> identical pre-baked cell")
   (let [red (php/aget (php/aget tex-fade-tc 23) 196)]
     (is (= "\e[48;2;255;0;0m " (paint-bg red)) "tagged value -> 24-bit BG cell")))
+
+;; ---------------------------------------------------------------------
+;; Quad floor: quadblock packs four sub-pixel samples into one 2×2
+;; Block-Elements cell, quantising to brightest (FG) + darkest (BG).
+;; ---------------------------------------------------------------------
+
+(deftest quadblock-left-bright-right-dark-is-left-half
+  ;; TL/BL bright (231), TR/BR dark (16): the bright column is FG, dark is
+  ;; BG, mask = left half -> ▌.
+  (is (= "\e[38;5;231;48;5;16m▌" (quadblock 231 16 231 16)) "vertical split -> ▌"))
+
+(deftest quadblock-top-bright-bottom-dark-is-upper-half
+  ;; Degenerate (caller would collapse this to a ▀ halfblock), but quadblock
+  ;; itself still resolves the mask: top set, bottom clear -> ▀.
+  (is (= "\e[38;5;231;48;5;16m▀" (quadblock 231 231 16 16)) "horizontal split -> ▀"))
+
+(deftest quadblock-single-bright-corner-is-that-quadrant
+  ;; Only TL bright -> upper-left quadrant glyph ▘.
+  (is (= "\e[38;5;231;48;5;16m▘" (quadblock 231 16 16 16)) "one bright corner -> ▘"))
+
+(deftest quadblock-resolves-truecolor-channels
+  (let [red   (php/aget (php/aget tex-fade-tc 23) 196)   ; tagged (255,0,0)
+        black 16]
+    ;; tagged-FG + 256-BG in a single quad cell (left column red).
+    (is (= "\e[38;2;255;0;0;48;5;16m▌" (quadblock red black red black))
+        "truecolor FG + 256 BG quadrant")))

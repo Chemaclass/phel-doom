@@ -164,33 +164,38 @@ in at the call site, skipping one PHP frame and exposing the body to constant
 folding. `^:pure` on a `defn-` opts it into inlining trust (the author asserts
 the body is side-effect-free; see issue #166).
 
-Annotated so far:
+Annotated: the let-free `physics/contribution` (`if` body) + `physics/counter-on?`
+(single `php/>`), and - since phel-lang's let-body inliner landed (see below) -
+~45 hot let-bodied pure helpers carrying `^:pure`: the per-cell `map/cell` +
+`map/wall?`, the per-ray `engine/cell-at` + `projection/wall-px`, `enemy/in-cone?`,
+and the per-enemy / per-frame AI (`enemy-ai/*`), physics, render-math
+(`fade-256`, `project-enemy-pd`, ...), map and combat helpers. The inliner splices
+each body at its call sites, dropping the `getDefinition(...)->__invoke(...)` frame
+dispatch. Byte-identical output (full unit suite + render golden hashes unchanged) -
+`^:pure` only relocates the same body. (`engine/cell-at` still shows a few sites the
+inliner skips; the rest inline.)
 
-- `physics/contribution` (an `if` body) inlines at all 4 movement-integration
-  call sites (yaw, pitch, forward/back, strafe).
-- `physics/counter-on?` (a single `php/>` body) inlines at most call sites.
+These run on the cast / AI / movement paths; the win is removing the per-call PHP
+frame dispatch, not changing the math (the hot loops were already native `php/`
+interop). It is small in absolute ms and easily lost in `/perf-bench` noise - verify
+it structurally by diffing `out/` (the dispatch form is gone), not by chasing a ms
+delta.
 
-Both run a handful of times per frame in the movement step, not in the cast
-loop, so the win is small and does not register on `/perf-bench` (which times
-cast + render only). Verified by diffing `out/`: the dispatch form
-`getDefinition(...)->__invoke(...)` is gone from the inlined sites.
+### let-body inlining (phel-lang dev-main)
 
-### Limitation: a `let` body blocks inlining
+Earlier the `CallInliner` rebaser whitelisted only Literal / GlobalVar / PhpVar /
+LocalVar / Call / If / Vector / Set / Map return nodes - a `LetNode` was NOT on the
+list, so any `defn` whose body is a `let` (or an `if`/`cond` with a `let` branch)
+fell back to dispatch even with `^:pure`, ruling out the highest-frequency helpers
+(`map/cell` ~600-1400 calls/frame, `map/wall?`, `enemy/in-cone?`). **phel-lang
+dev-main (#2586) lifted that limit**: let-bodied pure `defn`s now inline at opt >= 2,
+so phel-doom requires `phel-lang/phel-lang:dev-main`.
 
-`CallInliner`'s rebaser whitelists only Literal / GlobalVar / PhpVar / LocalVar
-/ Call / If / Vector / Set / Map return nodes. A `LetNode` is not on the list,
-so any `defn` whose body is a `let` (or an `if`/`cond` with a `let` branch)
-falls back to normal dispatch even with `^:pure`. This rules out the highest
-frequency helpers:
-
-- `map/cell` (the per-DDA cell read, ~600-1400 calls/frame) binds `row` in a
-  `let`.
-- `map/wall?`, `enemy/in-cone?` likewise bind in a `let`.
-
-Rewriting them to single expressions would duplicate the bound computation
-(`(get grid y)`, the projection) and regress every other caller, so they are
-left as-is pending an upstream `CallInliner` that handles `let` bodies
-(phel-lang). Until then, opt level 2 only reaches the let-free helpers above.
+Caveat: an early dev-main build mis-renamed inlined variables (undefined-variable
+codegen -> runtime crash, fixed in phel-lang#2622). `^:pure` on a let-bodied fn
+therefore needs dev-main AT OR AFTER that fix. The crash surfaces only in the FULL
+unit suite (it hit physics / AI / projectile paths), NOT the render golden hashes -
+so always full-suite a `^:pure` change.
 
 ## DDA raycaster
 

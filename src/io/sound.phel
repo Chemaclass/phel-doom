@@ -148,14 +148,28 @@
   (print "\a")
   (php/flush))
 
-(defn- muted?
-  "Test gate: when the PHEL_DOOM_SILENT env var is set to \"1\",
-   play-sfx! short-circuits and returns nil without shelling out OR
-   ringing the bell. Composer's `test` script sets this so phel
-   tests can never trigger real audio. Game runtime sets it nowhere,
-   so the default behaviour is unchanged."
+(defn- test-runner?
+  "Belt-and-suspenders mute: detect the `phel test` CLI command from argv
+   so the suite stays SILENT even if a runner forgets to export
+   PHEL_DOOM_SILENT (make/composer/docker all set it now — this guarantees
+   a bare `vendor/bin/phel test` never shells out to afplay either). Only
+   matches the literal `test` command token, never the game runtime
+   (`phel run phel-doom.main play`)."
   []
-  (php/=== "1" (php/getenv "PHEL_DOOM_SILENT")))
+  (let [argv (php/aget php/$_SERVER "argv")]
+    (if (php/is_array argv)
+      (php/in_array "test" argv)
+      false)))
+
+(defn- muted?
+  "Test gate: play-sfx! short-circuits and returns nil — no afplay, no
+   terminal bell — when PHEL_DOOM_SILENT=1 OR the process is the `phel
+   test` runner (`test-runner?`). Composer / make / docker test scripts
+   set the env var; the argv check is the safety net so tests can NEVER
+   trigger real audio. Game runtime matches neither, so play is unchanged."
+  []
+  (or (php/=== "1" (php/getenv "PHEL_DOOM_SILENT"))
+      (test-runner?)))
 
 (defn audio-player
   "Resolved audio-player binary for this host (afplay / paplay / aplay /

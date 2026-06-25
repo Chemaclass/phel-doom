@@ -17,7 +17,7 @@ play: ## start the DOOM showcase
 
 t: test
 test: ## run phel tests
-	vendor/bin/phel test
+	PHEL_DOOM_SILENT=1 vendor/bin/phel test
 
 f: format
 format: ## auto-format sources

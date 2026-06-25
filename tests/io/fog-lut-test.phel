@@ -2,7 +2,8 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.io.render.palette :refer [code-r code-g code-b nearest-256])
   (:require phel-doom.io.render.frame-math
-            :refer [tex-fade-table bg-cell-cache
+            :refer [tex-fade-table tex-fade-tc bg-cell-cache
+                    halfblock halfblock-tc paint-bg
                     seam-darken-16 seam-darken-8 seam-darken-5]))
 
 ;; ---------------------------------------------------------------------
@@ -128,3 +129,62 @@
   ;; the bake (extra reset, missing space, fg instead of bg) trips here.
   (is (= "\e[48;5;10m " (php/aget bg-cell-cache 10)) "code 10 BG cell")
   (is (= "\e[48;5;196m " (php/aget bg-cell-cache 196)) "code 196 BG cell"))
+
+;; ---------------------------------------------------------------------
+;; Truecolor (24-bit) fog: tex-fade-tc holds tagged paint values
+;; (256 + (r<<16|g<<8|b)) — the same fade as tex-fade-table but WITHOUT the
+;; nearest-256 snap, so the cell builders can emit \e[..;2;r;g;b. The
+;; tagged value must re-snap to exactly the matching 256 LUT entry.
+;; ---------------------------------------------------------------------
+
+(defn- tc? [^int v] (>= v 256))
+(defn- tc-rgb [^int v]
+  (let [p (php/- v 256)]
+    [(php/intdiv p 65536) (php/intdiv (php/% p 65536) 256) (php/% p 256)]))
+
+(deftest tex-fade-tc-values-are-tagged-truecolor
+  ;; Every cube/grey entry is tagged (>=256); system codes (<16) pass
+  ;; through as-is so UI markers never get a fake RGB.
+  (is (tc? (php/aget (php/aget tex-fade-tc 23) 196)) "near red is tagged")
+  (is (tc? (php/aget (php/aget tex-fade-tc 0) 196)) "far red is tagged")
+  (is (tc? (php/aget (php/aget tex-fade-tc 12) 46)) "mid green is tagged")
+  (is (= 7 (php/aget (php/aget tex-fade-tc 12) 7)) "system code passes through untagged"))
+
+(deftest tex-fade-tc-near-level-is-exact-rgb
+  ;; Level 23 = nearest wall, filmic(1)=1 -> no fade, so the tagged RGB is
+  ;; the code's exact cube RGB. 196 = (255,0,0).
+  (is (= [255 0 0] (tc-rgb (php/aget (php/aget tex-fade-tc 23) 196))) "near red = exact (255,0,0)"))
+
+(deftest tex-fade-tc-resnaps-to-256-lut
+  ;; The truecolor value is the SAME colour as the 256 path, just unsnapped:
+  ;; quantizing it back must land on the matching tex-fade-table code. Pins
+  ;; the two paths together so they can't drift apart.
+  (let [check (fn [lvl code]
+                (let [[r g b] (tc-rgb (php/aget (php/aget tex-fade-tc lvl) code))]
+                  (is (= (php/aget (php/aget tex-fade-table lvl) code)
+                         (nearest-256 r g b))
+                      (str "lvl " lvl " code " code " re-snaps to 256 LUT"))))]
+    (check 23 196) (check 0 196) (check 12 46) (check 6 240) (check 18 21)))
+
+(deftest halfblock-tc-emits-truecolor-cell
+  (let [red   (php/aget (php/aget tex-fade-tc 23) 196)   ; tagged (255,0,0)
+        green (php/aget (php/aget tex-fade-tc 23) 46)]   ; tagged (0,255,0)
+    ;; Two distinct tagged channels -> full 24-bit ▀ cell (top FG, bottom BG).
+    (is (= "\e[38;2;255;0;0;48;2;0;255;0m▀"
+           (halfblock-tc red green)) "two tagged colours paint a 24-bit ▀")))
+
+(deftest halfblock-tc-equal-collapses-to-space
+  (let [red (php/aget (php/aget tex-fade-tc 23) 196)]
+    (is (= "\e[48;2;255;0;0m " (halfblock-tc red red)) "top==bot -> single BG space cell")))
+
+(deftest halfblock-tc-mixes-truecolor-fg-with-256-bg
+  ;; A faded truecolor wall over a 256 sky/floor seam code: FG truecolor,
+  ;; BG 256, one ▀ cell. Proves per-channel disambiguation.
+  (let [red (php/aget (php/aget tex-fade-tc 23) 196)]
+    (is (= "\e[38;2;255;0;0;48;5;236m▀" (halfblock-tc red 236)) "tagged FG + 256 BG")
+    (is (= "\e[38;5;236;48;2;255;0;0m▀" (halfblock-tc 236 red)) "256 FG + tagged BG")))
+
+(deftest paint-bg-routes-256-to-cache-and-tags-to-truecolor
+  (is (= (php/aget bg-cell-cache 196) (paint-bg 196)) "256 code -> identical pre-baked cell")
+  (let [red (php/aget (php/aget tex-fade-tc 23) 196)]
+    (is (= "\e[48;2;255;0;0m " (paint-bg red)) "tagged value -> 24-bit BG cell")))

@@ -3,7 +3,7 @@
 (ns phel-doom.io.render.main
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
   (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright shade-table shade-code-table shade-table-blood shade-code-table-blood])
-  (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table bg-cell-cache halfblock build-sky-halfblock build-sky-codes-sub seam-darken-16 seam-darken-8 seam-darken-5 collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
+  (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table tex-fade-tc bg-cell-cache halfblock halfblock-tc paint-bg build-sky-halfblock build-sky-codes-sub seam-darken-16 seam-darken-8 seam-darken-5 collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.wall-texture-data :refer [wall-tex])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type-lod sprite-fade sprite-fade-index sprite-col-x sprite-subcol-x enemy-sprite-cell enemy-sprite-quad])
   (:require phel-doom.io.render.hud :refer [minimap-door-pulse minimap-rows minimap-frame hud-debug-line hud-line-str help-menu-string settings-menu-string pause-menu-string])
@@ -168,6 +168,19 @@
    Resolved once per frame."
   []
   (not (php/=== "1" (php/getenv "PHEL_DOOM_NO_SUBPIXEL"))))
+
+(defn- no-truecolor?
+  "PHEL_DOOM_NO_TRUECOLOR=1 hard-disables the 24-bit fog path regardless
+   of the :truecolor setting — the escape hatch for terminals without
+   truecolor support. Resolved per frame."
+  []
+  (php/=== "1" (php/getenv "PHEL_DOOM_NO_TRUECOLOR")))
+
+(defn- force-truecolor?
+  "PHEL_DOOM_TRUECOLOR=1 forces the 24-bit fog path on without touching
+   saved settings (A/B compare, screenshots). Resolved per frame."
+  []
+  (php/=== "1" (php/getenv "PHEL_DOOM_TRUECOLOR")))
 
 (defn- flat-walltex-on?
   "Dev / bench override for the `Low detail` player setting (fidelity-for-speed,
@@ -760,6 +773,15 @@
         ;; as true, so the shipped render + golden fixtures stay byte-identical.
         subpixel?                          (and (subpixel-enabled?)
                                                 (not (php/=== false (get stats :subpixel))))
+        ;; Truecolor distance-fog: floor cells emit 24-bit \e[48;2;r;g;b
+        ;; instead of a nearest-256 code, removing the cube/grey-ramp snap
+        ;; banding. OFF by default (256 parity); the :truecolor setting or
+        ;; PHEL_DOOM_TRUECOLOR=1 turns it on, PHEL_DOOM_NO_TRUECOLOR=1 forces
+        ;; it off. Only the full-detail (px1) floor path honours it.
+        truecolor?                         (and (not (no-truecolor?))
+                                                (if (force-truecolor?)
+                                                  true
+                                                  (boolean (get stats :truecolor))))
         flat-walltex?                      (or (flat-walltex-on?) (boolean (get stats :fast-walls)))
         ;; Floor-cast inputs: player position + per-row perpendicular
         ;; distance / fog level for the textured ground plane. The cell-
@@ -1347,7 +1369,13 @@
           bg-cell-cache       bg-cell-cache
           seam-darken-16      seam-darken-16
           seam-darken-8       seam-darken-8
-          seam-darken-5       seam-darken-5]
+          seam-darken-5       seam-darken-5
+          ;; Truecolor floor (px1 only): swap the fog LUT + the ▀ builder
+          ;; for their 24-bit twins. OFF -> these are the plain 256 globals
+          ;; so the floor path stays byte-identical. px2 keeps the 256 pins
+          ;; above (truecolor + pixel-doubling is a perf contradiction).
+          ftab                (if truecolor? tex-fade-tc tex-fade-table)
+          hb                  (if truecolor? halfblock-tc halfblock)]
       (if px2?
         ;; ----- Pixel-doubled scene emitter -------------------------
         ;; Walk the half-res scene; each internal cell emits two output
@@ -1793,10 +1821,10 @@
                 s-bot         (php/+ s-top 1)
                 dpt           (php/aget floor-dperp-sub s-top)
                 dpb           (php/aget floor-dperp-sub s-bot)
-                flr-fade-top  (php/aget tex-fade-table (php/aget floor-level-sub s-top))
-                flr-fade-bot  (php/aget tex-fade-table (php/aget floor-level-sub s-bot))
+                flr-fade-top  (php/aget ftab (php/aget floor-level-sub s-top))
+                flr-fade-bot  (php/aget ftab (php/aget floor-level-sub s-bot))
                 dp-cell       (buf-get floor-dperp row)
-                flr-fade-cell (php/aget tex-fade-table (buf-get floor-level row))]
+                flr-fade-cell (php/aget ftab (buf-get floor-level row))]
             (loop [col 0 prev nil run 0]
               (if (php/>= col vw)
                 (when (php/> run 0)
@@ -1864,15 +1892,15 @@
                                     tct (php/aget floor-tex-px (php/+ (php/* tyt 64) txt))
                                     tcb (php/aget floor-tex-px (php/+ (php/* tyb 64) txb))]
                                 (php/aset cell-reg 0
-                                          (halfblock (php/aget flr-fade-top tct)
-                                                     (php/aget flr-fade-bot tcb))))
+                                          (hb (php/aget flr-fade-top tct)
+                                              (php/aget flr-fade-bot tcb))))
                               (let [fx (php/+ pfx (php/* dp-cell (buf-get floordxs col)))
                                     fy (php/+ pfy (php/* dp-cell (buf-get floordys col)))
                                     tx (php/intval (php/* (php/- fx (php/floor fx)) 64))
                                     ty (php/intval (php/* (php/- fy (php/floor fy)) 64))
                                     tc (php/aget floor-tex-px (php/+ (php/* ty 64) tx))]
                                 (php/aset cell-reg 0
-                                          (php/aget bg-cell-cache (php/aget flr-fade-cell tc))))))
+                                          (paint-bg (php/aget flr-fade-cell tc))))))
                           ;; Glyph-mode enemy zones (sprite mode skips so
                           ;; the real wall resolves behind the billboard).
                           (if sprites-on false (buf-get emask col))

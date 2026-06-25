@@ -136,6 +136,77 @@
         (recur (php/+ lvl 1))))
     outer))
 
+;; ---------------------------------------------------------------------
+;; Truecolor (24-bit) tagged paint values. A "paint value" handed to the
+;; cell builders is EITHER a 256-colour code (0..255 — the legacy path) OR
+;; a tagged 24-bit colour:  tagged = 256 + (r<<16 | g<<8 | b),  r/g/b 0..255.
+;; Any value >= 256 therefore carries an exact RGB triple. `tex-fade-tc`
+;; bakes tagged values; `halfblock-tc` / `paint-bg` disambiguate PER channel
+;; so a tagged FG can pair with a 256 BG in one cell (mixed wall/seam cells
+;; just work) and the legacy 256-only `halfblock` stays byte-identical.
+;; This removes the `nearest-256` snap that bands the distance fog onto the
+;; 6×6×6 cube + 24-step grey ramp. Gated OFF by default in the renderer.
+(def tc-tag 256)
+
+(defn- pack-tc
+  ;; Tag an RGB triple (clamped 0..255) as a truecolor paint value.
+  ;; Load-time LUT bake only.
+  [^int r ^int g ^int b]
+  (php/+ tc-tag
+         (php/+ (php/* (php/max 0 (php/min 255 r)) 65536)
+                (php/+ (php/* (php/max 0 (php/min 255 g)) 256)
+                       (php/max 0 (php/min 255 b))))))
+
+(defn- fade-rgb-fog
+  ;; Truecolor twin of `fade-256-fog`: identical filmic lerp toward
+  ;; `fog-rgb`, but pack the exact RGB instead of snapping to nearest-256.
+  ;; System codes (<16) pass through as their plain code (UI/markers).
+  [^int code ^float t]
+  (if (php/< code 16)
+    code
+    (let [b  (filmic (php/- 1.0 t))
+          fr (php/aget fog-rgb 0)
+          fg (php/aget fog-rgb 1)
+          fb (php/aget fog-rgb 2)]
+      (pack-tc (php/intval (php/round (php/+ fr (php/* b (php/- (php/aget code-r code) fr)))))
+               (php/intval (php/round (php/+ fg (php/* b (php/- (php/aget code-g code) fg)))))
+               (php/intval (php/round (php/+ fb (php/* b (php/- (php/aget code-b code) fb)))))))))
+
+(defn- fade-rgb-flat
+  ;; Truecolor twin of the legacy fade-to-black fog (PHEL_DOOM_FLAT_FOG):
+  ;; lerp the code's RGB toward black by `t`. Niche A/B combo; kept simple.
+  [^int code ^float t]
+  (if (php/< code 16)
+    code
+    (let [k (php/- 1.0 t)]
+      (pack-tc (php/intval (php/round (php/* k (php/aget code-r code))))
+               (php/intval (php/round (php/* k (php/aget code-g code))))
+               (php/intval (php/round (php/* k (php/aget code-b code))))))))
+
+(def- fog-fade-rgb
+  ;; Resolved-once truecolor distance fade (tinted+filmic by default,
+  ;; toward-black under PHEL_DOOM_FLAT_FOG). Same `(code, t)` signature as
+  ;; `fog-fade` so the LUT bake is symmetric.
+  (if (fog-tinted?) fade-rgb-fog fade-rgb-flat))
+
+(def tex-fade-tc
+  "Truecolor twin of `tex-fade-table`: `tex-fade-tc[level][code]` is the
+   TAGGED 24-bit colour (>=256) of `code` faded by `1 - level/23` toward
+   the haze tint — no nearest-256 snap, so the renderer paints it as a
+   `\\e[38;2;r;g;b` / `\\e[48;2;r;g;b` cell. Built once at load (24×256)."
+  (let [outer (php/array)]
+    (loop [lvl 0]
+      (when (php/< lvl 24)
+        (let [inner (php/array)
+              t     (php/- 1.0 (php// lvl 23.0))]
+          (loop [c 0]
+            (when (php/< c 256)
+              (php/aset inner c (fog-fade-rgb c t))
+              (recur (php/+ c 1))))
+          (php/aset outer lvl inner))
+        (recur (php/+ lvl 1))))
+    outer))
+
 (defn- build-seam-darken
   ;; 256-entry LUT darkening a colour code by `steps` grayscale-equivalent
   ;; shade steps: grayscale-ramp codes subtract `steps` clamped at 232
@@ -206,6 +277,70 @@
                 (str "\e[38;5;" top ";48;5;" bot "m▀"))]
         (php/aset half-cell-cache k s)
         s))))
+
+(defn- tc-fg
+  ;; SGR fragment selecting `v` as FOREGROUND: "38;5;CODE" for a 256 code,
+  ;; "38;2;R;G;B" for a tagged truecolor value. Cache-miss path only.
+  [^int v]
+  (if (php/< v tc-tag)
+    (str "38;5;" v)
+    (let [p (php/- v tc-tag)]
+      (str "38;2;" (php/intdiv p 65536) ";" (php/intdiv (php/% p 65536) 256) ";" (php/% p 256)))))
+
+(defn- tc-bg
+  ;; SGR fragment selecting `v` as BACKGROUND. Cache-miss path only.
+  [^int v]
+  (if (php/< v tc-tag)
+    (str "48;5;" v)
+    (let [p (php/- v tc-tag)]
+      (str "48;2;" (php/intdiv p 65536) ";" (php/intdiv (php/% p 65536) 256) ";" (php/% p 256)))))
+
+;; Lazy memo of truecolor ▀ cells. Values can be tagged 24-bit ints up to
+;; 256 + 0xFFFFFF, so the int key `top*tc-key-base + bot` (tc-key-base >
+;; the max tagged value) stays collision-free and well inside PHP's 64-bit
+;; int — far faster than a "top_bot" string key on the floor hot path.
+;; Only populated when the truecolor renderer is active.
+(def- tc-key-base (php/+ tc-tag 16777216))
+(def- half-cell-cache-tc (php/array))
+;; Lazy memo of tagged-truecolor BG cells `\e[48;2;r;g;bm `, keyed by the
+;; tagged value. 256 codes never land here (paint-bg routes those to the
+;; pre-baked bg-cell-cache).
+(def- bg-cell-cache-tc (php/array))
+
+(defn halfblock-tc
+  "Truecolor-aware ▀ half-block builder. Resolves each channel
+   independently — a tagged 24-bit value emits `38;2;`/`48;2;`, a 256 code
+   emits `38;5;`/`48;5;` — so wall/seam cells that mix a faded truecolor
+   wall against a 256 sky/floor seam paint correctly. `top == bot` collapses
+   to a single BG cell (fewer bytes, RLE-coalesces). Memoised like
+   `halfblock`. The renderer swaps this in for `halfblock` only when the
+   :truecolor path is live."
+  [^int top ^int bot]
+  (let [k   (php/+ (php/* top tc-key-base) bot)
+        hit (php/aget half-cell-cache-tc k)]
+    (if hit
+      hit
+      (let [s (if (php/=== top bot)
+                (str "\e[" (tc-bg top) "m ")
+                (str "\e[" (tc-fg top) ";" (tc-bg bot) "m▀"))]
+        (php/aset half-cell-cache-tc k s)
+        s))))
+
+(defn paint-bg
+  "Resolve a single-colour BG paint cell for paint value `v`: a 256 code
+   hits the pre-baked `bg-cell-cache` (byte-identical to the legacy path);
+   a tagged truecolor value builds + memoises a `\\e[48;2;r;g;bm ` cell.
+   Replaces a raw `bg-cell-cache` fetch at the floor/wall single-sample
+   sites so they transparently support both palettes."
+  [^int v]
+  (if (php/< v tc-tag)
+    (php/aget bg-cell-cache v)
+    (let [hit (php/aget bg-cell-cache-tc v)]
+      (if hit
+        hit
+        (let [s (str "\e[" (tc-bg v) "m ")]
+          (php/aset bg-cell-cache-tc v s)
+          s)))))
 
 (defn build-sky-halfblock
   "Per-row ▀ half-block sky cells at 2× vertical resolution. Each screen

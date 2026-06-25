@@ -794,14 +794,16 @@
                                                 (if (force-truecolor?)
                                                   true
                                                   (boolean (get stats :truecolor))))
-        ;; Quad floor: pack a 2×2 quadrant glyph per floor cell (2× the
-        ;; horizontal floor detail of the ▀ half-block) where the four
-        ;; ground texels actually differ. OFF by default; honoured only with
-        ;; sub-pixel on, full-detail px1, textured (non-flat) floor.
-        quad-floor?                        (and (not (no-quad?))
+        ;; Quad detail: pack a 2×2 quadrant glyph where the four sub-pixels
+        ;; differ — smoothing the wall SILHOUETTE staircase (the visible win,
+        ;; high-contrast wall/sky edge) and adding horizontal floor texel
+        ;; detail. OFF by default; honoured only with sub-pixel on, full-detail
+        ;; px1. Collapses to the ▀ half-block where there's no horizontal
+        ;; detail, so flat / far surfaces stay byte-cheap.
+        quad?                              (and (not (no-quad?))
                                                 (if (force-quad?)
                                                   true
-                                                  (boolean (get stats :quad-floor))))
+                                                  (boolean (get stats :quad))))
         flat-walltex?                      (or (flat-walltex-on?) (boolean (get stats :fast-walls)))
         ;; Floor-cast inputs: player position + per-row perpendicular
         ;; distance / fog level for the textured ground plane. The cell-
@@ -1894,7 +1896,7 @@
                           (if (if in-blood? true floor-flat?)
                             (php/aset cell-reg 0 (if in-blood? blood-flr-row flr-plain))
                             (if (and subpixel? (not flat-walltex?))
-                              (if quad-floor?
+                              (if quad?
                               ;; Quad floor: 2×2 ground texels per cell at
                               ;; sub-column precision (the per-column cast has
                               ;; no sub-column ray, so the left/right basis is
@@ -2009,49 +2011,94 @@
                                   (php/aset cell-reg 0
                                             (halfblock (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u)))
                                                        (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u))))))
+                                (if quad?
+                                  ;; Quad silhouette AA: sample the wall edge at
+                                  ;; TWO sub-columns (bounds lerped 0.25 toward
+                                  ;; each neighbour — the per-column cast has no
+                                  ;; sub-column ray) × the two sub-rows, tag each
+                                  ;; of the 2×2 as sky / wall / floor, and emit the
+                                  ;; quadrant glyph, so a receding wall edge steps
+                                  ;; in half-CELL diagonals instead of whole
+                                  ;; columns. Wall colour is column-stable (edge
+                                  ;; AA, not texture sub-detail); collapses to ▀
+                                  ;; when the edge doesn't split the cell.
+                                  (let [tlb  (if (php/> col 0) (php/aget wsub-top (php/- col 1)) ts-sub)
+                                        trb  (if (php/< col (php/- vw 1)) (php/aget wsub-top (php/+ col 1)) ts-sub)
+                                        blb  (if (php/> col 0) (php/aget wsub-bot (php/- col 1)) bs-sub)
+                                        brb  (if (php/< col (php/- vw 1)) (php/aget wsub-bot (php/+ col 1)) bs-sub)
+                                        ;; Fractional on purpose: the half-cell
+                                        ;; edge offset is sub-integer, so rounding
+                                        ;; to whole sub-rows would snap back to
+                                        ;; ts/bs and never split the cell. Compare
+                                        ;; the integer sub-row directly against the
+                                        ;; lerped float edge so it straddles.
+                                        ts-l (php/+ (php/* 0.75 ts-sub) (php/* 0.25 tlb))
+                                        ts-r (php/+ (php/* 0.75 ts-sub) (php/* 0.25 trb))
+                                        bs-l (php/+ (php/* 0.75 bs-sub) (php/* 0.25 blb))
+                                        bs-r (php/+ (php/* 0.75 bs-sub) (php/* 0.25 brb))
+                                        wc2  (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/max 0 (php/intdiv (php/* rel 64) whs))) 64) u)))
+                                        wl2  (if (php/>= s2 (php/- bs-sub 1)) (php/aget seam-darken-16 wc2)
+                                                 (if (php/>= s2 (php/- bs-sub 2)) (php/aget seam-darken-8 wc2)
+                                                     (if (php/=== s2 ts-sub) (php/aget seam-darken-5 wc2) wc2)))
+                                        wc2b (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/max 0 (php/intdiv (php/* (php/+ rel 1) 64) whs))) 64) u)))
+                                        wl2b (if (php/>= s2b (php/- bs-sub 1)) (php/aget seam-darken-16 wc2b)
+                                                 (if (php/>= s2b (php/- bs-sub 2)) (php/aget seam-darken-8 wc2b)
+                                                     (if (php/=== s2b ts-sub) (php/aget seam-darken-5 wc2b) wc2b)))
+                                        sk2  (php/aget sky-sub-codes s2)
+                                        sk2b (php/aget sky-sub-codes s2b)
+                                        fl2  (floor-code-at s2 col)
+                                        fl2b (floor-code-at s2b col)
+                                        qtl  (if (php/< s2 ts-l) sk2 (if (php/>= s2 bs-l) fl2 wl2))
+                                        qtr  (if (php/< s2 ts-r) sk2 (if (php/>= s2 bs-r) fl2 wl2))
+                                        qbl  (if (php/< s2b ts-l) sk2b (if (php/>= s2b bs-l) fl2b wl2b))
+                                        qbr  (if (php/< s2b ts-r) sk2b (if (php/>= s2b bs-r) fl2b wl2b))]
+                                    (php/aset cell-reg 0
+                                              (if (if (php/=== qtl qtr) (php/=== qbl qbr) false)
+                                                (hb qtl qbl)
+                                                (quadblock qtl qtr qbl qbr))))
                                 ;; Seam accents: graduated dark border
                                 ;; tracing the exact wall/floor + wall/sky
                                 ;; diagonals - near-black wall base
                                 ;; sub-row, dark sub-row above it, dark
                                 ;; first floor sub-row, and a lighter lip
                                 ;; at the sky seam.
-                                (do
-                                  (cond
-                                    (php/< s2 ts-sub)
-                                    (php/aset pack-reg 1 (php/aget sky-sub-codes s2))
-                                    (php/>= s2 bs-sub)
-                                    (php/aset pack-reg 1 (if (php/=== s2 bs-sub)
-                                                           (php/aget seam-darken-8 (floor-code-at s2 col))
-                                                           (floor-code-at s2 col)))
-                                    :else
-                                    (let [wc (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u)))]
-                                      (php/aset pack-reg 1
-                                                (if (php/>= s2 (php/- bs-sub 1))
-                                                  (php/aget seam-darken-16 wc)
-                                                  (if (php/>= s2 (php/- bs-sub 2))
-                                                    (php/aget seam-darken-8 wc)
-                                                    (if (php/=== s2 ts-sub)
-                                                      (php/aget seam-darken-5 wc)
-                                                      wc))))))
-                                  (cond
-                                    (php/< s2b ts-sub)
-                                    (php/aset pack-reg 2 (php/aget sky-sub-codes s2b))
-                                    (php/>= s2b bs-sub)
-                                    (php/aset pack-reg 2 (if (php/=== s2b bs-sub)
-                                                           (php/aget seam-darken-8 (floor-code-at s2b col))
-                                                           (floor-code-at s2b col)))
-                                    :else
-                                    (let [wc (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u)))]
-                                      (php/aset pack-reg 2
-                                                (if (php/>= s2b (php/- bs-sub 1))
-                                                  (php/aget seam-darken-16 wc)
-                                                  (if (php/>= s2b (php/- bs-sub 2))
-                                                    (php/aget seam-darken-8 wc)
-                                                    (if (php/=== s2b ts-sub)
-                                                      (php/aget seam-darken-5 wc)
-                                                      wc))))))
-                                  (php/aset cell-reg 0
-                                            (halfblock (php/aget pack-reg 1) (php/aget pack-reg 2))))))
+                                  (do
+                                    (cond
+                                      (php/< s2 ts-sub)
+                                      (php/aset pack-reg 1 (php/aget sky-sub-codes s2))
+                                      (php/>= s2 bs-sub)
+                                      (php/aset pack-reg 1 (if (php/=== s2 bs-sub)
+                                                             (php/aget seam-darken-8 (floor-code-at s2 col))
+                                                             (floor-code-at s2 col)))
+                                      :else
+                                      (let [wc (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u)))]
+                                        (php/aset pack-reg 1
+                                                  (if (php/>= s2 (php/- bs-sub 1))
+                                                    (php/aget seam-darken-16 wc)
+                                                    (if (php/>= s2 (php/- bs-sub 2))
+                                                      (php/aget seam-darken-8 wc)
+                                                      (if (php/=== s2 ts-sub)
+                                                        (php/aget seam-darken-5 wc)
+                                                        wc))))))
+                                    (cond
+                                      (php/< s2b ts-sub)
+                                      (php/aset pack-reg 2 (php/aget sky-sub-codes s2b))
+                                      (php/>= s2b bs-sub)
+                                      (php/aset pack-reg 2 (if (php/=== s2b bs-sub)
+                                                             (php/aget seam-darken-8 (floor-code-at s2b col))
+                                                             (floor-code-at s2b col)))
+                                      :else
+                                      (let [wc (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u)))]
+                                        (php/aset pack-reg 2
+                                                  (if (php/>= s2b (php/- bs-sub 1))
+                                                    (php/aget seam-darken-16 wc)
+                                                    (if (php/>= s2b (php/- bs-sub 2))
+                                                      (php/aget seam-darken-8 wc)
+                                                      (if (php/=== s2b ts-sub)
+                                                        (php/aget seam-darken-5 wc)
+                                                        wc))))))
+                                    (php/aset cell-reg 0
+                                              (halfblock (php/aget pack-reg 1) (php/aget pack-reg 2)))))))
                             (let [lvl (buf-get shades-tex-level col)]
                               (if (if tex-on? (php/>= lvl 0) false)
                                 (if subpixel?

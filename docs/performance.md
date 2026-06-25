@@ -181,21 +181,21 @@ interop). It is small in absolute ms and easily lost in `/perf-bench` noise - ve
 it structurally by diffing `out/` (the dispatch form is gone), not by chasing a ms
 delta.
 
-### let-body inlining (phel-lang dev-main)
+### let-body inlining (phel-lang 0.46)
 
 Earlier the `CallInliner` rebaser whitelisted only Literal / GlobalVar / PhpVar /
 LocalVar / Call / If / Vector / Set / Map return nodes - a `LetNode` was NOT on the
 list, so any `defn` whose body is a `let` (or an `if`/`cond` with a `let` branch)
 fell back to dispatch even with `^:pure`, ruling out the highest-frequency helpers
-(`map/cell` ~600-1400 calls/frame, `map/wall?`, `enemy/in-cone?`). **phel-lang
-dev-main (#2586) lifted that limit**: let-bodied pure `defn`s now inline at opt >= 2,
-so phel-doom requires `phel-lang/phel-lang:dev-main`.
+(`map/cell` ~600-1400 calls/frame, `map/wall?`, `enemy/in-cone?`). **phel-lang 0.46
+(#2586) lifted that limit**: let-bodied pure `defn`s now inline at opt >= 2, so
+phel-doom requires `phel-lang/phel-lang` `^0.46`.
 
-Caveat: an early dev-main build mis-renamed inlined variables (undefined-variable
-codegen -> runtime crash, fixed in phel-lang#2622). `^:pure` on a let-bodied fn
-therefore needs dev-main AT OR AFTER that fix. The crash surfaces only in the FULL
-unit suite (it hit physics / AI / projectile paths), NOT the render golden hashes -
-so always full-suite a `^:pure` change.
+Caveat (history): the first dev-main build of #2586 mis-renamed inlined variables
+(undefined-variable codegen -> runtime crash, fixed in phel-lang#2622); 0.46 ships
+the fix. The crash surfaced only in the FULL unit suite (it hit physics / AI /
+projectile paths), NOT the render golden hashes - so always full-suite a `^:pure`
+change.
 
 ## DDA raycaster
 

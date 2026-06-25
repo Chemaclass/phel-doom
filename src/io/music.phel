@@ -8,15 +8,24 @@
 ;; without using any copyrighted asset. The original DOOM soundtrack
 ;; (Bobby Prince) is NOT free; several tracks also echo copyrighted
 ;; metal songs. So this is an ORIGINAL procedural composition — no WAD,
-;; no shipped file — synthesised once into a temp WAV (riff-wav-bytes,
-;; pure) and looped by a backgrounded `sh` that re-runs the player
-;; binary forever. Rides the Music volume slider.
+;; no shipped file.
+;;
+;; To avoid the 3-second riff looping audibly, we don't play one fixed
+;; clip. session-riff concatenates several ornamented sections (variant-
+;; riff — the ostinato with random 3rd/5th/octave stabs over the root
+;; chug) into ONE long continuous track, seeded off the pid so every
+;; session sounds fresh. It is baked once into a temp WAV and looped
+;; whole by a backgrounded `sh`, so there are no player-relaunch gaps
+;; between sections — only a brief one at the (much rarer) track wrap.
+;; Rides the Music slider.
 ;;
 ;; The loop guards on `kill -0 <game-pid>` each iteration, so a crashed
 ;; / SIGKILLed game self-terminates the music within one clip instead of
 ;; orphaning a forever-looping player. Lifecycle is driven from
 ;; commands/play: start-music! when gameplay begins, stop-music! on
-;; teardown, sync-music! on the N (sound) toggle. All entry points are
+;; teardown, sync-music! on the N (sound) toggle, and pause-music! /
+;; resume-music! (SIGSTOP/SIGCONT) on the pause edge so the OST freezes
+;; with the game and resumes where it left off. All entry points are
 ;; no-ops under PHEL_DOOM_SILENT and on hosts with no audio player.
 ;; ---------------------------------------------------------------------
 
@@ -53,6 +62,68 @@
    ;; bar 2 — climb to the b5 stab, then resolve back down
    {:midi 40 :dur 0.20} {:midi 40 :dur 0.20} {:midi 47 :dur 0.20} {:midi 50 :dur 0.20}
    {:midi 51 :dur 0.20} {:midi 50 :dur 0.20} {:midi 47 :dur 0.20} {:midi 43 :dur 0.20}])
+
+(def ornament-intervals
+  "Scale-degree lifts above the chugging root (E, midi 40): minor 3rd (G),
+   perfect 5th (B), octave (E). All sit inside E minor, so any random pick
+   stays consonant with the ostinato — the '3/5/8' colour."
+  [3 7 12])
+
+(def ornament-chance
+  "Percent chance a root chug hit is swapped for a random 3/5/8 stab. Low
+   enough that the relentless E pulse still dominates; high enough that the
+   ear hears the riff breathe differently each pass."
+  22)
+
+(def variant-reps
+  "Copies of the base riff chained inside one section. >1 makes a section
+   longer and gives the random stabs room to land in different bars."
+  2)
+
+(def track-sections
+  "Distinct ornamented sections concatenated — back to back, gapless —
+   into the one continuous session track. The whole track loops as a
+   single file, so the only player-relaunch silence is at the track wrap;
+   more sections push that wrap further apart. Each section is seeded
+   differently, so the colour keeps shifting as the track plays."
+  8)
+
+(defn variant-riff
+  "One OST variant: `reps` copies of `base` with random 3rd/5th/octave
+   (root+3/+7/+12) stabs sprinkled over the chugging root hits, leaving the
+   melodic slots untouched so the groove stays anchored. mt_rand is seeded
+   from `seed`, so a given seed reproduces a given colouring (one seed per
+   variant index keeps the baked set varied yet deterministic). Returns a
+   {:midi :dur} vector ready for riff-wav-bytes. Like the base riff, every
+   note still envelopes to zero, so clips stay click-free end to end."
+  [base ^int reps ^int seed]
+  (php/mt_srand seed)
+  (let [out (php/array)]
+    (dotimes [_ reps]
+      (foreach [note base]
+        (php/array_push
+         out
+         (if (and (php/=== 40 (:midi note))
+                  (php/< (php/mt_rand 0 99) ornament-chance))
+           {:midi (php/+ 40 (get ornament-intervals (php/mt_rand 0 2)))
+            :dur  (:dur note)}
+           note))))
+    out))
+
+(defn session-riff
+  "The full per-session track: `track-sections` ornamented sections
+   concatenated into one continuous note vector. Each section is seeded
+   off `seed` + its index, so the colour keeps shifting across the track
+   instead of repeating one phrase. Baked to a single WAV and looped as a
+   whole, so there are no player-relaunch gaps between sections — only
+   when the track wraps. Every note still envelopes to zero, so both the
+   section joins and the loop wrap stay click-free."
+  [^int seed]
+  (let [out (php/array)]
+    (dotimes [i track-sections]
+      (foreach [note (variant-riff doom-riff variant-reps (php/+ seed i))]
+        (php/array_push out note)))
+    out))
 
 (defn- silent? []
   (php/=== "1" (php/getenv "PHEL_DOOM_SILENT")))
@@ -125,25 +196,37 @@
            (php/pack "V" data-len)
            data))))
 
+(defn- music-path-prefix
+  "Temp-path stem for this game process's baked track. The pid keeps
+   concurrent games from clobbering each other and lets stop-music! /
+   pause-music! target exactly this session's process by pattern."
+  []
+  (str (php/sys_get_temp_dir) "/phel-doom-music-" (php/getmypid)))
+
 (defn- music-path []
-  (str (php/sys_get_temp_dir) "/phel-doom-music.wav"))
+  (str (music-path-prefix) ".wav"))
 
 (defn- ensure-wav!
-  "Write the riff WAV to the temp path once per host (content is fixed,
-   so an existing file is reused). Returns the path, or nil if the write
-   failed."
+  "Bake this session's continuous track once (idempotent: an existing
+   file is reused, so a volume-driven restart doesn't re-synth). Seeded
+   off the pid, so a new game gets fresh 3/5/8 colourings. Returns the
+   path, or nil if the write failed."
   []
   (let [path (music-path)]
     (if (php/file_exists path)
       path
-      (let [ok (php/file_put_contents path (riff-wav-bytes sample-rate doom-riff))]
+      (let [ok (php/file_put_contents
+                path
+                (riff-wav-bytes sample-rate (session-riff (php/* (php/getmypid) 100))))]
         (if (php/=== false ok) nil path)))))
 
 (defn- loop-command
-  "The backgrounded shell that re-plays `path` forever while the game
-   process (`ppid`) is alive. afplay gets a -v volume; others just play
-   the file. `& echo $!` prints the shell's PID so the caller can track
-   + kill it."
+  "The backgrounded shell that re-plays the continuous track `path` while
+   the game process (`ppid`) is alive. The whole session track loops as
+   one file, so the only silence is the brief player relaunch at the wrap
+   — not between sections. afplay gets a -v volume; others just play the
+   file. `& echo $!` prints the shell's PID so the caller can track +
+   kill it."
   [player path ^int ppid]
   (let [vol (if (php/=== player "afplay")
               (str " -v " (php/number_format @volume 3))
@@ -178,9 +261,30 @@
   []
   (let [pid (:pid @proc)]
     (when pid
+      ;; Wake first: a SIGSTOP-paused player can't receive the kill until
+      ;; it continues, so resume it before tearing down.
+      (php/exec (str "pkill -CONT -f " (php/escapeshellarg (music-path-prefix)) " 2>/dev/null"))
       (php/exec (str "kill " pid " 2>/dev/null"))
-      (php/exec (str "pkill -f " (php/escapeshellarg (music-path)) " 2>/dev/null"))
+      (php/exec (str "pkill -f " (php/escapeshellarg (music-path-prefix)) " 2>/dev/null"))
+      ;; Drop this session's baked track so temp doesn't accumulate.
+      (php/exec (str "rm -f " (php/escapeshellarg (music-path-prefix)) "*.wav 2>/dev/null"))
       (swap! proc assoc :pid nil))))
+
+(defn pause-music!
+  "Suspend the OST in place so it resumes exactly where it left off:
+   SIGSTOP the player (and its loop shell) via the session pattern. The
+   loop shell is blocked waiting on the player, so it can't relaunch while
+   paused. No-op when nothing is running. Idempotent."
+  []
+  (when (:pid @proc)
+    (php/exec (str "pkill -STOP -f " (php/escapeshellarg (music-path-prefix)) " 2>/dev/null"))))
+
+(defn resume-music!
+  "Resume a paused OST (SIGCONT) from where it was suspended. No-op when
+   nothing is running. Idempotent (CONT on a running process is harmless)."
+  []
+  (when (:pid @proc)
+    (php/exec (str "pkill -CONT -f " (php/escapeshellarg (music-path-prefix)) " 2>/dev/null"))))
 
 (defn set-music-volume!
   "Set the OST playback volume (clamped [0.0, 1.0]) from the settings

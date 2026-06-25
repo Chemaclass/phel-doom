@@ -1,6 +1,8 @@
 (ns phel-doom-tests.io.music-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.io.music :refer [riff-wav-bytes doom-riff sync-music! proc
+  (:require phel-doom.io.music :refer [riff-wav-bytes doom-riff variant-riff
+                                       session-riff track-sections variant-reps
+                                       sync-music! proc
                                        volume set-music-volume!]))
 
 ;; ---------------------------------------------------------------------
@@ -35,6 +37,65 @@
         raw (php/aget u 1)
         s   (if (php/> raw 32767) (php/- raw 65536) raw)]
     (is (php/< (php/abs s) 64) "final sample is near zero")))
+
+;; ---------------------------------------------------------------------
+;; variant-riff: the ornamented, repeated riffs the loop shuffles between.
+;; Pure given its seed, so safe to assert on like riff-wav-bytes.
+;; ---------------------------------------------------------------------
+
+(deftest test-variant-only-ornaments-root
+  (let [v  (variant-riff doom-riff 3 42)
+        bl (count doom-riff)
+        n  (php/count v)]
+    (is (= (php/* 3 bl) n) "length is reps * base length")
+    (dotimes [i n]
+      (let [vn (php/aget v i)
+            bn (get doom-riff (php/% i bl))]
+        (is (= (:dur bn) (:dur vn)) "durations are preserved")
+        (if (php/=== 40 (:midi bn))
+          (is (php/in_array (:midi vn) (php/array 40 43 47 52))
+              "a root hit stays root or becomes a 3/5/8 stab")
+          (is (= (:midi bn) (:midi vn)) "melodic slots are untouched"))))))
+
+(deftest test-variant-deterministic-per-seed
+  (is (= (riff-wav-bytes 8000 (variant-riff doom-riff 2 7))
+         (riff-wav-bytes 8000 (variant-riff doom-riff 2 7)))
+      "same seed -> identical variant bytes (reproducible)"))
+
+(deftest test-variant-loop-boundary-is-silent
+  ;; Sections are concatenated, so each must independently end at ~0 or the
+  ;; join from one section to the next would click.
+  (let [b   (riff-wav-bytes 8000 (variant-riff doom-riff 2 3))
+        len (php/strlen b)
+        u   (php/unpack "v" (php/substr b (php/- len 2) 2))
+        raw (php/aget u 1)
+        s   (if (php/> raw 32767) (php/- raw 65536) raw)]
+    (is (php/< (php/abs s) 64) "variant final sample is near zero")))
+
+;; ---------------------------------------------------------------------
+;; session-riff: the one continuous track baked & looped per session.
+;; ---------------------------------------------------------------------
+
+(deftest test-session-riff-length
+  (let [r (session-riff 100)]
+    (is (= (php/* track-sections (php/* variant-reps (count doom-riff)))
+           (php/count r))
+        "track is track-sections * variant-reps * base length")))
+
+(deftest test-session-riff-deterministic-per-seed
+  (is (= (riff-wav-bytes 8000 (session-riff 100))
+         (riff-wav-bytes 8000 (session-riff 100)))
+      "same seed -> identical track bytes (reproducible)"))
+
+(deftest test-session-riff-loop-boundary-is-silent
+  ;; The whole track loops as one file; its final sample must be ~0 so the
+  ;; wrap back to the top is click-free.
+  (let [b   (riff-wav-bytes 8000 (session-riff 100))
+        len (php/strlen b)
+        u   (php/unpack "v" (php/substr b (php/- len 2) 2))
+        raw (php/aget u 1)
+        s   (if (php/> raw 32767) (php/- raw 65536) raw)]
+    (is (php/< (php/abs s) 64) "track final sample is near zero")))
 
 ;; ---------------------------------------------------------------------
 ;; sync-music!: under PHEL_DOOM_SILENT (set by the test runner) every

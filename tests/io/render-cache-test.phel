@@ -3,7 +3,8 @@
   (:require phel-doom.core.level :refer [build-world])
   (:require phel-doom.core.engine :refer [mark-visible-cells])
   (:require phel-doom.io.render.frame-math :refer [halfblock build-sky-halfblock])
-  (:require phel-doom.io.render.palette :refer [shade-code-table])
+  (:require phel-doom.io.render.palette :refer [shade-code-table boss-door-marker])
+  (:require phel-doom.io.render.hud :refer [minimap-rows minimap-door-pulse])
   (:require phel-doom.io.render.main :refer [frame->string floor-tex-px]))
 
 ;; ---------------------------------------------------------------------
@@ -244,3 +245,24 @@
 (deftest test-px2-differs-from-full-detail
   (is (not= (frame->string world (assoc stats :px2? true) 120 30)
             (frame->string world stats 120 30))))
+
+;; ---------------------------------------------------------------------
+;; L10 boss-locked exit: red on the minimap until the cyberdemon dies,
+;; then it flips to the ordinary orange door glyph (combat stamps :boss
+;; into :held-keys). The arena has exactly one door, so the boss-door
+;; marker and the normal door glyph are mutually exclusive cues.
+;; ---------------------------------------------------------------------
+
+(defn- l10-minimap [held]
+  (php/implode "\n"
+               (minimap-rows
+                (mark-visible-cells (assoc (build-world 10 5) :full-map? true :held-keys held))
+                minimap-door-pulse 1)))
+
+(deftest test-l10-boss-door-minimap-red-until-boss-killed
+  (let [locked   (l10-minimap #{})
+        unlocked (l10-minimap #{:boss})]
+    (is (php/str_contains locked boss-door-marker)       "locked: boss door is red")
+    (is (not (php/str_contains locked minimap-door-pulse)) "locked: no orange door yet")
+    (is (php/str_contains unlocked minimap-door-pulse)   "killed: door turns orange")
+    (is (not (php/str_contains unlocked boss-door-marker)) "killed: red marker gone")))

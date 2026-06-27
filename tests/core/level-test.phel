@@ -1,7 +1,7 @@
 (ns phel-doom-tests.core.level-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.level :refer [ammo-box-count armor-shard-count config-for heart-count num-levels build-world place-secret-reward secret-trophies])
-  (:require phel-doom.core.map :refer [door? cell-floor cell-wall])
+  (:require phel-doom.core.map :refer [door? cell-floor cell-wall cell-door-boss find-door-cell passable?])
   (:require phel-doom.core.rng :as rng))
 
 ;; ---------------------------------------------------------------------
@@ -218,7 +218,16 @@
       ;; Two imps, each carrying the :max-concurrent 1 cap so the
       ;; respawn step never doubles up minion pressure.
       (is (= 2 (count imps)))
-      (is (every? (fn [e] (= 1 (:max-concurrent e))) imps)))))
+      (is (every? (fn [e] (= 1 (:max-concurrent e))) imps)))
+    ;; The exit door must be BOSS-locked, not a plain unlocked door:
+    ;; impassable until the cyberdemon dies and grants the synthetic
+    ;; :boss key. Regression for lock-cell-for dropping the :boss case.
+    (is (= :boss (:door-lock w)))
+    (let [grid    (:grid w)
+          [dx dy] (find-door-cell grid)]
+      (is (= cell-door-boss (get-in grid [dy dx])) "exit is the boss-locked door")
+      (is (not (passable? grid #{} dx dy))          "door blocks with no keys")
+      (is (passable? grid #{:boss} dx dy)           "door opens once boss is killed"))))
 
 ;; ---------------------------------------------------------------------
 ;; place-secret-reward: stash dropped at a revealed secret cell.

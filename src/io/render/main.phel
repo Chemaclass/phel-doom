@@ -350,7 +350,7 @@
   (let [{:keys [dists hits sides wallxs]}                              cast
         {:keys [stbl ctbl door-shade-now door-code-now
                 door-tex-boost
-                boss-door-shade-now boss-door-code-now
+                boss-door-shade-now boss-door-code-now boss-unlocked?
                 sky-code-grad floor-code-grad
                 blood-sky-code-grad blood-floor-code-grad]}            palette
         tops                                                           (buf-mk)
@@ -403,13 +403,16 @@
           (buf-set bots col (php/+ top wall-h))
           (buf-set tex-level col -1)            ; default: not textured
           (cond
-            (php/=== 5 h)
+            ;; Boss door stays blood-red ONLY while the boss lives; once
+            ;; killed (held-keys gains :boss) it falls through to the
+            ;; regular orange textured door so it reads as walk-through.
+            (and (php/=== 5 h) (not boss-unlocked?))
             (do (buf-set normal      col boss-door-shade-now)
                 (buf-set top-edge    col (str "\e[48;5;" boss-door-code-now ";38;5;" sky-edge-c "m▀"))
                 (buf-set bot-edge    col (str "\e[48;5;" flr-edge-c ";38;5;" boss-door-code-now "m▀"))
                 (buf-set top-shadow  col boss-door-shade-now)
                 (buf-set bot-shadow  col boss-door-shade-now))
-            (or (php/=== 2 h) (php/=== 3 h) (php/=== 4 h) (php/=== 9 h))
+            (or (php/=== 2 h) (php/=== 3 h) (php/=== 4 h) (php/=== 9 h) (php/=== 5 h))
             (do (buf-set normal      col door-shade-now)
                 (buf-set top-edge    col (str "\e[48;5;" door-code-now ";38;5;" sky-edge-c "m▀"))
                 (buf-set bot-edge    col (str "\e[48;5;" flr-edge-c ";38;5;" door-code-now "m▀"))
@@ -831,6 +834,11 @@
         door-code-now                      "130"
         boss-door-shade-now                "\e[48;5;124;38;5;226;1m▌"
         boss-door-code-now                 "124"
+        ;; Once the boss dies (combat stamps :boss into held-keys) the
+        ;; boss-locked exit renders as the normal orange door, signalling
+        ;; it's now walk-through.
+        boss-unlocked?                     (and (php/=== (:door-lock world) :boss)
+                                                (contains? (or (:held-keys world) #{}) :boss))
         ;; Pickup pulse: systole/diastole BG + matching centre glyph
         ;; both swap on the same beat so the icon throbs in tempo. Kept:
         ;; a gentle two-shade glow that draws the eye to interactables,
@@ -932,6 +940,7 @@
                               :door-tex-boost 3
                               :boss-door-shade-now boss-door-shade-now
                               :boss-door-code-now  boss-door-code-now
+                              :boss-unlocked?      boss-unlocked?
                               :sky-code-grad         sky-code-gradient
                               :floor-code-grad       floor-code-gradient
                               :blood-sky-code-grad   blood-sky-code-gradient

@@ -9,6 +9,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-06-27
+
 ### Added
 
 - "Quad detail" setting (default off): packs a 2×2 quadrant Block-Elements glyph (`▌▞▖▟…`) wherever the four sub-pixels of a cell differ, adding a 2nd HORIZONTAL sample on top of the `▀` half-block's 2× vertical. Two payoffs: (1) the wall SILHOUETTE staircase — at each boundary cell the wall top/bottom is sampled at two sub-columns (bounds lerped 0.25 toward each neighbour column, kept fractional so they straddle the sub-row grid), so a receding/angled edge steps in half-cell diagonals instead of whole columns (the high-contrast wall/sky edge is the visible win — ~150 vertical-edge + ~130 diagonal glyphs/frame on a typical view); (2) the floor texture shows four texels per cell near the camera instead of two. The per-column raycast has no sub-column ray, so both lerp the basis/bounds from the neighbour columns; samples quantise to brightest-FG + darkest-BG and pick the glyph for that mask. No-horizontal-detail cells collapse to the `▀` half-block, so flat / far surfaces still RLE-coalesce and only edges/near-floor pay. Composes with Truecolor. Only with Sub-pixel on, full-detail px1. Cost when on: ~+40-47% CPU, low extra bytes (most edge cells swap `▀`→a quadrant glyph, same length). Off by default (golden hashes unchanged). Env `PHEL_DOOM_QUAD=1` / `PHEL_DOOM_NO_QUAD=1`.
@@ -417,7 +419,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `cast + render` under 5 ms per frame at 120×30.
 - Flat PHP arrays on hot paths; `:tag` types for OPcache JIT tracing.
 
-[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/Chemaclass/phel-doom/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/Chemaclass/phel-doom/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/Chemaclass/phel-doom/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/Chemaclass/phel-doom/compare/v0.12.0...v0.13.0

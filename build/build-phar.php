@@ -6,8 +6,10 @@ declare(strict_types=1);
 // Build a single-file, self-contained phel-doom PHAR.
 //
 // phel-doom is a Phel *application*: `phel build` emits the whole game plus the
-// Phel stdlib it touches as ready-to-run PHP under out/. Nothing compiles at
-// runtime, so the archive needs only two trees:
+// Phel stdlib it touches as ready-to-run PHP under out/, and phar.sh runs
+// precompile-stdlib.php to add the stdlib's (load ...) core submodules as
+// out/phel/core/*.php siblings (phel build does not harvest those downstream).
+// Nothing compiles at runtime, so the archive needs only two trees:
 //   out/     - compiled PHP entry point + game code + compiled stdlib
 //   vendor/  - the production Phel runtime the compiled code calls into
 //

@@ -194,12 +194,14 @@ The cost that killed the earlier full-frame attempt was the per-cell string buil
 
 `▀` half-blocks render pixel-tight in iTerm2, kitty, WezTerm and Ghostty, but **macOS Terminal.app draws block / box glyphs with anti-aliasing and inter-row line gaps**, so the half-block illusion breaks into visible horizontal **row seams** in the 3D view and gappy HUD borders (#332). The colour path is fine: the renderer is 256-colour only (`\e[38;5;Nm` / `\e[48;5;Nm`), which Terminal.app supports, so the gap is glyph rendering, not colour depth.
 
-Two fixes, either one helps:
+**Auto-off on Terminal.app (#332).** On startup `load-settings` reads `$TERM_PROGRAM`; on `Apple_Terminal` a player who has never saved a `Sub-pixel` choice gets it defaulted **off** (`io/input.halfblock-seams?` -> `core/settings.resolve-subpixel`), so the scene is readable out of the box instead of seam-shredded. The in-game toggle still works and, once saved, wins on every terminal. Precedence: `PHEL_DOOM_NO_SUBPIXEL=1` (force off, applied at the render seam) > `PHEL_DOOM_SUBPIXEL=1` (force on) > saved choice > Terminal.app auto-off > default on. iTerm2 / kitty / WezTerm / Ghostty keep sub-pixel on.
 
-1. **`Sub-pixel` setting OFF** (or `PHEL_DOOM_NO_SUBPIXEL=1`): drops to one solid colour per cell, so there are no `▀` sub-pixels to seam. Lower vertical fidelity but clean on Terminal.app. Wired as a persisted player setting (see [settings.md](settings.md)) and ANDed with the env override in `frame->string`'s `subpixel?` gate.
-2. **Terminal.app settings**: Preferences -> Profiles -> Text - set **line spacing to 1.0** (the default above 1.0 is what opens the row gaps) and use a tight monospace font (SF Mono, Menlo, Fira Code). Tightening line height alone removes most seams with Sub-pixel left ON.
+To run full fidelity on Terminal.app instead of the auto-off:
 
-Recommended order: try line spacing 1.0 first (keeps full fidelity); if seams persist, turn Sub-pixel off. iTerm2 / kitty / WezTerm / Ghostty need neither.
+1. **Line spacing 1.0**: Preferences -> Profiles -> Text - set **line spacing to 1.0** (the default above 1.0 is what opens the row gaps) and use a tight monospace font (SF Mono, Menlo, Fira Code). This removes most seams with Sub-pixel left on.
+2. **Re-enable Sub-pixel**: turn the `Sub-pixel` setting back on (persists, see [settings.md](settings.md)) or run with `PHEL_DOOM_SUBPIXEL=1`. The `subpixel?` gate in `frame->string` ANDs the setting with `PHEL_DOOM_NO_SUBPIXEL`.
+
+iTerm2 / kitty / WezTerm / Ghostty need none of this.
 
 ## Pixel-doubled mode (auto, big screens on slow machines)
 

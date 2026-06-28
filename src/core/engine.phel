@@ -179,87 +179,110 @@
         hys                 (php/array)
         wallxs              (php/array)
         floordxs            (php/array)
-        floordys            (php/array)]
-     ;; DDA traversal is inlined: avoids one fn call per column AND
-     ;; replaces the per-ray Phel-vector `[d h side hx hy]` return
-     ;; with a cheap `php/array` so the hot loop allocates a plain
-     ;; PHP array per ray instead of a persistent vector.
+        floordys            (php/array)
+        ;; Per-cast 5-slot scratch register [dist hit side hx hy]. The
+        ;; DDA writes it in STATEMENT position (see below) and reuses it
+        ;; every column; binding the march's result directly would
+        ;; closure-compile and copy ~40 locals per column (issue #345).
+        hit-reg             (php/array)]
+     ;; Per column: march the DDA in STATEMENT position so the loop
+     ;; compiles to a plain `while` and its `[dist hit side hx hy]`
+     ;; result lands in the reused `hit-reg` register. Binding the
+     ;; march (or the `wallx` `let` branches) in VALUE position would
+     ;; compile each to a per-column PHP closure capturing ~40 locals -
+     ;; the documented closure tax (issue #345, docs/performance.md).
     (loop [col 0]
       (when (php/< col width)
-        (let [a       (php/+ angle (php/aget offsets col))
-              dirx    (php/cos a)
-              diry    (php/sin a)
-              stepx   (if (php/< dirx 0.0) -1 1)
-              stepy   (if (php/< diry 0.0) -1 1)
-              deltax  (if (php/=== dirx 0.0) dda-inf (php/abs (php// 1.0 dirx)))
-              deltay  (if (php/=== diry 0.0) dda-inf (php/abs (php// 1.0 diry)))
-              cx0     (php/intval (php/floor x))
-              cy0     (php/intval (php/floor y))
-              sidex0  (if (php/< dirx 0.0)
-                        (php/* (php/- x cx0) deltax)
-                        (php/* (php/- (php/+ cx0 1.0) x) deltax))
-              sidey0  (if (php/< diry 0.0)
-                        (php/* (php/- y cy0) deltay)
-                        (php/* (php/- (php/+ cy0 1.0) y) deltay))
-              hit-arr (loop [cx cx0 cy cy0 sidex sidex0 sidey sidey0]
-                        (if (php/< sidex sidey)
-                          (let [cx'  (php/+ cx stepx)
-                                dist sidex
-                                hit  (cell-at pgrid cx' cy)]
-                            (cond
-                              (php/> dist max-depth) (php/array max-depth 0 0 cx' cy)
-                              (php/!== 0 hit)        (php/array dist hit 0 cx' cy)
-                              :else                  (recur cx' cy (php/+ sidex deltax) sidey)))
-                          (let [cy'  (php/+ cy stepy)
-                                dist sidey
-                                hit  (cell-at pgrid cx cy')]
-                            (cond
-                              (php/> dist max-depth) (php/array max-depth 0 1 cx cy')
-                              (php/!== 0 hit)        (php/array dist hit 1 cx cy')
-                              :else                  (recur cx cy' sidex (php/+ sidey deltay))))))
-              rawd    (php/aget hit-arr 0)
-              d-corr  (php/* rawd (php/aget cos-offs col))
-              h       (php/aget hit-arr 1)
-              side    (php/aget hit-arr 2)
-              hx      (php/aget hit-arr 3)
-              hy      (php/aget hit-arr 4)
-              ;; Texture U: fractional position along the wall face where
-              ;; the ray hit. Vertical face (side 0) → frac of world-y at
-              ;; the hit; horizontal face (side 1) → frac of world-x.
-              ;; Uses the raw (perpendicular) side distance, not the
-              ;; fish-eye-corrected one. In [0, 1) → texture column.
-              wallx   (if (php/=== side 0)
-                        (let [wy (php/+ y (php/* rawd diry))] (php/- wy (php/floor wy)))
-                        (let [wx (php/+ x (php/* rawd dirx))] (php/- wx (php/floor wx))))
-              ;; Floor-cast basis for this column: the ray direction
-              ;; divided by cos(offset). A floor cell at perpendicular
-              ;; distance `dperp` (a per-ROW constant the renderer knows)
-              ;; sits at world `player + dperp * (floordx, floordy)`, so
-              ;; the renderer needs no per-cell trig — just two mul-adds.
-              inv-cos (php// 1.0 (php/aget cos-offs col))
-              floordx (php/* dirx inv-cos)
-              floordy (php/* diry inv-cos)]
-           ;; Replicate this sample across the next `scale` output
-           ;; columns. `scale` is 1 today (crisp 1:1 walls everywhere),
-           ;; so this fills exactly one cell; the loop keeps the
-           ;; replication capability for any caller that passes scale>1.
-           ;; Inner loop bound by `width` so a non-divisible tail (e.g.
-           ;; width=401, scale=2) doesn't overshoot. When scale>1 the
-           ;; fish-eye correction reuses the SAMPLE column's `offset`
-           ;; for every neighbour cell (the per-cell-accurate
-           ;; alternative would mean N atan + cos calls per sample).
-          (loop [c col fill 0]
-            (when (and (php/< c width) (php/< fill scale))
-              (php/aset dists c d-corr)
-              (php/aset hits c h)
-              (php/aset sides c side)
-              (php/aset hxs c hx)
-              (php/aset hys c hy)
-              (php/aset wallxs c wallx)
-              (php/aset floordxs c floordx)
-              (php/aset floordys c floordy)
-              (recur (php/+ c 1) (php/+ fill 1))))
-          (recur (php/+ col scale)))))
+        (let [a      (php/+ angle (php/aget offsets col))
+              dirx   (php/cos a)
+              diry   (php/sin a)
+              stepx  (if (php/< dirx 0.0) -1 1)
+              stepy  (if (php/< diry 0.0) -1 1)
+              deltax (if (php/=== dirx 0.0) dda-inf (php/abs (php// 1.0 dirx)))
+              deltay (if (php/=== diry 0.0) dda-inf (php/abs (php// 1.0 diry)))
+              cx0    (php/intval (php/floor x))
+              cy0    (php/intval (php/floor y))
+              sidex0 (if (php/< dirx 0.0)
+                       (php/* (php/- x cx0) deltax)
+                       (php/* (php/- (php/+ cx0 1.0) x) deltax))
+              sidey0 (if (php/< diry 0.0)
+                       (php/* (php/- y cy0) deltay)
+                       (php/* (php/- (php/+ cy0 1.0) y) deltay))]
+          ;; DDA march (statement position -> no closure). Each exit
+          ;; writes the 5-slot register; `:else` steps to the next
+          ;; grid-line crossing.
+          (loop [cx cx0 cy cy0 sidex sidex0 sidey sidey0]
+            (if (php/< sidex sidey)
+              (let [cx'  (php/+ cx stepx)
+                    dist sidex
+                    hit  (cell-at pgrid cx' cy)]
+                (cond
+                  (php/> dist max-depth)
+                  (do (php/aset hit-reg 0 max-depth) (php/aset hit-reg 1 0)
+                      (php/aset hit-reg 2 0) (php/aset hit-reg 3 cx') (php/aset hit-reg 4 cy))
+                  (php/!== 0 hit)
+                  (do (php/aset hit-reg 0 dist) (php/aset hit-reg 1 hit)
+                      (php/aset hit-reg 2 0) (php/aset hit-reg 3 cx') (php/aset hit-reg 4 cy))
+                  :else
+                  (recur cx' cy (php/+ sidex deltax) sidey)))
+              (let [cy'  (php/+ cy stepy)
+                    dist sidey
+                    hit  (cell-at pgrid cx cy')]
+                (cond
+                  (php/> dist max-depth)
+                  (do (php/aset hit-reg 0 max-depth) (php/aset hit-reg 1 0)
+                      (php/aset hit-reg 2 1) (php/aset hit-reg 3 cx) (php/aset hit-reg 4 cy'))
+                  (php/!== 0 hit)
+                  (do (php/aset hit-reg 0 dist) (php/aset hit-reg 1 hit)
+                      (php/aset hit-reg 2 1) (php/aset hit-reg 3 cx) (php/aset hit-reg 4 cy'))
+                  :else
+                  (recur cx cy' sidex (php/+ sidey deltay))))))
+          (let [rawd    (php/aget hit-reg 0)
+                d-corr  (php/* rawd (php/aget cos-offs col))
+                h       (php/aget hit-reg 1)
+                side    (php/aget hit-reg 2)
+                hx      (php/aget hit-reg 3)
+                hy      (php/aget hit-reg 4)
+                ;; Texture U: fractional position along the wall face where
+                ;; the ray hit. Vertical face (side 0) -> frac of world-y at
+                ;; the hit; horizontal face (side 1) -> frac of world-x.
+                ;; Uses the raw (perpendicular) side distance, not the
+                ;; fish-eye-corrected one. In [0, 1) -> texture column. Both
+                ;; `if` branches are pure expressions, so this stays a
+                ;; ternary; one frac op reads its result.
+                wcoord  (if (php/=== side 0)
+                          (php/+ y (php/* rawd diry))
+                          (php/+ x (php/* rawd dirx)))
+                wallx   (php/- wcoord (php/floor wcoord))
+                ;; Floor-cast basis for this column: the ray direction
+                ;; divided by cos(offset). A floor cell at perpendicular
+                ;; distance `dperp` (a per-ROW constant the renderer knows)
+                ;; sits at world `player + dperp * (floordx, floordy)`, so
+                ;; the renderer needs no per-cell trig - just two mul-adds.
+                inv-cos (php// 1.0 (php/aget cos-offs col))
+                floordx (php/* dirx inv-cos)
+                floordy (php/* diry inv-cos)]
+             ;; Replicate this sample across the next `scale` output
+             ;; columns. `scale` is 1 today (crisp 1:1 walls everywhere),
+             ;; so this fills exactly one cell; the loop keeps the
+             ;; replication capability for any caller that passes scale>1.
+             ;; Inner loop bound by `width` so a non-divisible tail (e.g.
+             ;; width=401, scale=2) doesn't overshoot. When scale>1 the
+             ;; fish-eye correction reuses the SAMPLE column's `offset`
+             ;; for every neighbour cell (the per-cell-accurate
+             ;; alternative would mean N atan + cos calls per sample).
+            (loop [c col fill 0]
+              (when (and (php/< c width) (php/< fill scale))
+                (php/aset dists c d-corr)
+                (php/aset hits c h)
+                (php/aset sides c side)
+                (php/aset hxs c hx)
+                (php/aset hys c hy)
+                (php/aset wallxs c wallx)
+                (php/aset floordxs c floordx)
+                (php/aset floordys c floordy)
+                (recur (php/+ c 1) (php/+ fill 1))))
+            (recur (php/+ col scale))))))
     {:dists dists :hits hits :sides sides :hxs hxs :hys hys :wallxs wallxs
      :floordxs floordxs :floordys floordys}))
 

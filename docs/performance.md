@@ -26,7 +26,7 @@ Result on the 3-enemy corridor bench (ms/frame, same machine):
 
 Frame output is byte-identical before/after (verified by md5 over a 24-config matrix: angles, sizes, blood, minimap, px2, flat/no-subpixel/no-sprite toggles).
 
-To check for regressions: build and grep the artifact - `grep -c 'function() use(' out/phel_doom/io/render/main.php` should stay at ~21, all of them once-per-frame sites (pickup-painter chain arguments, centre-cell capture, debug snapshot), none inside the per-cell `while` loops.
+To check for regressions: build and grep the artifact - `grep -c 'function() use(' out/phel_doom/io/render/main.php` should stay at ~21, all of them once-per-frame sites (pickup-painter chain arguments, centre-cell capture, debug snapshot), none inside the per-cell `while` loops. The raycaster artifact `out/phel_doom/core/engine.php` should stay at 2 (the once-per-width FOV-table build + the once-per-frame pause-cache probe); the per-column cast loop has been closure-free since issue #345 (the DDA march + `wallx` were lifted out of binding position into the reused `hit-reg` register).
 
 ## Big screens: uniform cadence + crisp walls
 
@@ -237,7 +237,7 @@ Verdict: complexity cost > realistic win.
 After DDA, `cast-frame` was still running `atan` + `cos` per column and dispatching `cast-ray-hit` per ray. Two follow-ups:
 
 1. **Width-keyed memo.** `offset-tables-for` caches per-width `[col -> offset]` + `[col -> cos(offset)]` arrays. Cast-frame reads two `aget`s instead of trig per column.
-2. **Inlined DDA.** `cast-ray-hit` inlined into `cast-frame`. DDA returns PHP arrays, not persistent vectors.
+2. **Inlined DDA.** `cast-ray-hit` inlined into `cast-frame`. The DDA marches in statement position and writes its `[dist hit side hx hy]` result into a reused 5-slot `hit-reg` register (issue #345), so the hot loop neither dispatches a per-ray call nor allocates a persistent vector (nor the per-column closure that binding the march in value position would have cost).
 
 Effect on `cast-frame` (2000-iter bench, `default-grid`):
 

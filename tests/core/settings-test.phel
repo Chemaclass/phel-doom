@@ -2,7 +2,8 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.settings :refer [default-settings difficulty-choices
                                             page-fields field-count field-at
-                                            coerce-settings move-cursor adjust
+                                            coerce-settings resolve-subpixel
+                                            move-cursor adjust
                                             navigate valid-difficulty?
                                             music-volume sfx-scalar music-ceiling
                                             mouse-sensitivity mouse-sensitivity-neutral
@@ -160,6 +161,34 @@
   (is (= true  (:quad (coerce-settings {:quad 1}))) "truthy coerced to bool true")
   (is (= false (:quad (coerce-settings {:quad false}))) "explicit false preserved")
   (is (= false (:quad (coerce-settings {}))) "missing -> default false"))
+
+;; ---------------------------------------------------------------------
+;; resolve-subpixel: terminal-aware startup default (#332). Args are
+;; (value saved? seams? force-on?). macOS Terminal.app shreds the ▀
+;; half-block, so a fresh player on a seam terminal defaults OFF.
+;; ---------------------------------------------------------------------
+
+(deftest test-resolve-subpixel-seam-terminal-unsaved-defaults-off
+  ;; Fresh player on Terminal.app: value is the default-on, but no saved
+  ;; choice + seam terminal -> off.
+  (is (= false (resolve-subpixel true false true false))))
+
+(deftest test-resolve-subpixel-non-seam-terminal-keeps-default-on
+  ;; iTerm2 etc.: not a seam terminal, so the default-on value stands.
+  (is (= true (resolve-subpixel true false false false))))
+
+(deftest test-resolve-subpixel-saved-choice-overrides-seam-default
+  ;; A saved choice wins over the seam default: a player who turned
+  ;; sub-pixel back ON on Terminal.app keeps it (true, not the seam's
+  ;; false) — this is what distinguishes `saved?` from `seams?`.
+  (is (= true  (resolve-subpixel true  true true false)) "saved on -> on")
+  (is (= false (resolve-subpixel false true true false)) "saved off -> off"))
+
+(deftest test-resolve-subpixel-env-force-on-beats-everything
+  ;; PHEL_DOOM_SUBPIXEL=1 forces on even on a seam terminal and even over a
+  ;; saved off.
+  (is (= true (resolve-subpixel true  false true true)))
+  (is (= true (resolve-subpixel false true  true true)) "force-on overrides saved off"))
 
 ;; ---------------------------------------------------------------------
 ;; Mouse + Sensitivity (issue #246).

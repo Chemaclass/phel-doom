@@ -1,5 +1,6 @@
 (ns phel-doom.io.settings
-  (:require phel-doom.core.settings :refer [coerce-settings default-settings]))
+  (:require phel-doom.core.settings :refer [coerce-settings default-settings resolve-subpixel])
+  (:require phel-doom.io.input :refer [terminal-program halfblock-seams?]))
 
 ;; ---------------------------------------------------------------------
 ;; Settings persistence in $HOME/.phel-doom-settings.json.
@@ -28,37 +29,60 @@
     (php/aget arr key)
     fallback))
 
+(defn- subpixel-force-on?
+  "PHEL_DOOM_SUBPIXEL=1 forces sub-pixel ON, overriding the macOS
+   Terminal.app auto-off (#332). Mirrors the render-seam PHEL_DOOM_NO_SUBPIXEL
+   kill-switch (which still wins, applied later in io/render)."
+  []
+  (php/=== "1" (php/getenv "PHEL_DOOM_SUBPIXEL")))
+
+(defn- apply-terminal-defaults
+  "Overlay terminal-derived startup defaults onto a coerced settings map.
+   `saved?` says whether the on-disk file carried an explicit sub-pixel
+   choice (honored over the terminal default). Currently only the #332
+   sub-pixel auto-off. Reads $TERM_PROGRAM + env, so it is side-effecting."
+  [settings saved?]
+  (assoc settings :subpixel
+         (resolve-subpixel (:subpixel settings) saved?
+                           (halfblock-seams? (terminal-program))
+                           (subpixel-force-on?))))
+
 (defn load-settings
   "Read the persisted settings file, returning the coerced defaults
    when it's missing or malformed. Enum fields (difficulty / crosshair /
    colorblind) are stored as strings and keyword-ised on the way in;
    coerce-settings clamps + validates the whole map so the result is
-   always complete and safe to apply."
+   always complete and safe to apply. A terminal that mangles the ▀
+   half-block (macOS Terminal.app, #332) flips `:subpixel` off for a player
+   who never saved a choice (see `apply-terminal-defaults`)."
   []
-  (let [path (settings-path)]
-    (if (php/file_exists path)
-      (let [content (php/file_get_contents path)]
-        (if (or (php/=== content false) (php/=== content ""))
-          (coerce-settings default-settings)
-          (let [data (php/json_decode content true)]
-            (if (php/is_array data)
-              (coerce-settings
-               {:music          (read-from data "music"   (:music default-settings))
-                :sfx            (read-from data "sfx"      (:sfx default-settings))
-                :minimap        (read-from data "minimap"  (:minimap default-settings))
-                :difficulty     (keyword (read-from data "difficulty"     "normal"))
-                :crosshair      (keyword (read-from data "crosshair"      "cross"))
-                :timer          (read-from data "timer"          (:timer default-settings))
-                :mouse          (read-from data "mouse"          (:mouse default-settings))
-                :sensitivity    (read-from data "sensitivity"    (:sensitivity default-settings))
-                :high-contrast  (read-from data "high-contrast"  (:high-contrast default-settings))
-                :colorblind     (keyword (read-from data "colorblind"     "none"))
-                :fast-walls     (read-from data "fast-walls" (:fast-walls default-settings))
-                :subpixel       (read-from data "subpixel" (:subpixel default-settings))
-                :truecolor      (read-from data "truecolor" (:truecolor default-settings))
-                :quad           (read-from data "quad" (:quad default-settings))})
-              (coerce-settings default-settings)))))
-      (coerce-settings default-settings))))
+  (let [path             (settings-path)
+        [coerced saved?]
+        (if (php/file_exists path)
+          (let [content (php/file_get_contents path)]
+            (if (or (php/=== content false) (php/=== content ""))
+              [(coerce-settings default-settings) false]
+              (let [data (php/json_decode content true)]
+                (if (php/is_array data)
+                  [(coerce-settings
+                    {:music          (read-from data "music"   (:music default-settings))
+                     :sfx            (read-from data "sfx"      (:sfx default-settings))
+                     :minimap        (read-from data "minimap"  (:minimap default-settings))
+                     :difficulty     (keyword (read-from data "difficulty"     "normal"))
+                     :crosshair      (keyword (read-from data "crosshair"      "cross"))
+                     :timer          (read-from data "timer"          (:timer default-settings))
+                     :mouse          (read-from data "mouse"          (:mouse default-settings))
+                     :sensitivity    (read-from data "sensitivity"    (:sensitivity default-settings))
+                     :high-contrast  (read-from data "high-contrast"  (:high-contrast default-settings))
+                     :colorblind     (keyword (read-from data "colorblind"     "none"))
+                     :fast-walls     (read-from data "fast-walls" (:fast-walls default-settings))
+                     :subpixel       (read-from data "subpixel" (:subpixel default-settings))
+                     :truecolor      (read-from data "truecolor" (:truecolor default-settings))
+                     :quad           (read-from data "quad" (:quad default-settings))})
+                   (php/array_key_exists "subpixel" data)]
+                  [(coerce-settings default-settings) false]))))
+          [(coerce-settings default-settings) false])]
+    (apply-terminal-defaults coerced saved?)))
 
 (defn save-settings!
   "Write `settings` back to the JSON file. Enum fields are stored as

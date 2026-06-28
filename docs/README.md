@@ -6,6 +6,7 @@ Per-subsystem docs, each linked to source files and key functions.
 
 | Topic | File |
 |---|---|
+| New to Phel (from Clojure/PHP) | [coming-from-clojure-or-php.md](coming-from-clojure-or-php.md) |
 | Player guide (controls, pickups, weapons) | [gameplay.md](gameplay.md) |
 | Feature catalogue | [features.md](features.md) |
 | Module layout + rules | [architecture.md](architecture.md) |
@@ -26,11 +27,12 @@ Per-subsystem docs, each linked to source files and key functions.
 
 ## Quick start: new contributor
 
-1. `architecture.md` - layout + dependency rules
-2. `game-loop.md` - frame-to-frame flow
-3. `raycaster.md` + `rendering.md` - how pixels reach the screen
-4. `contributing.md` - dev workflow + Phel quirks
-5. Pick subsystems as needed
+1. `coming-from-clojure-or-php.md` - read Phel fast if you know either
+2. `architecture.md` - layout + dependency rules
+3. `game-loop.md` - frame-to-frame flow
+4. `raycaster.md` + `rendering.md` - how pixels reach the screen
+5. `contributing.md` - dev workflow + Phel quirks
+6. Pick subsystems as needed
 
 ## File layout
 

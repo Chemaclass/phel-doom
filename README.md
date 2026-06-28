@@ -62,6 +62,7 @@ Full controls, pickups, and weapons: [docs/gameplay.md](docs/gameplay.md).
 ## Internals
 
 - [docs/README.md](docs/README.md) - per-subsystem guide.
+- [docs/coming-from-clojure-or-php.md](docs/coming-from-clojure-or-php.md) - read Phel fast if you know Clojure or PHP.
 - [docs/contributing.md](docs/contributing.md) - dev setup, test conventions, Phel gotchas.
 
 ## License

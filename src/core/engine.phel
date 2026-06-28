@@ -167,8 +167,21 @@
    / :hxs / :hys map. Pure: no cache lookup, no atom touch. cast-frame
    wraps this with a paused-frame cache short-circuit."
   [world ^int width ^int scale]
-  (let [pgrid               (:pgrid world)
+  (let [^array pgrid        (:pgrid world)
         {:keys [x y angle]} (:player world)
+        ;; Player cell + its fractional offsets to the four cell
+        ;; boundaries are fixed for the whole frame; hoist out of the
+        ;; per-column loop (was recomputed via intval/floor per column).
+        cx0                 (php/intval (php/floor x))
+        cy0                 (php/intval (php/floor y))
+        x-to-lo             (php/- x cx0)
+        x-to-hi             (php/- (php/+ cx0 1.0) x)
+        y-to-lo             (php/- y cy0)
+        y-to-hi             (php/- (php/+ cy0 1.0) y)
+        ;; Local aliases so per-step refs compile to PHP locals instead
+        ;; of a `getDefinition` singleton probe each DDA step.
+        max-depth           max-depth
+        dda-inf             dda-inf
         tables              (offset-tables-for width)
         offsets             (:offsets tables)
         cos-offs            (:cos-offs tables)
@@ -201,22 +214,24 @@
               stepy  (if (php/< diry 0.0) -1 1)
               deltax (if (php/=== dirx 0.0) dda-inf (php/abs (php// 1.0 dirx)))
               deltay (if (php/=== diry 0.0) dda-inf (php/abs (php// 1.0 diry)))
-              cx0    (php/intval (php/floor x))
-              cy0    (php/intval (php/floor y))
               sidex0 (if (php/< dirx 0.0)
-                       (php/* (php/- x cx0) deltax)
-                       (php/* (php/- (php/+ cx0 1.0) x) deltax))
+                       (php/* x-to-lo deltax)
+                       (php/* x-to-hi deltax))
               sidey0 (if (php/< diry 0.0)
-                       (php/* (php/- y cy0) deltay)
-                       (php/* (php/- (php/+ cy0 1.0) y) deltay))]
+                       (php/* y-to-lo deltay)
+                       (php/* y-to-hi deltay))]
           ;; DDA march (statement position -> no closure). Each exit
           ;; writes the 5-slot register; `:else` steps to the next
           ;; grid-line crossing.
           (loop [cx cx0 cy cy0 sidex sidex0 sidey sidey0]
             (if (php/< sidex sidey)
-              (let [cx'  (php/+ cx stepx)
-                    dist sidex
-                    hit  (cell-at pgrid cx' cy)]
+              (let [cx'        (php/+ cx stepx)
+                    dist       sidex
+                    ;; cell-at inlined: the `^array` tag lowers `get` to a
+                    ;; native `$row[k] ?? default` subscript, dropping the
+                    ;; per-step dispatch frame the fn call cost.
+                    ^array row (get pgrid cy)
+                    hit        (get row cx' 1)]
                 (cond
                   (php/> dist max-depth)
                   (do (php/aset hit-reg 0 max-depth) (php/aset hit-reg 1 0)
@@ -226,9 +241,10 @@
                       (php/aset hit-reg 2 0) (php/aset hit-reg 3 cx') (php/aset hit-reg 4 cy))
                   :else
                   (recur cx' cy (php/+ sidex deltax) sidey)))
-              (let [cy'  (php/+ cy stepy)
-                    dist sidey
-                    hit  (cell-at pgrid cx cy')]
+              (let [cy'        (php/+ cy stepy)
+                    dist       sidey
+                    ^array row (get pgrid cy')
+                    hit        (get row cx 1)]
                 (cond
                   (php/> dist max-depth)
                   (do (php/aset hit-reg 0 max-depth) (php/aset hit-reg 1 0)

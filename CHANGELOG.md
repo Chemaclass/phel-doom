@@ -12,6 +12,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 ### Performance
 
 - Eliminated the per-column closure tax in the raycaster cast loop (issue #345): the DDA march and the `wallx` texture-fraction branch sat in `let`-binding VALUE position, so each compiled to a per-column immediately-invoked PHP closure capturing ~40 locals - 3 closure builds per column, ~720/frame at 240 columns, on the hottest path. The DDA now marches in STATEMENT position into a reused 5-slot `hit-reg` register (the documented `cell-reg` pattern), and `wallx` reads a pure-arithmetic ternary - both compile inline with zero capture. Byte-identical (full suite + golden hashes unchanged); measured -39% on `cast-frame` at 80x24 / 120x30 / 180x40 (2000-iter `default-grid` bench, no-JIT local). Built `engine.php` drops from 5 `function() use(` sites to 2 (both non-per-column). See `docs/performance.md`.
+- Quad-detail floor cells skip redundant quantise work on cache hits (issue #346): `quadblock` re-ran all 8 `paint-lum` luminance lookups + the bright/dark quantise + pattern solve on EVERY call, even when the glyph cell was already memoised (only the string build was cached). 256-code quads now key a `quad-cell-cache-256` on the raw `(tl tr bl br)` tuple and return the cached cell before any quantise; truecolor/mixed quads keep the quantize-keyed cache (a raw 4-channel key would overflow a 64-bit int). Byte-identical (full suite + golden hashes unchanged); affects only the `:quad` detail path (off by default).
 
 ## [0.16.0] - 2026-06-27
 

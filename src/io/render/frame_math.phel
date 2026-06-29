@@ -373,40 +373,72 @@
   ;; the set bits, BG the clear bits. Universal (Unicode 1.0) coverage.
   (php/array " " "▗" "▖" "▄" "▝" "▐" "▞" "▟" "▘" "▚" "▌" "▙" "▀" "▜" "▛" "█"))
 
+;; Two caches to avoid 64-bit overflow on raw truecolor keys.
+;; 256-only inputs (all channels < tc-tag): keyed by raw ((tl*256+tr)*256+bl)*256+br,
+;; which fits in 32 bits and lets the cache hit skip the 8 paint-lum calls.
+;; Truecolor/mixed inputs: keyed by (fg*tc-key-base+bg)*16+pat (quantize-keyed,
+;; original scheme — a raw 4-channel tc-key-base key would overflow 64-bit int).
 (def- quad-cell-cache (php/array))
+(def- quad-cell-cache-256 (php/array))
 
 (defn quadblock
   "2×2 quadrant paint cell for the four sub-pixel paint values TL/TR/BL/BR
    (256 codes or tagged truecolor — resolved per channel like halfblock-tc).
    Quantises to the brightest (FG) + darkest (BG) sample by luminance,
    assigns each quadrant to the nearer of the two, and looks up the
-   Block-Elements glyph for that 2×2 mask. Memoised by (fg, bg, pattern) so
-   only the string build is cached; the cheap quantise re-runs per cell.
+   Block-Elements glyph for that 2×2 mask. 256-code inputs check a raw-quad
+   cache before quantizing, skipping 8 `paint-lum` calls on a hit. Truecolor
+   inputs use a quantize-keyed cache to avoid 64-bit key overflow.
    Callers must first collapse the no-horizontal-detail case
    (TL==TR & BL==BR) to a ▀ halfblock — this is the genuinely 2-wide path."
   [^int tl ^int tr ^int bl ^int br]
-  (let [llt  (paint-lum tl) lrt  (paint-lum tr) llb  (paint-lum bl) lrb  (paint-lum br)
-        ;; brightest of each row, then brightest overall -> FG; darkest -> BG.
-        topv (if (php/>= llt lrt) tl tr)  topl (if (php/>= llt lrt) llt lrt)
-        botv (if (php/>= llb lrb) bl br)  botl (if (php/>= llb lrb) llb lrb)
-        fg   (if (php/>= topl botl) topv botv)
-        fgl  (if (php/>= topl botl) topl botl)
-        ntpv (if (php/< llt lrt) tl tr)   ntpl (if (php/< llt lrt) llt lrt)
-        nbtv (if (php/< llb lrb) bl br)   nbtl (if (php/< llb lrb) llb lrb)
-        bg   (if (php/<= ntpl nbtl) ntpv nbtv)
-        bgl  (if (php/<= ntpl nbtl) ntpl nbtl)
-        mid  (php/+ fgl bgl)              ; compare 2*lum vs fgl+bgl
-        pat  (php/+ (php/+ (if (php/>= (php/* 2 llt) mid) 8 0)
-                           (if (php/>= (php/* 2 lrt) mid) 4 0))
-                    (php/+ (if (php/>= (php/* 2 llb) mid) 2 0)
-                           (if (php/>= (php/* 2 lrb) mid) 1 0)))
-        k    (php/+ (php/* (php/+ (php/* fg tc-key-base) bg) 16) pat)
-        hit  (php/aget quad-cell-cache k)]
-    (if hit
-      hit
-      (let [s (str "\e[" (tc-fg fg) ";" (tc-bg bg) "m" (php/aget quad-glyphs pat))]
-        (php/aset quad-cell-cache k s)
-        s))))
+  (if (if (php/< tl tc-tag) (if (php/< tr tc-tag) (if (php/< bl tc-tag) (php/< br tc-tag) false) false) false)
+    ;; 256-only: raw-key cache checked BEFORE quantize — hit avoids all lum work.
+    (let [rk  (php/+ (php/* (php/+ (php/* (php/+ (php/* tl 256) tr) 256) bl) 256) br)
+          hit (php/aget quad-cell-cache-256 rk)]
+      (if hit
+        hit
+        (let [llt  (paint-lum tl) lrt  (paint-lum tr) llb  (paint-lum bl) lrb  (paint-lum br)
+              ;; brightest of each row, then brightest overall -> FG; darkest -> BG.
+              topv (if (php/>= llt lrt) tl tr)  topl (if (php/>= llt lrt) llt lrt)
+              botv (if (php/>= llb lrb) bl br)  botl (if (php/>= llb lrb) llb lrb)
+              fg   (if (php/>= topl botl) topv botv)
+              fgl  (if (php/>= topl botl) topl botl)
+              ntpv (if (php/< llt lrt) tl tr)   ntpl (if (php/< llt lrt) llt lrt)
+              nbtv (if (php/< llb lrb) bl br)   nbtl (if (php/< llb lrb) llb lrb)
+              bg   (if (php/<= ntpl nbtl) ntpv nbtv)
+              bgl  (if (php/<= ntpl nbtl) ntpl nbtl)
+              mid  (php/+ fgl bgl)              ; compare 2*lum vs fgl+bgl
+              pat  (php/+ (php/+ (if (php/>= (php/* 2 llt) mid) 8 0)
+                                 (if (php/>= (php/* 2 lrt) mid) 4 0))
+                          (php/+ (if (php/>= (php/* 2 llb) mid) 2 0)
+                                 (if (php/>= (php/* 2 lrb) mid) 1 0)))
+              s    (str "\e[" (tc-fg fg) ";" (tc-bg bg) "m" (php/aget quad-glyphs pat))]
+          (php/aset quad-cell-cache-256 rk s)
+          s)))
+    ;; Truecolor/mixed: quantize-keyed cache (raw key would overflow 64-bit).
+    (let [llt  (paint-lum tl) lrt  (paint-lum tr) llb  (paint-lum bl) lrb  (paint-lum br)
+          ;; brightest of each row, then brightest overall -> FG; darkest -> BG.
+          topv (if (php/>= llt lrt) tl tr)  topl (if (php/>= llt lrt) llt lrt)
+          botv (if (php/>= llb lrb) bl br)  botl (if (php/>= llb lrb) llb lrb)
+          fg   (if (php/>= topl botl) topv botv)
+          fgl  (if (php/>= topl botl) topl botl)
+          ntpv (if (php/< llt lrt) tl tr)   ntpl (if (php/< llt lrt) llt lrt)
+          nbtv (if (php/< llb lrb) bl br)   nbtl (if (php/< llb lrb) llb lrb)
+          bg   (if (php/<= ntpl nbtl) ntpv nbtv)
+          bgl  (if (php/<= ntpl nbtl) ntpl nbtl)
+          mid  (php/+ fgl bgl)              ; compare 2*lum vs fgl+bgl
+          pat  (php/+ (php/+ (if (php/>= (php/* 2 llt) mid) 8 0)
+                             (if (php/>= (php/* 2 lrt) mid) 4 0))
+                      (php/+ (if (php/>= (php/* 2 llb) mid) 2 0)
+                             (if (php/>= (php/* 2 lrb) mid) 1 0)))
+          k    (php/+ (php/* (php/+ (php/* fg tc-key-base) bg) 16) pat)
+          hit  (php/aget quad-cell-cache k)]
+      (if hit
+        hit
+        (let [s (str "\e[" (tc-fg fg) ";" (tc-bg bg) "m" (php/aget quad-glyphs pat))]
+          (php/aset quad-cell-cache k s)
+          s)))))
 
 (defn build-sky-halfblock
   "Per-row ▀ half-block sky cells at 2× vertical resolution. Each screen

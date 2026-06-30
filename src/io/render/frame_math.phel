@@ -239,6 +239,35 @@
    against the sky."
   (build-seam-darken 5))
 
+(defmacro seam-shade!
+  "Resolve one wall/sky/floor seam sub-sample into `pack-reg[slot]`: sky
+   code above the wall top, seam-darkened floor at/below the wall bottom,
+   else the fogged wall texel graduated-darkened near the floor/sky seams.
+   `slot` is the literal pack-reg index, `sub` the sub-row index symbol,
+   `rel` the wall-relative sub-row form. Expands INLINE (no per-cell call,
+   so the frame-local pins stay PHP locals - see main/frame->string) and
+   reads these call-site locals: pack-reg, ts-sub, bs-sub, whs, u, col,
+   fade, tpx, sky-sub-codes, floor-code-at, seam-darken-5/8/16. Was
+   copy-pasted 6x across the px2 + px1 emitters (#350)."
+  [slot sub rel]
+  `(cond
+     (php/< ~sub ts-sub)
+     (php/aset pack-reg ~slot (php/aget sky-sub-codes ~sub))
+     (php/>= ~sub bs-sub)
+     (php/aset pack-reg ~slot (if (php/=== ~sub bs-sub)
+                                (php/aget seam-darken-8 (floor-code-at ~sub col))
+                                (floor-code-at ~sub col)))
+     :else
+     (let [wc# (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* ~rel 64) whs)) 64) u)))]
+       (php/aset pack-reg ~slot
+                 (if (php/>= ~sub (php/- bs-sub 1))
+                   (php/aget seam-darken-16 wc#)
+                   (if (php/>= ~sub (php/- bs-sub 2))
+                     (php/aget seam-darken-8 wc#)
+                     (if (php/=== ~sub ts-sub)
+                       (php/aget seam-darken-5 wc#)
+                       wc#)))))))
+
 (def bg-cell-cache
   "256 pre-baked BG paint cells `\\e[48;5;<code>m ` (escape + one space),
    indexed by 256-colour code. The textured-wall path resolves a faded

@@ -54,6 +54,31 @@
   (is (= "5d656320324eb4945aad32bb88d41a7c" (php/md5 (frame->string world stats 160 44))))
   (is (= "abd5ba65d1e79af4e60d600ebec09e7e" (php/md5 (frame->string world (assoc stats :px2? true) 120 30)))))
 
+;; The golden world above carries no keycards / weapon-pickups, so its
+;; hashes only exercise the empty-source path. These pin the non-empty
+;; path: the keycard / weapon-pickup paint passes are guarded by a
+;; `(seq source)` check (perf #348), and a wrong guard would silently
+;; stop painting them with no other test catching it. (17.0, 10.4) sits
+;; in an open cell just ahead of the level-1 spawn (15.5, 10.5 facing
+;; east), so the pickup projects into view and changes the frame.
+(deftest test-keycard-paints-into-frame
+  (let [w-kc (assoc world :keycards [{:x 17.0 :y 10.4 :colour :blue}])]
+    (is (not= (frame->string world stats 120 30)
+              (frame->string w-kc stats 120 30))
+        "a visible keycard paints into the frame")
+    (is (= (frame->string w-kc stats 120 30)
+           (frame->string w-kc stats 120 30))
+        "keycard render stays deterministic")))
+
+(deftest test-weapon-pickup-paints-into-frame
+  (let [w-wp (assoc world :weapon-pickups [{:x 17.0 :y 10.4 :weapon :shotgun}])]
+    (is (not= (frame->string world stats 120 30)
+              (frame->string w-wp stats 120 30))
+        "a visible weapon-pickup paints into the frame")
+    (is (= (frame->string w-wp stats 120 30)
+           (frame->string w-wp stats 120 30))
+        "weapon-pickup render stays deterministic")))
+
 (deftest test-low-detail-setting-flattens-and-is-deterministic
   ;; The `Low detail` perf setting is threaded into stats as :fast-walls (key
   ;; kept for save-file back-compat) and flips the wall + floor interior to a

@@ -20,6 +20,7 @@ src/
 │   ├── projectile.phel              ; enemy fireballs: spawn + march + impacts
 │   ├── level.phel                   ; level catalog + build-world factory
 │   ├── weapons.phel                 ; per-weapon stats + switch/reload
+│   ├── pickups.phel                 ; step-on item rules (hearts, ammo, keys, weapons)
 │   ├── format.phel                  ; render format helpers
 │   ├── settings.phel                ; difficulty + volume + minimap settings
 │   ├── perf.phel                    ; frame cadence + render-scale (uniform)

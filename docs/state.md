@@ -86,7 +86,7 @@ After `build-world` from `core/level.phel` stamps level metadata, the world also
 :pgrid (to-php-array (map to-php-array grid))
 ```
 
-On grid mutation (door turning into floor, etc.) **both** must update. See `pickup-hearts` and door logic in `commands/play.phel`. `rebuild-pgrid` is called after any grid edit to keep the PHP mirror in sync.
+On grid mutation (door turning into floor, etc.) **both** must update. See `pickup-hearts` in `core/pickups.phel` and door logic in `commands/play.phel`. `rebuild-pgrid` is called after any grid edit to keep the PHP mirror in sync.
 
 ## The player
 

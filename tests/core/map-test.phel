@@ -1,6 +1,6 @@
 (ns phel-doom-tests.core.map-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.map :refer [default-grid wall? door?
+  (:require phel-doom.core.map :refer [default-grid wall? door? cell
                                        cell-floor cell-wall cell-door
                                        cell-secret cell-switch-off
                                        cell-switch-on count-secrets passable?
@@ -27,6 +27,26 @@
   (is (= 0 cell-floor))
   (is (= 1 cell-wall))
   (is (= 2 cell-door)))
+
+(deftest test-cell-reads-in-bounds-value
+  ;; cell is the foundational grid accessor (wall? / door? / the raycaster
+  ;; all read through it); pin that it returns the literal at (x, y).
+  (let [g [[1 1 1]
+           [1 0 2]
+           [1 1 1]]]
+    (is (= cell-wall (cell g 0 0)))
+    (is (= cell-floor (cell g 1 1)))
+    (is (= cell-door (cell g 2 1)))))
+
+(deftest test-cell-out-of-bounds-returns-wall
+  ;; OOB reads clamp to cell-wall so the raycaster never escapes the map.
+  ;; Covers each guard: negative x, negative y, over-length col, missing row.
+  (let [g [[0 0]
+           [0 0]]]
+    (is (= cell-wall (cell g -1 0)))
+    (is (= cell-wall (cell g 0 -1)))
+    (is (= cell-wall (cell g 5 0)))
+    (is (= cell-wall (cell g 0 5)))))
 
 (deftest test-door-does-not-block-player-movement
   ;; wall? must let the player walk into a door cell — that's how

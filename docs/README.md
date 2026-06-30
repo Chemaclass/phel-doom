@@ -50,7 +50,7 @@ src/core/                    ; pure logic (no IO)
   enemies.phel               enemy catalog + stats
   level.phel                 level 1-10 + build-world
   weapons.phel               weapon catalog + ammo state
-  projectile.phel            projectiles (not used yet)
+  projectile.phel            enemy fireballs: spawn + march + impacts
   perf.phel                  big-screen perf checks
   difficulty.phel            easy/normal/hard/nightmare
   settings.phel              options model (volume, defaults)

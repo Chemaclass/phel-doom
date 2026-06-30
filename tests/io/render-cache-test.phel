@@ -2,6 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.level :refer [build-world])
   (:require phel-doom.core.engine :refer [mark-visible-cells])
+  (:require phel-doom.core.rng :as rng)
   (:require phel-doom.io.render.frame-math :refer [halfblock build-sky-halfblock])
   (:require phel-doom.io.render.palette :refer [shade-code-table boss-door-marker])
   (:require phel-doom.io.render.hud :refer [minimap-rows minimap-door-pulse])
@@ -53,6 +54,55 @@
   (is (= "fa555217b6374ecf3de454c8c8deb4c3" (php/md5 (frame->string world stats 80 24))))
   (is (= "5d656320324eb4945aad32bb88d41a7c" (php/md5 (frame->string world stats 160 44))))
   (is (= "abd5ba65d1e79af4e60d600ebec09e7e" (php/md5 (frame->string world (assoc stats :px2? true) 120 30)))))
+
+;; The golden hash above pins a single config (level 1, level gaze). The
+;; px2 / px1 scene emitters branch on scene geometry - sky above the wall
+;; top, textured floor below the wall bottom, and the graduated seam
+;; darken at each wall edge - so one config can't prove a `frame->string`
+;; refactor byte-identical. The table below pins that contract across a
+;; spread of those dimensions: level-to-level geometry (1/3/7/10), look
+;; up (sky-heavy top) and down (floor pulled up) via pitch, and both pixel
+;; modes incl. a px2 look-down case for the px2 floor-seam path. Together
+;; they are the safety net the emitter extraction (#350) is built on.
+;; build-world draws from the global RNG stream (no per-level reseed), so
+;; building inside a deftest would make the frame depend on ambient RNG
+;; state - i.e. on test execution order, flaky between a single-file run
+;; and the full suite. Seed per level first so each case is reproducible
+;; regardless of what ran before it.
+(defn- golden-frame [level ^float pitch px2?]
+  (rng/seed! level)
+  (frame->string
+   (assoc-in (mark-visible-cells (build-world level 5 0 :normal #{:pistol}))
+             [:player :pitch] pitch)
+   (assoc stats :level level :px2? px2?)
+   120 30))
+
+(def golden-geometry-cases
+  ;; [level pitch px2? md5] - pitch +0.8 looks up (sky-heavy top), -0.8
+  ;; looks down (floor pulled up into view), 0.0 is level gaze.
+  [[1  0.8  false "40858c111481ff74d3eb21125694c3bd"]
+   [1  -0.8 false "20172363e8f68e6fec5948d910576b34"]
+   [3  0.0  false "74fcb27e88ebeaff00a14dbd158df3ae"]
+   [7  0.0  false "aa32854861270ed2e73551bce4c27d8e"]
+   [10 0.0  false "554dba19c56d4df78746ae6f6cc3adf5"]
+   [3  0.0  true  "b7ceec50692f30970d5f2bd2d86d99b6"]
+   [10 0.8  true  "ab78793a4606400fbb973e9e456c8800"]
+   [3  -0.8 true  "7a6eff366be9bae4e94cfe6c3fdeca1b"]])
+
+(deftest test-frame-bytes-pinned-across-geometry
+  (doseq [[level pitch px2? expected] golden-geometry-cases]
+    (is (= expected (php/md5 (golden-frame level pitch px2?)))
+        (str "golden frame changed for level " level " pitch " pitch " px2? " px2?))))
+
+(deftest test-golden-geometry-cases-are-distinct
+  ;; Guard the premise: each case must render a DIFFERENT frame, else the
+  ;; coverage is an illusion - a regression that ignored pitch, level or
+  ;; px2 would collapse them and the hashes above would still pass in
+  ;; lockstep. Dedupe on the digest, not the multi-KB frame strings.
+  (let [digests (map (fn [[level pitch px2? _]] (php/md5 (golden-frame level pitch px2?)))
+                     golden-geometry-cases)]
+    (is (= (count golden-geometry-cases) (count (set digests)))
+        "every golden geometry case renders a distinct frame")))
 
 ;; The golden world above carries no keycards / weapon-pickups, so its
 ;; hashes only exercise the empty-source path. These pin the non-empty

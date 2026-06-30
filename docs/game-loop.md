@@ -67,7 +67,7 @@ The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself; the g
 | `try-reveal-secret` / `try-toggle-switch` | F-key adjacent: secret reveal OR switch toggle + targets | `commands/play` |
 | `mark-visible-cells` | Stamp LOS cells onto `:visited` (fog-of-war reveal) | `core/engine` |
 | `tick-stamina` + `apply-physics` | Drain sprint pool; rotate + translate (with Z step/fall) + ease pending fall + decay counters | `core/physics` |
-| `pickup-*` (x9) | Hearts, armor, armor-shards, ammo, berserk, invuln, soulsphere, backpack, weapon | `commands/play` |
+| `pickup-*` (x10) | Hearts, armor, armor-shards, ammo, berserk, invuln, soulsphere, backpack, weapon, keycards | `core/pickups` |
 | `tick-enemies` | Step alive enemies; tick respawn + AI + hit-flash | `core/enemy`, `core/enemy_ai` |
 | `tick-projectiles` | Spawn bolts from released casters; march + cull; resolve player impacts | `core/projectile` |
 | `reload` | R edge: drain reserve into mag; arm cooldown | `core/combat` |

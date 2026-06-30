@@ -1,0 +1,205 @@
+(ns phel-doom.core.pickups
+  (:require phel-doom.core.state   :refer [at-backpack-cap? backpack-level gain-armor-shard gain-backpack gain-life gain-soulsphere max-armor])
+  (:require phel-doom.core.combat  :refer [ammo-per-box arm-berserk invuln-seconds push-sfx])
+  (:require phel-doom.core.weapons :refer [give-weapon weapon-spec weapons]))
+
+;; Pure step-on pickup rules, extracted from commands/play.phel (#349).
+;; Sound is enqueued via `push-sfx` (never played inline) so these stay
+;; pure and unit-testable without an audio stub.
+
+(defn- entities-not-at
+  "All entities in `coll` whose integer cell is NOT (px, py). Shared by
+   every step-on pickup to drop the consumed entity from its vector.
+   nil-safe: a missing collection reads as empty."
+  [coll px py]
+  (apply vector
+         (filter (fn [e]
+                   (not (and (= (php/intval (:x e)) px)
+                             (= (php/intval (:y e)) py))))
+                 (or coll []))))
+
+(defn pickup-hearts
+  "If the player stands on a heart cell, consume it and gain a life."
+  [world]
+  (let [kept (entities-not-at (:hearts world)
+                              (php/intval (:x (:player world)))
+                              (php/intval (:y (:player world))))]
+    (if (= (count kept) (count (or (:hearts world) [])))
+      world
+      (push-sfx (gain-life (assoc world :hearts kept)) :berserk 1.0))))
+
+(defn pickup-armors
+  "Step-on triggers an armor pickup: bumps :armor by 1, capped at
+   `max-armor` (5) so the player can't farm an indestructible
+   buffer. The next contact-damage hit consumes one armor unit
+   instead of a life (see combat/take-damage). Pickup is always
+   consumed even at cap to match the heart / gain-life pattern."
+  [world]
+  (let [kept (entities-not-at (:armors world)
+                              (php/intval (:x (:player world)))
+                              (php/intval (:y (:player world))))]
+    (if (= (count kept) (count (or (:armors world) [])))
+      world
+      (let [shielded (assoc world :armors kept)]
+        (push-sfx
+         (update shielded :armor (fn [a] (php/min max-armor (php/+ (or a 0) 1))))
+         :door 1.0)))))
+
+(defn- entity-at
+  "Pick the first entity in `coll` at cell (px, py) so the caller can
+   read its optional tags (e.g. an ammo box's `:weapon`). nil when no
+   entity sits on the cell."
+  [coll px py]
+  (loop [es coll]
+    (cond
+      (nil? es)          nil
+      (zero? (count es)) nil
+      :else
+      (let [e (first es)]
+        (if (and (= (php/intval (:x e)) px)
+                 (= (php/intval (:y e)) py))
+          e
+          (recur (next es)))))))
+
+(defn pickup-ammos
+  "Step-on triggers an ammo-box pickup. Two flavours:
+
+   - Untagged box (level spawn): bumps the ACTIVE weapon's reserve
+     by its `:ammo-per-box`, capped at the weapon's `:reserve-cap`.
+   - Weapon-tagged box (kill-loot, carries `:weapon kw`): bumps
+     THAT weapon's reserve so dropping a chaingun-tagged box while
+     holding the pistol still feeds the chaingun. Top-level
+     `:ammo-reserve` mirror is updated only when the tag matches
+     the currently-held weapon.
+
+   Box is removed so the player can't farm one cell."
+  [world]
+  (let [px     (php/intval (:x (:player world)))
+        py     (php/intval (:y (:player world)))
+        all    (or (:ammo-boxes world) [])
+        on-box (entity-at all px py)
+        kept   (entities-not-at all px py)]
+    (if (nil? on-box)
+      world
+      (let [tagged-w  (:weapon on-box)
+            target    (or tagged-w (:weapon world) :pistol)
+            target-sp (or (get weapons target) (weapon-spec world) {})
+            per-box   (or (:ammo-per-box target-sp) ammo-per-box)
+            base-cap  (or (:reserve-cap target-sp) 0)
+            cap       (php/* base-cap (php/+ 1 (backpack-level world)))
+            stash     (or (:weapon-state world) {})
+            cur       (or (get-in stash [target :reserve]) 0)
+            cur'      (php/min cap (php/+ cur per-box))
+            stash'    (assoc-in stash [target :reserve] cur')
+            refilled  (assoc world :ammo-boxes kept :weapon-state stash')]
+        (push-sfx
+         (if (= target (or (:weapon world) :pistol))
+           (assoc refilled :ammo-reserve cur')
+           refilled)
+         :door 1.0)))))
+
+(defn pickup-berserks
+  "Step-on consumes the berserk sphere + arms `:berserk-secs` for the
+   2x-damage rage window. Stepping on a second sphere while still
+   berserk refreshes (not stacks) - `arm-berserk` replaces the timer
+   rather than adding to it. Distinct `:berserk` sfx so the pickup is
+   audibly different from a generic door/key tink."
+  [world]
+  (let [kept (entities-not-at (:berserks world)
+                              (php/intval (:x (:player world)))
+                              (php/intval (:y (:player world))))]
+    (if (= (count kept) (count (or (:berserks world) [])))
+      world
+      (push-sfx (arm-berserk (assoc world :berserks kept)) :berserk 1.0))))
+
+(defn pickup-invulns
+  "Step-on consumes the invulnerability sphere + arms
+   `:invuln-secs` of damage immunity. Refresh-not-add on stack."
+  [world]
+  (let [kept (entities-not-at (:invulns world)
+                              (php/intval (:x (:player world)))
+                              (php/intval (:y (:player world))))]
+    (if (= (count kept) (count (or (:invulns world) [])))
+      world
+      (push-sfx (assoc world
+                       :invulns     kept
+                       :invuln-secs invuln-seconds)
+                :door 1.0))))
+
+(defn pickup-soulspheres
+  "Step-on consumes a soulsphere + bumps `:lives` toward
+   `soulsphere-cap` via `gain-soulsphere`. Over-cap lives decay back
+   to `max-lives` over time (see `decay-soul-overcap`)."
+  [world]
+  (let [kept (entities-not-at (:soulspheres world)
+                              (php/intval (:x (:player world)))
+                              (php/intval (:y (:player world))))]
+    (if (= (count kept) (count (or (:soulspheres world) [])))
+      world
+      (push-sfx (gain-soulsphere (assoc world :soulspheres kept)) :berserk 1.0))))
+
+(defn pickup-armor-shards
+  "Step-on consumes an armor shard + adds +1 armor via
+   `gain-armor-shard` (capped at `armor-shard-cap` = 2x max-armor).
+   No decay - shards bank as a permanent buffer (DOOM helmet bonus
+   pattern). Common pickup so the door tink reads as routine
+   loot rather than a special-event sfx."
+  [world]
+  (let [kept (entities-not-at (:armor-shards world)
+                              (php/intval (:x (:player world)))
+                              (php/intval (:y (:player world))))]
+    (if (= (count kept) (count (or (:armor-shards world) [])))
+      world
+      (push-sfx (gain-armor-shard (assoc world :armor-shards kept)) :door 1.0))))
+
+(defn pickup-backpacks
+  "Stacking pickup (#68 part 3): each step-on bumps `:backpack-level`
+   by 1 up to `max-backpacks`. `weapons/effective-reserve-cap` then
+   returns `base * (1 + level)` so a second backpack expands every
+   weapon's reserve cap from 2x to 3x, a third to 4x. The stack
+   carries across levels via build-world's owned-state argument.
+   At cap the pickup is silently consumed (cell freed) but the
+   level is unchanged."
+  [world]
+  (let [kept (entities-not-at (:backpacks world)
+                              (php/intval (:x (:player world)))
+                              (php/intval (:y (:player world))))]
+    (if (= (count kept) (count (or (:backpacks world) [])))
+      world
+      (let [picked (assoc world :backpacks kept)]
+        (push-sfx
+         (if (at-backpack-cap? picked)
+           picked
+           (gain-backpack picked))
+         :door 1.0)))))
+
+(defn pickup-weapon-pickups
+  "Step-on consumes a weapon pickup, adds it to :owned-weapons, and
+   auto-switches to it DOOM-style (mid-fight reload-lockout check is
+   bypassed here because the pickup is the trigger, not user input)."
+  [world]
+  (let [px      (php/intval (:x (:player world)))
+        py      (php/intval (:y (:player world)))
+        on-pick (entity-at (:weapon-pickups world) px py)]
+    (if (nil? on-pick)
+      world
+      (let [kept (entities-not-at (:weapon-pickups world) px py)]
+        (push-sfx
+         (give-weapon (assoc world :weapon-pickups kept) (:weapon on-pick))
+         :door 1.0)))))
+
+(defn pickup-keycards
+  "Step-on consumes the keycard + adds its colour to `:held-keys`.
+   try-move uses the set to gate locked-door passage."
+  [world]
+  (let [px      (php/intval (:x (:player world)))
+        py      (php/intval (:y (:player world)))
+        on-card (entity-at (:keycards world) px py)]
+    (if (nil? on-card)
+      world
+      (let [kept (entities-not-at (:keycards world) px py)]
+        (push-sfx
+         (assoc world
+                :keycards  kept
+                :held-keys (conj (or (:held-keys world) #{}) (:colour on-card)))
+         :door 1.0)))))

@@ -1,0 +1,120 @@
+(ns phel-doom-tests.core.pickups-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.state :refer [max-armor soulsphere-cap])
+  (:require phel-doom.core.pickups :refer [pickup-hearts pickup-armors pickup-ammos
+                                           pickup-berserks pickup-invulns pickup-soulspheres
+                                           pickup-armor-shards pickup-backpacks
+                                           pickup-weapon-pickups pickup-keycards]))
+
+;; Each pickup-* is a pure world->world step-on transform. A world with the
+;; player standing on cell (5, 5); seed the entity there to trigger, or
+;; elsewhere to assert the no-op branch. push-sfx enqueues onto :sfx (the
+;; purity invariant: sound is queued, never played inline).
+
+(defn- player-at [x y] {:player {:x x :y y}})
+
+(defn- queued-sfx? [world name]
+  (some (fn [ev] (= name (:name ev))) (or (:sfx world) [])))
+
+(deftest test-pickup-hearts-consumes-cell-and-heals-two
+  (let [w  (merge (player-at 5.0 5.0) {:hearts [{:x 5.0 :y 5.0}] :lives 4})
+        w' (pickup-hearts w)]
+    (is (= 0 (count (:hearts w'))) "heart on the player's cell is consumed")
+    (is (= 6 (:lives w')) "a heart heals two half-hearts")
+    (is (queued-sfx? w' :berserk) "pickup enqueues sfx instead of playing inline")))
+
+(deftest test-pickup-hearts-noop-off-cell
+  ;; Heart two cells away: nothing consumed, lives untouched, no sfx.
+  (let [w  (merge (player-at 5.0 5.0) {:hearts [{:x 7.0 :y 7.0}] :lives 4})
+        w' (pickup-hearts w)]
+    (is (= 1 (count (:hearts w'))) "off-cell heart is left in place")
+    (is (= 4 (:lives w')) "no heal off-cell")
+    (is (nil? (:sfx w')) "no sfx enqueued off-cell")))
+
+(deftest test-pickup-armors-adds-one
+  (let [w' (pickup-armors (merge (player-at 5.0 5.0) {:armors [{:x 5.0 :y 5.0}] :armor 0}))]
+    (is (= 1 (:armor w')) "armor pickup bumps :armor by one")
+    (is (= 0 (count (:armors w'))) "armor entity consumed")))
+
+(deftest test-pickup-armors-consumed-but-clamped-at-cap
+  ;; At the cap the pickup is still consumed (cell freed) but armor holds.
+  (let [w' (pickup-armors (merge (player-at 5.0 5.0)
+                                 {:armors [{:x 5.0 :y 5.0}] :armor max-armor}))]
+    (is (= max-armor (:armor w')) "armor never exceeds max-armor")
+    (is (= 0 (count (:armors w'))) "over-cap armor pickup is still consumed")))
+
+(deftest test-pickup-keycards-adds-colour-to-held-keys
+  (let [w' (pickup-keycards (merge (player-at 5.0 5.0)
+                                   {:keycards [{:x 5.0 :y 5.0 :colour :red}] :held-keys #{}}))]
+    (is (contains? (:held-keys w') :red) "keycard colour joins :held-keys")
+    (is (= 0 (count (:keycards w'))) "keycard consumed")))
+
+(deftest test-pickup-keycards-noop-off-cell
+  (let [w  (merge (player-at 5.0 5.0) {:keycards [{:x 1.0 :y 1.0 :colour :blue}] :held-keys #{}})
+        w' (pickup-keycards w)]
+    (is (= #{} (:held-keys w')) "no key gained off-cell")
+    (is (= 1 (count (:keycards w'))) "off-cell keycard untouched")))
+
+(deftest test-pickup-weapon-pickups-owns-and-switches
+  (let [w' (pickup-weapon-pickups (merge (player-at 5.0 5.0)
+                                         {:weapon-pickups [{:x 5.0 :y 5.0 :weapon :shotgun}]
+                                          :owned-weapons #{:pistol} :weapon :pistol}))]
+    (is (contains? (:owned-weapons w') :shotgun) "weapon added to owned set")
+    (is (= :shotgun (:weapon w')) "auto-switches to the picked-up weapon")
+    (is (= 0 (count (:weapon-pickups w'))) "weapon pickup consumed")))
+
+(deftest test-pickup-ammos-untagged-refills-active-weapon
+  ;; Untagged box refills the ACTIVE weapon's reserve and mirrors it into
+  ;; the top-level :ammo-reserve. Start at 0 so any refill is visible.
+  (let [w  (merge (player-at 5.0 5.0)
+                  {:ammo-boxes [{:x 5.0 :y 5.0}] :weapon :pistol
+                   :weapon-state {:pistol {:reserve 0}} :ammo-reserve 0})
+        w' (pickup-ammos w)]
+    (is (= 0 (count (:ammo-boxes w'))) "ammo box consumed")
+    (is (php/> (get-in w' [:weapon-state :pistol :reserve]) 0) "active weapon reserve refilled")
+    (is (= (get-in w' [:weapon-state :pistol :reserve]) (:ammo-reserve w'))
+        "top-level :ammo-reserve mirrors the active weapon")))
+
+(deftest test-pickup-ammos-tagged-box-refills-tagged-weapon-not-active
+  ;; A chaingun-tagged box (kill-loot) picked up while holding the pistol
+  ;; feeds the CHAINGUN's reserve and leaves the active pistol + the
+  ;; :ammo-reserve mirror untouched (the mirror only tracks the held weapon).
+  (let [w  (merge (player-at 5.0 5.0)
+                  {:ammo-boxes [{:x 5.0 :y 5.0 :weapon :chaingun}] :weapon :pistol
+                   :weapon-state {:pistol {:reserve 0} :chaingun {:reserve 0}} :ammo-reserve 0})
+        w' (pickup-ammos w)]
+    (is (= 0 (count (:ammo-boxes w'))) "tagged box consumed")
+    (is (php/> (get-in w' [:weapon-state :chaingun :reserve]) 0) "tagged weapon's reserve refilled")
+    (is (= 0 (get-in w' [:weapon-state :pistol :reserve])) "held weapon's reserve untouched")
+    (is (= 0 (:ammo-reserve w')) "ammo-reserve mirror unchanged when tag != active weapon")))
+
+(deftest test-pickup-soulspheres-pushes-lives-over-base-cap
+  ;; A soulsphere at full base health still helps: it lifts lives toward
+  ;; soulsphere-cap (14), above the 10 base cap a heart would clamp to.
+  (let [w' (pickup-soulspheres (merge (player-at 5.0 5.0)
+                                      {:soulspheres [{:x 5.0 :y 5.0}] :lives 10}))]
+    (is (php/> (:lives w') 10) "soulsphere lifts lives above the base cap")
+    (is (php/<= (:lives w') soulsphere-cap) "but never past the soulsphere cap")
+    (is (= 0 (count (:soulspheres w'))) "soulsphere consumed")))
+
+(deftest test-pickup-invulns-arms-immunity-window
+  (let [w' (pickup-invulns (merge (player-at 5.0 5.0) {:invulns [{:x 5.0 :y 5.0}]}))]
+    (is (php/> (:invuln-secs w') 0.0) "invuln pickup arms the immunity timer")
+    (is (= 0 (count (:invulns w'))) "invuln sphere consumed")))
+
+(deftest test-pickup-berserks-arms-rage-window
+  (let [w' (pickup-berserks (merge (player-at 5.0 5.0) {:berserks [{:x 5.0 :y 5.0}]}))]
+    (is (= 0 (count (:berserks w'))) "berserk sphere consumed")
+    (is (php/> (:berserk-secs w') 0.0) "berserk window armed")))
+
+(deftest test-pickup-armor-shards-adds-armor
+  (let [w' (pickup-armor-shards (merge (player-at 5.0 5.0)
+                                       {:armor-shards [{:x 5.0 :y 5.0}] :armor 0}))]
+    (is (= 0 (count (:armor-shards w'))) "armor shard consumed")
+    (is (php/> (:armor w') 0) "shard adds armor")))
+
+(deftest test-pickup-backpacks-raises-level
+  (let [w' (pickup-backpacks (merge (player-at 5.0 5.0)
+                                    {:backpacks [{:x 5.0 :y 5.0}] :backpack-level 0}))]
+    (is (= 0 (count (:backpacks w'))) "backpack consumed")
+    (is (= 1 (:backpack-level w')) "first backpack lifts the level to 1")))

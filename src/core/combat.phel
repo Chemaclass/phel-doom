@@ -1,11 +1,11 @@
 (ns phel-doom.core.combat
-  (:require phel-doom.core.rng :as rng)
   (:require phel-doom.core.engine     :refer [cast-ray fov-proj-dist])
   (:require phel-doom.core.projection :refer [pitch-rows])
   (:require phel-doom.core.enemy      :refer [push-back-enemy shoot beam-impact splash pierce spread-shoot])
   (:require phel-doom.core.enemy-ai :refer [attacks? noise-wake])
   (:require phel-doom.core.physics  :refer [try-move])
   (:require phel-doom.core.state    :refer [max-lives])
+  (:require phel-doom.core.loot      :refer [corpse-type-at push-kill-loot])
   (:require phel-doom.core.weapons  :refer [weapon-order weapon-spec weapons]))
 
 (def shot-knockback-dist
@@ -646,103 +646,6 @@
             (fn [ts] (conj (or ts [])
                            {:x sx :y sy :tx ix :ty iy :kind kind
                             :t 0.0 :dur tracer-flight-seconds})))))
-
-(defn- corpse-type-at
-  "Type of a just-killed enemy sitting at `hit-pos` (the corpse cell), or
-   nil. The multi-target shots (pistol pierce, shotgun spread, BFG) only
-   know a hit-pos + kill count, so this recovers the primary kill's type
-   from `enemies` (alive false within half a cell of hit-pos) to tag the
-   blood fx for the death-sprite renderer."
-  [enemies hit-pos]
-  (when hit-pos
-    (let [hx (:x hit-pos) hy (:y hit-pos) n (count enemies)]
-      ;; Nearest dead enemy within ~1.5 cells of the impact point.
-      (loop [i 0 best nil bestd 2.25]
-        (if (php/>= i n)
-          (when best (:type best))
-          (let [e  (get enemies i)
-                dx (php/- (:x e) hx)
-                dy (php/- (:y e) hy)
-                d2 (php/+ (php/* dx dx) (php/* dy dy))]
-            (if (and (false? (:alive e)) (php/< d2 bestd))
-              (recur (php/+ i 1) e d2)
-              (recur (php/+ i 1) best bestd))))))))
-
-(def loot-drop-chance
-  "Probability cutoffs for a kill drop, layered on a single uniform roll
-   in [0, 1). Tuned DOWN to 25% total after the v0.3 playtesting
-   reported too much loot, then back UP to 35% (issue #157): the
-   8-weapon roster + faster pace made 75% no-drop read as sparse —
-   kill loot is the core dopamine feedback. Ammo dominates; armor
-   mid; heart is rare AND only rolls when it would actually heal
-   (lives < cap)."
-  {:ammo  0.22          ; 0.00 .. 0.22
-   :armor 0.30          ; 0.22 .. 0.30
-   :heart 0.35})        ; 0.30 .. 0.35 (gated by lives < max-lives)
-
-(defn roll-loot-kind
-  "Decide which pickup (if any) drops on the current kill. nil = no
-   drop. `roll` is a uniform float in [0, 1) supplied by the caller
-   so tests can pin the outcome."
-  [world ^float roll]
-  (cond
-    (php/< roll (:ammo  loot-drop-chance)) :ammo
-    (php/< roll (:armor loot-drop-chance)) :armor
-    ;; A heart only drops when it would actually heal. At full HP a roll
-    ;; in the heart band does NOT re-bucket to ammo/armor - it falls
-    ;; through to nil (no drop), by design (~5% of kills drop nothing
-    ;; that otherwise would have given a heart).
-    (and (php/< roll (:heart loot-drop-chance))
-         (php/< (or (:lives world) 0) max-lives)) :heart
-    :else nil))
-
-(defn- push-pickup [world key hit-pos]
-  (update world key
-          (fn [xs] (conj (or xs []) {:x (:x hit-pos) :y (:y hit-pos)}))))
-
-(defn- push-ammo-loot [world hit-pos weapon-kw]
-  ;; Tagged ammo box — pickup-ammos in commands/play.phel reads
-  ;; `:weapon` to top up that specific weapon's reserve. Boxes
-  ;; without `:weapon` (level-spawn) refill the active weapon.
-  (update world :ammo-boxes
-          (fn [xs]
-            (conj (or xs []) {:x (:x hit-pos) :y (:y hit-pos) :weapon weapon-kw}))))
-
-(defn pick-loot-weapon
-  "Choose a random weapon from `:owned-weapons` for a kill-loot ammo
-   drop. Uniform over the owned set MINUS the pistol — the player
-   always starts with the pistol AND its reserve refills via
-   level-spawned ammo boxes, so kill-loot biases toward the scarce
-   weapons (shotgun, chaingun) that the player had to hunt for on
-   the map. Pure given `roll` (uniform float in [0, 1)) so tests
-   can pin the outcome. Falls back to :pistol only when nothing
-   else is owned (fresh-run / defensive fixture)."
-  [world ^float roll]
-  (let [owned     (or (:owned-weapons world) #{:pistol})
-        non-basic (apply vector
-                         (sort (filter (fn [kw] (php/!== kw :pistol)) owned)))
-        n         (count non-basic)]
-    (if (zero? n)
-      :pistol
-      (get non-basic (php/min (php/- n 1)
-                              (php/intval (php/* roll n)))))))
-
-(defn- push-kill-loot
-  "Possibly drop a pickup at the enemy's death position. Two RNG rolls:
-   one for kind (ammo/armor/heart/nil), one to pick which owned
-   weapon an ammo drop refills. Tests pin both via roll-loot-kind /
-   pick-loot-weapon directly."
-  [world hit-pos]
-  (let [roll-kind (rng/float!)
-        kind      (roll-loot-kind world roll-kind)]
-    (cond
-      (= kind :ammo)
-      (let [roll-wpn (rng/float!)
-            weapon   (pick-loot-weapon world roll-wpn)]
-        (push-ammo-loot world hit-pos weapon))
-      (= kind :armor) (push-pickup world :armors hit-pos)
-      (= kind :heart) (push-pickup world :hearts hit-pos)
-      :else           world)))
 
 (defn- maybe-unlock-boss-door
   "On a `:door-lock :boss` level, killing a `:cyber` enemy grants the

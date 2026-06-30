@@ -14,6 +14,7 @@ src/
 │   ├── engine.phel                  ; raycaster (cast-ray, cast-frame)
 │   ├── physics.phel                 ; rotation + translation + counter decay + stamina
 │   ├── combat.phel                  ; fire-shot + damage-step + timers
+│   ├── loot.phel                    ; kill-loot drop economy (ammo / armor / heart)
 │   ├── enemy.phel                   ; spawn, step, shoot, respawn timer
 │   ├── enemy_ai.phel                ; AI state machine
 │   ├── enemies.phel                 ; enemy-type catalog

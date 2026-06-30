@@ -13,9 +13,10 @@ The implementation lives under `src/io/render/`:
 | `...render.frame-math` | `frame_math.phel` | Gradients, sprite scaling, enemy projection, visibility tests. Pure helpers. |
 | `...render.hud` | `hud.phel` | Minimap, F3 debug line, help menu, settings panel. |
 | `...render.paint` | `paint.phel` | Transient overlay effects (face, crosshair, vignettes, badges, pistol HUD). |
+| `...render.sprites` | `sprites.phel` | Item / projectile / tracer billboards + Freedoom death & blood-FX painters, and the `sprites-enabled?` gate. |
 | `...render.main` | `main.phel` | The `frame->string` pipeline, `render!`, perf snapshot, end / menu screens. |
 
-Dependency direction is acyclic: `buffer -> palette -> frame-math -> {hud, paint} -> main -> facade`. The hot per-cell loop (`frame->string` + `compute-wall-shades`) stays co-located in `main`; cross-namespace calls compile to direct PHP static calls and the buffer macros inline, so the split adds no hot-path overhead.
+Dependency direction is acyclic: `buffer -> palette -> frame-math -> {hud, paint, sprites} -> main -> facade` (`paint` also calls `sprites-enabled?` from `sprites`). The hot per-cell loop (`frame->string` + `compute-wall-shades`) stays co-located in `main`; cross-namespace calls compile to direct PHP static calls and the buffer macros inline, so the split adds no hot-path overhead.
 
 Entry point: `render! [world stats cols rows]` - cursor home, pick impact flash or normal frame, flush.
 

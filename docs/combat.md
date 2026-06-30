@@ -41,7 +41,7 @@ Fresh run starts with 30 reserve (3 mags); cap 50. Pickups refill (see [`level-s
 
 ## Kill loot
 
-On kill, roll uniform float through `roll-loot-kind`:
+The drop economy lives in `src/core/loot.phel` (extracted from `combat.phel`); `on-shot-hit` calls `push-kill-loot` on a kill. On kill, roll uniform float through `roll-loot-kind`:
 
 | Band | Drop | Notes |
 |------|------|-------|

@@ -75,6 +75,19 @@
     (is (= (get-in w' [:weapon-state :pistol :reserve]) (:ammo-reserve w'))
         "top-level :ammo-reserve mirrors the active weapon")))
 
+(deftest test-pickup-ammos-tagged-box-refills-tagged-weapon-not-active
+  ;; A chaingun-tagged box (kill-loot) picked up while holding the pistol
+  ;; feeds the CHAINGUN's reserve and leaves the active pistol + the
+  ;; :ammo-reserve mirror untouched (the mirror only tracks the held weapon).
+  (let [w  (merge (player-at 5.0 5.0)
+                  {:ammo-boxes [{:x 5.0 :y 5.0 :weapon :chaingun}] :weapon :pistol
+                   :weapon-state {:pistol {:reserve 0} :chaingun {:reserve 0}} :ammo-reserve 0})
+        w' (pickup-ammos w)]
+    (is (= 0 (count (:ammo-boxes w'))) "tagged box consumed")
+    (is (php/> (get-in w' [:weapon-state :chaingun :reserve]) 0) "tagged weapon's reserve refilled")
+    (is (= 0 (get-in w' [:weapon-state :pistol :reserve])) "held weapon's reserve untouched")
+    (is (= 0 (:ammo-reserve w')) "ammo-reserve mirror unchanged when tag != active weapon")))
+
 (deftest test-pickup-soulspheres-pushes-lives-over-base-cap
   ;; A soulsphere at full base health still helps: it lifts lives toward
   ;; soulsphere-cap (14), above the 10 base cap a heart would clamp to.
@@ -89,14 +102,16 @@
     (is (php/> (:invuln-secs w') 0.0) "invuln pickup arms the immunity timer")
     (is (= 0 (count (:invulns w'))) "invuln sphere consumed")))
 
-(deftest test-pickup-berserks-and-shards-consume-cell
-  (let [berserked (pickup-berserks (merge (player-at 5.0 5.0) {:berserks [{:x 5.0 :y 5.0}]}))
-        sharded   (pickup-armor-shards (merge (player-at 5.0 5.0)
-                                              {:armor-shards [{:x 5.0 :y 5.0}] :armor 0}))]
-    (is (= 0 (count (:berserks berserked))) "berserk sphere consumed")
-    (is (php/> (:berserk-secs berserked) 0.0) "berserk window armed")
-    (is (= 0 (count (:armor-shards sharded))) "armor shard consumed")
-    (is (php/> (:armor sharded) 0) "shard adds armor")))
+(deftest test-pickup-berserks-arms-rage-window
+  (let [w' (pickup-berserks (merge (player-at 5.0 5.0) {:berserks [{:x 5.0 :y 5.0}]}))]
+    (is (= 0 (count (:berserks w'))) "berserk sphere consumed")
+    (is (php/> (:berserk-secs w') 0.0) "berserk window armed")))
+
+(deftest test-pickup-armor-shards-adds-armor
+  (let [w' (pickup-armor-shards (merge (player-at 5.0 5.0)
+                                       {:armor-shards [{:x 5.0 :y 5.0}] :armor 0}))]
+    (is (= 0 (count (:armor-shards w'))) "armor shard consumed")
+    (is (php/> (:armor w') 0) "shard adds armor")))
 
 (deftest test-pickup-backpacks-raises-level
   (let [w' (pickup-backpacks (merge (player-at 5.0 5.0)

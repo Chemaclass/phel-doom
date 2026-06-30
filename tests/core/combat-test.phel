@@ -1030,6 +1030,35 @@
     (is (= 1 (:kills w1)))
     (is (not (contains? (or (:held-keys w1) #{}) :boss)))))
 
+;; The splash weapons (bfg slot 5, rocket slot 7) route through bfg-fire,
+;; which re-implements the boss-unlock independently of the hitscan path
+;; tested above. A regression there would strand the player behind a
+;; permanently-locked L10 exit, so both splash paths are pinned (#352).
+(deftest test-fire-shot-bfg-splash-kill-of-cyber-on-boss-lock-grants-boss-key
+  (let [w0 (assoc (boss-world) :weapon :bfg :owned-weapons #{:pistol :bfg})
+        w1 (fire-shot w0)]
+    (is (= 1 (:kills w1)) "bfg blast killed the cyber")
+    (is (contains? (:held-keys w1) :boss) "boss exit unlocked via the splash path")))
+
+(deftest test-fire-shot-rocket-splash-kill-of-cyber-on-boss-lock-grants-boss-key
+  ;; Smaller radius/damage than the BFG but still one-shots the 1-HP
+  ;; fixture cyber through the same bfg-fire branch.
+  (let [w0 (assoc (boss-world) :weapon :rocket :owned-weapons #{:pistol :rocket})
+        w1 (fire-shot w0)]
+    (is (= 1 (:kills w1)) "rocket blast killed the cyber")
+    (is (contains? (:held-keys w1) :boss) "boss exit unlocked via the splash path")))
+
+(deftest test-fire-shot-bfg-splash-kill-of-non-cyber-does-not-grant-boss-key
+  ;; bfg-fire has its OWN :cyber type-check; the hitscan negatives exercise
+  ;; finish-multikill's, not this one. A blast that kills only an imp on a
+  ;; boss-locked level must leave the exit shut.
+  (let [w0 (assoc (boss-world) :weapon :bfg :owned-weapons #{:pistol :bfg}
+                  :enemies [{:x 4.5 :y 1.5 :alive true :lives 1 :max-lives 1
+                             :hit-flash-secs 0.0 :type :imp}])
+        w1 (fire-shot w0)]
+    (is (= 1 (:kills w1)) "bfg blast killed the imp")
+    (is (not (contains? (or (:held-keys w1) #{}) :boss)) "non-cyber kill keeps the door locked")))
+
 ;; ---------------------------------------------------------------------
 ;; tick-armory: dev cheat that effectively grants infinite ammo by
 ;; refilling mag + reserve each tick. No-op when :armory? is falsy.

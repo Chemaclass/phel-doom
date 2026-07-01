@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Added
+
+- Per-cell floor-height data layer (issue #368, epic #375): worlds now carry `:fz-grid` (per-cell floor heights, quantized 0.25 steps) with a flat PHP hot-array twin `:pfz` (indexed `y * width + x`); layouts can author raised tiers via digit chars `1`/`2`/`3` (fz 0.25/0.5/0.75); `map/floor-z` lookup returns 0.0 out of bounds. Data only — cast/render/physics still assume a flat world, and every shipped level stays flat (zero behavior change; saves round-trip heights without a version bump).
+
 ### Performance
 
 - Trimmed per-frame render allocations on the common pickup-paint path (issue #348): the 8 pickup paint passes (3 keycard colours + 5 weapon-pickup kinds) each ran `(apply vector (filter … (or (:keycards world) [])))` every frame — a closure + lazy seq + materialised vector built even on the overwhelmingly common frame with zero keycards / weapon-pickups. Each pass now guards on `(seq …)`, skipping the filter, the vector build, AND the `paint-pickups-into` call (its `sprites-enabled?` / `pitch-rows` setup) when the source list is empty; the two source lists also bind once instead of re-reading `world` 8×. `pulse` (sin-wave beat sampled 15×/frame) gains `^:pure`. Byte-identical (golden render hashes + full suite unchanged: the empty path returns the threaded buffer untouched, the non-empty path is the same paint call); a new `render-cache` test pins that a visible keycard / weapon-pickup still paints. No bench needed.

@@ -41,6 +41,22 @@ Every cell is one of these ints. Constants exported so no module uses raw `0/1/2
 
 `wall?` / `passable?` use the same lock colour resolution, so the player can't walk through locked doors but the raycaster still blocks rays on them (stay visually solid until traversed).
 
+## Floor heights (fz)
+
+Issue #368 (variable-floor-heights epic #375): each cell carries a floor height alongside its type. Heights live in a separate `fz-grid` (vector of vectors of floats), not in the cell int.
+
+```phel
+(def fz-step 0.25)        ; height quantum; stairs rise one step per cell
+(quantize-fz 0.3)         ; => 0.25 - snap raw input to the nearest step
+(floor-z fz-grid x y)     ; height at (x, y); out-of-bounds or nil grid = 0.0
+```
+
+Quantization happens in loaders (layout parsing), so stored data is always clean multiples of `fz-step` and `floor-z` stays a bare read.
+
+Layouts author heights with digit chars: `1` / `2` / `3` parse as `cell-floor` with fz 0.25 / 0.5 / 0.75. `parse-layout` returns `{:grid :spawn :fz-grid}`; a digit-free layout yields an all-zero `fz-grid`. Procgen grids carry no heights (flat world).
+
+Data layer only for now: cast, render, and physics still assume a flat world. The epic issues #369-#372 make heights visible and walkable.
+
 ## Random map generation
 
 ```phel
@@ -118,3 +134,5 @@ Minimap: dim `T` (off) / bright `T` (on).
 ```
 
 Off-map = wall means the raycaster skips range checks: keeps stepping until a non-floor cell (or max-depth). One branch saved per ray step.
+
+Floor heights follow the same defensive pattern with a different default: `(floor-z fz-grid 99 99)` returns `0.0` (ground level), as does a nil `fz-grid`, so consumers never see nil.

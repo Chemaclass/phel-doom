@@ -1,5 +1,6 @@
 (ns phel-doom-tests.core.physics-test
   (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.map     :refer [fz-step])
   (:require phel-doom.core.state   :refer [max-stamina new-world new-player])
   (:require phel-doom.core.physics :refer [try-move apply-physics sprint-engage-threshold sprint-multiplier stamina-drain stamina-regen tick-heartbeat tick-stamina tick-blood-drops]))
 
@@ -40,6 +41,55 @@
         p (:player w)]
     (is (= 1.5 (:x p)))
     (is (= 1.5 (:y p)))))
+
+;; ---------------------------------------------------------------------
+;; try-move + step-up rule (issue #371): a rise of exactly fz-step onto
+;; the destination cell is walkable (stairs); anything taller blocks
+;; like a wall. 5-wide open corridor, walls top/bottom only, so every
+;; interior cell is passable? and the fz difference is the only gate
+;; under test.
+;; ---------------------------------------------------------------------
+
+(def step-corridor
+  [[1 1 1 1 1]
+   [0 0 0 0 0]
+   [1 1 1 1 1]])
+
+(defn- step-world [mid-fz]
+  (new-world step-corridor (new-player 1.5 1.5 0.0) [[0.0 0.0 0.0 0.0 0.0] mid-fz [0.0 0.0 0.0 0.0 0.0]]))
+
+(deftest test-try-move-steps-up-exactly-one-fz-step
+  ;; Cell (2,1) sits one fz-step above the player's current 0.0 floor.
+  ;; The rise is allowed and the player's :z snaps to it.
+  (let [w0 (step-world [0.0 0.0 fz-step 0.0 0.0])
+        w  (try-move w0 1.0 0.0)
+        p  (:player w)]
+    (is (= 2.5 (:x p)) "move is not blocked")
+    (is (= fz-step (:z p)) "z snaps to the destination cell's fz")))
+
+(deftest test-try-move-blocks-rise-of-two-fz-steps
+  ;; A rise steeper than one fz-step reads as a wall — no move, z unchanged.
+  (let [w0 (step-world [0.0 0.0 (php/* 2.0 fz-step) 0.0 0.0])
+        w  (try-move w0 1.0 0.0)
+        p  (:player w)]
+    (is (= 1.5 (:x p)) "move is blocked")
+    (is (= 0.0 (:z p)) "z stays put")))
+
+(deftest test-try-move-steps-down-any-depth-and-snaps-z
+  ;; Starting elevated one fz-step, stepping onto a lower (0.0) cell is
+  ;; always allowed — no gravity/fall gate in this phase — and z snaps
+  ;; down to match (no lerp; documented as later polish, not built here).
+  (let [w0 (assoc-in (step-world [0.0 fz-step 0.0 0.0 0.0]) [:player :z] fz-step)
+        w  (try-move w0 1.0 0.0)
+        p  (:player w)]
+    (is (= 2.5 (:x p)) "move is not blocked")
+    (is (= 0.0 (:z p)) "z snaps down to the destination cell's fz")))
+
+(deftest test-try-move-on-flat-world-keeps-z-at-zero
+  ;; Every shipped level is flat: the step-up gate must be a no-op
+  ;; there so behaviour is unchanged (proof: full suite stays green).
+  (let [w (try-move open-world 0.0 0.0)]
+    (is (= 0.0 (:z (:player w))))))
 
 ;; ---------------------------------------------------------------------
 ;; try-move + locked doors: arming the NEED <COLOUR> KEY HUD cue.

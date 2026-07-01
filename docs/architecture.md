@@ -12,7 +12,7 @@ src/
 │   ├── state.phel                   ; world + player maps, gain-life, max-lives
 │   ├── map.phel                     ; grid generators, cell constants, wall? / door?
 │   ├── engine.phel                  ; raycaster (cast-ray, cast-frame)
-│   ├── physics.phel                 ; rotation + translation + counter decay + stamina
+│   ├── physics.phel                 ; rotation + translation (+ fz step-up gate) + counter decay + stamina
 │   ├── combat.phel                  ; fire-shot + damage-step + timers
 │   ├── loot.phel                    ; kill-loot drop economy (ammo / armor / heart)
 │   ├── enemy.phel                   ; spawn, step, shoot, respawn timer

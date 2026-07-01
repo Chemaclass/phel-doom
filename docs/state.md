@@ -96,10 +96,11 @@ The same source-of-truth / hot-twin split applies to floor heights (issue #368):
 {:x       <float world units>
  :y       <float>
  :angle   <float radians>
- :pitch   <float look up/down fraction in [-1, 1], 0 = level>}
+ :pitch   <float look up/down fraction in [-1, 1], 0 = level>
+ :z       <float floor height under the player's feet, 0.0 = ground level>}
 ```
 
-`new-player x y angle` creates the player at a world position and facing angle. `move-player` does delta translation (no collision); `turn-player` does delta angle. `change-pitch` updates camera look. Collision is handled at `physics/try-move`. The world is uniformly flat (no elevation), so the camera is fixed at standard eye height (0.5 units above the ground plane).
+`new-player x y angle` creates the player at a world position and facing angle, spawning at `:z 0.0`; every shipped level's spawn cell is at ground level, so a static default is correct without threading the level's `fz-grid` through spawn. `move-player` does delta translation (no collision); `turn-player` does delta angle. `change-pitch` updates camera look. Collision AND the floor-height step-up rule are handled at `physics/try-move` (issue #371): a destination cell's `fz` rise of at most `map/fz-step` (0.25) above `:z` is walkable and snaps `:z` to it (stairs); stepping down any depth is always allowed and also snaps `:z` (no gravity/fall lerp in this phase); a bigger rise blocks the move exactly like a wall. Flat worlds keep every cell's `fz` at 0.0, so the gate is a no-op there and `:z` stays 0.0.
 
 ## Movement counters (`:moves`)
 
@@ -146,6 +147,6 @@ Float-seconds countdowns on the world, decayed by `decay-timers` in `core/combat
 
 ## Flat world design
 
-The world has a single flat floor plane (z = 0) and a flat ceiling (z = 1). All gameplay occurs on this plane. This keeps construction simple (one `new-world` call), updates lightweight (`assoc`/`update`), and tests literal (`(is (= expected (tick-world ...)))`). Trade-off: no compiler help on key names, so `frame-stats` centralizes all reads to catch typos.
+Every shipped level is still flat (`fz` 0.0 everywhere) and the ceiling stays a flat plane (z = 1); construction stays simple (one `new-world` call), updates lightweight (`assoc`/`update`), and tests literal (`(is (= expected (tick-world ...)))`). Trade-off: no compiler help on key names, so `frame-stats` centralizes all reads to catch typos.
 
-Issue #368 starts loosening this: worlds now carry per-cell floor heights (`:fz-grid` / `:pfz`, all zeros for every shipped level), but cast, render, and physics still assume the flat plane until the rest of epic #375 lands.
+Issue #368 started loosening this: worlds carry per-cell floor heights (`:fz-grid` / `:pfz`). Issue #369 taught the raycaster to march past floor-height risers. Issue #371 taught physics the step-up rule (this doc's "The player" section) so both the player AND enemies (`core/enemy.phel`'s `step-toward` -> `try-step` -> `step-clears?`) can climb a one-`fz-step` rise; enemies don't carry their own `:z` field - they read their current cell's `fz` on the fly from the `fz-grid` threaded into `enemy/advance`, since that is the only place the value is needed (matches how sprite rendering plans to read cell `fz` directly rather than caching it per-enemy). Render still projects every world at a fixed eye height until #370 lands.

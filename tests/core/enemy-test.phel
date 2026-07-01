@@ -1,6 +1,7 @@
 (ns phel-doom-tests.core.enemy-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.rng :as rng)
+  (:require phel-doom.core.map :refer [fz-step])
   (:require phel-doom.core.enemy :refer [default-wander-fraction new-enemy promote-wanderers push-back-enemy spawn-enemies spawn-enemies-mixed shoot pierce spread-shoot splash beam-impact advance tick-scare rear-attacker? type-speed-mul]))
 
 (def open-grid
@@ -208,6 +209,43 @@
   (let [e (first (advance [(new-enemy 1.5 2.5)] wall-between-grid 3.5 2.5 0.5 0.75 true))]
     (is (or (not (= 1.5 (:x e)))
             (not (= 2.5 (:y e)))))))
+
+;; ---------------------------------------------------------------------
+;; advance + step-up parity (issue #371): enemies get the same
+;; fz-step rule as the player so monsters can chase up stairs. The
+;; 9-arity form threads an fz-grid; a rise of exactly one fz-step is
+;; walkable, a rise of two blocks like a wall.
+;; ---------------------------------------------------------------------
+
+(def step-grid
+  "3-row corridor, walls top/bottom, open middle row — same shape as
+   open-grid but only 5 columns so a single east step is easy to reason
+   about."
+  [[1 1 1 1 1]
+   [0 0 0 0 0]
+   [1 1 1 1 1]])
+
+(defn- step-fz [mid-fz]
+  [[0.0 0.0 0.0 0.0 0.0] mid-fz [0.0 0.0 0.0 0.0 0.0]])
+
+(deftest test-advance-climbs-a-single-fz-step-rise
+  ;; Enemy at (1.9,1.5), close enough to the x=2 cell boundary that one
+  ;; frame's step (speed 0.75 * dt 0.5 = 0.375) crosses it. Cell (2,1)
+  ;; rises by exactly one fz-step: the climb is allowed.
+  (let [fz  (step-fz [0.0 0.0 fz-step 0.0 0.0])
+        es' (advance [(new-enemy 1.9 1.5)] step-grid nil fz 3.5 1.5 0.5 0.75 true)]
+    (is (> (:x (first es')) 2.0))))
+
+(deftest test-advance-blocked-by-a-two-fz-step-rise
+  ;; Same setup, but the rise is two fz-steps — too steep to climb. The
+  ;; straight-ahead and 45-degree cascade offsets all cross into cell
+  ;; (2,1) and are blocked; the enemy never advances past the x=2
+  ;; boundary (it may still slide sideways within its own cell via the
+  ;; 90-degree offset — that's pick-step's normal wall-slide, not a
+  ;; step-rule regression)."
+  (let [fz  (step-fz [0.0 0.0 (php/* 2.0 fz-step) 0.0 0.0])
+        es' (advance [(new-enemy 1.9 1.5)] step-grid nil fz 3.5 1.5 0.5 0.75 true)]
+    (is (< (:x (first es')) 2.0))))
 
 (deftest test-advance-leaves-dead-enemies-untouched
   (let [es' (advance [{:x 5.0 :y 5.0 :alive false}] open-grid 8.0 5.0 0.5 0.75 true)]

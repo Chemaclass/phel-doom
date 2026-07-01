@@ -1,6 +1,6 @@
 (ns phel-doom.core.enemy
   (:require phel-doom.core.rng :as rng)
-  (:require phel-doom.core.map        :refer [random-spawn wall?])
+  (:require phel-doom.core.map        :refer [random-spawn wall? floor-z fz-step])
   (:require phel-doom.core.enemies    :refer [resists? default-lives-for])
   (:require phel-doom.core.engine     :refer [proj-dist])
   (:require phel-doom.core.projection :refer [sprite-half-rows wall-px])
@@ -107,15 +107,28 @@
         t (php/* 0.75 php/M_PI)]
     [0.0 q (php/- 0.0 q) h (php/- 0.0 h) t (php/- 0.0 t)]))
 
+(defn- ^:pure step-clears? [fz-grid ^float ex ^float ey ^int nix ^int niy]
+  ;; Same rule as physics/try-move (issue #371): rises up to one
+  ;; fz-step are climbable, stepping down any depth is always allowed.
+  ;; No fz-grid (nil, flat worlds) means every cell is 0.0 - a no-op
+  ;; gate so pre-#371 chase behaviour is unchanged on flat levels.
+  (or (nil? fz-grid)
+      (php/<= (php/- (floor-z fz-grid nix niy)
+                     (floor-z fz-grid (php/intval ex) (php/intval ey)))
+              fz-step)))
+
 (defn- try-step
   "Attempt to step `dist` units from (ex, ey) along `angle`. Returns
-   [nx ny] if the destination cell is open (not a `wall?`), nil otherwise.
-   Flat wall-collision only: the floor is one plane, so a step is gated by
-   walls alone."
-  [grid ^float ex ^float ey ^float dist ^float angle]
-  (let [nx (php/+ ex (php/* dist (php/cos angle)))
-        ny (php/+ ey (php/* dist (php/sin angle)))]
-    (if (wall? grid (php/intval nx) (php/intval ny))
+   [nx ny] if the destination cell is open (not a `wall?`) AND its
+   floor-height rise from the enemy's current cell clears the
+   fz-step gate (issue #371, `step-clears?`), nil otherwise."
+  [grid fz-grid ^float ex ^float ey ^float dist ^float angle]
+  (let [nx  (php/+ ex (php/* dist (php/cos angle)))
+        ny  (php/+ ey (php/* dist (php/sin angle)))
+        nix (php/intval nx)
+        niy (php/intval ny)]
+    (if (or (wall? grid nix niy)
+            (not (step-clears? fz-grid ex ey nix niy)))
       nil
       [nx ny])))
 
@@ -124,19 +137,21 @@
    destination cell is open. nil if the enemy is sealed in. The cascade
    first cuts corners, then slides along walls, then backs out of dead
    ends, so a monster routes around obstacles instead of bumping forever."
-  [grid ^float ex ^float ey ^float step ^float desired]
+  [grid fz-grid ^float ex ^float ey ^float step ^float desired]
   (loop [offsets chase-angle-offsets]
     (cond
       (empty? offsets) nil
-      :else            (let [hit (try-step grid ex ey step (php/+ desired (first offsets)))]
+      :else            (let [hit (try-step grid fz-grid ex ey step (php/+ desired (first offsets)))]
                          (if hit hit (recur (rest offsets)))))))
 
 (defn- step-toward
   "Walk one frame of `speed` * dt toward (target-x, target-y). The enemy
    slides around obstacles via pick-step's offset cascade instead of
-   bumping forever. Heads straight at the player; the floor is flat so
-   there is no climb / fall to gate the move."
-  [enemy grid ^float target-x ^float target-y ^float dt ^float speed]
+   bumping forever. Heads straight at the player; a floor-height rise
+   bigger than one fz-step blocks the same way a wall does (issue #371),
+   so a monster climbs stairs but can't scale a taller ledge. `fz-grid`
+   nil (flat worlds / legacy callers) keeps the pre-#371 wall-only gate."
+  [enemy grid fz-grid ^float target-x ^float target-y ^float dt ^float speed]
   (let [ex   (:x enemy)
         ey   (:y enemy)
         dx   (php/- target-x ex)
@@ -144,7 +159,7 @@
         dist (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
     (if (php/<= dist stop-dist)
       enemy
-      (let [hit (pick-step grid ex ey (php/* speed dt) (php/atan2 dy dx))]
+      (let [hit (pick-step grid fz-grid ex ey (php/* speed dt) (php/atan2 dy dx))]
         (if hit
           (assoc enemy :x (first hit) :y (second hit))
           enemy)))))
@@ -541,8 +556,12 @@
    chase expectations still hold.
 
    `revive?` false suspends every dead enemy's timer (boss dead on L10
-   → no more respawns of boss OR minions, the run is winding down)."
-  [e grid pgrid ^float player-x ^float player-y ^float dt ^float speed all-enemies revive?]
+   → no more respawns of boss OR minions, the run is winding down).
+
+   `fz-grid` (issue #371) gates step-toward's movement the same way
+   physics/try-move gates the player: nil (legacy callers, flat worlds)
+   is a no-op so pre-#371 chase behaviour is unchanged."
+  [e grid pgrid fz-grid ^float player-x ^float player-y ^float dt ^float speed all-enemies revive?]
   (cond
     (:alive e)                (let [;; Per-frame AI pipeline. Order matters:
                                     ;;
@@ -587,7 +606,7 @@
                                                   (let [target (target-pos wandered player-x player-y)
                                                         mul    (or (get type-speed-mul (:type wandered)) 1.0)]
                                                     (if target
-                                                      (step-toward wandered grid (:x target) (:y target) dt (php/* speed mul))
+                                                      (step-toward wandered grid fz-grid (:x target) (:y target) dt (php/* speed mul))
                                                       wandered))
                                                   wandered)
                                     flash'      (php/max 0.0 (php/- (or (:hit-flash-secs wandered) 0.0) dt))]
@@ -634,16 +653,21 @@
    test callers don't have to build a PHP-array grid mirror; the AI
    then falls through to the enemy's existing `:state` (default
    `:aware` → they chase as before). The 8-arity form carries `pgrid`
-   for the LOS observe pass.
+   for the LOS observe pass. The 9-arity form additionally carries
+   `fz-grid` (issue #371) so enemies get the same step-up rule as the
+   player and can chase up stairs; both shorter forms pass `fz-grid`
+   nil, which is a no-op gate (flat worlds / legacy callers).
 
    `revive?`, when false, freezes every dead enemy in place — used on
    L10 once the boss is down so neither the cyberdemon nor its capped
    minions ever come back."
   ([enemies grid player-x player-y dt speed revive?]
-   (advance enemies grid nil player-x player-y dt speed revive?))
+   (advance enemies grid nil nil player-x player-y dt speed revive?))
   ([es g pg x y delta sp rev?]
+   (advance es g pg nil x y delta sp rev?))
+  ([es g pg fz x y delta sp rev?]
    (apply vector
-          (map (fn [e] (tick-one e g pg x y delta sp es rev?))
+          (map (fn [e] (tick-one e g pg fz x y delta sp es rev?))
                es))))
 
 (def scare-trigger-dist

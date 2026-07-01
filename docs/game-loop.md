@@ -80,9 +80,9 @@ The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself; the g
 
 `tick-world` calls no IO. Every cue (pickups, combat, secret reveal, switch) enqueues `{:name :vol}` on `:sfx` via `push-sfx`. Queue reset at tick top, drained + emitted by game-loop after tick, gated on `:sound-on`. Keeps tick pure so tests run full frame sequences without side effects. See [audio.md](audio.md).
 
-## Physics on flat ground
+## Physics + floor height
 
-The world is uniformly flat (z = 0 floor, z = 1 ceiling). `apply-physics` translates and returns updated player position. No step-up / fall / handrail logic applies since there is no elevation change. Wall and locked-door collision are checked. The player's camera is fixed at standard eye height (0.5 units above the ground). See [state.md](state.md) for the field contract.
+`apply-physics` translates and returns the updated player position; collision, the locked-door bump cue, AND the floor-height step-up rule (issue #371) all resolve inside `physics/try-move`. A destination cell's `fz` rise of at most `map/fz-step` (0.25) above the player's `:z` is walkable and snaps `:z` to it (stairs); stepping down any depth is always allowed and also snaps `:z`; a bigger rise blocks the move exactly like a wall. Every shipped level is still flat (`fz` 0.0 everywhere), so the gate is a no-op there and `:z` stays 0.0 - byte-identical to the pre-#371 behaviour. See [state.md](state.md) for the field contract.
 
 ## Frame timing + adaptive FPS
 

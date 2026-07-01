@@ -2,6 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.level :refer [build-world])
   (:require phel-doom.core.engine :refer [mark-visible-cells])
+  (:require phel-doom.core.state :refer [new-world new-player])
   (:require phel-doom.core.rng :as rng)
   (:require phel-doom.io.render.frame-math :refer [halfblock build-sky-halfblock])
   (:require phel-doom.io.render.palette :refer [shade-code-table boss-door-marker])
@@ -341,3 +342,68 @@
     (is (not (php/str_contains locked minimap-door-pulse)) "locked: no orange door yet")
     (is (php/str_contains unlocked minimap-door-pulse)   "killed: door turns orange")
     (is (not (php/str_contains unlocked boss-door-marker)) "killed: red marker gone")))
+
+;; ---------------------------------------------------------------------
+;; Multi-span column painter (issue #370): golden hashes over tiered
+;; scenes. #369 pins the CAST (:spans stream); these pin the RENDER of
+;; that stream - risers painted, tier-top floor gated behind them,
+;; nothing regressed on the classic wall/floor path. Same rationale as
+;; the flat golden table above: deterministic fixtures (no build-world
+;; RNG), one hash per scene so a future refactor that changes a single
+;; pixel fails loudly instead of silently.
+;; ---------------------------------------------------------------------
+
+(def stair-grid
+  ;; 16-wide corridor, single step at x=4 (fz 0 -> 0.25), far wall at
+  ;; x=15. The riser (d=2.5 from x=1.5) and far wall (d=11.5) are far
+  ;; enough apart that a real tier-top floor sliver is visible between
+  ;; the wall's bottom and the riser's top (~2 scene rows at vh=30) -
+  ;; see docs/rendering.md for the exact row math.
+  [(vec (repeat 16 1))
+   (into [1] (into (vec (repeat 14 0)) [1]))
+   (vec (repeat 16 1))])
+
+(def flat16 (vec (repeat 16 0.0)))
+(def step-fz
+  [0.0 0.0 0.0 0.0 0.25 0.25 0.25 0.25 0.25 0.25 0.25 0.25 0.25 0.25 0.25 0.0])
+
+(defn- stair-world [x y]
+  (mark-visible-cells
+   (new-world stair-grid (new-player x y 0.0) [flat16 step-fz flat16])))
+
+(deftest test-tiered-scene-differs-from-flat
+  ;; Sanity before trusting the hashes below: a tiered scene is NOT
+  ;; byte-identical to an all-flat world of the same size/gaze.
+  (let [flat-w (mark-visible-cells (new-world stair-grid (new-player 1.5 1.5 0.0)))
+        tiered (stair-world 1.5 1.5)]
+    (is (not= (frame->string flat-w stats 120 30)
+              (frame->string tiered stats 120 30)))))
+
+(deftest test-riser-scene-from-below-pinned
+  ;; Player on the LOW tier (x=1.5) facing the step: the far wall band
+  ;; sits above a visible tier-top floor sliver, which sits above the
+  ;; riser face, which sits above the near-tier floor - all four zones
+  ;; in one column.
+  (is (= "a95caed5d6d37ce0bb141adb31020817"
+         (php/md5 (frame->string (stair-world 1.5 1.5) stats 120 30)))))
+
+(deftest test-riser-scene-from-above-pinned
+  ;; Player standing ON the raised tier (x=9.5), facing further along it
+  ;; toward the far wall - no riser ahead (it's behind the player), so
+  ;; this also pins that a column with no upcoming riser still renders
+  ;; through the ordinary flat-floor path once past the tier.
+  (is (= "e1e43d9fc491d5ffdb4fdf9ea8a2246b"
+         (php/md5 (frame->string (stair-world 9.5 1.5) stats 120 30)))))
+
+(deftest test-riser-scene-px2-pinned
+  ;; Pixel-doubled path exercises the compact-cast-2 span-copy + the
+  ;; separate pack-reg -2/-11 resolution branch, not the px1 loop above.
+  (is (= "2a70aed4af2a02148457394aca12fa36"
+         (php/md5 (frame->string (stair-world 1.5 1.5) (assoc stats :px2? true) 120 30)))))
+
+(deftest test-riser-face-shade-string-present
+  ;; The riser paints with a wall-style shade string (an ANSI BG code),
+  ;; not a bare gap - regression guard for the pack-reg -2 / cell-reg
+  ;; wiring independent of the exact byte hash above.
+  (let [s (frame->string (stair-world 1.5 1.5) stats 120 30)]
+    (is (php/str_contains s "\e[48;5;"))))

@@ -88,6 +88,27 @@ Textured, non-glyph-enemy columns place the wall top/bottom in SUB-rows (half a 
 
 The same mixer runs at both render scales: 2 sub-rows per cell at full detail, 4 per 2-terminal-row scene cell in pixel-doubled mode - the identical half-row absolute precision. At full detail it requires subpixel mode (`PHEL_DOOM_NO_SUBPIXEL=1` falls back to the whole-cell edge bands above). Costs ~15% render time at full detail (the per-cell mix-column checks), well inside the auto-calibration budget. The `Low detail` setting (`:fast-walls` in stats; dev/bench override `PHEL_DOOM_FLAT_WALLTEX=1`) paints the wall AND floor INTERIOR as a single flat sample per cell while keeping the wall seam mixer running, so silhouettes stay sub-pixel and only the interior textures go chunky - reclaiming ~11-26% render time and ~31-40% bytes/frame on large screens. Off by default (byte-identical to the shipped render); see [settings.md](settings.md).
 
+## Multi-span column painter (risers, tier tops)
+
+Issue #370 (epic #375) consumes the `:spans` riser-event stream #369's cast produces (see raycaster.md "Multi-span cast"). `compute-riser-shades` scans the flat stream once per frame and keeps only the FIRST event seen per column - `:spans` arrives ordered by ascending distance within a ray, so the first hit is the nearest riser, and anything farther in the same column is behind it and never visible. That ordering guarantee IS the row clip: there is no separate "skip rows already covered" pass, because a farther riser in the same column was never kept in the first place.
+
+For a column with a riser, `compute-riser-shades` returns:
+
+- `riser-top` / `riser-bot`: the riser face's screen rows, via `project-height` at the riser's fish-eye-corrected distance with `z1` (tier top) and `z0` (tier bottom) - the same projection kernel walls use, so a riser reads as a wall slice, not a special case.
+- `riser-shade`: a side-shaded colour string, computed exactly like `compute-wall-shades` shades a wall face (same gamma distance falloff, same `+3` vertical-face bonus, same haze-shift). Riser faces are flat-shaded (no wall texture sampling) - they are usually one or two rows tall, too thin for texture detail to read.
+- `riser-dist`: the corrected distance, for the same z-buffer role `dists` plays for walls (enemy/pickup occlusion compares against it).
+- `tier-fz`: the floor height BEYOND the riser (`z1`), read by the tier-top floor band below.
+
+The row loop (both the px1 half-block path and the px2 pixel-doubled path) tests, in order: sky, riser face `[riser-top, riser-bot)`, tier-top floor `[wall-bottom, riser-top)`, then falls through to the ordinary floor/wall logic unchanged. On a flat world `:spans` is empty, so every column's riser lookup returns the `no-riser` sentinel (`-1`) and both new branches are dead comparisons - no new per-cell work reaches the flat path (see "Perf" below).
+
+**Tier-top floor** is the thin band of raised-tier ground visible between the far wall's bottom and the nearer riser's top. It paints the flat (untextured) floor gradient rather than a second textured floor-cast pass: `src/core/projection.phel` provides `tier-top-row-dist` (the height-aware row-distance inversion, `rowDist = (eye-z - z) * pd / ((row - horizon) * char-aspect)`, generalizing `build-floor-dperp`'s flat-floor special case to any tier height) with its own unit tests, but wiring a full textured floor-cast into that sliver is deferred - the band is usually 1-3 rows tall at typical viewing angles (authored tier heights cap at fz 0.75), so the per-cell cost of a second texture sample there was judged not worth it yet against the flat-gradient fallback, which is visually adequate and free. `tier-top-row-dist` is ready for a future pass that wants it.
+
+**Sprite anchoring**: enemy billboards still anchor their feet at world z=0 (`e.g. main.phel`'s `feet-row` calc and the mirrored copies in `paint.phel`) rather than the occupied cell's `:pfz` height. Deferred - see "Deferred" below.
+
+### Perf
+
+Flat worlds pay zero extra cost: `:spans` is empty, `compute-riser-shades` returns empty arrays in one pass over zero events, and `riser-top-at` is a single `aget` + `nil`-check per column (no `or`, no branching in binding-value position) that resolves to `no-riser` - the closure-tax discipline (docs/performance.md) is preserved: no new closures on the flat path. Built `main.php` closure count: main baseline (pre-#370, `1fb15c0`) 34 `function() use(`, this branch 25 (a decrease - the new riser helpers are plain-expression bindings, no new capture sites). Staircase-level bench (`frame->string`, deterministic single-riser fixture, no-JIT local): 180x40 renders at ~7.9ms/frame, inside the 16ms hard ceiling; flat 180x40 renders at ~9.7ms/frame, consistent with the pre-#370 numbers in the table above (no regression - flat and staircase costs are close because the riser branches are dead comparisons either way at this fixture's column mix).
+
 ## Distance-shaded sky and floor
 
 Per-row shade by distance from horizon (`vh/2`): rows near horizon darkest (atmospheric haze), overhead/feet brightest. Sky and floor share the gradient, pre-baked per viewport height in `build-horizon-gradient`.

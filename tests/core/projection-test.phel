@@ -1,6 +1,8 @@
 (ns phel-doom-tests.core.projection-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.projection :refer [wall-px project-height pitch-rows pitch-cap sprite-half-rows]))
+  (:require phel-doom.core.engine :refer [max-depth])
+  (:require phel-doom.core.projection :refer [wall-px project-height pitch-rows pitch-cap
+                                              sprite-half-rows tier-top-row-dist]))
 
 ;; ---------------------------------------------------------------------
 ;; wall-px: the shared projection kernel. num / ((max 0.3 dist) * 2.0).
@@ -149,3 +151,40 @@
   ;; sprite (half-rows 15) still spans the crosshair (|12| <= 15).
   (is (php/<= (php/abs (pitch-rows 1.0 30))
               (sprite-half-rows 30 0.5 1.0))))
+
+;; ---------------------------------------------------------------------
+;; tier-top-row-dist: height-aware floor-cast row distance (issue #370).
+;; General inversion of project-height; build-floor-dperp's
+;; floor-cast-k / p is the special case eye-z=0.5, z=0.0.
+;; ---------------------------------------------------------------------
+
+(deftest tier-top-row-dist-flat-case-matches-floor-cast-k
+  ;; z=0, eye-z=0.5: floor-cast-k = 70 * 0.5 / 2 = 17.5, so p=5 gives 3.5 -
+  ;; the same numerator build-floor-dperp uses for the flat floor.
+  (is (= 3.5 (tier-top-row-dist 70.0 5.0 0.5 0.0))))
+
+(deftest tier-top-row-dist-raised-tier-is-nearer
+  ;; A higher floor (z closer to eye-z) needs a SMALLER perpendicular
+  ;; distance to land on the same screen row - the tier top is "closer"
+  ;; to the horizon than the ground at the same row.
+  (is (php/< (tier-top-row-dist 70.0 5.0 0.5 0.25)
+             (tier-top-row-dist 70.0 5.0 0.5 0.0))))
+
+(deftest tier-top-row-dist-reconciles-with-project-height
+  ;; Round-trip: project-height's row for a given dist/z/eye-z, fed back
+  ;; through tier-top-row-dist at the resulting p, returns the same dist.
+  (let [pd    70.0 vh    30 dist  4.0 eye-z 0.6 z     0.25
+        row   (project-height pd vh dist eye-z z)
+        p     (php/- row (php// vh 2.0))]
+    (is (< (php/abs (php/- dist (tier-top-row-dist pd p eye-z z))) 0.001))))
+
+(deftest tier-top-row-dist-at-or-above-horizon-is-max-depth
+  ;; p <= 0 means the row is at/above the horizon - never sampled as
+  ;; floor, mirrors build-floor-dperp's row >= vh/2 guard.
+  (is (= max-depth (tier-top-row-dist 70.0 0.0 0.5 0.0)))
+  (is (= max-depth (tier-top-row-dist 70.0 -2.0 0.5 0.0))))
+
+(deftest tier-top-row-dist-clamped-to-max-depth
+  ;; A tiny p (row hugging the horizon) would blow up toward infinity;
+  ;; clamp matches build-floor-dperp's ceiling.
+  (is (= max-depth (tier-top-row-dist 70.0 0.001 0.5 0.0))))

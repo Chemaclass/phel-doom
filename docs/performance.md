@@ -28,6 +28,8 @@ Frame output is byte-identical before/after (verified by md5 over a 24-config ma
 
 To check for regressions: build and grep the artifact - `grep -c 'function() use(' out/phel_doom/io/render/main.php` should stay at ~21, all of them once-per-frame sites (pickup-painter chain arguments, centre-cell capture, debug snapshot), none inside the per-cell `while` loops. The raycaster artifact `out/phel_doom/core/engine.php` should stay at 2 (the once-per-width FOV-table build + the once-per-frame pause-cache probe); the per-column cast loop has been closure-free since issue #345 (the DDA march + `wallx` were lifted out of binding position into the reused `hit-reg` register).
 
+The multi-span column painter (issue #370: riser faces + tier-top floor from #369's `:spans` stream) followed the same discipline - `compute-riser-shades` and the row-loop's riser lookups are plain-expression bindings, no `and`/`or`/`cond` in value position. Measured before/after the actual branch that landed it (pre-#370 base `1fb15c0` vs the #370 branch, same build command): `main.php` closure count went from 34 to 25 (a decrease - unrelated to #370's own numbers, other work had already moved the baseline up from the ~21 figure above by the time #370 branched). The flat-world path adds zero per-cell cost: `:spans` is empty on flat worlds, so every riser lookup resolves the `no-riser` sentinel through one `aget` with no new branching reached.
+
 ## Big screens: uniform cadence + crisp walls
 
 Cadence and render-scale are **uniform at every terminal size**. The old "big-screen perf mode" (a width/area threshold that dropped wide terminals to 30fps and a chunky 2x render-scale) has been removed:

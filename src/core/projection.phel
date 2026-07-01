@@ -1,5 +1,5 @@
 (ns phel-doom.core.projection
-  (:require phel-doom.core.engine :refer [proj-dist]))
+  (:require phel-doom.core.engine :refer [proj-dist max-depth]))
 
 ;; ---------------------------------------------------------------------
 ;; Pure vertical-projection kernel. Maps a world height + perpendicular
@@ -73,6 +73,27 @@
      (pitch-rows -1.0 30); => -12 (full look-down, horizon up 12 rows)"
   [^float pitch ^int vh]
   (php/intval (php/round (php/* pitch (php/* pitch-cap vh)))))
+
+(defn ^:pure tier-top-row-dist
+  "Height-aware perpendicular ground distance for a floor-cast row on a
+   RAISED tier (issue #370). `build-floor-dperp` bakes in the flat-floor
+   case (`z=0`, `eye-z=0.5`) as `floor-cast-k / p`; this is that same
+   inversion of `project-height` generalised to any tier height `z` and
+   camera eye `eye-z`, so a tier-top floor-cast row lands on the exact
+   world point a wall/sprite at that height would project from.
+
+   `pd` is the wall-height projection numerator (`proj-dist` at full
+   detail, halved in pixel-doubled mode); `p` is `row - horizon` in
+   screen rows (positive below the horizon, where floor is visible);
+   `eye-z` is the camera height (`0.5 + player z`); `z` is the tier's
+   floor height. Returns `max-depth` when `p <= 0` (at/above the
+   horizon - never sampled as floor), mirroring `build-floor-dperp`.
+
+     (tier-top-row-dist 70.0 5.0 0.5 0.0) ; => floor-cast-k / 5, z=0 flat case"
+  [^float pd ^float p ^float eye-z ^float z]
+  (if (php/<= p 0.0)
+    max-depth
+    (php/min max-depth (php// (php/* (php/- eye-z z) pd) (php/* p char-aspect)))))
 
 (defn ^:pure sprite-half-rows
   {:doc "Half the on-screen height (rows) of an enemy billboard at

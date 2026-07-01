@@ -11,6 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
+- Multi-span raycast (issue #369, epic #375): the DDA now marches past floor-height risers and returns a `:spans` event stream (stride-8 flat array: col, corrected distance, z0, z1, side, hit coords, texture U) alongside the classic per-column arrays — one event per rise boundary, step-downs are backfaces and never emit, blocked risers never leak through walls. Render ignores the stream until #370, so frames stay byte-identical (golden hashes unchanged). Flat worlds pay ZERO cast cost: a build-time `:fz-flat?` flag routes them onto the untouched legacy march (the always-on span march measured +13-16% cast time and was rejected); only tiered worlds run the span-emitting variant.
 - Per-cell floor-height data layer (issue #368, epic #375): worlds now carry `:fz-grid` (per-cell floor heights, quantized 0.25 steps) with a flat PHP hot-array twin `:pfz` (indexed `y * width + x`); layouts can author raised tiers via digit chars `1`/`2`/`3` (fz 0.25/0.5/0.75); `map/floor-z` lookup returns 0.0 out of bounds. Data only — cast/render/physics still assume a flat world, and every shipped level stays flat (zero behavior change; saves round-trip heights without a version bump).
 
 ### Performance

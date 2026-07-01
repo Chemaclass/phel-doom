@@ -307,3 +307,24 @@
     (is (= [[0.0 0.0 0.0] [0.0 0.0 0.0] [0.0 0.0 0.0]] (:fz-grid w2)))
     (is (= 9 (php/count (:pfz w2))))
     (is (= 0.0 (php/aget (:pfz w2) 0)))))
+
+(deftest test-new-world-flags-flat-fz
+  ;; do-cast picks the legacy zero-cost DDA march when the world is
+  ;; flat; the flag must be computed at build time, not per frame.
+  (let [flat   (new-world grid (new-player 1.0 1.0 0.0))
+        raised (new-world grid (new-player 1.0 1.0 0.0)
+                          [[0.0 0.0 0.0] [0.0 0.25 0.0] [0.0 0.0 0.0]])
+        zeroed (new-world grid (new-player 1.0 1.0 0.0)
+                          [[0.0 0.0 0.0] [0.0 0.0 0.0] [0.0 0.0 0.0]])]
+    (is (= true (:fz-flat? flat)) "2-arity default is flat")
+    (is (= false (:fz-flat? raised)) "any raised cell clears the flag")
+    (is (= true (:fz-flat? zeroed)) "explicit all-zero grid is still flat")))
+
+(deftest test-rebuild-pgrid-refreshes-fz-flat-flag
+  ;; Savegame load path: the flag is derived state and must re-derive
+  ;; with :pfz (a loaded raised world may carry no flag at all).
+  (let [w  (new-world grid (new-player 1.0 1.0 0.0))
+        w2 (rebuild-pgrid (-> w
+                              (assoc-in [:fz-grid 1 1] 0.75)
+                              (dissoc :fz-flat?)))]
+    (is (= false (:fz-flat? w2)))))

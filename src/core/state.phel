@@ -98,6 +98,9 @@
 (defn- fz->pfz [fz-grid]
   (to-php-array (apply concat fz-grid)))
 
+(defn- all-flat? [fz-grid]
+  (every? (fn [row] (every? (fn [z] (php/== 0.0 z)) row)) fz-grid))
+
 (defn rebuild-pgrid
   "Re-derive `:pgrid` from `:grid` and `:pfz` from `:fz-grid`. Call
    after any in-game mutation of the grid (secret reveal, switch
@@ -111,7 +114,8 @@
     (assoc world
            :pgrid (to-php-array (map to-php-array (:grid world)))
            :fz-grid fz
-           :pfz (fz->pfz fz))))
+           :pfz (fz->pfz fz)
+           :fz-flat? (all-flat? fz))))
 
 (defn new-world
   {:doc "Bundle map grid and player into the world state. Stores a PHP-native
@@ -129,6 +133,10 @@
       :pgrid     (to-php-array (map to-php-array grid))
       :fz-grid   fz
       :pfz       (fz->pfz fz)
+      ;; Build-time flatness flag: do-cast selects the legacy zero-cost
+      ;; DDA march for flat worlds (the per-step fz read measured
+      ;; +13-16% cast time, see #369).
+      :fz-flat?  (all-flat? fz)
       :width     (count (first grid))
       :height    (count grid)
       :player    player

@@ -88,7 +88,7 @@ After `build-world` from `core/level.phel` stamps level metadata, the world also
 
 On grid mutation (door turning into floor, etc.) **both** must update. See `pickup-hearts` in `core/pickups.phel` and door logic in `commands/play.phel`. `rebuild-pgrid` is called after any grid edit to keep the PHP mirror in sync.
 
-The same source-of-truth / hot-twin split applies to floor heights (issue #368): `:fz-grid` is a Phel vector of vectors of floats; `:pfz` is a flat PHP float array indexed `y * width + x` (one `aget` per read in future hot loops). `new-world` takes an optional third `fz-grid` argument (nil = all-zero flat world), and `rebuild-pgrid` re-derives `:pfz` too, defaulting a missing `:fz-grid` to zeros so pre-#368 saves load clean.
+The same source-of-truth / hot-twin split applies to floor heights (issue #368): `:fz-grid` is a Phel vector of vectors of floats; `:pfz` is a flat PHP float array indexed `y * width + x` (one `aget` per read in hot loops). `new-world` takes an optional third `fz-grid` argument (nil = all-zero flat world), and `rebuild-pgrid` re-derives `:pfz` too, defaulting a missing `:fz-grid` to zeros so pre-#368 saves load clean. Both also stamp `:fz-flat?` (true when every cell is at ground level): the raycaster reads it once per frame to pick the zero-cost legacy DDA march on flat worlds and the span-emitting march on tiered ones (issue #369).
 
 ## The player
 

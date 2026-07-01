@@ -201,6 +201,8 @@ change.
 
 Grid-line-to-grid-line march via Wolfenstein DDA: precompute step direction and per-axis delta, advance the smaller side-distance, check the cell. ~5-8 iterations per ray instead of ~35 fixed steps. Side bit and hit-cell coords are free (no second pass). Issue #2.
 
+Multi-span variant (issue #369): tiered worlds (any raised floor cell) run a second march variant that reads the next cell's floor height per continue step and pushes riser span events. That per-step read + the extra loop var measured +13-16% cast-frame time, so the variant is gated behind the build-time `:fz-flat?` world flag - flat worlds (every shipped level today) run the legacy march byte-for-byte. Rule for future march changes: any per-step cost added unconditionally shows up on EVERY frame of EVERY level; gate it or inline it for free.
+
 ## Evaluated and shelved
 
 ### Sprite occlusion z-buffer (issue #4)

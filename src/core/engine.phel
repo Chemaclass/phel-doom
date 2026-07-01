@@ -164,16 +164,33 @@
 
 (defn- do-cast
   "Cast every column once; returns the parallel :dists / :hits / :sides
-   / :hxs / :hys map. Pure: no cache lookup, no atom touch. cast-frame
-   wraps this with a paused-frame cache short-circuit."
+   / :hxs / :hys map plus the :spans riser-event stream (issue #369).
+   Pure: no cache lookup, no atom touch. cast-frame wraps this with a
+   paused-frame cache short-circuit."
   [world ^int width ^int scale]
   (let [^array pgrid        (:pgrid world)
         {:keys [x y angle]} (:player world)
+        ;; Floor heights (#369). mapw is the MAP width for y*w+x pfz
+        ;; indexing - NOT the `width` param (viewport columns). The nil
+        ;; guard keeps hand-rolled fixture worlds without :pfz castable
+        ;; (missing reads fall back to 0.0 -> zero span events). `if`
+        ;; not `or`: `or` in binding value closure-compiles.
+        mapw                (:width world)
+        pfz-src             (:pfz world)
+        ^array pfz          (if (php/=== nil pfz-src) (php/array) pfz-src)
+        ;; Tiered world? Only an explicit false flag (set by new-world /
+        ;; rebuild-pgrid when any cell is raised) selects the span
+        ;; march; absent flag (hand-rolled fixtures) = flat fast path.
+        fz-track?           (php/=== false (:fz-flat? world))
         ;; Player cell + its fractional offsets to the four cell
         ;; boundaries are fixed for the whole frame; hoist out of the
         ;; per-column loop (was recomputed via intval/floor per column).
         cx0                 (php/intval (php/floor x))
         cy0                 (php/intval (php/floor y))
+        ;; Height of the player's own cell: every ray starts its
+        ;; riser tracking from here (frame-constant, like the
+        ;; boundary offsets below).
+        fz0                 (get pfz (php/+ (php/* cy0 mapw) cx0) 0.0)
         x-to-lo             (php/- x cx0)
         x-to-hi             (php/- (php/+ cx0 1.0) x)
         y-to-lo             (php/- y cy0)
@@ -193,6 +210,14 @@
         wallxs              (php/array)
         floordxs            (php/array)
         floordys            (php/array)
+        ;; Riser-event stream (#369): flat PHP array, stride 8 per
+        ;; event: [col d-corr z0 z1 side hx hy wallx]. One event per
+        ;; RAY (base col; scale replication is render's job), pushed
+        ;; in ascending distance within a ray and ascending col across
+        ;; rays. Flat frames never touch it after this alloc. A flat
+        ;; stream (not per-column arrays) sidesteps PHP array
+        ;; value-copy semantics AND per-column allocations.
+        spans               (php/array)
         ;; Per-cast scratch register, reused every column. Slots:
         ;; [0]=dist [1]=hit [2]=side [3]=hx [4]=hy. The DDA writes it in
         ;; STATEMENT position (see below) so the writes land on the real
@@ -219,43 +244,97 @@
                        (php/* x-to-hi deltax))
               sidey0 (if (php/< diry 0.0)
                        (php/* y-to-lo deltay)
-                       (php/* y-to-hi deltay))]
+                       (php/* y-to-hi deltay))
+              coff   (php/aget cos-offs col)]
           ;; DDA march (statement position -> no closure). Each exit
           ;; writes the 5-slot register; `:else` steps to the next
-          ;; grid-line crossing.
-          (loop [cx cx0 cy cy0 sidex sidex0 sidey sidey0]
-            (if (php/< sidex sidey)
-              (let [cx'        (php/+ cx stepx)
-                    dist       sidex
-                    ;; cell-at inlined: the `^array` tag lowers `get` to a
-                    ;; native `$row[k] ?? default` subscript, dropping the
-                    ;; per-step dispatch frame the fn call cost.
-                    ^array row (get pgrid cy)
-                    hit        (get row cx' 1)]
-                (cond
-                  (php/> dist max-depth)
-                  (do (php/aset hit-reg 0 max-depth) (php/aset hit-reg 1 0)
-                      (php/aset hit-reg 2 0) (php/aset hit-reg 3 cx') (php/aset hit-reg 4 cy))
-                  (php/!== 0 hit)
-                  (do (php/aset hit-reg 0 dist) (php/aset hit-reg 1 hit)
-                      (php/aset hit-reg 2 0) (php/aset hit-reg 3 cx') (php/aset hit-reg 4 cy))
-                  :else
-                  (recur cx' cy (php/+ sidex deltax) sidey)))
-              (let [cy'        (php/+ cy stepy)
-                    dist       sidey
-                    ^array row (get pgrid cy')
-                    hit        (get row cx 1)]
-                (cond
-                  (php/> dist max-depth)
-                  (do (php/aset hit-reg 0 max-depth) (php/aset hit-reg 1 0)
-                      (php/aset hit-reg 2 1) (php/aset hit-reg 3 cx) (php/aset hit-reg 4 cy'))
-                  (php/!== 0 hit)
-                  (do (php/aset hit-reg 0 dist) (php/aset hit-reg 1 hit)
-                      (php/aset hit-reg 2 1) (php/aset hit-reg 3 cx) (php/aset hit-reg 4 cy'))
-                  :else
-                  (recur cx cy' sidex (php/+ sidey deltay))))))
+          ;; grid-line crossing. TWO variants, selected once per frame:
+          ;; flat worlds run the legacy 4-var march untouched (the
+          ;; span path's per-step fz read + 5th loop var measured
+          ;; +13-16% cast time on flat maps - see #369 bench); tiered
+          ;; worlds run the span march below. The x/y branch bodies
+          ;; are deliberately duplicated in BOTH variants - extracting
+          ;; a helper reintroduces the per-step call frame #345 removed.
+          (if fz-track?
+            ;; Span march (#369): `cfz` tracks the CURRENT cell's floor
+            ;; height. It updates on EVERY continue step (also on drops -
+            ;; a down-then-up profile still shows the second riser); a
+            ;; step whose height RISES pushes one stride-8 span event
+            ;; before recurring. Rise compare is strict float `>`; exact
+            ;; here because all fz values share provenance
+            ;; (loader-quantized to fz-step multiples through fz->pfz).
+            (loop [cx cx0 cy cy0 sidex sidex0 sidey sidey0 cfz fz0]
+              (if (php/< sidex sidey)
+                (let [cx'        (php/+ cx stepx)
+                      dist       sidex
+                      ^array row (get pgrid cy)
+                      hit        (get row cx' 1)]
+                  (cond
+                    (php/> dist max-depth)
+                    (do (php/aset hit-reg 0 max-depth) (php/aset hit-reg 1 0)
+                        (php/aset hit-reg 2 0) (php/aset hit-reg 3 cx') (php/aset hit-reg 4 cy))
+                    (php/!== 0 hit)
+                    (do (php/aset hit-reg 0 dist) (php/aset hit-reg 1 hit)
+                        (php/aset hit-reg 2 0) (php/aset hit-reg 3 cx') (php/aset hit-reg 4 cy))
+                    :else
+                    (let [nfz (get pfz (php/+ (php/* cy mapw) cx') 0.0)]
+                      (when (php/> nfz cfz)
+                        (let [wc (php/+ y (php/* dist diry))]
+                          (php/array_push spans col (php/* dist coff) cfz nfz 0 cx' cy
+                                          (php/- wc (php/floor wc)))))
+                      (recur cx' cy (php/+ sidex deltax) sidey nfz))))
+                (let [cy'        (php/+ cy stepy)
+                      dist       sidey
+                      ^array row (get pgrid cy')
+                      hit        (get row cx 1)]
+                  (cond
+                    (php/> dist max-depth)
+                    (do (php/aset hit-reg 0 max-depth) (php/aset hit-reg 1 0)
+                        (php/aset hit-reg 2 1) (php/aset hit-reg 3 cx) (php/aset hit-reg 4 cy'))
+                    (php/!== 0 hit)
+                    (do (php/aset hit-reg 0 dist) (php/aset hit-reg 1 hit)
+                        (php/aset hit-reg 2 1) (php/aset hit-reg 3 cx) (php/aset hit-reg 4 cy'))
+                    :else
+                    (let [nfz (get pfz (php/+ (php/* cy' mapw) cx) 0.0)]
+                      (when (php/> nfz cfz)
+                        (let [wc (php/+ x (php/* dist dirx))]
+                          (php/array_push spans col (php/* dist coff) cfz nfz 1 cx cy'
+                                          (php/- wc (php/floor wc)))))
+                      (recur cx cy' sidex (php/+ sidey deltay) nfz))))))
+            ;; Legacy flat march: byte-for-byte the pre-#369 loop.
+            (loop [cx cx0 cy cy0 sidex sidex0 sidey sidey0]
+              (if (php/< sidex sidey)
+                (let [cx'        (php/+ cx stepx)
+                      dist       sidex
+                      ;; cell-at inlined: the `^array` tag lowers `get` to a
+                      ;; native `$row[k] ?? default` subscript, dropping the
+                      ;; per-step dispatch frame the fn call cost.
+                      ^array row (get pgrid cy)
+                      hit        (get row cx' 1)]
+                  (cond
+                    (php/> dist max-depth)
+                    (do (php/aset hit-reg 0 max-depth) (php/aset hit-reg 1 0)
+                        (php/aset hit-reg 2 0) (php/aset hit-reg 3 cx') (php/aset hit-reg 4 cy))
+                    (php/!== 0 hit)
+                    (do (php/aset hit-reg 0 dist) (php/aset hit-reg 1 hit)
+                        (php/aset hit-reg 2 0) (php/aset hit-reg 3 cx') (php/aset hit-reg 4 cy))
+                    :else
+                    (recur cx' cy (php/+ sidex deltax) sidey)))
+                (let [cy'        (php/+ cy stepy)
+                      dist       sidey
+                      ^array row (get pgrid cy')
+                      hit        (get row cx 1)]
+                  (cond
+                    (php/> dist max-depth)
+                    (do (php/aset hit-reg 0 max-depth) (php/aset hit-reg 1 0)
+                        (php/aset hit-reg 2 1) (php/aset hit-reg 3 cx) (php/aset hit-reg 4 cy'))
+                    (php/!== 0 hit)
+                    (do (php/aset hit-reg 0 dist) (php/aset hit-reg 1 hit)
+                        (php/aset hit-reg 2 1) (php/aset hit-reg 3 cx) (php/aset hit-reg 4 cy'))
+                    :else
+                    (recur cx cy' sidex (php/+ sidey deltay)))))))
           (let [rawd    (php/aget hit-reg 0)
-                d-corr  (php/* rawd (php/aget cos-offs col))
+                d-corr  (php/* rawd coff)
                 h       (php/aget hit-reg 1)
                 side    (php/aget hit-reg 2)
                 hx      (php/aget hit-reg 3)
@@ -276,7 +355,7 @@
                 ;; distance `dperp` (a per-ROW constant the renderer knows)
                 ;; sits at world `player + dperp * (floordx, floordy)`, so
                 ;; the renderer needs no per-cell trig - just two mul-adds.
-                inv-cos (php// 1.0 (php/aget cos-offs col))
+                inv-cos (php// 1.0 coff)
                 floordx (php/* dirx inv-cos)
                 floordy (php/* diry inv-cos)]
              ;; Replicate this sample across the next `scale` output
@@ -301,7 +380,7 @@
                 (recur (php/+ c 1) (php/+ fill 1))))
             (recur (php/+ col scale))))))
     {:dists dists :hits hits :sides sides :hxs hxs :hys hys :wallxs wallxs
-     :floordxs floordxs :floordys floordys}))
+     :floordxs floordxs :floordys floordys :spans spans}))
 
 (def visit-radius
   "Square radius (cells) around the player scanned each frame for
@@ -426,6 +505,9 @@
            :hys    integer y coord of the hit cell
            :wallxs wall-hit fraction (texture U) in [0, 1)
            :floordxs/:floordys floor-cast basis (ray dir / cos offset)
+           :spans  flat riser-event stream (#369), stride 8 per event:
+                   [col d-corr z0 z1 side hx hy wallx]. One event per
+                   RAY at its base column; empty on flat frames.
 
          `scale` controls the ray-replication factor (see `do-cast`).
 

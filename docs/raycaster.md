@@ -52,7 +52,7 @@ Returns raw (uncorrected) distance. Detailed tuple `[dist side hx hy]` is comput
 
 ```phel
 (defn cast-frame [world ^int width ^int scale]
-  ...returns {:dists :hits :sides :hxs :hys :wallxs :floordxs :floordys})
+  ...returns {:dists :hits :sides :hxs :hys :wallxs :floordxs :floordys :spans})
 ```
 
 Cast `width / scale` rays; return the parallel PHP arrays (one per output column).
@@ -62,7 +62,31 @@ Cast `width / scale` rays; return the parallel PHP arrays (one per output column
 - `hxs, hys`: hit cell coordinates
 - `wallxs`: wall-hit fraction in [0, 1) - the texture U coordinate (frac of world-y on a vertical face, world-x on a horizontal face, from the raw perpendicular distance)
 - `floordxs, floordys`: floor-cast basis = ray direction / cos(offset). A floor cell at per-row perpendicular distance `dperp` sits at world `player + dperp * (floordx, floordy)`, so the renderer needs no per-cell trig (two mul-adds + a frac for the texture sample)
+- `spans`: flat riser-event stream for floor heights (see Multi-span cast below); empty on flat frames
 
+## Multi-span cast: floor risers
+
+Issue #369 (epic #375): the DDA no longer treats the first hit as the whole story. While marching, each cell boundary where the floor height (`:pfz`, see map.md) RISES emits one span event - the visible riser face between the two tiers - and the march continues to the real wall (or max-depth) exactly as before. The classic 8 arrays keep holding the final wall hit, which is always the LAST span of a column; on a flat map the stream is empty and the arrays alone describe the frame.
+
+`:spans` is one flat PHP array, stride 8 per event:
+
+| slot | field | meaning |
+|---|---|---|
+| +0 | col | the ray's BASE output column (one event per ray; with scale > 1 the render layer fans out, same as wall samples) |
+| +1 | d-corr | fish-eye corrected distance to the riser boundary |
+| +2 | z0 | floor height of the cell being left (riser bottom) |
+| +3 | z1 | floor height of the cell being entered (riser top) |
+| +4 | side | 0 = x-line, 1 = y-line - same convention as `sides` |
+| +5 | hx, +6 hy | integer coords of the entered (higher) cell |
+| +7 | wallx | texture U in [0, 1) at the crossing, same formula as `wallxs` |
+
+Guarantees and rules:
+
+- **Rise-only.** Step-downs are backfaces (invisible from above) and never emit. The march still tracks the current cell height across drops, so a down-then-up profile emits the second riser with the correct `z0`.
+- **Ordering.** Events arrive in ascending distance within a ray and ascending base col across rays - render can scan the stream once.
+- **Occlusion.** A riser behind a wall/door/secret never emits: blocking cells exit the march before the height check.
+- **No early-out.** The march always reaches the wall/max-depth; deciding that stacked risers fill a screen column needs projection (eye height, pitch), which is render's knowledge (#370). Authorable heights cap at fz 0.75 (layout digits 1-3), so no riser can fill a column by itself.
+- **Cost.** Zero on flat worlds: `new-world` / `rebuild-pgrid` stamp a build-time `:fz-flat?` flag, and do-cast selects the legacy 4-var march (no fz reads, no extra loop var) when it is set - measured, the always-on span march cost +13-16% cast time on flat maps. Tiered worlds run the span march: one subscript + float compare per continue step, plus the event push at each rise.
 
 ## Two key details
 

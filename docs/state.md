@@ -88,6 +88,8 @@ After `build-world` from `core/level.phel` stamps level metadata, the world also
 
 On grid mutation (door turning into floor, etc.) **both** must update. See `pickup-hearts` in `core/pickups.phel` and door logic in `commands/play.phel`. `rebuild-pgrid` is called after any grid edit to keep the PHP mirror in sync.
 
+The same source-of-truth / hot-twin split applies to floor heights (issue #368): `:fz-grid` is a Phel vector of vectors of floats; `:pfz` is a flat PHP float array indexed `y * width + x` (one `aget` per read in future hot loops). `new-world` takes an optional third `fz-grid` argument (nil = all-zero flat world), and `rebuild-pgrid` re-derives `:pfz` too, defaulting a missing `:fz-grid` to zeros so pre-#368 saves load clean.
+
 ## The player
 
 ```phel
@@ -145,3 +147,5 @@ Float-seconds countdowns on the world, decayed by `decay-timers` in `core/combat
 ## Flat world design
 
 The world has a single flat floor plane (z = 0) and a flat ceiling (z = 1). All gameplay occurs on this plane. This keeps construction simple (one `new-world` call), updates lightweight (`assoc`/`update`), and tests literal (`(is (= expected (tick-world ...)))`). Trade-off: no compiler help on key names, so `frame-stats` centralizes all reads to catch typos.
+
+Issue #368 starts loosening this: worlds now carry per-cell floor heights (`:fz-grid` / `:pfz`, all zeros for every shipped level), but cast, render, and physics still assume the flat plane until the rest of epic #375 lands.

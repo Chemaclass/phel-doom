@@ -700,7 +700,7 @@
   (spawn-unique-pickups grid n))
 
 (defn- build-grid
-  "Build `{:grid :spawn}`. Geometry + spawn come from a hand-authored
+  "Build `{:grid :spawn :fz-grid}`. Geometry + spawn come from a hand-authored
    `:layout` (parsed via map/parse-layout) or the procedural `random-grid`.
    For varied rooms, `:walls` random interior wall blobs are scattered in:
    procgen gets them from `random-grid`; a hand-authored room gets them via
@@ -709,7 +709,7 @@
    hand-placed). `map/place-exit` then drops ONE random reachable exit door
    on any wall, locked per `:door-lock` - the way out differs every run."
   [cfg]
-  (let [{:keys [grid spawn]}
+  (let [{:keys [grid spawn fz-grid]}
         (if (:layout cfg)
           (or (parse-layout (:layout cfg))
               (throw (php/new php/InvalidArgumentException
@@ -718,11 +718,15 @@
           (let [[w h] (:size cfg)
                 g     (random-grid w h (:walls cfg))]
             {:grid g :spawn (random-spawn g)}))
-        varied               (if (and (:layout cfg) (not (:switches cfg)) (:walls cfg))
-                               (scatter-walls grid spawn (:walls cfg))
-                               grid)]
-    {:grid  (lock-the-door (place-exit varied spawn) (:door-lock cfg))
-     :spawn spawn}))
+        varied                       (if (and (:layout cfg) (not (:switches cfg)) (:walls cfg))
+                                       (scatter-walls grid spawn (:walls cfg))
+                                       grid)]
+    ;; scatter-walls / place-exit mutate geometry only; a wall dropped on a
+    ;; raised cell keeps its fz (harmless - walls never read floor height).
+    ;; Procgen path carries nil fz-grid; new-world defaults it to flat.
+    {:grid    (lock-the-door (place-exit varied spawn) (:door-lock cfg))
+     :spawn   spawn
+     :fz-grid fz-grid}))
 
 (defn- normalise-enemies
   "Coerce the level's `:enemies` field into a vector of mixed specs
@@ -788,8 +792,10 @@
                        (:grid built))
          [px py]     spawn
          specs       (normalise-enemies cfg)
-         world       (new-world grid (new-player px py (php/* (rng/int! 360)
-                                                              (php// php/M_PI 180.0))))
+         world       (new-world grid
+                                (new-player px py (php/* (rng/int! 360)
+                                                         (php// php/M_PI 180.0)))
+                                (:fz-grid built))
          spawned     (spawn-enemies-mixed grid specs
                                           enemy-min-spawn-dist px py)
          ;; Nightmare: stamp every spawned enemy so respawn picks the

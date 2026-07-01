@@ -270,3 +270,40 @@
   (let [w (reset-reticle {:aim-col 119 :aim-row 0})]
     (is (nil? (:aim-col w)) "column cleared to centre")
     (is (nil? (:aim-row w)) "row cleared to centre")))
+
+;; ---------------------------------------------------------------------
+;; Floor heights (issue #368): :fz-grid source of truth + :pfz flat
+;; PHP twin (indexed y * width + x) for future hot-loop reads.
+;; ---------------------------------------------------------------------
+
+(deftest test-new-world-defaults-flat-fz
+  ;; 2-arg construction (all existing call sites) stays flat: zeros
+  ;; everywhere, :pfz sized width * height.
+  (let [w (new-world grid (new-player 1.0 1.0 0.0))]
+    (is (= [[0.0 0.0 0.0] [0.0 0.0 0.0] [0.0 0.0 0.0]] (:fz-grid w)))
+    (is (= 9 (php/count (:pfz w))))
+    (is (= 0.0 (php/aget (:pfz w) 0)))))
+
+(deftest test-new-world-accepts-fz-grid
+  (let [fz [[0.0 0.0 0.0]
+            [0.0 0.5 0.0]
+            [0.0 0.0 0.0]]
+        w  (new-world grid (new-player 1.0 1.0 0.0) fz)]
+    (is (= fz (:fz-grid w)))
+    ;; Flat index y * width + x: (1, 1) on a 3-wide grid -> 4.
+    (is (= 0.5 (php/aget (:pfz w) 4)))))
+
+(deftest test-rebuild-pgrid-refreshes-pfz
+  ;; :pfz is derived state; any :fz-grid change must re-sync it.
+  (let [w  (new-world grid (new-player 1.0 1.0 0.0))
+        w2 (rebuild-pgrid (assoc-in w [:fz-grid 1 1] 0.75))]
+    (is (= 0.75 (php/aget (:pfz w2) 4)))))
+
+(deftest test-rebuild-pgrid-defaults-missing-fz
+  ;; Old-save path: a decoded world without height data gets flat
+  ;; defaults instead of nil (savestring->world calls rebuild-pgrid).
+  (let [w  (new-world grid (new-player 1.0 1.0 0.0))
+        w2 (rebuild-pgrid (-> w (dissoc :fz-grid) (dissoc :pfz)))]
+    (is (= [[0.0 0.0 0.0] [0.0 0.0 0.0] [0.0 0.0 0.0]] (:fz-grid w2)))
+    (is (= 9 (php/count (:pfz w2))))
+    (is (= 0.0 (php/aget (:pfz w2) 0)))))

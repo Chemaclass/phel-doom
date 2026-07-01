@@ -87,10 +87,13 @@ When `:enemies` is a vector, each spec spawns its own count + HP and the enemy c
 | `@` | player spawn |
 | `S` | secret wall (press F to reveal) |
 | `T` | switch (toggles target cells via `:switches` config) |
+| `1` / `2` / `3` | floor raised to fz 0.25 / 0.5 / 0.75 (issue #368; data only until the epic #375 render/physics issues land) |
 
 `:layout` supplies GEOMETRY + spawn (+ secrets / switches) only; it authors neither the interior walls nor the exit. `map/scatter-walls` seeds `:walls` random interior wall blobs into each hand-authored room (skipped on `:switches` levels) and seals any cut-off pocket so the floor stays connected; `map/place-exit` then drops exactly one exit door at a random reachable wall - interior pillar or border edge - on EVERY level, and `lock-the-door` applies the `:door-lock`. So the room disposition AND the way out are randomised per run, and finding the exit is part of the game. Enemy spawn still applies.
 
 Switches: `:switches [{:at [cx cy] :targets [[tx ty] ...]}]`. F near `:at` flips targets wall↔floor.
+
+Floor heights: `build-grid` threads the layout's `:fz-grid` into `new-world` (procgen levels pass nil, which defaults to a flat all-zero grid). Omitting digit chars keeps a level flat - every shipped level is flat today.
 
 
 ### Adding a new room

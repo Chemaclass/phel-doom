@@ -109,6 +109,32 @@
         cell-wall
         (or (get row x) cell-wall)))))
 
+(def fz-step
+  "Floor-height quantum. All per-cell floor heights (fz) snap to
+   multiples of this step; a staircase is a run of cells rising one
+   step at a time. The physics step-up rule (issue #371) will allow
+   climbing exactly one step."
+  0.25)
+
+(defn ^:pure quantize-fz
+  "Snap a raw floor height to the nearest fz-step multiple. Loaders
+   call this so stored height data is always clean and lookups stay
+   bare reads."
+  [z]
+  (php/* fz-step (php/round (php// z fz-step))))
+
+(defn ^:pure floor-z
+  "Read the floor height at integer (x, y) from an fz-grid.
+   Out-of-bounds reads (and a nil grid) return 0.0 - ground level -
+   so consumers never see nil."
+  [fz-grid x y]
+  (if (or (nil? fz-grid) (< x 0) (< y 0))
+    0.0
+    (let [row (get fz-grid y)]
+      (if (nil? row)
+        0.0
+        (or (get row x) 0.0)))))
+
 (defn ^:pure wall?
   "True when (x, y) blocks player movement. Solid walls, unrevealed
    secrets, AND switch cells (either state) qualify; doors are
@@ -476,10 +502,12 @@
 ;;   'Y' yellow-locked door
 ;;   'X' boss-locked door (unlocks when boss is killed)
 ;;   '@' floor + records [x y] as the player spawn (cell centre)
+;;   '1' '2' '3' floor raised to fz 0.25 / 0.5 / 0.75 (issue #368)
 ;;
-;; parse-layout returns {:grid <vec-of-vec> :spawn [x y]} when the
-;; layout is well-formed, nil when no '@' is found. Used by level.phel
-;; when a level entry carries :layout to bypass the random-grid path.
+;; parse-layout returns {:grid <vec-of-vec> :spawn [x y] :fz-grid
+;; <vec-of-vec>} when the layout is well-formed, nil when no '@' is
+;; found. Used by level.phel when a level entry carries :layout to
+;; bypass the random-grid path.
 ;; ---------------------------------------------------------------------
 
 ;; Layout ASCII -> cell value. Layouts are GEOMETRY ONLY (walls, floor,
@@ -490,37 +518,50 @@
    "." cell-floor
    "@" cell-floor
    "S" cell-secret
-   "T" cell-switch-off})
+   "T" cell-switch-off
+   "1" cell-floor
+   "2" cell-floor
+   "3" cell-floor})
+
+;; Layout ASCII -> floor height. Multiples of fz-step by construction,
+;; so parse-row needs no quantize pass.
+(def ^:private layout-char->fz
+  {"1" 0.25
+   "2" 0.5
+   "3" 0.75})
 
 (defn- parse-row
-  "Convert one layout string into [row-vec maybe-spawn-x]. Returns
-   nil for spawn-x when the row doesn't contain '@'. Unknown chars
-   fall back to floor so a typo doesn't crash."
+  "Convert one layout string into [row-vec fz-row-vec maybe-spawn-x].
+   Returns nil for spawn-x when the row doesn't contain '@'. Unknown
+   chars fall back to flat floor so a typo doesn't crash."
   [s y]
   (let [w (php/strlen s)]
     (loop [x       0
            row     []
+           fz-row  []
            spawn-x nil]
       (if (php/>= x w)
-        [row spawn-x]
+        [row fz-row spawn-x]
         (let [ch    (php/substr s x 1)
               cell  (or (get layout-char->cell ch) cell-floor)
+              fz    (or (get layout-char->fz ch) 0.0)
               spawn (if (= ch "@") x spawn-x)]
-          (recur (php/+ x 1) (conj row cell) spawn))))))
+          (recur (php/+ x 1) (conj row cell) (conj fz-row fz) spawn))))))
 
 (defn parse-layout
-  "Parse a hand-authored ASCII grid into `{:grid :spawn}`. Returns
-   nil when the layout has no '@' (no player spawn)."
+  "Parse a hand-authored ASCII grid into `{:grid :spawn :fz-grid}`.
+   Returns nil when the layout has no '@' (no player spawn)."
   [rows]
   (let [h (count rows)]
     (loop [y     0
            grid  []
+           fz    []
            spawn nil]
       (if (php/>= y h)
         (when (some? spawn)
-          {:grid grid :spawn spawn})
-        (let [[row sx] (parse-row (get rows y) y)
-              spawn'   (if (and (nil? spawn) (some? sx))
-                         [(+ 0.5 sx) (+ 0.5 y)]
-                         spawn)]
-          (recur (php/+ y 1) (conj grid row) spawn'))))))
+          {:grid grid :spawn spawn :fz-grid fz})
+        (let [[row fz-row sx] (parse-row (get rows y) y)
+              spawn'          (if (and (nil? spawn) (some? sx))
+                                [(+ 0.5 sx) (+ 0.5 y)]
+                                spawn)]
+          (recur (php/+ y 1) (conj grid row) (conj fz fz-row) spawn'))))))

@@ -475,12 +475,6 @@
 ;; § Riser / tier-top column data (issue #370)
 ;; =====================================================================
 
-(def no-riser
-  "Sentinel `riser-top` value meaning \"this column has no riser\" - one
-   `!==` compare in the row loop, cheap on the flat path where every
-   column carries it (`:spans` is empty)."
-  -1)
-
 (defn- compute-riser-shades
   "Per-column NEAREST riser data from the flat `:spans` stream (#369),
    for painting a step's rise-face and gating the tier-top floor-cast
@@ -492,8 +486,8 @@
    column are behind it and never visible, so they're skipped outright -
    this IS the row clip; there's nothing nearer left to paint over.
 
-   Returns 5 php-arrays, `no-riser` (-1) in `riser-top` where a column
-   has none:
+   Returns 5 php-arrays; a column with no riser is simply absent (its
+   `riser-top` aget reads nil, the row loop's `has-riser?` sentinel):
      riser-top / riser-bot  screen rows of the riser face [top, bot)
      riser-shade            side-shaded wall colour string for the face
      riser-dist             fish-eye corrected distance (for the enemy
@@ -538,15 +532,6 @@
         (recur (php/+ base 8))))
     {:riser-top riser-top :riser-bot riser-bot :riser-shade riser-sh
      :riser-dist riser-dist :tier-fz tier-fz}))
-
-(defn- riser-top-at
-  "Column `col`'s nearest riser top row, or `no-riser` when the column
-   has none. Isolates the `aget` + nil-default so row-loop call sites
-   read as a plain expression (closure-tax discipline: no `or` in a
-   binding value)."
-  [riser-top ^int col]
-  (let [v (php/aget riser-top col)]
-    (if (php/=== nil v) no-riser v)))
 
 ;; =====================================================================
 ;; § Pulse cadences + near-death haze
@@ -1053,8 +1038,8 @@
         eye-z                               (php/+ 0.5 (get (:player world) :z 0.0))
         ;; Riser faces + tier-top floor gating (#370), from the flat
         ;; :spans stream (#369). Empty on flat worlds -> every array below
-        ;; comes back empty, so `riser-top-at` reads `no-riser` for every
-        ;; column and the row loop's extra branches never fire.
+        ;; comes back empty, so the row loop's `riser-top` aget reads nil
+        ;; for every column and its extra branches never fire.
         {:riser-top riser-top :riser-bot riser-bot :riser-shade riser-shade
          :riser-dist riser-dist :tier-fz tier-fz}
         (compute-riser-shades (:spans cast-result) haze-shift stbl ctbl scene-pd svh eye-z pr)
@@ -1603,10 +1588,11 @@
                       sky-lim     (php/aget wsub-skylim col)
                       floor-from  (php/aget wsub-floorfrom col)
                       ;; Riser bounds (#370), scene-row precision - see
-                      ;; the px1 loop above for the full rationale. Dead
-                      ;; comparisons on a flat world (no-riser everywhere).
-                      rtop2       (riser-top-at riser-top col)
-                      has-riser2? (php/!== no-riser rtop2)
+                      ;; the px1 loop above for the full rationale. Nil (dead)
+                      ;; comparisons on a flat world; inlined aget, no
+                      ;; per-cell function dispatch.
+                      rtop2       (php/aget riser-top col)
+                      has-riser2? (php/!== nil rtop2)
                       rbot2       (if has-riser2? (buf-get riser-bot col) 0)]
                   ;; Cell pack -> pack-reg[0], resolved by ONE statement
                   ;; cond: the split kinds (sky / floor texture / wall
@@ -1956,13 +1942,15 @@
                             ;; pass, so glyph-enemy columns must keep the
                             ;; live tops/bots.
                             mixw?      (php/=== 1 (php/aget wsub-mix col))
-                            ;; Riser bounds (#370): no-riser (-1) on every
-                            ;; column of a flat world, so `rtop`/`rbot` are
-                            ;; two plain agets and the two cond clauses
-                            ;; below are dead comparisons there - no new
-                            ;; branch cost on the byte-identical flat path.
-                            rtop       (riser-top-at riser-top col)
-                            has-riser? (php/!== no-riser rtop)
+                            ;; Riser bounds (#370): `riser-top` is empty on a
+                            ;; flat world, so this aget is nil for every
+                            ;; column and the two cond clauses below are dead
+                            ;; comparisons - no new branch cost on the
+                            ;; byte-identical flat path. Inlined aget (not a
+                            ;; `riser-top-at` call) so the hot per-cell path
+                            ;; pays no function dispatch.
+                            rtop       (php/aget riser-top col)
+                            has-riser? (php/!== nil rtop)
                             rbot       (if has-riser? (buf-get riser-bot col) 0)]
                         (cond
                           ;; Half-block sky stacks two gradient sub-rows

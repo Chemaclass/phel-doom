@@ -169,13 +169,15 @@ the body is side-effect-free; see issue #166).
 Annotated: the let-free `physics/contribution` (`if` body) + `physics/counter-on?`
 (single `php/>`), and - since phel-lang's let-body inliner landed (see below) -
 ~45 hot let-bodied pure helpers carrying `^:pure`: the per-cell `map/cell` +
-`map/wall?`, the per-ray `engine/cell-at` + `projection/wall-px`, `enemy/in-cone?`,
+`map/wall?`, the per-ray `projection/wall-px`, `enemy/in-cone?`,
 and the per-enemy / per-frame AI (`enemy-ai/*`), physics, render-math
 (`fade-256`, `project-enemy-pd`, ...), map and combat helpers. The inliner splices
 each body at its call sites, dropping the `getDefinition(...)->__invoke(...)` frame
 dispatch. Byte-identical output (full unit suite + render golden hashes unchanged) -
-`^:pure` only relocates the same body. (`engine/cell-at` still shows a few sites the
-inliner skips; the rest inline.)
+`^:pure` only relocates the same body. (`engine/cell-at`, once the poster child
+here, showed sites the inliner skipped; issue #354 removed the fn entirely and
+hand-inlined its body as native `?? 1` subscripts at every former call site -
+the do-cast column loop in #347, then `cast-ray` + `los-clear?`.)
 
 These run on the cast / AI / movement paths; the win is removing the per-call PHP
 frame dispatch, not changing the math (the hot loops were already native `php/`

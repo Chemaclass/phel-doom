@@ -1,6 +1,7 @@
 (ns phel-doom-tests.core.physics-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.map     :refer [fz-step])
+  (:require phel-doom.core.map     :refer [fz-step parse-layout])
+  (:require phel-doom.core.level   :refer [showcase-layout])
   (:require phel-doom.core.state   :refer [max-stamina new-world new-player])
   (:require phel-doom.core.physics :refer [try-move apply-physics sprint-engage-threshold sprint-multiplier stamina-drain stamina-regen tick-heartbeat tick-stamina tick-blood-drops]))
 
@@ -90,6 +91,61 @@
   ;; there so behaviour is unchanged (proof: full suite stays green).
   (let [w (try-move open-world 0.0 0.0)]
     (is (= 0.0 (:z (:player w))))))
+
+;; End-to-end staircase climb (issue #372): walking a run of cells that
+;; each rise exactly one fz-step is what makes a staircase. Assert the
+;; player's :z advances 0 -> 0.25 -> 0.5 -> 0.75 one tread at a time and
+;; holds on the flat platform tread at the top.
+(def stair-run-corridor
+  [[1 1 1 1 1 1]
+   [0 0 0 0 0 0]
+   [1 1 1 1 1 1]])
+
+(defn- climb-zs
+  "Walk east one cell per step from the west end of `stair-run-corridor`,
+   collecting the player's :z after each try-move. `fz-mid` is the middle
+   row's per-cell floor height."
+  [fz-mid steps]
+  (let [w0 (new-world stair-run-corridor (new-player 1.5 1.5 0.0)
+                      [[0.0 0.0 0.0 0.0 0.0 0.0] fz-mid [0.0 0.0 0.0 0.0 0.0 0.0]])]
+    (loop [w w0 n steps zs []]
+      (if (php/<= n 0)
+        zs
+        (let [w' (try-move w 1.0 0.0)]
+          (recur w' (php/- n 1) (conj zs (:z (:player w')))))))))
+
+(deftest test-walk-up-staircase-z-progression
+  ;; Treads at cells 2/3/4 rise 0.25 each; cell 5 is a flat platform at
+  ;; the top tier. Four eastward steps snap :z up one fz-step per tread,
+  ;; then hold on the platform.
+  (is (= [0.25 0.5 0.75 0.75]
+         (climb-zs [0.0 0.0 0.25 0.5 0.75 0.75] 4))
+      "z climbs one fz-step per tread, then holds on the platform"))
+
+(deftest test-walk-into-too-tall-rise-halts-climb
+  ;; A tread that jumps two fz-steps (0.0 -> 0.5) blocks like a wall: the
+  ;; player never leaves the first cell, so every recorded :z stays 0.0.
+  (is (= [0.0 0.0]
+         (climb-zs [0.0 0.0 0.5 0.75 0.75 0.75] 2))
+      "a 2-step rise halts the climb, z never leaves the ground tier"))
+
+;; End-to-end over the REAL shipped L2 layout (issue #372): parse
+;; showcase-layout, walk the player straight north from the spawn one
+;; cell per try-move, and assert :z reaches every tier in one-fz-step
+;; order. Doubles as a geometry regression guard - editing the layout
+;; digits so the treads stop rising monotonically breaks this.
+(deftest test-walk-up-real-showcase-layout
+  (let [{:keys [grid spawn fz-grid]} (parse-layout showcase-layout)
+        [sx sy]                      spawn
+        w0                           (new-world grid (new-player sx sy 0.0) fz-grid)
+        zs                           (loop [w w0 n 8 acc []]
+                                       (if (php/<= n 0)
+                                         acc
+                                         (let [w' (try-move w 0.0 -1.0)]
+                                           (recur w' (php/- n 1) (conj acc (:z (:player w')))))))]
+    (is (= [0.0 0.0 0.0 0.0 fz-step (php/* 2.0 fz-step) (php/* 3.0 fz-step) (php/* 3.0 fz-step)]
+           zs)
+        "walking north from the spawn climbs 0 -> 0.25 -> 0.5 -> 0.75 then holds on the platform")))
 
 ;; ---------------------------------------------------------------------
 ;; try-move + locked doors: arming the NEED <COLOUR> KEY HUD cue.

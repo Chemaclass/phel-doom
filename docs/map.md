@@ -55,7 +55,7 @@ Quantization happens in loaders (layout parsing), so stored data is always clean
 
 Layouts author heights with digit chars: `1` / `2` / `3` parse as `cell-floor` with fz 0.25 / 0.5 / 0.75. `parse-layout` returns `{:grid :spawn :fz-grid}`; a digit-free layout yields an all-zero `fz-grid`. Procgen grids carry no heights (flat world).
 
-Data layer only for now: cast, render, and physics still assume a flat world. The epic issues #369-#372 make heights visible and walkable.
+Casting, rendering, and physics all honor fz per epic #375: the raycaster's DDA engine supports multi-span columns (issue #369), the renderer paints risers and tier tops (issue #379), and player physics honor step-clears? (issue #371) so the player snaps up staircases cell-by-cell. The showcase level (L2) demonstrates the staircase mechanic.
 
 ## Random map generation
 

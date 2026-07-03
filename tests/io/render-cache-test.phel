@@ -1,6 +1,7 @@
 (ns phel-doom-tests.io.render-cache-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.level :refer [build-world])
+  (:require phel-doom.core.level :refer [build-world showcase-layout])
+  (:require phel-doom.core.map :refer [parse-layout])
   (:require phel-doom.core.engine :refer [mark-visible-cells])
   (:require phel-doom.core.state :refer [new-world new-player])
   (:require phel-doom.core.rng :as rng)
@@ -400,6 +401,70 @@
   ;; separate pack-reg -2/-11 resolution branch, not the px1 loop above.
   (is (= "2a70aed4af2a02148457394aca12fa36"
          (php/md5 (frame->string (stair-world 1.5 1.5) (assoc stats :px2? true) 120 30)))))
+
+;; ---------------------------------------------------------------------
+;; Staircase showcase level golden frames (issue #372). Render the SHIPPED
+;; L2 `showcase-layout` geometry directly through parse-layout so these
+;; hashes track the real level, not a synthetic fixture, yet stay
+;; enemy/pickup-free (hand-built world, no build-world RNG). The 3-tread
+;; stair (fz 0.25/0.5/0.75) + 0.75 platform is viewed from below (at the
+;; spawn, looking north up the stairs) and from above (on the platform,
+;; looking south back down them). angle -pi/2 faces -y (north); +pi/2
+;; faces +y (south). See src/core/level.phel showcase-layout.
+;; ---------------------------------------------------------------------
+
+(def showcase-parsed (parse-layout showcase-layout))
+
+(defn- showcase-world [x y ^float angle z]
+  (let [{:keys [grid fz-grid]} showcase-parsed]
+    (mark-visible-cells
+     (assoc-in (new-world grid (new-player x y angle) fz-grid)
+               [:player :z] z))))
+
+;; Same geometry + viewpoint but with the fz-grid zeroed - proves the
+;; pinned golden frames actually RENDER the tiers (not a degenerate view
+;; that happens to look flat), so the hashes below are meaningful.
+(defn- showcase-flat-world [x y ^float angle]
+  (let [{:keys [grid fz-grid]} showcase-parsed
+        h                      (count fz-grid)
+        w                      (count (first fz-grid))
+        flat                   (vec (repeat h (vec (repeat w 0.0))))]
+    (mark-visible-cells (new-world grid (new-player x y angle) flat))))
+
+(def look-north (php/* -0.5 php/M_PI))
+(def look-south (php/* 0.5 php/M_PI))
+
+(deftest test-showcase-stairs-from-below-pinned
+  ;; At the spawn (11.5, 15.5) on the ground tier, looking north up the
+  ;; staircase: the three risers + tier tops stack ahead, the 0.75
+  ;; platform capping the far end.
+  (is (= "62c2ef10c29f2ea87fc4f8ea8cb9a4c8"
+         (php/md5 (frame->string (showcase-world 11.5 15.5 look-north 0.0) stats 120 30)))))
+
+(deftest test-showcase-stairs-from-above-pinned
+  ;; Standing ON the platform (11.5, 6.5, z=0.75) looking south back down
+  ;; the stairs: the descending treads read from above, ground floor
+  ;; beyond.
+  (is (= "e6e407b5e5d101f10d02f8b5593e3ca6"
+         (php/md5 (frame->string (showcase-world 11.5 6.5 look-south 0.75) stats 120 30)))))
+
+(deftest test-showcase-stairs-px2-pinned
+  ;; Pixel-doubled path over the same from-below viewpoint.
+  (is (= "8a7d5f6b3956301e6bd91ec6f42fc5b9"
+         (php/md5 (frame->string (showcase-world 11.5 15.5 look-north 0.0) (assoc stats :px2? true) 120 30)))))
+
+(deftest test-showcase-stairs-distinct
+  ;; The two viewpoints must render distinct frames (guards against a
+  ;; degenerate view that captures no tier geometry).
+  (is (not= (frame->string (showcase-world 11.5 15.5 look-north 0.0) stats 120 30)
+            (frame->string (showcase-world 11.5 6.5 look-south 0.75) stats 120 30))))
+
+(deftest test-showcase-stairs-visible-vs-flat
+  ;; The staircase must actually change the rendered bytes from the spawn:
+  ;; the tiered frame differs from the same view with a zeroed fz-grid, so
+  ;; the from-below golden above is pinning real tier geometry.
+  (is (not= (frame->string (showcase-world 11.5 15.5 look-north 0.0) stats 120 30)
+            (frame->string (showcase-flat-world 11.5 15.5 look-north) stats 120 30))))
 
 (deftest test-riser-face-shade-string-present
   ;; The riser paints with a wall-style shade string (an ANSI BG code),

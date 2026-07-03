@@ -405,25 +405,32 @@
           (is (= 1 (count ds)) (str "level " lv " has exactly one exit door"))
           (is (true? (get (first ds) 2)) (str "level " lv " exit is reachable from spawn"))
           ;; Varied room: random interior walls (obstacles) are present.
-          (is (php/> (interior-wall-count grid) 0) (str "level " lv " has interior walls"))
+          ;; L2 is the staircase showcase (#372) - it omits :walls so
+          ;; scatter-walls can't chew the treads, so it has none.
+          (when (php/!== 2 lv)
+            (is (php/> (interior-wall-count grid) 0) (str "level " lv " has interior walls")))
           (php/array_push positions (str (get (first ds) 0) "," (get (first ds) 1)))))
       ;; Random: the exit is not pinned to one spot across seeds.
       (is (php/> (php/count (php/array_unique positions)) 1)
           (str "level " lv " exit position varies with the seed")))))
 
 ;; ---------------------------------------------------------------------
-;; Floor heights (issue #368): every shipped level loads flat. Pins the
-;; zero-behavior-change guarantee until levels author raised cells.
+;; Floor heights (issue #368): every shipped level loads flat EXCEPT the
+;; L2 staircase showcase (#372). Pins the zero-behavior-change guarantee
+;; for the flat levels and that L2 actually carries raised cells.
 ;; ---------------------------------------------------------------------
 
 (deftest test-build-world-fz-defaults-flat-every-level
   (foreach [lv (range 1 (php/+ num-levels 1))]
     (rng/seed! (php/* 42 lv))
-    (let [w  (build-world lv 5)
-          fz (:fz-grid w)]
+    (let [w     (build-world lv 5)
+          fz    (:fz-grid w)
+          flat? (every? (fn [row] (every? (fn [z] (= 0.0 z)) row)) fz)]
       (is (= (:height w) (count fz)) (str "level " lv " fz-grid height matches"))
       (is (= (:width w) (count (first fz))) (str "level " lv " fz-grid width matches"))
-      (is (every? (fn [row] (every? (fn [z] (= 0.0 z)) row)) fz)
-          (str "level " lv " is flat"))
+      ;; L2 is the staircase showcase; every other level is flat.
+      (if (php/=== 2 lv)
+        (is (not flat?) "level 2 (staircase showcase) has raised cells")
+        (is flat? (str "level " lv " is flat")))
       (is (= (php/* (:width w) (:height w)) (php/count (:pfz w)))
           (str "level " lv " pfz sized width*height")))))

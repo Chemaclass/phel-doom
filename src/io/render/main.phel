@@ -475,6 +475,29 @@
 ;; § Riser / tier-top column data (issue #370)
 ;; =====================================================================
 
+(def riser-face-darken
+  "Shade-table steps a riser FACE is pulled below the coplanar wall shade
+   (issue #373). Big enough that a step never reads as a same-distance
+   wall, small enough that a near rise doesn't crush to black."
+  3)
+
+(defn riser-shade-level
+  {:doc "Shade-table index for a riser FACE (issue #373 tier polish). Takes
+         the index a coplanar WALL would use at the same distance and pulls
+         it darker by `riser-face-darken` plus the tier level (height `z1`
+         in fz-step units: 0.25/0.5/0.75 -> 1/2/3), so a step reads distinct
+         from a wall AND taller rises read progressively darker (elevation
+         legible at a glance). Higher index = brighter (shade-table[i] =
+         code 232+i), so the pull is a subtraction, clamped at 0 (darkest).
+         `4.0` is `1 / map/fz-step` - kept literal to avoid a core.map
+         require in this hot render module; map-test/test-fz-step-pinned
+         pins fz-step at 0.25, so a drift there fails the suite loudly."
+   :see-also ["compute-riser-shades"]}
+  [^int wall-idx ^float z1]
+  (php/max 0 (php/- wall-idx
+                    (php/+ riser-face-darken
+                           (php/intval (php/round (php/* z1 4.0)))))))
+
 (defn- compute-riser-shades
   "Per-column NEAREST riser data from the flat `:spans` stream (#369),
    for painting a step's rise-face and gating the tier-top floor-cast
@@ -513,17 +536,21 @@
       (when (php/< base span-n)
         (let [col (php/aget spans base)]
           (when (php/=== nil (php/aget riser-top col))
-            (let [d-corr  (php/aget spans (php/+ base 1))
-                  z0      (php/aget spans (php/+ base 2))
-                  z1      (php/aget spans (php/+ base 3))
-                  side    (php/aget spans (php/+ base 4))
-                  top-f   (project-height pd svh d-corr eye-z z1)
-                  bot-f   (project-height pd svh d-corr eye-z z0)
-                  idx-raw (php/max 0
-                                   (php/min 23
-                                            (php/+ (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// d-corr max-depth))) 0.6) 23))
-                                                   (if (php/=== side 0) 3 0))))
-                  idx     (php/max 0 (php/- idx-raw haze-shift))]
+            (let [d-corr   (php/aget spans (php/+ base 1))
+                  z0       (php/aget spans (php/+ base 2))
+                  z1       (php/aget spans (php/+ base 3))
+                  side     (php/aget spans (php/+ base 4))
+                  top-f    (project-height pd svh d-corr eye-z z1)
+                  bot-f    (project-height pd svh d-corr eye-z z0)
+                  idx-raw  (php/max 0
+                                    (php/min 23
+                                             (php/+ (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// d-corr max-depth))) 0.6) 23))
+                                                    (if (php/=== side 0) 3 0))))
+                  ;; #373 tier polish: risers read as steps, not walls.
+                  ;; Start from the shade a coplanar wall would use here,
+                  ;; then pull it darker + nudge by tier height (z1).
+                  wall-idx (php/max 0 (php/- idx-raw haze-shift))
+                  idx      (riser-shade-level wall-idx z1)]
               (php/aset riser-top  col (php/+ (php/intval (php/round top-f)) pr))
               (php/aset riser-bot  col (php/+ (php/intval (php/round bot-f)) pr))
               (php/aset riser-sh   col (php/aget stbl idx))

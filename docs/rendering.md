@@ -95,7 +95,7 @@ Issue #370 (epic #375) consumes the `:spans` riser-event stream #369's cast prod
 For a column with a riser, `compute-riser-shades` returns:
 
 - `riser-top` / `riser-bot`: the riser face's screen rows, via `project-height` at the riser's fish-eye-corrected distance with `z1` (tier top) and `z0` (tier bottom) - the same projection kernel walls use, so a riser reads as a wall slice, not a special case.
-- `riser-shade`: a side-shaded colour string, computed exactly like `compute-wall-shades` shades a wall face (same gamma distance falloff, same `+3` vertical-face bonus, same haze-shift). Riser faces are flat-shaded (no wall texture sampling) - they are usually one or two rows tall, too thin for texture detail to read.
+- `riser-shade`: a side-shaded colour string. It starts from the index a coplanar wall would use at that distance (same gamma distance falloff, same `+3` vertical-face bonus, same haze-shift), then `riser-shade-level` pulls it darker so a step never reads as a same-distance wall, and nudges it darker again by tier level (height `z1` in fz-step units, 1/2/3) so taller rises read progressively distinct (issue #373 tier polish - elevation legible at a glance). Riser faces are flat-shaded (no wall texture sampling) - they are usually one or two rows tall, too thin for texture detail to read.
 - `riser-dist`: the corrected distance, for the same z-buffer role `dists` plays for walls (enemy/pickup occlusion compares against it).
 - `tier-fz`: the floor height BEYOND the riser (`z1`), read by the tier-top floor band below.
 

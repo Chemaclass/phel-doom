@@ -52,7 +52,7 @@ Returns raw (uncorrected) distance. Detailed tuple `[dist side hx hy]` is comput
 
 ```phel
 (defn cast-frame [world ^int width ^int scale]
-  ...returns {:dists :hits :sides :hxs :hys :wallxs :floordxs :floordys :spans})
+  ...returns {:dists :hits :sides :hxs :hys :wallxs :floordxs :floordys :spans :uspans})
 ```
 
 Cast `width / scale` rays; return the parallel PHP arrays (one per output column).
@@ -63,6 +63,7 @@ Cast `width / scale` rays; return the parallel PHP arrays (one per output column
 - `wallxs`: wall-hit fraction in [0, 1) - the texture U coordinate (frac of world-y on a vertical face, world-x on a horizontal face, from the raw perpendicular distance)
 - `floordxs, floordys`: floor-cast basis = ray direction / cos(offset). A floor cell at per-row perpendicular distance `dperp` sits at world `player + dperp * (floordx, floordy)`, so the renderer needs no per-cell trig (two mul-adds + a frac for the texture sample)
 - `spans`: flat riser-event stream for floor heights (see Multi-span cast below); empty on flat frames
+- `uspans`: flat upper-span stream for ceiling drops (see Upper-span cast below); empty on full-height frames
 
 ## Multi-span cast: floor risers
 
@@ -87,6 +88,14 @@ Guarantees and rules:
 - **Occlusion.** A riser behind a wall/door/secret never emits: blocking cells exit the march before the height check.
 - **No early-out.** The march always reaches the wall/max-depth; deciding that stacked risers fill a screen column needs projection (eye height, pitch), which is render's knowledge (#370). Authorable heights cap at fz 0.75 (layout digits 1-3), so no riser can fill a column by itself.
 - **Cost.** Zero on flat worlds: `new-world` / `rebuild-pgrid` stamp a build-time `:fz-flat?` flag, and do-cast selects the legacy 4-var march (no fz reads, no extra loop var) when it is set - measured, the always-on span march cost +13-16% cast time on flat maps. Tiered worlds run the span march: one subscript + float compare per continue step, plus the event push at each rise.
+
+## Upper-span cast: ceiling drops
+
+Issue #386 (epic #375 Phase 3): the mirror of floor risers, for ceilings. Where the ceiling height (`:pcz`, see map.md) DROPS between cells, the march emits one `:uspans` event - the visible upper wall slice hanging down from the higher ceiling. A cell with a raised floor AND a lowered ceiling is a window gap. `:uspans` has the identical stride-8 shape as `:spans`, but `cz1 < cz0` (the ceiling got lower); `+2 cz0` is the ceiling being left, `+3 cz1` the lower ceiling entered.
+
+- **Drop-only.** A ceiling that rises back up is a backface (invisible from below), mirror of the floor rise-only rule.
+- **Three march variants.** do-cast selects once per frame on the build-time `:fz-flat?` / `:cz-flat?` flags: both flat -> legacy; tiered floor + flat ceiling -> floor-span march (#369); lowered ceiling -> a COMBINED march tracking both floor and ceiling. The first two are byte-identical to before, so tiered-floor levels (e.g. L2) and flat levels are unchanged; only lowered-ceiling worlds pay for ceiling tracking.
+- **Cost.** Zero on full-height worlds (the combined march is never selected). On a lowered-ceiling world the combined march reads both `:pfz` and `:pcz` per step and computes the crossing coordinate once per continue step: measured ~+53% cast vs the flat legacy march. No shipped level has lowered ceilings, so this is future-content cost only.
 
 ## Two key details
 

@@ -403,6 +403,61 @@
          (php/md5 (frame->string (stair-world 1.5 1.5) (assoc stats :px2? true) 120 30)))))
 
 ;; ---------------------------------------------------------------------
+;; Lowered-ceiling scene (upper wall-slice painter, #387). No shipped
+;; level has a lowered ceiling yet, so this is a synthetic 24x17 room:
+;; full-height (cz 1.0) everywhere except a band at x=7..10 dropped to
+;; cz 0.75. Cast from the west (2.5, 8.5) looking east, every ray crosses
+;; that drop, so the upper wall-slice hangs across the whole view - the
+;; exact geometry the #387 painter exists to draw. Twinned with a
+;; full-ceiling world of the same layout: the frames MUST differ (the
+;; slice actually paints) and each MUST render deterministically. These
+;; assertions are OS/PHP-version agnostic - unlike an exact md5 pin, a
+;; synthetic drop whose projected band edges can straddle an integer row
+;; boundary differently under macOS vs Linux libm rounding. The drop is
+;; kept at 0.75 (clear of the eye-z=0.5 knife-edge, where cz1 == eye-z
+;; would project the band's bottom exactly onto the horizon row). Hand
+;; built (no build-world RNG).
+(def ceiling-room
+  ;; 24 wide x 17 tall: solid border, open interior.
+  (let [wall (vec (repeat 24 1))
+        open (into [1] (into (vec (repeat 22 0)) [1]))]
+    (into [wall] (into (vec (repeat 15 open)) [wall]))))
+(def ceiling-flat-fz (vec (repeat 17 (vec (repeat 24 0.0)))))
+(def ceiling-full-cz (vec (repeat 17 (vec (repeat 24 1.0)))))
+(def ceiling-low-cz
+  ;; ceiling dropped to 0.75 across x=7..10, full height elsewhere.
+  (let [row (vec (concat (repeat 7 1.0) (repeat 4 0.75) (repeat 13 1.0)))]
+    (vec (repeat 17 row))))
+
+(defn- ceiling-world [cz-grid]
+  (mark-visible-cells
+   (new-world ceiling-room (new-player 2.5 8.5 0.0) ceiling-flat-fz cz-grid)))
+
+(deftest test-lowered-ceiling-scene-differs-from-flat
+  ;; The upper wall-slice must actually paint: a lowered-ceiling view is
+  ;; NOT byte-identical to the same room with a full-height ceiling. The
+  ;; ONLY difference between the two worlds is the ceiling height, so a
+  ;; differing frame means the `:uspans` band reached the painter.
+  (is (not= (frame->string (ceiling-world ceiling-full-cz) stats 120 30)
+            (frame->string (ceiling-world ceiling-low-cz) stats 120 30))))
+
+(deftest test-lowered-ceiling-scene-deterministic
+  ;; px1 upper-slice branch renders the same bytes twice (no ambient
+  ;; state bleed through compute-upper-shades / the paint dispatch).
+  (let [w (ceiling-world ceiling-low-cz)]
+    (is (= (frame->string w stats 120 30)
+           (frame->string w stats 120 30)))))
+
+(deftest test-lowered-ceiling-scene-px2-deterministic
+  ;; px2 path exercises the compact-cast-2 uspan copy + the pack-reg -12
+  ;; resolution branch, distinct from the px1 loop; also deterministic.
+  (let [w (ceiling-world ceiling-low-cz)]
+    (is (= (frame->string w (assoc stats :px2? true) 120 30)
+           (frame->string w (assoc stats :px2? true) 120 30)))
+    (is (not= (frame->string (ceiling-world ceiling-full-cz) (assoc stats :px2? true) 120 30)
+              (frame->string w (assoc stats :px2? true) 120 30)))))
+
+;; ---------------------------------------------------------------------
 ;; Staircase showcase level golden frames (issue #372). Render the SHIPPED
 ;; L2 `showcase-layout` geometry directly through parse-layout so these
 ;; hashes track the real level, not a synthetic fixture, yet stay

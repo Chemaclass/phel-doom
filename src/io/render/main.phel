@@ -606,6 +606,70 @@
     {:riser-top riser-top :riser-bot riser-bot :riser-shade riser-sh
      :riser-dist riser-dist :tier-fz tier-fz :tier-top-tex tier-top-tex}))
 
+(defn- compute-upper-shades
+  "Per-column NEAREST upper-span (ceiling-drop) data from the flat
+   `:uspans` stream (#386) - the CEILING mirror of `compute-riser-shades`
+   (#370): paints the drop's slice FACE (the underside of the higher
+   ceiling hanging down to the lower one) but, unlike the floor riser,
+   does not texture the recessed ceiling beyond it - that's a future pass
+   (see `ceiling-top-row-dist` in core.projection, deliberately unwired).
+
+   `:uspans` arrives ordered the same way `:spans` does (ascending
+   distance within a ray, ascending column across rays), so the FIRST
+   event seen for a column is its nearest ceiling drop; farther drops in
+   the same column are hidden behind it and skipped outright - this IS
+   the row clip, mirroring compute-riser-shades exactly.
+
+   Returns 3 php-arrays; a column with no upper-span is simply absent
+   (its `upper-top` aget reads nil, the row loop's `has-upper?` sentinel):
+     upper-top / upper-bot  screen rows of the slice face [top, bot)
+     upper-shade            side-shaded wall colour string for the face
+
+   `top-f` projects the event's `cz0` (the higher ceiling being left -
+   nearer to the camera, so it lands closer to the true screen top /
+   smaller row) and `bot-f` projects `cz1` (the lower ceiling entered,
+   landing further from the true top / larger row); the face paints
+   [round(top-f), round(bot-f)) same as the riser's [top,bot).
+
+   Shading reuses the flat WALL fog formula at the event's own corrected
+   distance/side (same `idx-raw` shape compute-wall-shades and
+   compute-riser-shades use) with NO extra tier-height darken pull - a
+   ceiling slice reads fine as 'more wall', and #373's riser-specific
+   darken only exists to separate a step's rise from a coplanar wall at
+   the SAME distance, which doesn't apply here (a future pass can add a
+   distinct ceiling tint if playtesting wants one).
+
+   `pd`/`svh`/`eye-z` are the same projection inputs `compute-riser-
+   shades` takes; `haze-shift`/`stbl`/`ctbl` dim it exactly like
+   `compute-wall-shades` dims walls."
+  {:see-also ["compute-riser-shades" "project-height"]}
+  [uspans ^int haze-shift stbl ctbl ^float pd ^int svh ^float eye-z & [pr-arg]]
+  (let [pr        (or pr-arg 0)
+        span-n    (php/count uspans)
+        upper-top (php/array)
+        upper-bot (php/array)
+        upper-sh  (php/array)]
+    (loop [base 0]
+      (when (php/< base span-n)
+        (let [col (php/aget uspans base)]
+          (when (php/=== nil (php/aget upper-top col))
+            (let [d-corr  (php/aget uspans (php/+ base 1))
+                  cz0     (php/aget uspans (php/+ base 2))
+                  cz1     (php/aget uspans (php/+ base 3))
+                  side    (php/aget uspans (php/+ base 4))
+                  top-f   (project-height pd svh d-corr eye-z cz0)
+                  bot-f   (project-height pd svh d-corr eye-z cz1)
+                  idx-raw (php/max 0
+                                   (php/min 23
+                                            (php/+ (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// d-corr max-depth))) 0.6) 23))
+                                                   (if (php/=== side 0) 3 0))))
+                  idx     (php/max 0 (php/- idx-raw haze-shift))]
+              (php/aset upper-top col (php/+ (php/intval (php/round top-f)) pr))
+              (php/aset upper-bot col (php/+ (php/intval (php/round bot-f)) pr))
+              (php/aset upper-sh  col (php/aget stbl idx)))))
+        (recur (php/+ base 8))))
+    {:upper-top upper-top :upper-bot upper-bot :upper-shade upper-sh}))
+
 ;; =====================================================================
 ;; § Pulse cadences + near-death haze
 ;; =====================================================================
@@ -737,17 +801,20 @@
    full-width base col j is always scene col j/2 - integer division,
    exact) so the scene-space row loop can index it the same way it
    indexes the px1 stream. d-corr / z0 / z1 / side / hx / hy / wallx
-   pass through unchanged."
+   pass through unchanged. `:uspans` (#386, the ceiling-drop mirror of
+   `:spans`) compacts by the identical col-halving pass."
   [cast ^int svw]
-  (let [{:keys [dists hits sides wallxs floordxs floordys spans]} cast
-        d                                                         (php/array)
-        h                                                         (php/array)
-        s                                                         (php/array)
-        w                                                         (php/array)
-        fx                                                        (php/array)
-        fy                                                        (php/array)
-        sp                                                        (php/array)
-        span-n                                                    (php/count spans)]
+  (let [{:keys [dists hits sides wallxs floordxs floordys spans uspans]} cast
+        d                                                                (php/array)
+        h                                                                (php/array)
+        s                                                                (php/array)
+        w                                                                (php/array)
+        fx                                                               (php/array)
+        fy                                                               (php/array)
+        sp                                                               (php/array)
+        up                                                               (php/array)
+        span-n                                                           (php/count spans)
+        uspan-n                                                          (php/count uspans)]
     (loop [i 0]
       (when (php/< i svw)
         (let [j (php/* 2 i)]
@@ -766,7 +833,15 @@
             (php/aset sp (php/+ e k) (php/aget spans (php/+ e k)))
             (recur (php/+ k 1))))
         (recur (php/+ e 8))))
-    {:dists d :hits h :sides s :wallxs w :floordxs fx :floordys fy :spans sp}))
+    (loop [e 0]
+      (when (php/< e uspan-n)
+        (php/aset up e (php/intdiv (php/aget uspans e) 2))
+        (loop [k 1]
+          (when (php/< k 8)
+            (php/aset up (php/+ e k) (php/aget uspans (php/+ e k)))
+            (recur (php/+ k 1))))
+        (recur (php/+ e 8))))
+    {:dists d :hits h :sides s :wallxs w :floordxs fx :floordys fy :spans sp :uspans up}))
 
 (defn- frame-gradients
   "Memoized sky/floor gradient bundle for viewport height `vh` and look
@@ -846,6 +921,7 @@
    tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow  ; wall spans + shades
    shades-tex-u shades-tex-level shades-tex-px                              ; wall texture
    riser-top riser-bot riser-shade tier-top-tex                            ; risers (#370, tier-top tex #384)
+   upper-top upper-bot upper-shade                                        ; upper wall-slices (#387)
    mids lowers emask eheads ebodys elegss                                  ; enemy glyph rows
    e-stop e-sbot e-vtop e-vbot e-sx e-sxr e-spx e-sw e-sh e-fade           ; sprite window
    sprites-on bp-trc                                                       ; sprite/blood flags
@@ -923,7 +999,15 @@
                       ;; per-cell function dispatch.
                   rtop2       (php/aget riser-top col)
                   has-riser2? (php/!== nil rtop2)
-                  rbot2       (if has-riser2? (buf-get riser-bot col) 0)]
+                  rbot2       (if has-riser2? (buf-get riser-bot col) 0)
+                      ;; Upper-slice bounds (#387), the ceiling mirror of
+                      ;; the riser bounds above - see emit-scene-px1 for
+                      ;; the full rationale. Nil (dead) comparisons on a
+                      ;; full-height-ceiling world; inlined aget, no
+                      ;; per-cell function dispatch.
+                  utop2       (php/aget upper-top col)
+                  has-upper2? (php/!== nil utop2)
+                  ubot2       (if has-upper2? (buf-get upper-bot col) 0)]
                   ;; Cell pack -> pack-reg[0], resolved by ONE statement
                   ;; cond: the split kinds (sky / floor texture / wall
                   ;; texture) sample all four vertical sub-texels and
@@ -935,10 +1019,12 @@
                   ;;   -5 enemy glyph zone      -6 top edge
                   ;;   -7 top shadow            -8 bot edge
                   ;;   -9 bot shadow            -10 wall flat
-                  ;;   -11 tier-top floor (#370)
+                  ;;   -11 tier-top floor (#370) -12 upper slice (#387)
               (cond
                 mini?
                 (php/aset pack-reg 0 -1)
+                (if has-upper2? (if (php/>= r2 utop2) (php/< r2 ubot2) false) false)
+                (php/aset pack-reg 0 -12)
                 (php/< r2 sky-lim)
                 (if in-blood?
                   (php/aset pack-reg 0 -3)
@@ -1040,6 +1126,7 @@
                   (cond
                     (php/=== pack -1)  (php/aset cell-reg 0 sky-r2)
                     (php/=== pack -2)  (php/aset cell-reg 0 (buf-get riser-shade col))
+                    (php/=== pack -12) (php/aset cell-reg 0 (buf-get upper-shade col))
                     (php/=== pack -3)  (php/aset cell-reg 0 blood-sky-r2)
                         ;; Intentional alias: the blood floor reuses the
                         ;; blood sky row — one uniform red wash.
@@ -1091,17 +1178,19 @@
                                    true
                                    (if (php/=== pack -2)
                                      true
-                                     (if (php/=== pack -3)
+                                     (if (php/=== pack -12)
                                        true
-                                       (if (php/=== pack -4)
+                                       (if (php/=== pack -3)
                                          true
-                                         (if (php/=== pack -11)
+                                         (if (php/=== pack -4)
                                            true
-                                           (if (php/=== pack -7)
-                                             plain?
-                                             (if (php/=== pack -9)
+                                           (if (php/=== pack -11)
+                                             true
+                                             (if (php/=== pack -7)
                                                plain?
-                                               (if (php/=== pack -10) plain? false)))))))))
+                                               (if (php/=== pack -9)
+                                                 plain?
+                                                 (if (php/=== pack -10) plain? false))))))))))
                           ;; Overlay merge: tracer/pickup buffer wins the whole
                           ;; block; a sprite quad overrides per quadrant with
                           ;; transparent texels keeping the base pair.
@@ -1247,6 +1336,7 @@
    tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow  ; wall spans + shades
    shades-tex-u shades-tex-level shades-tex-px                              ; wall texture
    riser-top riser-bot riser-shade tier-top-tex                            ; risers (#370, tier-top tex #384)
+   upper-top upper-bot upper-shade                                         ; upper wall-slices (#387)
    mids lowers emask eheads ebodys elegss                                  ; enemy glyph rows
    e-stop e-sbot e-vtop e-vbot e-sx e-sxr e-spx e-sw e-sh e-fade           ; sprite window
    sprites-on bp-trc                                                       ; sprite/blood flags
@@ -1323,8 +1413,21 @@
                             ;; pays no function dispatch.
                         rtop       (php/aget riser-top col)
                         has-riser? (php/!== nil rtop)
-                        rbot       (if has-riser? (buf-get riser-bot col) 0)]
+                        rbot       (if has-riser? (buf-get riser-bot col) 0)
+                            ;; Upper wall-slice (#387): a lowered ceiling hangs
+                            ;; a wall band down from the top. Flat-ceiling
+                            ;; columns leave this nil - dead comparison, no cost
+                            ;; on the byte-identical flat path.
+                        utop       (php/aget upper-top col)
+                        has-upper? (php/!== nil utop)
+                        ubot       (if has-upper? (buf-get upper-bot col) 0)]
                     (cond
+                          ;; Upper wall-slice (#387): a lowered ceiling's wall
+                          ;; band, painted like a wall using the pre-shaded
+                          ;; colour from compute-upper-shades. Hangs from the
+                          ;; ceiling top, so it wins over sky for its rows.
+                      (if has-upper? (if (php/>= row utop) (php/< row ubot) false) false)
+                      (php/aset cell-reg 0 (buf-get upper-shade col))
                           ;; Half-block sky stacks two gradient sub-rows
                           ;; per cell (2× vertical). Blood columns keep
                           ;; the flat red wash.
@@ -1898,6 +2001,13 @@
          :riser-dist riser-dist :tier-fz tier-fz :tier-top-tex tier-top-tex}
         (compute-riser-shades (:spans cast-result) haze-shift stbl ctbl scene-pd svh eye-z
                               pfx pfy floordxs floordys floor-tex-px tex-fade-table pr)
+        ;; Upper wall-slice faces (#387), the ceiling mirror of the riser
+        ;; block above, from the flat :uspans stream (#386). Empty on
+        ;; full-height-ceiling worlds -> every array below comes back
+        ;; empty, so the row loop's `upper-top` aget reads nil for every
+        ;; column and the new branch never fires (byte-identical).
+        {:upper-top upper-top :upper-bot upper-bot :upper-shade upper-shade}
+        (compute-upper-shades (:uspans cast-result) haze-shift stbl ctbl scene-pd svh eye-z pr)
         ;; Enemy sprite zone boundaries (head/body/legs). For each
         ;; column carrying an enemy:
         ;;   row in [tops, mids)   -> head
@@ -2363,6 +2473,7 @@
                             tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow
                             shades-tex-u shades-tex-level shades-tex-px
                             riser-top riser-bot riser-shade tier-top-tex
+                            upper-top upper-bot upper-shade
                             mids lowers emask eheads ebodys elegss
                             e-stop e-sbot e-vtop e-vbot e-sx e-sxr e-spx e-sw e-sh e-fade
                             sprites-on bp-trc
@@ -2378,6 +2489,7 @@
                             tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow
                             shades-tex-u shades-tex-level shades-tex-px
                             riser-top riser-bot riser-shade tier-top-tex
+                            upper-top upper-bot upper-shade
                             mids lowers emask eheads ebodys elegss
                             e-stop e-sbot e-vtop e-vbot e-sx e-sxr e-spx e-sw e-sh e-fade
                             sprites-on bp-trc

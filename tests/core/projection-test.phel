@@ -2,7 +2,8 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.engine :refer [max-depth])
   (:require phel-doom.core.projection :refer [wall-px project-height pitch-rows pitch-cap
-                                              sprite-half-rows tier-top-row-dist]))
+                                              sprite-half-rows tier-top-row-dist
+                                              ceiling-top-row-dist]))
 
 ;; ---------------------------------------------------------------------
 ;; wall-px: the shared projection kernel. num / ((max 0.3 dist) * 2.0).
@@ -188,3 +189,40 @@
   ;; A tiny p (row hugging the horizon) would blow up toward infinity;
   ;; clamp matches build-floor-dperp's ceiling.
   (is (= max-depth (tier-top-row-dist 70.0 0.001 0.5 0.0))))
+
+;; ---------------------------------------------------------------------
+;; ceiling-top-row-dist: the ceiling mirror of tier-top-row-dist (#387).
+;; z > eye-z projects ABOVE the horizon, so p = row - horizon is negative.
+;; ---------------------------------------------------------------------
+
+(deftest ceiling-top-row-dist-flat-ceiling-case
+  ;; z=1, eye-z=0.5: (z-eye-z)*pd = 0.5*70 = 35; p=-5 gives 35/(5*2) = 3.5,
+  ;; the ceiling mirror of the flat floor's floor-cast-k / p.
+  (is (= 3.5 (ceiling-top-row-dist 70.0 -5.0 0.5 1.0))))
+
+(deftest ceiling-top-row-dist-lower-ceiling-is-nearer
+  ;; A lower ceiling (z closer to eye-z) needs a SMALLER perpendicular
+  ;; distance to land on the same screen row - it hangs "closer" to the
+  ;; horizon than the full-height ceiling at the same row.
+  (is (php/< (ceiling-top-row-dist 70.0 -5.0 0.5 0.75)
+             (ceiling-top-row-dist 70.0 -5.0 0.5 1.0))))
+
+(deftest ceiling-top-row-dist-reconciles-with-project-height
+  ;; Round-trip: project-height's row for a ceiling z/dist/eye-z, fed back
+  ;; through ceiling-top-row-dist at the resulting (negative) p, returns
+  ;; the same dist.
+  (let [pd    70.0 vh    30 dist  4.0 eye-z 0.5 z     0.75
+        row   (project-height pd vh dist eye-z z)
+        p     (php/- row (php// vh 2.0))]
+    (is (< (php/abs (php/- dist (ceiling-top-row-dist pd p eye-z z))) 0.001))))
+
+(deftest ceiling-top-row-dist-at-or-below-horizon-is-max-depth
+  ;; p >= 0 means the row is at/below the horizon - never sampled as
+  ;; ceiling, mirrors tier-top-row-dist's p <= 0 guard.
+  (is (= max-depth (ceiling-top-row-dist 70.0 0.0 0.5 1.0)))
+  (is (= max-depth (ceiling-top-row-dist 70.0 2.0 0.5 1.0))))
+
+(deftest ceiling-top-row-dist-clamped-to-max-depth
+  ;; A tiny |p| (row hugging the horizon) would blow up toward infinity;
+  ;; clamp matches tier-top-row-dist's ceiling.
+  (is (= max-depth (ceiling-top-row-dist 70.0 -0.001 0.5 1.0))))

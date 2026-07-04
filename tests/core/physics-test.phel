@@ -1,6 +1,6 @@
 (ns phel-doom-tests.core.physics-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.map     :refer [fz-step parse-layout])
+  (:require phel-doom.core.map     :refer [fz-step player-height parse-layout])
   (:require phel-doom.core.level   :refer [showcase-layout])
   (:require phel-doom.core.state   :refer [max-stamina new-world new-player])
   (:require phel-doom.core.physics :refer [try-move apply-physics sprint-engage-threshold sprint-multiplier stamina-drain stamina-regen tick-heartbeat tick-stamina tick-blood-drops]))
@@ -146,6 +146,49 @@
     (is (= [0.0 0.0 0.0 0.0 fz-step (php/* 2.0 fz-step) (php/* 3.0 fz-step) (php/* 3.0 fz-step)]
            zs)
         "walking north from the spawn climbs 0 -> 0.25 -> 0.5 -> 0.75 then holds on the platform")))
+
+;; ---------------------------------------------------------------------
+;; try-move + window-gap headroom (issue #388, epic #375 Phase 3): a cell
+;; is walk-through only when its vertical opening `ceiling-z - floor-z`
+;; clears `player-height`. A lowered lintel (small opening) blocks walking
+;; but stays see-through (the renderer still paints the upper slice #387).
+;; `player-height` equals one fz-step (0.25), so every shipped flat-ceiling
+;; level - including L2's fz-0.75 platform under a full cz-1.0 ceiling
+;; (opening 0.25) - stays walkable and behaviour is unchanged.
+;; ---------------------------------------------------------------------
+
+(defn- headroom-world [mid-fz mid-cz]
+  (new-world step-corridor (new-player 1.5 1.5 0.0)
+             [[0.0 0.0 0.0 0.0 0.0] mid-fz [0.0 0.0 0.0 0.0 0.0]]
+             [[1.0 1.0 1.0 1.0 1.0] mid-cz [1.0 1.0 1.0 1.0 1.0]]))
+
+(deftest test-try-move-blocked-by-low-ceiling
+  ;; Cell (2,1): flat floor (fz 0, step-up gate passes) but the ceiling
+  ;; drops to 0.2 - an opening of 0.2 < player-height (0.25). The lintel
+  ;; is too low to walk under, so the move is blocked like a wall.
+  (let [w0 (headroom-world [0.0 0.0 0.0 0.0 0.0] [1.0 1.0 0.2 1.0 1.0])
+        w  (try-move w0 1.0 0.0)
+        p  (:player w)]
+    (is (= 1.5 (:x p)) "low-ceiling cell blocks the move")
+    (is (= 0.0 (:z p)) "z stays put")))
+
+(deftest test-try-move-allowed-when-opening-clears-player-height
+  ;; Same cell but the ceiling only drops to exactly player-height above
+  ;; the floor (opening == 0.25 >= player-height): the move is allowed.
+  (let [w0 (headroom-world [0.0 0.0 0.0 0.0 0.0] [1.0 1.0 player-height 1.0 1.0])
+        w  (try-move w0 1.0 0.0)
+        p  (:player w)]
+    (is (= 2.5 (:x p)) "an opening of exactly player-height is walkable")))
+
+(deftest test-try-move-flat-ceiling-tier-stays-walkable
+  ;; Behaviour-neutral guard: a raised tier (fz 0.25) under a full ceiling
+  ;; (cz 1.0) has opening 0.75, far above player-height - the headroom gate
+  ;; must NOT block it (it is the ordinary one-step climb #371 allows).
+  (let [w0 (headroom-world [0.0 0.0 fz-step 0.0 0.0] [1.0 1.0 1.0 1.0 1.0])
+        w  (try-move w0 1.0 0.0)
+        p  (:player w)]
+    (is (= 2.5 (:x p)) "flat-ceiling raised tier is still walkable")
+    (is (= fz-step (:z p)) "z snaps to the tier fz")))
 
 ;; ---------------------------------------------------------------------
 ;; try-move + locked doors: arming the NEED <COLOUR> KEY HUD cue.

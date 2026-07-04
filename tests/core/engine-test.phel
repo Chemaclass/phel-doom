@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.map    :refer [default-grid])
   (:require phel-doom.core.state  :refer [new-world new-player])
-  (:require phel-doom.core.engine :refer [cast-ray cast-frame mark-visible-cells max-depth visited? visit-radius fov-proj-dist fov-clamp-width fov-max-deg proj-dist]))
+  (:require phel-doom.core.engine :refer [cast-ray cast-shot-dist cast-frame mark-visible-cells max-depth visited? visit-radius fov-proj-dist fov-clamp-width fov-max-deg proj-dist]))
 
 (def pgrid (to-php-array (map to-php-array default-grid)))
 
@@ -52,6 +52,52 @@
   ;; from (1.5, 1.5) facing north (-y), wall at y=1 → distance ~0.5
   (let [d (cast-ray pgrid 1.5 1.5 (- 0 (/ php/M_PI 2.0)))]
     (is (< d 1.0))))
+
+;; ---------------------------------------------------------------------
+;; cast-shot-dist: window-gap shoot-through (issue #388, epic #375). A
+;; hitscan/projectile travels at the muzzle height `shot-z` (eye level,
+;; ~0.5) and passes through a floor cell UNLESS its ceiling drops to or
+;; below the shot line (`cz <= shot-z`) - a lowered lintel stops the shot
+;; just like a wall. Full-height ceilings never block, so every shipped
+;; flat-ceiling level is behaviour-neutral (identical to `cast-ray`).
+;; ---------------------------------------------------------------------
+
+;; 8-wide corridor open along y=1, walls top/bottom + far east at x=7.
+(def shot-corridor
+  [[1 1 1 1 1 1 1 1]
+   [0 0 0 0 0 0 0 1]
+   [1 1 1 1 1 1 1 1]])
+(def shot-flat-fz (vec (repeat 3 (vec (repeat 8 0.0)))))
+(defn- shot-world [cz-mid]
+  (new-world shot-corridor (new-player 1.5 1.5 0.0) shot-flat-fz
+             [(vec (repeat 8 1.0)) cz-mid (vec (repeat 8 1.0))]))
+
+(deftest test-cast-shot-dist-flat-ceiling-matches-cast-ray
+  ;; Full-height ceiling everywhere: the shot behaves exactly like the
+  ;; wall-only cast-ray - the neutrality contract for shipped levels.
+  (let [w   (shot-world (vec (repeat 8 1.0)))
+        px  1.5 py  1.5 ang 0.0]
+    (is (= (cast-ray (:pgrid w) px py ang)
+           (cast-shot-dist (:pgrid w) (:pcz w) (:width w) 0.5 px py ang)))))
+
+(deftest test-cast-shot-dist-lowered-lintel-stops-shot-early
+  ;; Cell (4,1) ceiling drops to 0.2, below the 0.5 shot line: the shot
+  ;; stops at that lintel, nearer than the far wall the plain cast reaches.
+  (let [w    (shot-world [1.0 1.0 1.0 1.0 0.2 1.0 1.0 1.0])
+        px   1.5 py   1.5 ang  0.0
+        wall (cast-ray (:pgrid w) px py ang)
+        shot (cast-shot-dist (:pgrid w) (:pcz w) (:width w) 0.5 px py ang)]
+    (is (< shot wall) "the lowered lintel stops the shot before the wall")
+    (is (< (php/abs (php/- shot 2.5)) 0.001) "stops at the x=4 lintel (~2.5 away)")))
+
+(deftest test-cast-shot-dist-high-lintel-does-not-block
+  ;; Cell (4,1) ceiling at 0.75, ABOVE the 0.5 shot line: the shot clears
+  ;; it and travels on to the far wall, same as the flat-ceiling cast.
+  (let [w   (shot-world [1.0 1.0 1.0 1.0 0.75 1.0 1.0 1.0])
+        px  1.5 py  1.5 ang 0.0]
+    (is (= (cast-ray (:pgrid w) px py ang)
+           (cast-shot-dist (:pgrid w) (:pcz w) (:width w) 0.5 px py ang))
+        "a lintel above the shot line is see-through and shoot-through")))
 
 ;; ---------------------------------------------------------------------
 ;; DDA correctness (issue #2): pin the hit details cast-frame surfaces

@@ -1,5 +1,5 @@
 (ns phel-doom.core.combat
-  (:require phel-doom.core.engine     :refer [cast-ray fov-proj-dist])
+  (:require phel-doom.core.engine     :refer [cast-ray cast-shot-dist fov-proj-dist])
   (:require phel-doom.core.projection :refer [pitch-rows])
   (:require phel-doom.core.enemy      :refer [push-back-enemy shoot beam-impact splash pierce spread-shoot])
   (:require phel-doom.core.enemy-ai :refer [attacks? noise-wake])
@@ -578,13 +578,18 @@
          (aim-angle-offset (:aim-col world) (:scene-cols world))))
 
 (defn- cast-wall-dist
-  "Distance to the wall along the AIM direction (#324): an off-centre
-   reticle steers the wall probe too, so the shot stops at the wall the
-   reticle points at, not the one dead ahead. Centre / mouse-off aims down
-   `:angle`, identical to the pre-#324 cast."
+  "Distance the shot travels along the AIM direction (#324): an off-centre
+   reticle steers the probe too, so the shot stops at the wall the reticle
+   points at, not the one dead ahead. Centre / mouse-off aims down
+   `:angle`, identical to the pre-#324 cast. Uses `cast-shot-dist` (#388)
+   so a window-gap lintel (a floor cell whose ceiling dropped to/below the
+   muzzle height) stops the shot like a wall; on a flat-ceiling level every
+   ceiling is full-height, so this is identical to the plain wall cast."
   [world]
-  (let [p (:player world)]
-    (cast-ray (:pgrid world) (:x p) (:y p) (aim-angle world))))
+  (let [p      (:player world)
+        shot-z (php/+ 0.5 (or (:z p) 0.0))]
+    (cast-shot-dist (:pgrid world) (:pcz world) (:width world)
+                    shot-z (:x p) (:y p) (aim-angle world))))
 
 (defn- aim-svh
   "Scene viewport height (rows) the hit gate projects against. The game

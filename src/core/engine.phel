@@ -166,6 +166,58 @@
             (php/!== 0 hit)        dist
             :else                  (recur cx cy' sidex (php/+ sidey deltay))))))))
 
+(defn ^:pure cast-shot-dist
+  "Like `cast-ray`, but a hitscan / projectile at muzzle height `shot-z`
+   (eye level, ~0.5) also stops at a window-gap lintel: a floor cell whose
+   ceiling has dropped to or below the shot line (`cz <= shot-z`) blocks
+   the shot exactly like a wall, while a higher ceiling is shoot-through
+   (issue #388, epic #375 Phase 3). `pcz` is the world's flat ceiling
+   array (indexed `y * mapw + x`, default 1.0); on a flat-ceiling level
+   every `cz` is 1.0 > `shot-z`, so this reduces to `cast-ray` and combat
+   is behaviour-neutral. Runs per shot (not per column), so it favours
+   clarity over the closure-tax micro-tuning of the frame cast."
+  [pgrid pcz ^int mapw ^float shot-z ^float px ^float py ^float angle]
+  (let [max-depth   max-depth
+        dda-inf     dda-inf
+        ^array grid pgrid
+        ^array cz   pcz
+        dirx        (php/cos angle)
+        diry        (php/sin angle)
+        cx0         (php/intval (php/floor px))
+        cy0         (php/intval (php/floor py))
+        stepx       (if (php/< dirx 0.0) -1 1)
+        stepy       (if (php/< diry 0.0) -1 1)
+        deltax      (if (php/=== dirx 0.0) dda-inf (php/abs (php// 1.0 dirx)))
+        deltay      (if (php/=== diry 0.0) dda-inf (php/abs (php// 1.0 diry)))
+        sidex0      (if (php/< dirx 0.0)
+                      (php/* (php/- px cx0) deltax)
+                      (php/* (php/- (php/+ cx0 1.0) px) deltax))
+        sidey0      (if (php/< diry 0.0)
+                      (php/* (php/- py cy0) deltay)
+                      (php/* (php/- (php/+ cy0 1.0) py) deltay))]
+    (loop [cx cx0 cy cy0 sidex sidex0 sidey sidey0]
+      (if (php/< sidex sidey)
+        (let [cx'        (php/+ cx stepx)
+              dist       sidex
+              ^array row (get grid cy)
+              hit        (get row cx' 1)]
+          (cond
+            (php/> dist max-depth)                                   max-depth
+            (php/!== 0 hit)                                          dist
+            ;; window-gap lintel: ceiling of the entered cell drops to or
+            ;; below the shot line - the shot stops here like a wall.
+            (php/<= (get cz (php/+ (php/* cy mapw) cx') 1.0) shot-z) dist
+            :else                                                    (recur cx' cy (php/+ sidex deltax) sidey)))
+        (let [cy'        (php/+ cy stepy)
+              dist       sidey
+              ^array row (get grid cy')
+              hit        (get row cx 1)]
+          (cond
+            (php/> dist max-depth)                                   max-depth
+            (php/!== 0 hit)                                          dist
+            (php/<= (get cz (php/+ (php/* cy' mapw) cx) 1.0) shot-z) dist
+            :else                                                    (recur cx cy' sidex (php/+ sidey deltay))))))))
+
 (defn- do-cast
   "Cast every column once; returns the parallel :dists / :hits / :sides
    / :hxs / :hys map plus the :spans riser-event stream (issue #369) and

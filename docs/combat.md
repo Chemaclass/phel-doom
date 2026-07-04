@@ -56,7 +56,7 @@ Drops push into `:hearts` / `:armors` / `:ammo-boxes` vectors (same as level spa
 
 Two-step scan per shot:
 
-1. **Wall ray** along player facing via `cast-ray`, returns distance to first wall.
+1. **Shot ray** along player facing via `cast-shot-dist`, returns distance to the first blocker. A blocker is a wall OR a window-gap lintel: a floor cell whose ceiling has dropped to or below the muzzle height `shot-z` (eye level, `0.5 + player z`) stops the shot like a wall, while a higher ceiling is shoot-through (issue #388). On a flat-ceiling level every ceiling is full-height (`cz 1.0 > shot-z`), so this reduces exactly to the old wall-only `cast-ray` and combat is behaviour-neutral. Floor risers do not block shots (the shot skims over a raised step as before), which keeps tiered-floor levels like L2 unchanged.
 2. **Enemy scan**: project each alive enemy onto heading (dot product). Nearest one in front, closer than wall, within max-range, within hit-radius perpendicular, AND vertically on the sprite (see below) = hit. Flip `:alive false`, arm respawn timer (3-6s uniform).
 
 On hit: `play-shot-sfx` emits weapon report + kill cue (distance-attenuated). `on-shot-hit` bumps `:kills`, chains streak, pushes blood splatter, arms hit-stop if tough enemy dies, and stamps the crosshair hit-marker (see below).

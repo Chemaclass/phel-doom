@@ -262,6 +262,59 @@
     (is (< (php/abs (php/- (php/aget (:dists c) 0) 1.5)) 0.01)
         "wall hit unchanged")))
 
+;; ---------------------------------------------------------------------
+;; Upper-span cast (issue #386): the combined march tracks ceiling height
+;; (:pcz from #385) alongside floor and emits a flat :uspans stream where
+;; the ceiling DROPS, mirror of :spans. Behavior-neutral on flat-ceiling
+;; worlds (empty :uspans). Render ignores :uspans until #387.
+;; ---------------------------------------------------------------------
+
+(def full9 [1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0])
+
+(defn- ceil-corridor-world [mid-cz]
+  (new-world corridor-grid (new-player 1.5 1.5 0.0) [flat9 flat9 flat9] [full9 mid-cz full9]))
+
+(deftest test-cast-frame-flat-ceiling-uspans-empty
+  ;; Full-height worlds (every shipped level) cast with zero upper events.
+  (let [w (new-world chamber-grid (new-player 2.5 2.5 0.0))
+        c (cast-frame w 8 1)]
+    (is (php/is_array (:uspans c)))
+    (is (= 0 (php/count (:uspans c))))))
+
+(deftest test-cast-frame-single-ceiling-drop-emits-one-uspan
+  ;; cz 1.0 -> 0.75 at x=3: one drop event at the x=3.0 boundary, dist
+  ;; 1.5 from the player at x=1.5. cz0 = ceiling left, cz1 = lower entered.
+  (let [w  (ceil-corridor-world [1.0 1.0 1.0 0.75 1.0 1.0 1.0 1.0 1.0])
+        c  (cast-frame w 1 1)
+        sp (:uspans c)]
+    (is (= 8 (php/count sp)) "exactly one stride-8 upper event")
+    (is (= 0 (span-at sp 0 0)) "base col")
+    (is (< (php/abs (php/- (span-at sp 0 1) 1.5)) 0.01) "corrected dist")
+    (is (= 1.0 (span-at sp 0 2)) "cz0 = ceiling left")
+    (is (= 0.75 (span-at sp 0 3)) "cz1 = ceiling entered (lower)")
+    (is (= 0 (span-at sp 0 4)) "x-line -> side 0")
+    (is (= 3 (span-at sp 0 5)) "hx = entered cell x")
+    (is (= 1 (span-at sp 0 6)) "hy = entered cell y")))
+
+(deftest test-cast-frame-ceiling-raise-is-backface-no-uspan
+  ;; A ceiling that rises back up (0.75 -> 1.0 at x=4) is a backface, like
+  ;; a floor step-down: only the drop at x=3 emits, so exactly one event.
+  (let [w (ceil-corridor-world [1.0 1.0 1.0 0.75 1.0 1.0 1.0 1.0 1.0])
+        c (cast-frame w 1 1)]
+    (is (= 8 (php/count (:uspans c))) "only the drop emits, not the raise-back")))
+
+(deftest test-cast-frame-window-gap-emits-floor-and-upper-span
+  ;; A window-gap cell (raised floor AND lowered ceiling at x=3) emits
+  ;; BOTH a floor span and an upper span - the combined march tracks both.
+  (let [w (new-world corridor-grid (new-player 1.5 1.5 0.0)
+                     [flat9 [0.0 0.0 0.0 0.25 0.0 0.0 0.0 0.0 0.0] flat9]
+                     [full9 [1.0 1.0 1.0 0.75 1.0 1.0 1.0 1.0 1.0] full9])
+        c (cast-frame w 1 1)]
+    (is (= 8 (php/count (:spans c))) "floor rise still emits a span")
+    (is (= 8 (php/count (:uspans c))) "ceiling drop emits an upper span")
+    (is (= 0.25 (span-at (:spans c) 0 3)) "floor span z1")
+    (is (= 0.75 (span-at (:uspans c) 0 3)) "upper span cz1")))
+
 (deftest test-cast-frame-step-down-only-no-span
   ;; Player stands ON the raised tier; the only height change ahead is
   ;; a drop. Backface -> zero events.

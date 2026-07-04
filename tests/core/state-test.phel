@@ -333,3 +333,44 @@
                               (assoc-in [:fz-grid 1 1] 0.75)
                               (dissoc :fz-flat?)))]
     (is (= false (:fz-flat? w2)))))
+
+;; ---------------------------------------------------------------------
+;; Ceiling heights (issue #385, epic #375 Phase 3): :cz-grid source of
+;; truth + :pcz flat PHP twin (indexed y * width + x) + :cz-flat? build
+;; flag. Mirror of :fz-grid/:pfz/:fz-flat?, default 1.0 (full height).
+;; ---------------------------------------------------------------------
+
+(deftest test-new-world-defaults-flat-cz
+  ;; Construction without a cz-grid stays full-height: 1.0 everywhere,
+  ;; :pcz sized width * height, flat flag set.
+  (let [w (new-world grid (new-player 1.0 1.0 0.0))]
+    (is (= [[1.0 1.0 1.0] [1.0 1.0 1.0] [1.0 1.0 1.0]] (:cz-grid w)))
+    (is (= 9 (php/count (:pcz w))))
+    (is (= 1.0 (php/aget (:pcz w) 0)))
+    (is (= true (:cz-flat? w)))))
+
+(deftest test-new-world-accepts-cz-grid
+  (let [cz [[1.0 1.0 1.0]
+            [1.0 0.5 1.0]
+            [1.0 1.0 1.0]]
+        w  (new-world grid (new-player 1.0 1.0 0.0) nil cz)]
+    (is (= cz (:cz-grid w)))
+    ;; Flat index y * width + x: (1, 1) on a 3-wide grid -> 4.
+    (is (= 0.5 (php/aget (:pcz w) 4)))
+    (is (= false (:cz-flat? w)) "a lowered cell clears the flat flag")))
+
+(deftest test-rebuild-pgrid-refreshes-pcz
+  ;; :pcz is derived state; any :cz-grid change must re-sync it.
+  (let [w  (new-world grid (new-player 1.0 1.0 0.0))
+        w2 (rebuild-pgrid (assoc-in w [:cz-grid 1 1] 0.25))]
+    (is (= 0.25 (php/aget (:pcz w2) 4)))
+    (is (= false (:cz-flat? w2)))))
+
+(deftest test-rebuild-pgrid-defaults-missing-cz
+  ;; Old-save path: a decoded world without ceiling data gets full-height
+  ;; 1.0 defaults instead of nil (savestring->world calls rebuild-pgrid).
+  (let [w  (new-world grid (new-player 1.0 1.0 0.0))
+        w2 (rebuild-pgrid (-> w (dissoc :cz-grid) (dissoc :pcz)))]
+    (is (= [[1.0 1.0 1.0] [1.0 1.0 1.0] [1.0 1.0 1.0]] (:cz-grid w2)))
+    (is (= 9 (php/count (:pcz w2))))
+    (is (= 1.0 (php/aget (:pcz w2) 0)))))

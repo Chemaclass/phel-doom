@@ -9,7 +9,7 @@
                                        toggle-switch-cell toggle-target-cell
                                        parse-layout place-exit scatter-walls
                                        random-grid random-spawn seed-secrets
-                                       fz-step quantize-fz floor-z])
+                                       fz-step quantize-fz floor-z ceiling-z])
   (:require phel-doom.core.rng :as rng))
 
 (deftest test-walls-on-perimeter
@@ -234,6 +234,47 @@
   (is (= 0.5 (quantize-fz 0.4)))
   (is (= 0.75 (quantize-fz 0.75)))
   (is (= 0.0 (quantize-fz 0.0))))
+
+;; ---------------------------------------------------------------------
+;; Ceiling heights (issue #385, epic #375 Phase 3): per-cell `cz`, the
+;; mirror of `fz`. Default 1.0 (full-height ceiling); a lowered cell
+;; drops it. `ceiling-z` defaults OOB / nil to 1.0 so consumers never
+;; see nil, symmetric to `floor-z`'s 0.0.
+;; ---------------------------------------------------------------------
+
+(deftest test-ceiling-z-reads-heights
+  (let [cz [[1.0 0.75]
+            [0.5 0.25]]]
+    (is (= 1.0 (ceiling-z cz 0 0)))
+    (is (= 0.75 (ceiling-z cz 1 0)))
+    (is (= 0.5 (ceiling-z cz 0 1)))
+    (is (= 0.25 (ceiling-z cz 1 1)))))
+
+(deftest test-ceiling-z-oob-returns-full-height
+  ;; OOB / nil default to 1.0 (full ceiling), mirroring floor-z's 0.0.
+  (let [cz [[0.5 0.5]
+            [0.5 0.5]]]
+    (is (= 1.0 (ceiling-z cz -1 0)))
+    (is (= 1.0 (ceiling-z cz 0 -1)))
+    (is (= 1.0 (ceiling-z cz 5 0)))
+    (is (= 1.0 (ceiling-z cz 0 5)))
+    (is (= 1.0 (ceiling-z nil 1 1)))))
+
+(deftest test-parse-layout-authors-lowered-ceilings
+  ;; Lowercase a/b/c drop the ceiling to cz 0.75/0.5/0.25; every other
+  ;; cell keeps the full-height 1.0 default. Geometry stays plain floor.
+  (let [out (parse-layout ["#####"
+                           "#ab@#"
+                           "#c..#"
+                           "#####"])
+        cz  (:cz-grid out)]
+    (is (= 0.75 (get (get cz 1) 1)) "'a' -> cz 0.75")
+    (is (= 0.5 (get (get cz 1) 2)) "'b' -> cz 0.5")
+    (is (= 1.0 (get (get cz 1) 3)) "'@' keeps full-height ceiling")
+    (is (= 0.25 (get (get cz 2) 1)) "'c' -> cz 0.25")
+    (is (= 1.0 (get (get cz 2) 2)) "'.' keeps full-height ceiling")
+    ;; lowered-ceiling cells are still walkable floor geometrically
+    (is (= cell-floor (get (get (:grid out) 1) 1)))))
 
 (deftest test-parse-layout-digits-set-floor-height
   ;; Digit chars author raised floor tiers: geometry stays cell-floor,

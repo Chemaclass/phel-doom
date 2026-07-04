@@ -98,7 +98,13 @@
   (let [row (into [] (map (fn [_] 0.0) (range 0 (count (first grid)))))]
     (into [] (map (fn [_] row) (range 0 (count grid))))))
 
+;; Ceiling default is full-height 1.0 (issue #385), the mirror of flat-fz.
+(defn- flat-cz [grid]
+  (let [row (into [] (map (fn [_] 1.0) (range 0 (count (first grid)))))]
+    (into [] (map (fn [_] row) (range 0 (count grid))))))
+
 ;; Row-major flatten: index y * width + x, one aget in future hot loops.
+;; Structural (height-agnostic), so both :pfz and :pcz go through it.
 (defn- fz->pfz [fz-grid]
   (to-php-array (apply concat fz-grid)))
 
@@ -107,21 +113,30 @@
   ;; loaded flat worlds as tiered.
   (every? (fn [row] (every? (fn [z] (php/== 0.0 z)) row)) fz-grid))
 
+(defn- all-full-ceiling? [cz-grid]
+  ;; Mirror of all-flat? for ceilings; loose == for JSON-decoded 1.0.
+  (every? (fn [row] (every? (fn [z] (php/== 1.0 z)) row)) cz-grid))
+
 (defn rebuild-pgrid
-  "Re-derive `:pgrid` from `:grid` and `:pfz` from `:fz-grid`. Call
-   after any in-game mutation of the grid (secret reveal, switch
-   toggle, door open) so the raycaster's hot-path PHP-array views stay
-   in sync with the persistent Phel vectors. Without this the 3D view
-   paints the pre-mutation cell (player walks through a wall that
-   still visually looks solid). A missing `:fz-grid` defaults to flat
-   zeros so pre-#368 saves load clean."
+  "Re-derive `:pgrid` from `:grid`, `:pfz` from `:fz-grid`, and `:pcz`
+   from `:cz-grid`. Call after any in-game mutation of the grid (secret
+   reveal, switch toggle, door open) so the raycaster's hot-path
+   PHP-array views stay in sync with the persistent Phel vectors. Without
+   this the 3D view paints the pre-mutation cell (player walks through a
+   wall that still visually looks solid). A missing `:fz-grid` defaults to
+   flat zeros (pre-#368 saves) and a missing `:cz-grid` to full-height
+   1.0 (pre-#385 saves), so old saves load clean."
   [world]
-  (let [fz (or (:fz-grid world) (flat-fz (:grid world)))]
+  (let [fz (or (:fz-grid world) (flat-fz (:grid world)))
+        cz (or (:cz-grid world) (flat-cz (:grid world)))]
     (assoc world
            :pgrid (to-php-array (map to-php-array (:grid world)))
            :fz-grid fz
            :pfz (fz->pfz fz)
-           :fz-flat? (all-flat? fz))))
+           :fz-flat? (all-flat? fz)
+           :cz-grid cz
+           :pcz (fz->pfz cz)
+           :cz-flat? (all-full-ceiling? cz))))
 
 (defn new-world
   {:doc "Bundle map grid and player into the world state. Stores a PHP-native
@@ -129,12 +144,17 @@
          via aget instead of going through Phel's persistent-vector dispatch.
          The optional fz-grid (per-cell floor heights, issue #368) lands under
          :fz-grid with a flat PHP twin :pfz indexed y * width + x; nil (the
-         2-arity form) derives an all-zeros flat world."
+         2/3-arity forms) derives an all-zeros flat world. The optional
+         cz-grid (per-cell ceiling heights, issue #385) mirrors it under
+         :cz-grid / :pcz / :cz-flat?, defaulting to a full-height (1.0)
+         ceiling."
    :see-also ["new-player" "build-world" "rebuild-pgrid"]
    :example "(new-world grid (new-player 5.0 5.0 0.0)) ; => world map"}
-  ([grid player] (new-world grid player nil))
-  ([grid player fz-grid]
-   (let [fz (or fz-grid (flat-fz grid))]
+  ([grid player] (new-world grid player nil nil))
+  ([grid player fz-grid] (new-world grid player fz-grid nil))
+  ([grid player fz-grid cz-grid]
+   (let [fz (or fz-grid (flat-fz grid))
+         cz (or cz-grid (flat-cz grid))]
      {:grid      grid
       :pgrid     (to-php-array (map to-php-array grid))
       :fz-grid   fz
@@ -143,6 +163,11 @@
       ;; DDA march for flat worlds (the per-step fz read measured
       ;; +13-16% cast time, see #369).
       :fz-flat?  (all-flat? fz)
+      ;; Ceiling twin (issue #385): full-height 1.0 default, flat flag
+      ;; for the future ceiling-cast fast path.
+      :cz-grid   cz
+      :pcz       (fz->pfz cz)
+      :cz-flat?  (all-full-ceiling? cz)
       :width     (count (first grid))
       :height    (count grid)
       :player    player

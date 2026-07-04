@@ -57,6 +57,20 @@ Layouts author heights with digit chars: `1` / `2` / `3` parse as `cell-floor` w
 
 Casting, rendering, and physics all honor fz per epic #375: the raycaster's DDA engine supports multi-span columns (issue #369), the renderer paints risers and tier tops (issue #379), and player physics honor step-clears? (issue #371) so the player snaps up staircases cell-by-cell. The showcase level (L2) demonstrates the staircase mechanic.
 
+## Ceiling heights (cz)
+
+Issue #385 (epic #375 Phase 3) mirrors `fz` for ceilings: each cell carries a ceiling height in a separate `cz-grid`, defaulting to `1.0` (full height). A cell with raised `fz` and lowered `cz` is a window gap.
+
+```phel
+(ceiling-z cz-grid x y)   ; height at (x, y); out-of-bounds or nil grid = 1.0
+```
+
+Layouts author lowered ceilings with lowercase chars: `a` / `b` / `c` parse as `cell-floor` with cz 0.75 / 0.5 / 0.25 (quantized to `fz-step`, the shared quantum). `parse-layout` returns `{:grid :spawn :fz-grid :cz-grid}`; a layout with no lowercase chars yields an all-`1.0` `cz-grid`. `new-world` stores `:cz-grid` with a flat PHP twin `:pcz` (indexed `y * width + x`) and a build-time `:cz-flat?` flag, exactly like `:pfz` / `:fz-flat?`.
+
+Note: each layout char sets EITHER floor height (`1`/`2`/`3`) OR ceiling height (`a`/`b`/`c`), not both, so no single char authors a window gap (raised `fz` + lowered `cz`) on one cell yet. A combined-authoring char is left for the #387 render / #388 physics sub-issues that first need it.
+
+This is the data layer only (#385): cast / render / physics still assume ceiling `z = 1`, and every shipped level stays full-height, so behavior is unchanged. The cast (#386), render (#387), and physics/combat (#388) sub-issues make ceilings visible and walk-blocking.
+
 ## Random map generation
 
 ```phel

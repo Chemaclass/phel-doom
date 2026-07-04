@@ -111,6 +111,23 @@ Flat worlds pay near-zero extra cost. `:spans` is empty, `compute-riser-shades` 
 
 Perf gate (measured, `frame->string` micro-bench, deterministic worlds, no-JIT local, median of 5x500-iter runs): flat `build-world 1` at 180x40 renders at ~6.9ms/frame vs ~6.6ms on the pre-#370 baseline - **+~5%**, inside measurement noise (the baseline's own runs span 6.5-7.0ms). An earlier draft anchored the riser lookup in a `riser-top-at` FUNCTION called per cell, which cost +15-23%; inlining the `aget` recovered it. The staircase fixture at 180x40 renders at ~6.8ms, comfortably under the 16ms hard ceiling. This per-cell cost mirrors the enemy-sprite zone checks, which are likewise evaluated on every cell and gated by an unset-array sentinel.
 
+## Upper wall-slice painter (lowered ceilings)
+
+Issue #387 (epic #375 Phase 3) is the ceiling mirror of the riser painter above. It consumes the `:uspans` ceiling-drop stream #386's cast produces (see raycaster.md "Upper-span cast") - same stride-8 shape as `:spans`, but each event is a ceiling DROP (`cz1 < cz0`) rather than a floor rise. `compute-upper-shades` scans the flat stream once per frame and keeps only the FIRST (nearest) event per column, exactly like `compute-riser-shades`; that ascending-distance ordering IS the row clip, no separate occlusion pass.
+
+For a column with a ceiling drop, `compute-upper-shades` returns:
+
+- `upper-top` / `upper-bot`: the hanging wall band's screen rows, via `project-height` at the drop's fish-eye-corrected distance with `cz0` (the higher ceiling, projecting nearer the top of the viewport) and `cz1` (the lowered ceiling plane). Same projection kernel walls and risers use, so the slice reads as a wall face hanging from the ceiling.
+- `upper-shade`: a side-shaded colour string, built with the SAME wall-fog index formula `compute-riser-shades` uses (gamma distance falloff, `+3` vertical-face bonus, haze-shift). The band is flat-shaded (no texture sampling) - like a riser face it is usually a few rows tall.
+
+The row loop (both the px1 half-block path and the px2 pixel-doubled path) tests the upper slice FIRST, before sky: a lowered ceiling occludes the sky behind it. The branch is `has-upper? && upper-top <= row < upper-bot`, painting `upper-shade`; the ordinary sky/wall/floor logic follows unchanged. On a flat-ceiling world `:uspans` is empty, every column's `upper-top` aget reads `nil`, `has-upper?` is false, and the branch short-circuits as a dead comparison.
+
+`src/core/projection.phel` also gains `ceiling-top-row-dist`, the ceiling mirror of `tier-top-row-dist` (the `project-height` inverse for the above-horizon half-plane, guard `p >= 0 -> max-depth`). It is unit-tested and wired-and-ready for a future textured-ceiling pass but NOT yet on the paint path - `compute-upper-shades` uses `project-height` directly, so no textured ceiling-cast happens today.
+
+### Perf
+
+Same discipline as the riser painter: flat-ceiling worlds pay near-zero cost (`:uspans` empty, `compute-upper-shades` returns empty arrays in one pass, the per-cell upper lookup is a single inlined `aget` + `nil`-compare, no binding-value closures). The built closure counts are unchanged from the #386 baseline: `out/phel_doom/io/render/main.php` stays at 26 `function() use(` sites, `core/engine.php` at 2. Only lowered-ceiling columns (rare - no shipped level has them yet) evaluate the paint band.
+
 ## Distance-shaded sky and floor
 
 Per-row shade by distance from horizon (`vh/2`): rows near horizon darkest (atmospheric haze), overhead/feet brightest. Sky and floor share the gradient, pre-baked per viewport height in `build-horizon-gradient`.

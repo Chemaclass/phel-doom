@@ -69,7 +69,7 @@ Layouts author lowered ceilings with lowercase chars: `a` / `b` / `c` parse as `
 
 Note: each layout char sets EITHER floor height (`1`/`2`/`3`) OR ceiling height (`a`/`b`/`c`), not both, so no single char authors a window gap (raised `fz` + lowered `cz`) on one cell yet. A combined-authoring char is left for the #387 render / #388 physics sub-issues that first need it.
 
-This is the data layer only (#385): cast / render / physics still assume ceiling `z = 1`, and every shipped level stays full-height, so behavior is unchanged. The cast (#386), render (#387), and physics/combat (#388) sub-issues make ceilings visible and walk-blocking.
+Ceilings are now fully wired through the pipeline: the cast emits ceiling-drop `:uspans` (#386), the renderer paints the upper wall slice (#387), and physics + combat honor the gap (#388). Passability uses `headroom-clears?`: a cell is walk-through only when its opening `ceiling-z - floor-z` is at least `player-height` (one `fz-step`, 0.25), so a lowered lintel that pinches the opening blocks walking while staying see-through. Combat's `cast-shot-dist` stops a shot at a lintel whose ceiling has dropped to or below the muzzle height. `player-height` equals one `fz-step` precisely so every flat-ceiling level - including L2's fz-0.75 platform under a full cz-1.0 ceiling (opening 0.25) - stays walkable and shootable, i.e. behaviour is unchanged on all shipped levels. Enemy chase parity for the headroom gate is deferred (enemies still use the wall + step-up gate only), consistent with the epic's other deferred enemy-elevation work; no shipped level has lowered ceilings to exercise it.
 
 ## Random map generation
 

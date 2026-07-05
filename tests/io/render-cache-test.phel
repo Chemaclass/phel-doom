@@ -8,7 +8,7 @@
   (:require phel-doom.io.render.frame-math :refer [halfblock build-sky-halfblock])
   (:require phel-doom.io.render.palette :refer [shade-code-table boss-door-marker])
   (:require phel-doom.io.render.hud :refer [minimap-rows minimap-door-pulse])
-  (:require phel-doom.io.render.main :refer [frame->string floor-tex-px]))
+  (:require phel-doom.io.render.main :refer [frame->string floor-tex-px sprite-crop-bot sprite-crop-top]))
 
 ;; ---------------------------------------------------------------------
 ;; Gradient memo (frame-gradients) transparency. The sky/floor gradient
@@ -527,3 +527,76 @@
   ;; wiring independent of the exact byte hash above.
   (let [s (frame->string (stair-world 1.5 1.5) stats 120 30)]
     (is (php/str_contains s "\e[48;5;"))))
+
+;; ---------------------------------------------------------------------
+;; Enemy sprite occlusion by variable-height geometry (epic #375). Before
+;; this, sprites were occluded only by full-height walls (`dists`); a
+;; raised tier or lowered ceiling nearer than the enemy did NOT hide it,
+;; so a monster behind a platform painted straight through it. The two
+;; pure crop helpers pull the billboard's visible window in against that
+;; nearer geometry (feet behind a riser, head under a ceiling drop).
+;; ---------------------------------------------------------------------
+
+(deftest test-sprite-crop-bot
+  ;; No riser (nil dist) or a riser FARTHER than the sprite leaves the box
+  ;; bottom alone; a NEARER riser pulls the bottom up to its top row.
+  (is (= 20 (sprite-crop-bot 20 nil nil 5.0)) "no riser -> unchanged")
+  (is (= 20 (sprite-crop-bot 20 12 8.0 5.0)) "farther riser -> unchanged")
+  (is (= 12 (sprite-crop-bot 20 12 3.0 5.0)) "nearer riser crops feet to riser-top")
+  (is (= 20 (sprite-crop-bot 20 25 3.0 5.0)) "riser-top below the feet never extends the box"))
+
+(deftest test-sprite-crop-top
+  ;; Symmetric: a NEARER ceiling drop pushes the box top down to its
+  ;; bottom row; nil / farther drops leave it alone.
+  (is (= 4 (sprite-crop-top 4 nil nil 5.0)) "no ceiling drop -> unchanged")
+  (is (= 4 (sprite-crop-top 4 9 8.0 5.0)) "farther drop -> unchanged")
+  (is (= 9 (sprite-crop-top 4 9 3.0 5.0)) "nearer drop crops head to drop-bottom")
+  (is (= 4 (sprite-crop-top 4 2 3.0 5.0)) "drop-bottom above the head never extends the box"))
+
+;; 14-wide open room; an imp stands at (10.5, 2.5), the player at (1.5, 2.5)
+;; looking east. `occl-rows-touched` counts scene rows the enemy changes vs
+;; the same world with no enemy - a proxy for how much of the billboard is
+;; visible.
+(def occ-room
+  (let [wall (vec (repeat 14 1))
+        open (into [1] (into (vec (repeat 12 0)) [1]))]
+    (into [wall] (into (vec (repeat 3 open)) [wall]))))
+(def occ-imp {:x 10.5 :y 2.5 :type :imp :alive true :hp 30 :state :aware})
+(defn- occl-rows-touched [fz-grid]
+  (let [we (mark-visible-cells (assoc (new-world occ-room (new-player 1.5 2.5 0.0) fz-grid) :enemies [occ-imp]))
+        wn (mark-visible-cells (assoc (new-world occ-room (new-player 1.5 2.5 0.0) fz-grid) :enemies []))
+        re (php/explode "\n" (frame->string we stats 120 30))
+        rn (php/explode "\n" (frame->string wn stats 120 30))]
+    (count (filter (fn [i] (not= (php/aget re i) (php/aget rn i))) (range 28)))))
+
+(deftest test-enemy-visible-on-flat-floor
+  ;; Baseline: on a flat floor the enemy is unobstructed and paints into
+  ;; the scene (touches at least one row).
+  (is (php/> (occl-rows-touched (vec (repeat 5 (vec (repeat 14 0.0))))) 0)
+      "a flat-floor enemy is visible"))
+
+(deftest test-raised-tier-occludes-enemy-behind-it
+  ;; A tall tier (fz 0.75) between the player and the enemy hides some or
+  ;; all of the billboard, so the enemy touches STRICTLY fewer rows than on
+  ;; the flat floor - the occlusion the wall-only `dists` gate missed.
+  (let [flat (vec (repeat 5 (vec (repeat 14 0.0))))
+        tier (vec (repeat 5 (vec (map (fn [x] (if (php/=== x 7) 0.75 0.0)) (range 0 14)))))]
+    (is (php/< (occl-rows-touched tier) (occl-rows-touched flat))
+        "a raised tier occludes the enemy behind it")))
+
+(deftest test-fully-occluded-enemy-does-not-occlude-pickup
+  ;; The concrete bug this fixes: an enemy fully hidden behind a tall tier
+  ;; must NOT write `edists`, so a pickup behind it still paints. Pre-fix the
+  ;; bled-through enemy both painted and occluded the keycard. With the tier
+  ;; fully occluding the imp (window collapsed), adding the imp leaves the
+  ;; frame byte-identical to the keycard-only world - it paints nothing and
+  ;; occludes nothing.
+  (let [tier   (vec (repeat 5 (vec (map (fn [x] (if (php/=== x 7) 0.75 0.0)) (range 0 14)))))
+        kc     [{:x 11.5 :y 2.5 :colour :blue}]
+        w-both (mark-visible-cells (assoc (new-world occ-room (new-player 1.5 2.5 0.0) tier)
+                                          :enemies [occ-imp] :keycards kc))
+        w-kc   (mark-visible-cells (assoc (new-world occ-room (new-player 1.5 2.5 0.0) tier)
+                                          :keycards kc))]
+    (is (= (frame->string w-both stats 120 30)
+           (frame->string w-kc stats 120 30))
+        "a tier-hidden enemy neither paints nor occludes the pickup behind it")))

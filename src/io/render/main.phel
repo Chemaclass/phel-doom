@@ -2,7 +2,7 @@
 ;; perf snapshot, and the end / menu screens.
 (ns phel-doom.io.render.main
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
-  (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright shade-table shade-code-table shade-table-blood shade-code-table-blood])
+  (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright tier-top-fill tier-riser-fill shade-table shade-code-table shade-table-blood shade-code-table-blood])
   (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table tex-fade-tc bg-cell-cache halfblock halfblock-tc paint-bg quadblock build-sky-halfblock build-sky-codes-sub seam-darken-16 seam-darken-8 seam-darken-5 seam-shade! collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.wall-texture-data :refer [wall-tex])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type-lod sprite-fade sprite-fade-index sprite-col-x sprite-subcol-x enemy-sprite-cell enemy-sprite-quad])
@@ -10,7 +10,7 @@
   (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-reload-ready paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-weapon-hud])
   (:require phel-doom.io.render.sprites :refer [paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
-  (:require phel-doom.core.projection :refer [char-aspect wall-px pitch-rows project-height tier-top-row-dist])
+  (:require phel-doom.core.projection :refer [char-aspect wall-px pitch-rows project-height])
   (:require phel-doom.core.perf :refer [render-scale])
   (:require phel-doom.core.format :refer [format-duration])
   (:require phel-doom.core.version :refer [version]))
@@ -475,41 +475,6 @@
 ;; § Riser / tier-top column data (issue #370)
 ;; =====================================================================
 
-(def riser-face-darken
-  "Shade-table steps a riser FACE is pulled below the coplanar wall shade
-   (issue #373). Big enough that a step never reads as a same-distance
-   wall, small enough that a near rise doesn't crush to black."
-  3)
-
-(defn riser-shade-level
-  {:doc "Shade-table index for a riser FACE (issue #373 tier polish). Takes
-         the index a coplanar WALL would use at the same distance and pulls
-         it darker by `riser-face-darken` plus the tier level (height `z1`
-         in fz-step units: 0.25/0.5/0.75 -> 1/2/3), so a step reads distinct
-         from a wall AND taller rises read progressively darker (elevation
-         legible at a glance). Higher index = brighter (shade-table[i] =
-         code 232+i), so the pull is a subtraction, clamped at 0 (darkest).
-         `4.0` is `1 / map/fz-step` - kept literal to avoid a core.map
-         require in this hot render module; map-test/test-fz-step-pinned
-         pins fz-step at 0.25, so a drift there fails the suite loudly."
-   :see-also ["compute-riser-shades"]}
-  [^int wall-idx ^float z1]
-  (php/max 0 (php/- wall-idx
-                    (php/+ riser-face-darken
-                           (php/intval (php/round (php/* z1 4.0)))))))
-
-(defn- ^:pure tier-top-fog-level
-  "Fog level (0..23) for a tier-top floor texture sample at perpendicular
-   distance `dperp` (issue #384). Same gamma falloff + `floor-darken`
-   pull as `build-floor-level`, evaluated once per riser column instead
-   of per row - the tier-top band is approximated by a single texel, so
-   it needs a single fog level rather than a per-row array."
-  [^float dperp]
-  (php/max 0
-           (php/min 23
-                    (php/- (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// dperp max-depth))) 0.6) 23))
-                           floor-darken))))
-
 (defn- compute-riser-shades
   "Per-column NEAREST riser data from the flat `:spans` stream (#369),
    for painting a step's rise-face and gating the tier-top floor-cast
@@ -524,37 +489,29 @@
    Returns 6 php-arrays; a column with no riser is simply absent (its
    `riser-top` aget reads nil, the row loop's `has-riser?` sentinel):
      riser-top / riser-bot  screen rows of the riser face [top, bot)
-     riser-shade            side-shaded wall colour string for the face
+     riser-shade            plain dark step-face cell (`tier-riser-fill`)
      riser-dist             fish-eye corrected distance (for the enemy
                              z-buffer compare, same role as `dists`)
      tier-fz                floor height BEYOND the riser (z1) - the
                              tier-top floor-cast in the row loop reads
                              this instead of 0.0.
-     tier-top-tex           pre-painted BG cell string for the tier-top
-                             floor texture sample (issue #384), keyed by
-                             column like the others; absent columns fall
-                             back to the flat gradient in the row loop.
+     tier-top-tex           plain dark tier-top surface cell
+                             (`tier-top-fill`), keyed by column like the
+                             others; absent columns fall back to the flat
+                             floor gradient in the row loop.
 
    `pd` is the wall-height projection numerator (scene_pd: proj-dist at
    full detail, halved in px2); `svh` is the scene viewport height
-   `project-height` centres rows on; `eye-z` is the camera height;
-   `haze-shift` dims the riser face exactly like `compute-wall-shades`
-   dims walls. `pfx`/`pfy` are the player's world position; `floordxs`/
-   `floordys` are the per-column floor-cast ray basis (from the cast);
-   `floor-tex-px`/`tex-fade-table` are the floor texel LUT + distance-fog
-   LUT the flat floor path already samples.
+   `project-height` centres rows on; `eye-z` is the camera height.
 
-   Tier-top texturing (#384): rather than casting the whole thin band
-   per row (deferred - see docs/rendering.md), one representative world
-   point is sampled per column at the RISER-TOP row (`top-f`, before the
-   `pr` pitch shear is added) via `tier-top-row-dist` - the pure inverse
-   of `project-height` this module already unit-tests but never wired.
-   That point is the nearest edge of the tier-top band (right behind the
-   riser), so its perpendicular distance recovers `d-corr` almost
-   exactly; the whole band then paints with that single sampled +
-   fogged texel instead of the flat grey gradient."
-  [spans ^int haze-shift stbl ctbl ^float pd ^int svh ^float eye-z
-   ^float pfx ^float pfy floordxs floordys floor-tex-px tex-fade-table & [pr-arg]]
+   Legible stairs/platforms: both the step FACE and the tier-top SURFACE
+   paint as a PLAIN dark slate distinct from the textured grey floor. A
+   flat uniform fill (vs the busy floor texture) plus the darker-face /
+   lighter-top contrast makes elevation + individual stair edges pop
+   instead of blending into the floor. This deliberately drops the
+   per-tier/distance riser shading (#373) and the floor-texel tier-top
+   sampling (#384) in favour of that flat legibility."
+  [spans ^float pd ^int svh ^float eye-z & [pr-arg]]
   (let [pr           (or pr-arg 0)
         span-n       (php/count spans)
         riser-top    (php/array)
@@ -567,41 +524,17 @@
       (when (php/< base span-n)
         (let [col (php/aget spans base)]
           (when (php/=== nil (php/aget riser-top col))
-            (let [d-corr   (php/aget spans (php/+ base 1))
-                  z0       (php/aget spans (php/+ base 2))
-                  z1       (php/aget spans (php/+ base 3))
-                  side     (php/aget spans (php/+ base 4))
-                  top-f    (project-height pd svh d-corr eye-z z1)
-                  bot-f    (project-height pd svh d-corr eye-z z0)
-                  idx-raw  (php/max 0
-                                    (php/min 23
-                                             (php/+ (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// d-corr max-depth))) 0.6) 23))
-                                                    (if (php/=== side 0) 3 0))))
-                  ;; #373 tier polish: risers read as steps, not walls.
-                  ;; Start from the shade a coplanar wall would use here,
-                  ;; then pull it darker + nudge by tier height (z1).
-                  wall-idx (php/max 0 (php/- idx-raw haze-shift))
-                  idx      (riser-shade-level wall-idx z1)
-                  ;; Tier-top texture (#384): sample the floor texel at the
-                  ;; band's near edge (the riser-top row, before `pr`), one
-                  ;; texel/fog-level per column - no per-row cost.
-                  fdx      (php/aget floordxs col)
-                  fdy      (php/aget floordys col)
-                  tt-p     (php/- top-f (php/* 0.5 svh))
-                  tt-dperp (tier-top-row-dist pd tt-p eye-z z1)
-                  tt-fx    (php/+ pfx (php/* tt-dperp fdx))
-                  tt-fy    (php/+ pfy (php/* tt-dperp fdy))
-                  tt-tx    (php/intval (php/* (php/- tt-fx (php/floor tt-fx)) 64))
-                  tt-ty    (php/intval (php/* (php/- tt-fy (php/floor tt-fy)) 64))
-                  tt-tc    (php/aget floor-tex-px (php/+ (php/* tt-ty 64) tt-tx))
-                  tt-lvl   (tier-top-fog-level tt-dperp)
-                  tt-code  (php/aget (php/aget tex-fade-table tt-lvl) tt-tc)]
+            (let [d-corr (php/aget spans (php/+ base 1))
+                  z0     (php/aget spans (php/+ base 2))
+                  z1     (php/aget spans (php/+ base 3))
+                  top-f  (project-height pd svh d-corr eye-z z1)
+                  bot-f  (project-height pd svh d-corr eye-z z0)]
               (php/aset riser-top    col (php/+ (php/intval (php/round top-f)) pr))
               (php/aset riser-bot    col (php/+ (php/intval (php/round bot-f)) pr))
-              (php/aset riser-sh     col (php/aget stbl idx))
+              (php/aset riser-sh     col tier-riser-fill)
               (php/aset riser-dist   col d-corr)
               (php/aset tier-fz      col z1)
-              (php/aset tier-top-tex col (paint-bg tt-code)))))
+              (php/aset tier-top-tex col tier-top-fill))))
         (recur (php/+ base 8))))
     {:riser-top riser-top :riser-bot riser-bot :riser-shade riser-sh
      :riser-dist riser-dist :tier-fz tier-fz :tier-top-tex tier-top-tex}))
@@ -635,12 +568,13 @@
    [round(top-f), round(bot-f)) same as the riser's [top,bot).
 
    Shading reuses the flat WALL fog formula at the event's own corrected
-   distance/side (same `idx-raw` shape compute-wall-shades and
-   compute-riser-shades use) with NO extra tier-height darken pull - a
-   ceiling slice reads fine as 'more wall', and #373's riser-specific
-   darken only exists to separate a step's rise from a coplanar wall at
-   the SAME distance, which doesn't apply here (a future pass can add a
-   distinct ceiling tint if playtesting wants one).
+   distance/side (the same `idx-raw` shape `compute-wall-shades` uses),
+   so a ceiling slice reads as 'more wall'. Unlike the floor riser -
+   which paints a flat plain-dark constant (`tier-riser-fill`) so a step
+   never blends into the textured floor - the ceiling slice keeps the
+   wall shade: there is no adjacent floor texture for it to blend into,
+   so a distinct plain fill would only make it read as a hole. A future
+   pass can add a ceiling tint if playtesting wants one.
 
    `pd`/`svh`/`eye-z` are the same projection inputs `compute-riser-
    shades` takes; `haze-shift`/`stbl`/`ctbl` dim it exactly like
@@ -953,7 +887,7 @@
    floordxs floordys pfx pfy floor-dperp-sub floor-level-sub                ; floor-cast
    tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow  ; wall spans + shades
    shades-tex-u shades-tex-level shades-tex-px                              ; wall texture
-   riser-top riser-bot riser-shade tier-top-tex                            ; risers (#370, tier-top tex #384)
+   riser-top riser-bot riser-shade tier-top-tex                            ; risers + plain-dark tier tops (#370)
    upper-top upper-bot upper-shade                                        ; upper wall-slices (#387)
    mids lowers emask eheads ebodys elegss                                  ; enemy glyph rows
    e-stop e-sbot e-vtop e-vbot e-sx e-sxr e-spx e-sw e-sh e-fade           ; sprite window
@@ -1164,16 +1098,15 @@
                         ;; Intentional alias: the blood floor reuses the
                         ;; blood sky row — one uniform red wash.
                     (php/=== pack -4)  (php/aset cell-reg 0 (if in-blood? blood-sky-r2 flr-r2))
-                        ;; Tier-top floor (#370, textured #384): blood
-                        ;; wash still wins (matches the -4 floor case);
-                        ;; otherwise use the per-column pre-painted
-                        ;; texel from compute-riser-shades when present,
-                        ;; else fall back to the flat gradient (a column
-                        ;; whose riser math never resolved one).
+                        ;; Tier-top floor (#370): blood wash still wins
+                        ;; (matches the -4 floor case); otherwise paint the
+                        ;; per-column plain-dark surface cell (`tier-top-fill`)
+                        ;; from compute-riser-shades - a flat slate distinct
+                        ;; from the textured floor so a raised tier reads.
                     ;; tier-top-tex is set for exactly the columns that
                     ;; carry a riser, and pack -11 only fires there, so the
-                    ;; per-column texel is always present - no fallback (an
-                    ;; `or` here would closure-compile in the per-cell path).
+                    ;; cell is always present - no fallback (an `or` here
+                    ;; would closure-compile in the per-cell path).
                     (php/=== pack -11) (php/aset cell-reg 0
                                                  (if in-blood? blood-sky-r2 (buf-get tier-top-tex col)))
                     (php/=== pack -5)  (cond
@@ -1368,7 +1301,7 @@
    floordxs floordys pfx pfy floor-dperp-sub floor-level-sub                ; floor-cast
    tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow  ; wall spans + shades
    shades-tex-u shades-tex-level shades-tex-px                              ; wall texture
-   riser-top riser-bot riser-shade tier-top-tex                            ; risers (#370, tier-top tex #384)
+   riser-top riser-bot riser-shade tier-top-tex                            ; risers + plain-dark tier tops (#370)
    upper-top upper-bot upper-shade                                         ; upper wall-slices (#387)
    mids lowers emask eheads ebodys elegss                                  ; enemy glyph rows
    e-stop e-sbot e-vtop e-vbot e-sx e-sxr e-spx e-sw e-sh e-fade           ; sprite window
@@ -1468,21 +1401,21 @@
                       (php/aset cell-reg 0 (if in-blood?
                                              blood-sky-row
                                              (if subpixel? sky-hb-row sky-plain)))
-                          ;; Riser face (#370): the step's rise, painted
-                          ;; like a wall using the pre-shaded EW colour
-                          ;; from compute-riser-shades. Nearest riser only
+                          ;; Riser face (#370): the step's rise, painted with
+                          ;; the plain-dark face constant (`tier-riser-fill`)
+                          ;; from compute-riser-shades - a flat border distinct
+                          ;; from the walls + floor. Nearest riser only
                           ;; (compute-riser-shades already dropped farther
                           ;; ones in this column) so this IS the row clip -
                           ;; nothing behind it competes for these rows.
                       (if has-riser? (if (php/>= row rtop) (php/< row rbot) false) false)
                       (php/aset cell-reg 0 (buf-get riser-shade col))
-                          ;; Tier-top floor (#370, textured #384): the raised
-                          ;; tier's own ground, in the thin band between the
-                          ;; far wall's bottom and the riser's top. Uses the
-                          ;; per-column pre-painted texel from
-                          ;; compute-riser-shades when present (sampled once
-                          ;; per column, not per cell), else the flat
-                          ;; gradient; blood wash still wins.
+                          ;; Tier-top floor (#370): the raised tier's own
+                          ;; ground, in the thin band between the far wall's
+                          ;; bottom and the riser's top. Paints the per-column
+                          ;; plain-dark surface constant (`tier-top-fill`) from
+                          ;; compute-riser-shades - flat slate distinct from the
+                          ;; textured floor; blood wash still wins.
                       (if has-riser? (php/< row rtop) false)
                       (php/aset cell-reg 0 (if in-blood? blood-flr-row (buf-get tier-top-tex col)))
                           ;; Floor: cast the ground plane and sample the
@@ -2041,8 +1974,7 @@
         ;; for every column and its extra branches never fire.
         {:riser-top riser-top :riser-bot riser-bot :riser-shade riser-shade
          :riser-dist riser-dist :tier-fz tier-fz :tier-top-tex tier-top-tex}
-        (compute-riser-shades (:spans cast-result) haze-shift stbl ctbl scene-pd svh eye-z
-                              pfx pfy floordxs floordys floor-tex-px tex-fade-table pr)
+        (compute-riser-shades (:spans cast-result) scene-pd svh eye-z pr)
         ;; Upper wall-slice faces (#387), the ceiling mirror of the riser
         ;; block above, from the flat :uspans stream (#386). Empty on
         ;; full-height-ceiling worlds -> every array below comes back

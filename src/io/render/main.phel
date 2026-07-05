@@ -620,10 +620,13 @@
    the same column are hidden behind it and skipped outright - this IS
    the row clip, mirroring compute-riser-shades exactly.
 
-   Returns 3 php-arrays; a column with no upper-span is simply absent
+   Returns 4 php-arrays; a column with no upper-span is simply absent
    (its `upper-top` aget reads nil, the row loop's `has-upper?` sentinel):
      upper-top / upper-bot  screen rows of the slice face [top, bot)
      upper-shade            side-shaded wall colour string for the face
+     upper-dist             fish-eye corrected distance of the drop (the
+                            ceiling mirror of `riser-dist`, read by the
+                            enemy zone pass to occlude sprites behind it)
 
    `top-f` projects the event's `cz0` (the higher ceiling being left -
    nearer to the camera, so it lands closer to the true screen top /
@@ -644,11 +647,15 @@
    `compute-wall-shades` dims walls."
   {:see-also ["compute-riser-shades" "project-height"]}
   [uspans ^int haze-shift stbl ctbl ^float pd ^int svh ^float eye-z & [pr-arg]]
-  (let [pr        (or pr-arg 0)
-        span-n    (php/count uspans)
-        upper-top (php/array)
-        upper-bot (php/array)
-        upper-sh  (php/array)]
+  (let [pr         (or pr-arg 0)
+        span-n     (php/count uspans)
+        upper-top  (php/array)
+        upper-bot  (php/array)
+        upper-sh   (php/array)
+        ;; Corrected distance of the nearest ceiling drop per column, the
+        ;; ceiling mirror of `riser-dist`: the enemy zone pass reads it to
+        ;; occlude a sprite whose head sits behind a nearer lowered ceiling.
+        upper-dist (php/array)]
     (loop [base 0]
       (when (php/< base span-n)
         (let [col (php/aget uspans base)]
@@ -664,11 +671,37 @@
                                             (php/+ (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// d-corr max-depth))) 0.6) 23))
                                                    (if (php/=== side 0) 3 0))))
                   idx     (php/max 0 (php/- idx-raw haze-shift))]
-              (php/aset upper-top col (php/+ (php/intval (php/round top-f)) pr))
-              (php/aset upper-bot col (php/+ (php/intval (php/round bot-f)) pr))
-              (php/aset upper-sh  col (php/aget stbl idx)))))
+              (php/aset upper-top  col (php/+ (php/intval (php/round top-f)) pr))
+              (php/aset upper-bot  col (php/+ (php/intval (php/round bot-f)) pr))
+              (php/aset upper-dist col d-corr)
+              (php/aset upper-sh   col (php/aget stbl idx)))))
         (recur (php/+ base 8))))
-    {:upper-top upper-top :upper-bot upper-bot :upper-shade upper-sh}))
+    {:upper-top upper-top :upper-bot upper-bot :upper-shade upper-sh :upper-dist upper-dist}))
+
+(defn sprite-crop-bot
+  "Feet-occlusion clip for an enemy billboard column (#375 tiers). A raised
+   tier NEARER than the sprite (`riser-dist < d`) hides the enemy's lower
+   body: the riser face + tier-top floor between camera and enemy block the
+   view down to the riser's top screen row, so the visible box bottom is
+   pulled up to `riser-top`. Returns `e-bot` unchanged when the column has
+   no riser (`riser-dist` nil) or the riser is farther than the sprite (the
+   enemy stands in front of / on it). Distances are fish-eye corrected, the
+   same space as `dists` / `riser-dist`."
+  [^int e-bot riser-top riser-dist ^float d]
+  (if (and (php/!== nil riser-dist) (php/< riser-dist d))
+    (php/min e-bot riser-top)
+    e-bot))
+
+(defn sprite-crop-top
+  "Head-occlusion clip for an enemy billboard column (#387 lowered ceilings).
+   A ceiling drop NEARER than the sprite (`upper-dist < d`) hangs in front of
+   the enemy's upper body: the visible box top is pushed down to the drop's
+   bottom screen row (`upper-bot`). Returns `e-top` unchanged when the column
+   has no drop (`upper-dist` nil) or the drop is farther than the sprite."
+  [^int e-top upper-bot upper-dist ^float d]
+  (if (and (php/!== nil upper-dist) (php/< upper-dist d))
+    (php/max e-top upper-bot)
+    e-top))
 
 ;; =====================================================================
 ;; § Pulse cadences + near-death haze
@@ -2006,7 +2039,7 @@
         ;; full-height-ceiling worlds -> every array below comes back
         ;; empty, so the row loop's `upper-top` aget reads nil for every
         ;; column and the new branch never fires (byte-identical).
-        {:upper-top upper-top :upper-bot upper-bot :upper-shade upper-shade}
+        {:upper-top upper-top :upper-bot upper-bot :upper-shade upper-shade :upper-dist upper-dist}
         (compute-upper-shades (:uspans cast-result) haze-shift stbl ctbl scene-pd svh eye-z pr)
         ;; Enemy sprite zone boundaries (head/body/legs). For each
         ;; column carrying an enemy:
@@ -2198,11 +2231,23 @@
                 (when (php/<= c c-to)
                   (when (php/< d (buf-get dists c))
                     ;; The sprite is gated against the full-height wall
-                    ;; (`dists`, above); on the flat single-floor world the
-                    ;; whole billboard span [e-top, e-bot) is visible.
-                    (let [c-top e-top
-                          c-bot e-bot]
-                      (if spr
+                    ;; (`dists`, above). Now crop the billboard against the
+                    ;; NEARER variable-height geometry (#375): a raised tier
+                    ;; between camera and enemy hides the feet down to its
+                    ;; riser-top row (`sprite-crop-bot`), and a lowered
+                    ;; ceiling hanging in front hides the head up to its
+                    ;; drop-bottom row (`sprite-crop-top`). On a flat-floor
+                    ;; flat-ceiling world the riser/upper arrays are empty,
+                    ;; both crops are no-ops (aget nil), and the window is the
+                    ;; full box - byte-identical to before.
+                    (let [c-top (sprite-crop-top e-top (php/aget upper-bot c) (php/aget upper-dist c) d)
+                          c-bot (sprite-crop-bot e-bot (php/aget riser-top c) (php/aget riser-dist c) d)]
+                      ;; Fully occluded (window collapsed): paint nothing, and
+                      ;; do NOT touch edists - a hidden enemy must neither
+                      ;; occlude a pickup behind it nor drop a grounding
+                      ;; shadow (the "clip nil" case the shadow pass expects).
+                      (when (php/< c-top c-bot)
+                        (if spr
                                ;; Sprite path: stash the FULL billboard box
                                ;; (e-stop/e-sbot drive the sprite-y sampling)
                                ;; plus the cross-tier VISIBLE window
@@ -2212,55 +2257,52 @@
                                ;; pixels, not squished into the window. Wall
                                ;; tops/bots stay untouched so transparent
                                ;; pixels show the wall behind.
-                        (do
-                          (buf-set e-stop c e-top)
-                          (buf-set e-sbot c e-bot)
-                          (buf-set e-vtop c c-top)
-                          (buf-set e-vbot c c-bot)
-                          (buf-set e-sx c (sprite-col-x sw col ehw c))
-                          (buf-set e-sxr c (sprite-subcol-x sw col ehw c))
-                          (buf-set e-spx c spx)
-                          (buf-set e-sw c sw)
-                          (buf-set e-sh c sh)
-                          (buf-set e-fade c sfade)
-                          (buf-set emask c true))
-                        (do
+                          (do
+                            (buf-set e-stop c e-top)
+                            (buf-set e-sbot c e-bot)
+                            (buf-set e-vtop c c-top)
+                            (buf-set e-vbot c c-bot)
+                            (buf-set e-sx c (sprite-col-x sw col ehw c))
+                            (buf-set e-sxr c (sprite-subcol-x sw col ehw c))
+                            (buf-set e-spx c spx)
+                            (buf-set e-sw c sw)
+                            (buf-set e-sh c sh)
+                            (buf-set e-fade c sfade)
+                            (buf-set emask c true))
+                          (do
                                  ;; Glyph path: clip the drawn span to [c-top,
                                  ;; c-bot). `mids`/`lowers` keep the UNCLIPPED
                                  ;; `e-mid`/`e-lower` - the head/body/legs split
                                  ;; is anatomical, so clamping tops/bots just
                                  ;; ends the paint loop early (legs/head hidden)
                                  ;; without sliding the zones.
-                          (buf-set tops c c-top)
-                          (buf-set bots c c-bot)
-                          (buf-set mids c e-mid)
-                          (buf-set lowers c e-lower)
+                            (buf-set tops c c-top)
+                            (buf-set bots c c-bot)
+                            (buf-set mids c e-mid)
+                            (buf-set lowers c e-lower)
                                    ;; Cyberdemon: carve a boss silhouette out of
                                    ;; the rectangle so the form reads as helmet +
                                    ;; arms + 2 legs instead of a giant imp brick.
-                          (let [[ph pb pl] (if (and (php/=== (:type proj) :cyber)
-                                                    body-code)
-                                             (boss-col-paint
-                                              (php// (php/abs (php/- c col))
-                                                     (php/max 1 hw))
-                                              fhead fbody flegs body-code body-fade
-                                              (buf-get shades-normal c))
-                                             [fhead fbody flegs])]
-                            (buf-set eheads c ph)
-                            (buf-set ebodys c pb)
-                            (buf-set elegss c pl))
-                          (buf-set emask c true)))
+                            (let [[ph pb pl] (if (and (php/=== (:type proj) :cyber)
+                                                      body-code)
+                                               (boss-col-paint
+                                                (php// (php/abs (php/- c col))
+                                                       (php/max 1 hw))
+                                                fhead fbody flegs body-code body-fade
+                                                (buf-get shades-normal c))
+                                               [fhead fbody flegs])]
+                              (buf-set eheads c ph)
+                              (buf-set ebodys c pb)
+                              (buf-set elegss c pl))
+                            (buf-set emask c true)))
                                ;; Track nearest enemy distance for this col so
                                ;; pickups behind it occlude properly. Multiple
                                ;; enemies on the same col → keep the closest.
                                ;; The shadow pass below also reads this to keep
                                ;; only the front enemy's grounding shadow.
-                               ;; Skipped when fully tier-occluded (clip nil):
-                               ;; a hidden enemy can't occlude a pickup as an
-                               ;; enemy, and its grounding shadow must not draw.
-                      (let [prev (buf-get edists c)]
-                        (when (or (php/=== prev nil) (php/< d prev))
-                          (buf-set edists c d)))))
+                        (let [prev (buf-get edists c)]
+                          (when (or (php/=== prev nil) (php/< d prev))
+                            (buf-set edists c d))))))
                   (recur (php/+ c 1)))))))))
     ;; Grounding shadows, second pass. The shadow goes into blood-paint
     ;; (top-priority overlay), so it can't be painted inline during the

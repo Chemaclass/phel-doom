@@ -1,0 +1,37 @@
+;; Multi-step stair painter (#375 verticality): `row-in-farther-face?`
+;; classifies a plateau screen row as inside one of the FARTHER stacked
+;; step faces (so it paints dark) vs a tread/platform surface (light).
+;; The nearest step face is handled by the emitters' fast-path range
+;; test; this helper walks only the farther bands compute-riser-shades
+;; packs (stride 3: top, bot, dist near->far).
+(ns phel-doom-tests.io.riser-band-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.io.render.main :refer [row-in-farther-face? row-at-farther-face-top?]))
+
+(deftest no-bands-is-false
+  (is (= false (row-in-farther-face? nil 5))
+      "a column with no farther steps (nil band list) is never a face"))
+
+(deftest single-farther-face-band
+  ;; one farther step face spanning rows [10, 14)
+  (let [sb (php/array 10 14 3.0)]
+    (is (= false (row-in-farther-face? sb 9))  "row above the face top is a tread")
+    (is (= true  (row-in-farther-face? sb 10)) "top row is inside the face [inclusive]")
+    (is (= true  (row-in-farther-face? sb 13)) "last face row is inside")
+    (is (= false (row-in-farther-face? sb 14)) "bot row is outside the face [exclusive]")))
+
+(deftest two-stacked-farther-faces
+  ;; nearer-of-the-farther face [10,14), the next one up [5,9)
+  (let [sb (php/array 10 14 3.0 5 9 4.0)]
+    (is (= true  (row-in-farther-face? sb 12)) "inside the lower farther face")
+    (is (= false (row-in-farther-face? sb 9))  "the tread gap between the two faces")
+    (is (= true  (row-in-farther-face? sb 7))  "inside the higher farther face")
+    (is (= false (row-in-farther-face? sb 4))  "above every face is the platform top")))
+
+(deftest face-top-is-the-lit-lip
+  (let [sb (php/array 10 14 3.0 5 9 4.0)]
+    (is (= true  (row-at-farther-face-top? sb 10)) "top of the lower farther face is a lip")
+    (is (= true  (row-at-farther-face-top? sb 5))  "top of the higher farther face is a lip")
+    (is (= false (row-at-farther-face-top? sb 13)) "an interior face row is not the lip")
+    (is (= false (row-at-farther-face-top? sb 9))  "a bottom row is not the lip")
+    (is (= false (row-at-farther-face-top? nil 5)) "no bands -> no lip")))

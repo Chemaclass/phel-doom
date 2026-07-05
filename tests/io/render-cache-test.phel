@@ -584,6 +584,27 @@
     (is (php/< (occl-rows-touched tier) (occl-rows-touched flat))
         "a raised tier occludes the enemy behind it")))
 
+(defn- occl-first-row
+  "First scene row (0-27) the enemy changes vs the no-enemy frame - a proxy
+   for the top of the visible billboard. 99 when the enemy paints nothing."
+  [fz-grid]
+  (let [we (mark-visible-cells (assoc (new-world occ-room (new-player 1.5 2.5 0.0) fz-grid) :enemies [occ-imp]))
+        wn (mark-visible-cells (assoc (new-world occ-room (new-player 1.5 2.5 0.0) fz-grid) :enemies []))
+        re (php/explode "\n" (frame->string we stats 120 30))
+        rn (php/explode "\n" (frame->string wn stats 120 30))]
+    (reduce (fn [acc i] (if (and (php/=== acc 99) (not= (php/aget re i) (php/aget rn i))) i acc))
+            99 (range 28))))
+
+(deftest test-enemy-on-raised-tier-anchors-higher
+  ;; Feet-anchoring (#375): an imp standing ON a 0.75 platform renders
+  ;; HIGHER up the screen than the same imp on flat ground - its feet sit
+  ;; on the platform surface instead of sinking to world z=0. A smaller
+  ;; first-row = the billboard moved up.
+  (let [flat (vec (repeat 5 (vec (repeat 14 0.0))))
+        plat (vec (repeat 5 (vec (map (fn [x] (if (php/>= x 8) 0.75 0.0)) (range 0 14)))))]
+    (is (php/< (occl-first-row plat) (occl-first-row flat))
+        "an enemy on a raised tier stands higher than on flat ground")))
+
 (deftest test-fully-occluded-enemy-does-not-occlude-pickup
   ;; The concrete bug this fixes: an enemy fully hidden behind a tall tier
   ;; must NOT write `edists`, so a pickup behind it still paints. Pre-fix the

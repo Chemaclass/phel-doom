@@ -2026,6 +2026,15 @@
         ;; missing key reads as 0.0 so this stays byte-identical to the
         ;; hardcoded 0.5 everywhere else in the file until that lands.
         eye-z                               (php/+ 0.5 (get (:player world) :z 0.0))
+        ;; Flat per-cell floor-height hot array (#375, indexed y*mapw+x),
+        ;; so the enemy zone pass can anchor each billboard's feet on the
+        ;; tier it stands on rather than the flat z=0 ground. Read via a
+        ;; bare aget (no `floor-z` call) to keep the built-file closure
+        ;; count at baseline; every cell is present (flat worlds store 0.0),
+        ;; and enemies are always in-bounds. On a world without :pfz the
+        ;; aget yields nil -> treated as 0.0 (old anchor).
+        pfz                                 (:pfz world)
+        mapw                                (:width world)
         ;; Riser faces + tier-top floor gating (#370), from the flat
         ;; :spans stream (#369). Empty on flat worlds -> every array below
         ;; comes back empty, so the row loop's `riser-top` aget reads nil
@@ -2185,12 +2194,24 @@
                    ;; darkening) rather than level 8 (65%), keeping its
                    ;; shading bands visible against dark stone.
               sfade     (php/aget sprite-fade (sprite-fade-index body-fade))]
-          ;; #297: anchor the billboard by its FEET on the projected z=0
-          ;; floor (eye-z 0.5 on flat ground), then draw the body UPWARD by
-          ;; `h`. `scene-pd` is halved in px2 mode, so the projection scales
-          ;; there automatically.
-          (let [feet-row (php/+ (php/intval (php/round (php/+ (php// svh 2.0)
-                                                              (php/* 0.5 (wall-px scene-pd d)))))
+          ;; #297: anchor the billboard by its FEET on the projected floor,
+          ;; then draw the body UPWARD by `h`. #375: the feet land on the
+          ;; enemy's CELL floor height (`enemy-fz`), not flat z=0, so a
+          ;; monster on a raised tier stands on the platform instead of
+          ;; sinking through it; `project-height` with the shared `eye-z`
+          ;; (0.5 + player z) also keeps the anchor correct when the PLAYER
+          ;; is elevated. On flat ground (enemy-fz 0, eye-z 0.5) this equals
+          ;; the old `svh/2 + 0.5*wall-px` exactly (byte-identical).
+          ;; `scene-pd` is halved in px2 mode, so the projection scales there.
+          (let [enemy-fz (php/aget pfz (php/+ (php/* (:cell-y proj) mapw) (:cell-x proj)))
+                ;; project-height(scene-pd, svh, d, eye-z, enemy-fz) written
+                ;; inline via wall-px (as the pre-#375 anchor did) so the
+                ;; ^:pure project-height isn't inlined into a fresh per-frame
+                ;; closure here - keeps the built-file closure count at its
+                ;; documented baseline. enemy-fz 0 + eye-z 0.5 -> the old
+                ;; `svh/2 + 0.5*wall-px`.
+                feet-row (php/+ (php/intval (php/round (php/- (php// svh 2.0)
+                                                              (php/* (php/- enemy-fz eye-z) (wall-px scene-pd d)))))
                                 pr)
                 e-top    (php/- feet-row h)]
             (let [e-bot         (php/+ e-top h)

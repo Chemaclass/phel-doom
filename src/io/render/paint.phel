@@ -51,12 +51,22 @@
    the same `pr` to stay pinned to the head. pr=0 keeps the overlay
    exactly where it was.
 
-   The face also tracks the sprite's feet anchor: on flat ground (fz=0,
-   eye-z=0.5) the feet row is `round(vh/2 + 0.5 * wall-px(proj-dist, d)) + pr`,
-   and the face glyph paints at the sprite's upper third (`feet-row - h + h/6`)
-   so the face sits on the standing body."
+   The face tracks the sprite's feet anchor, which lifts to the enemy's
+   own cell floor height (`enemy-fz`, #375): the feet row is
+   `round(vh/2 - (enemy-fz - eye-z) * wall-px(proj-dist, d)) + pr` (on flat
+   ground fz=0/eye-z=0.5 this is the old `vh/2 + 0.5*wall-px`), and the face
+   glyph paints at the sprite's upper third (`feet-row - h + h/6`) so it
+   sits on the standing body even when the enemy is on a raised tier."
   [parts world stats vw vh dists edists face-phase ^int sc & [pr-arg]]
-  (let [pr (or pr-arg 0)]
+  (let [pr    (or pr-arg 0)
+        ;; Feet anchor lifts to the enemy's own cell floor height (#375),
+        ;; so the face glyph tracks a tier-standing body instead of the
+        ;; flat z=0 row. Bare `:pfz` aget (no floor-z call) + `eye-z`
+        ;; matching the zone pass; flat worlds (fz 0, eye-z 0.5) are
+        ;; byte-identical to the old anchor.
+        pfz   (:pfz world)
+        mapw  (:width world)
+        eye-z (php/+ 0.5 (get (:player world) :z 0.0))]
     (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
       (let [col         (:col proj)
             d           (:dist proj)
@@ -73,7 +83,8 @@
                    (php/< col vw)
                    (enemy-front-visible-at? d col dists edists))
           (let [h        (sprite-h vh d 1.0)
-                feet-row (php/+ (php/intval (php/round (php/+ (php// vh 2.0) (php/* 0.5 (wall-px proj-dist d))))) pr)
+                enemy-fz (php/aget pfz (php/+ (php/* (:cell-y proj) mapw) (:cell-x proj)))
+                feet-row (php/+ (php/intval (php/round (php/- (php// vh 2.0) (php/* (php/- enemy-fz eye-z) (wall-px proj-dist d))))) pr)
                 face-row (php/+ (php/- feet-row h) (php/intdiv h 6))]
             (when (and (php/>= face-row 1) (php/<= face-row vh))
               (buf-push parts
@@ -838,12 +849,19 @@
    it. `pr` (rows, default 0) is the look up/down horizon shear at full
    resolution, added so the digit tracks the pitched sprite head.
 
-   The digit also tracks the sprite's feet anchor: on flat ground (fz=0,
-   eye-z=0.5) the feet row is `round(vh/2 + 0.5 * wall-px(proj-dist, d)) + pr`,
-   and the digit floats one row above the head (`feet-row - h - 1`)."
+   The digit tracks the sprite's feet anchor, which lifts to the enemy's
+   own cell floor height (`enemy-fz`, #375): the feet row is
+   `round(vh/2 - (enemy-fz - eye-z) * wall-px(proj-dist, d)) + pr` (flat
+   ground reduces to `vh/2 + 0.5*wall-px`), and the digit floats one row
+   above the head (`feet-row - h - 1`), tracking a tier-standing body."
   [parts world vw vh & [pr-arg]]
   (let [pr     (or pr-arg 0)
-        player (:player world)]
+        player (:player world)
+        ;; Feet anchor lifts to the enemy's cell floor height (#375) so the
+        ;; HP digit tracks a tier-standing body; flat worlds byte-identical.
+        pfz    (:pfz world)
+        mapw   (:width world)
+        eye-z  (php/+ 0.5 (get player :z 0.0))]
     (doseq [e (:enemies world)]
       (when (and e
                  (:alive e)
@@ -855,7 +873,8 @@
             (let [col      (:col proj)
                   d        (:dist proj)
                   h        (sprite-h vh d 1.0)
-                  feet-row (php/+ (php/intval (php/round (php/+ (php// vh 2.0) (php/* 0.5 (wall-px proj-dist d))))) pr)
+                  enemy-fz (php/aget pfz (php/+ (php/* (:cell-y proj) mapw) (:cell-x proj)))
+                  feet-row (php/+ (php/intval (php/round (php/- (php// vh 2.0) (php/* (php/- enemy-fz eye-z) (wall-px proj-dist d))))) pr)
                   row      (php/max 1 (php/- (php/- feet-row h) 1))]
               (when (and (php/>= col 1) (php/<= col vw))
                 (buf-push parts

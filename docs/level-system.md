@@ -7,7 +7,7 @@
 | # | Name | Type | Enemies |
 |---|---|---|---|
 | 1 | imps | random | 4 imps |
-| 2 | demons | staircase showcase (variable-height) | 5 demons + 2 imps + shotgun |
+| 2 | demons | staircase showcase (variable-height) | 5 demons + 2 imps + 3 more fixed on the stairs + shotgun |
 | 3 | cacodemons | hand-authored flat chamber | 4 cacos + 2 demons + 2 imps + chaingun |
 | 4 | barons | hand-authored flat chamber + blue lock | 3 barons + 3 demons |
 | 5 | cyberdemons | hand-authored flat chamber + red lock | 5 cyberdemons + 2 imps |
@@ -93,7 +93,7 @@ When `:enemies` is a vector, each spec spawns its own count + HP and the enemy c
 
 Switches: `:switches [{:at [cx cy] :targets [[tx ty] ...]}]`. F near `:at` flips targets wall↔floor.
 
-Floor heights: `build-grid` threads the layout's `:fz-grid` into `new-world` (procgen levels pass nil, which defaults to a flat all-zero grid). Omitting digit chars keeps a level flat. L2 uses a 3-tread staircase (fz 0.25, 0.5, 0.75) climbing north from the spawn to a raised platform, showcasing the step-up mechanic.
+Floor heights: `build-grid` threads the layout's `:fz-grid` into `new-world` (procgen levels pass nil, which defaults to a flat all-zero grid). Omitting digit chars keeps a level flat. L2 uses a 3-tread staircase (fz 0.25, 0.5, 0.75) climbing north from the spawn to a raised platform, showcasing the step-up mechanic. L2 also pins `:enemy-spawns` (a per-level vector of `{:type :x :y [:lives]}`) to stand two demons on the 0.75 platform and an imp on the 0.5 tread, so the enemy tier feet-anchor (#395) and cross-tier sprite occlusion (#394) are visible in play, not just in tests. `build-world` builds these fixed spawns via `new-enemy` (default `:aware`, same depth-scaled `:aggression` as the random mix) and appends them to the random roster; render reads each one's cell `fz` on the fly, so no per-enemy `:z` is stored and they descend the stairs at the player.
 
 
 ### Adding a new room

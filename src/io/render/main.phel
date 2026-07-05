@@ -476,29 +476,34 @@
 ;; =====================================================================
 
 (defn- compute-riser-shades
-  "Per-column NEAREST riser data from the flat `:spans` stream (#369),
-   for painting a step's rise-face and gating the tier-top floor-cast
-   behind it (#370).
+  "Per-column riser data from the flat `:spans` stream (#369), for
+   painting a staircase's rise-faces + tier-top surfaces (#370, #375).
 
    `:spans` arrives ordered by ascending distance within a ray and
-   ascending column across rays (docs/raycaster.md), so the FIRST event
-   seen for a column is its nearest riser; farther risers in the same
-   column are behind it and never visible, so they're skipped outright -
-   this IS the row clip; there's nothing nearer left to paint over.
+   ascending column across rays (docs/raycaster.md), so a column's events
+   are contiguous and near->far: the FIRST is the nearest riser, the rest
+   are the higher steps stacked behind it. A staircase must read as
+   countable steps, not one flat block (#375), so every event is kept -
+   the nearest fills the fast-path fields the emitters read directly, and
+   each farther one appends to the per-column `step-bands` list.
 
    Returns 6 php-arrays; a column with no riser is simply absent (its
    `riser-top` aget reads nil, the row loop's `has-riser?` sentinel):
      riser-top / riser-bot  screen rows of the riser face [top, bot)
      riser-shade            plain dark step-face cell (`tier-riser-fill`)
-     riser-dist             fish-eye corrected distance (for the enemy
-                             z-buffer compare, same role as `dists`)
-     tier-fz                floor height BEYOND the riser (z1) - the
-                             tier-top floor-cast in the row loop reads
-                             this instead of 0.0.
+     riser-dist             fish-eye corrected distance of the NEAREST
+                             riser (for the enemy z-buffer compare, same
+                             role as `dists`)
      tier-top-tex           plain dark tier-top surface cell
                              (`tier-top-fill`), keyed by column like the
                              others; absent columns fall back to the flat
                              floor gradient in the row loop.
+     step-bands             per-column list of the FARTHER step faces
+                             (every riser beyond the nearest), stride 3
+                             [top bot dist ...] near->far; absent for a
+                             single-step column. Read by `row-in-farther
+                             -face?` / `row-at-farther-face-top?` to paint
+                             a staircase as stacked steps, not one block.
 
    `pd` is the wall-height projection numerator (scene_pd: proj-dist at
    full detail, halved in px2); `svh` is the scene viewport height
@@ -518,7 +523,6 @@
         riser-bot    (php/array)
         riser-sh     (php/array)
         riser-dist   (php/array)
-        tier-fz      (php/array)
         tier-top-tex (php/array)
         ;; Per-column list of the FARTHER step faces (every riser beyond
         ;; the nearest), stride 3: [top bot dist ...] near->far. Absent
@@ -544,7 +548,6 @@
               (php/aset riser-bot    col bot)
               (php/aset riser-sh     col tier-riser-fill)
               (php/aset riser-dist   col d-corr)
-              (php/aset tier-fz      col z1)
               (php/aset tier-top-tex col tier-top-fill))
             ;; farther riser (behind the nearest, up the staircase):
             ;; append its face band for the plateau subdivision.
@@ -555,7 +558,7 @@
                     (php/aset step-bands col cur))))))
         (recur (php/+ base 8))))
     {:riser-top riser-top :riser-bot riser-bot :riser-shade riser-sh
-     :riser-dist riser-dist :tier-fz tier-fz :tier-top-tex tier-top-tex
+     :riser-dist riser-dist :tier-top-tex tier-top-tex
      :step-bands step-bands}))
 
 (defn row-in-farther-face?
@@ -1477,13 +1480,6 @@
                       (php/aset cell-reg 0 (if in-blood?
                                              blood-sky-row
                                              (if subpixel? sky-hb-row sky-plain)))
-                          ;; Riser face (#370): the step's rise, painted with
-                          ;; the plain-dark face constant (`tier-riser-fill`)
-                          ;; from compute-riser-shades - a flat border distinct
-                          ;; from the walls + floor. Nearest riser only
-                          ;; (compute-riser-shades already dropped farther
-                          ;; ones in this column) so this IS the row clip -
-                          ;; nothing behind it competes for these rows.
                           ;; Step lip (#375): the lit front edge of the
                           ;; nearest tread, one brighter-slate constant so
                           ;; the step reads even when its tread collapses.
@@ -2067,7 +2063,7 @@
         ;; comes back empty, so the row loop's `riser-top` aget reads nil
         ;; for every column and its extra branches never fire.
         {:riser-top riser-top :riser-bot riser-bot :riser-shade riser-shade
-         :riser-dist riser-dist :tier-fz tier-fz :tier-top-tex tier-top-tex
+         :riser-dist riser-dist :tier-top-tex tier-top-tex
          :step-bands step-bands}
         (compute-riser-shades (:spans cast-result) scene-pd svh eye-z pr)
         ;; Upper wall-slice faces (#387), the ceiling mirror of the riser

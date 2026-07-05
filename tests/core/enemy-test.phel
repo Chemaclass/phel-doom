@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.rng :as rng)
   (:require phel-doom.core.map :refer [fz-step])
-  (:require phel-doom.core.enemy :refer [default-wander-fraction new-enemy promote-wanderers push-back-enemy spawn-enemies spawn-enemies-mixed shoot pierce spread-shoot splash beam-impact advance tick-scare rear-attacker? type-speed-mul]))
+  (:require phel-doom.core.enemy :refer [default-wander-fraction new-enemy promote-wanderers push-back-enemy spawn-enemies spawn-enemies-mixed shoot pierce spread-shoot splash beam-impact advance tick-scare rear-attacker? type-speed-mul vertical-hit?]))
 
 (def open-grid
   "Bordered 10x10 open arena, no interior walls."
@@ -39,6 +39,44 @@
     (is (= true (:alive e)))
     (is (= 1 (:lives e)))
     (is (= 1 (:max-lives e)))))
+
+;; ---------------------------------------------------------------------
+;; vertical-hit? tier awareness (issue #396): the vertical aim gate must
+;; anchor an enemy's feet on its OWN cell floor height, mirroring the
+;; renderer (#395), so what you SEE is what you can SHOOT. An enemy on a
+;; raised tier is drawn higher, and the shootable band moves up with it.
+;; ---------------------------------------------------------------------
+
+(def vh-enemy (new-enemy 5.5 5.5 3 :demon))
+(def vh-flat  (vec (repeat 8 (vec (repeat 8 0.0)))))
+;; same grid but the enemy's cell (5,5) is a 0.75 platform.
+(def vh-tier
+  (vec (map (fn [y]
+              (vec (map (fn [x] (if (and (php/=== x 5) (php/=== y 5)) 0.75 0.0))
+                        (range 0 8))))
+            (range 0 8))))
+
+(deftest test-vertical-hit-nil-grid-matches-flat
+  ;; The pre-#396 flat anchor: a nil fz-grid reads enemy-fz as 0.0, so the
+  ;; gate is byte-identical to an all-flat grid - the shim path legacy
+  ;; callers hit.
+  (is (= (vertical-hit? vh-enemy 4.0 28 0 nil 0.5)
+         (vertical-hit? vh-enemy 4.0 28 0 vh-flat 0.5))))
+
+(deftest test-vertical-hit-level-aim-hits-flat-misses-tier
+  ;; At level aim (pr=0) the crosshair sits on a flat enemy's body but
+  ;; BELOW a tier-elevated enemy (its whole billboard lifted above centre),
+  ;; so the elevated one is missed until the player aims up - exactly what
+  ;; the drawn sprite shows.
+  (is (php/=== true  (vertical-hit? vh-enemy 4.0 28 0 vh-flat 0.5)) "flat enemy hit at level aim")
+  (is (php/=== false (vertical-hit? vh-enemy 4.0 28 0 vh-tier 0.5)) "tier enemy missed at level aim"))
+
+(deftest test-vertical-hit-aim-up-hits-tier-misses-flat
+  ;; Aiming up (pr>0 slides the drawn sprite down toward the fixed
+  ;; crosshair) lands on the elevated enemy's body while OVER-shooting the
+  ;; flat one - the shootable band tracks the tier lift, so see == shoot.
+  (is (php/=== true  (vertical-hit? vh-enemy 4.0 28 5 vh-tier 0.5)) "tier enemy hit when aiming up")
+  (is (php/=== false (vertical-hit? vh-enemy 4.0 28 5 vh-flat 0.5)) "flat enemy over-shot when aiming that high"))
 
 (deftest test-new-enemy-with-max-lives
   (let [e (new-enemy 0.0 0.0 4)]

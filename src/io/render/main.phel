@@ -2,7 +2,7 @@
 ;; perf snapshot, and the end / menu screens.
 (ns phel-doom.io.render.main
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
-  (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright tier-top-fill tier-riser-fill tier-lip-fill shade-table shade-code-table shade-table-blood shade-code-table-blood])
+  (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright tier-riser-ramp tier-riser-steps tier-top-ramp tier-top-steps shade-table shade-code-table shade-table-blood shade-code-table-blood])
   (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table tex-fade-tc bg-cell-cache halfblock halfblock-tc paint-bg quadblock build-sky-halfblock build-sky-codes-sub seam-darken-16 seam-darken-8 seam-darken-5 seam-shade! collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.wall-texture-data :refer [wall-tex])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type-lod sprite-fade sprite-fade-index sprite-col-x sprite-subcol-x enemy-sprite-cell enemy-sprite-quad])
@@ -487,51 +487,49 @@
    the nearest fills the fast-path fields the emitters read directly, and
    each farther one appends to the per-column `step-bands` list.
 
-   Returns 6 php-arrays; a column with no riser is simply absent (its
+   Returns 4 php-arrays; a column with no riser is simply absent (its
    `riser-top` aget reads nil, the row loop's `has-riser?` sentinel):
-     riser-top / riser-bot  screen rows of the riser face [top, bot)
-     riser-shade            plain dark step-face cell (`tier-riser-fill`)
+     riser-top / riser-bot  screen rows of the nearest riser face [top, bot)
      riser-dist             fish-eye corrected distance of the NEAREST
                              riser (for the enemy z-buffer compare, same
                              role as `dists`)
-     tier-top-tex           plain dark tier-top surface cell
-                             (`tier-top-fill`), keyed by column like the
-                             others; absent columns fall back to the flat
-                             floor gradient in the row loop.
      step-bands             per-column list of the FARTHER step faces
                              (every riser beyond the nearest), stride 3
                              [top bot dist ...] near->far; absent for a
-                             single-step column. Read by `row-in-farther
-                             -face?` / `row-at-farther-face-top?` to paint
-                             a staircase as stacked steps, not one block.
+                             single-step column. Read by `farther-face-vstep`
+                             to paint a staircase as stacked steps, not one
+                             block.
+
+   Face + tier-top COLOURS are not stored per column: the emitters index
+   the global `tier-riser-ramp` / `tier-top-ramp` gradients by the row's
+   depth into the face / plateau, so a surface reads as a shaded 3D plane
+   rather than a flat constant.
 
    `pd` is the wall-height projection numerator (scene_pd: proj-dist at
    full detail, halved in px2); `svh` is the scene viewport height
    `project-height` centres rows on; `eye-z` is the camera height.
 
-   Legible stairs/platforms: both the step FACE and the tier-top SURFACE
-   paint as a PLAIN dark slate distinct from the textured grey floor. A
-   flat uniform fill (vs the busy floor texture) plus the darker-face /
-   lighter-top contrast makes elevation + individual stair edges pop
-   instead of blending into the floor. This deliberately drops the
-   per-tier/distance riser shading (#373) and the floor-texel tier-top
-   sampling (#384) in favour of that flat legibility."
+   Legible stairs/platforms: the step FACE and tier-top SURFACE keep a
+   distinct dark-slate hue (never the busy floor texture, so a tier never
+   blends into the ground) but SHADE with depth - the riser top-lit to
+   shadow-base down its height (#402), the tier-top receding brighter-near
+   to darker-far - so a raised tier reads as a lit 3D surface, not a flat
+   sticker. Deliberately not the #373 wall-shade tint (risers read as
+   walls) nor the #384 floor-texel sampling (tiers read as floor)."
   [spans ^float pd ^int svh ^float eye-z & [pr-arg]]
-  (let [pr           (or pr-arg 0)
-        span-n       (php/count spans)
-        riser-top    (php/array)
-        riser-bot    (php/array)
-        riser-sh     (php/array)
-        riser-dist   (php/array)
-        tier-top-tex (php/array)
+  (let [pr         (or pr-arg 0)
+        span-n     (php/count spans)
+        riser-top  (php/array)
+        riser-bot  (php/array)
+        riser-dist (php/array)
         ;; Per-column list of the FARTHER step faces (every riser beyond
         ;; the nearest), stride 3: [top bot dist ...] near->far. Absent
-        ;; for a single-step column; drives `row-in-farther-face?` so a
+        ;; for a single-step column; drives `farther-face-vstep` so a
         ;; staircase paints each step, not one flat block (#375). Spans
         ;; for a given column are contiguous (one ray per column, ordered
         ;; near->far), so a fetch-mutate-store keeps the nested php-array
         ;; correct despite PHP's by-value array copy.
-        step-bands   (php/array)]
+        step-bands (php/array)]
     (loop [base 0]
       (when (php/< base span-n)
         (let [col    (php/aget spans base)
@@ -542,13 +540,13 @@
               bot    (php/+ (php/intval (php/round (project-height pd svh d-corr eye-z z0))) pr)]
           (if (php/=== nil (php/aget riser-top col))
             ;; nearest riser: the fast-path fields the emitters read
-            ;; directly + the enemy z-buffer distance.
+            ;; directly + the enemy z-buffer distance. The face colour is
+            ;; not stored - the emitters index `tier-riser-ramp` by the
+            ;; row's depth into the face (top-lit -> shadow-base).
             (do
-              (php/aset riser-top    col top)
-              (php/aset riser-bot    col bot)
-              (php/aset riser-sh     col tier-riser-fill)
-              (php/aset riser-dist   col d-corr)
-              (php/aset tier-top-tex col tier-top-fill))
+              (php/aset riser-top  col top)
+              (php/aset riser-bot  col bot)
+              (php/aset riser-dist col d-corr))
             ;; farther riser (behind the nearest, up the staircase):
             ;; append its face band for the plateau subdivision.
             (let [cur (php/aget step-bands col)]
@@ -557,48 +555,35 @@
                 (do (php/array_push cur top bot d-corr)
                     (php/aset step-bands col cur))))))
         (recur (php/+ base 8))))
-    {:riser-top riser-top :riser-bot riser-bot :riser-shade riser-sh
-     :riser-dist riser-dist :tier-top-tex tier-top-tex
-     :step-bands step-bands}))
+    {:riser-top riser-top :riser-bot riser-bot
+     :riser-dist riser-dist :step-bands step-bands}))
 
-(defn row-in-farther-face?
-  "True if screen row `r` sits inside one of a column's FARTHER stacked
-   step faces. `sb` is the per-column band list `compute-riser-shades`
-   packs (stride 3: face-top, face-bot, dist, near->far) holding every
-   riser BEYOND the nearest one; nil when the column has no farther step.
+(defn farther-face-vstep
+  "Screen row `r`'s vertical depth into whichever of a column's FARTHER
+   stacked step faces it lands in, or -1 if it lands in none. `sb` is the
+   per-column band list `compute-riser-shades` packs (stride 3: face-top,
+   face-bot, dist, near->far) holding every riser BEYOND the nearest one;
+   nil when the column has no farther step.
 
-   The nearest step face is painted by the emitters' own fast-path range
-   test (`riser-top`/`riser-bot`); this walks only the farther bands that
-   make a plateau read as a real staircase - a dark rise-face for each
-   higher step instead of one flat block (#375). A plateau row that lands
-   in no farther face is a tread / platform surface (light tier-top)."
+   The return is `r - face-top` (0 at the lit leading edge, growing toward
+   the shadowed base), the index the emitters clamp into `tier-riser-ramp`
+   to shade each farther step top-lit -> shadow-base (#402). This is what
+   makes a plateau read as a real staircase - a shaded rise-face for each
+   higher step instead of one flat block (#375). A plateau row inside no
+   farther face returns -1: it is a tread / platform surface (tier-top).
+   The nearest step face is shaded by the emitters directly off
+   `riser-top` (its own fast-path range test)."
   [sb ^int r]
   (if (php/=== nil sb)
-    false
+    -1
     (let [n (php/count sb)]
       (loop [i 0]
         (if (php/>= i n)
-          false
-          (if (if (php/>= r (php/aget sb i)) (php/< r (php/aget sb (php/+ i 1))) false)
-            true
-            (recur (php/+ i 3))))))))
-
-(defn row-at-farther-face-top?
-  "True if screen row `r` is exactly the TOP row of one of a column's
-   farther step faces (`sb` from `compute-riser-shades`, stride 3). That
-   row is the lit leading edge of the step's tread; the emitters paint it
-   with `tier-lip-fill` so each stair stays countable when its tread
-   collapses to sub-row at a shallow angle (#375). nil `sb` -> false."
-  [sb ^int r]
-  (if (php/=== nil sb)
-    false
-    (let [n (php/count sb)]
-      (loop [i 0]
-        (if (php/>= i n)
-          false
-          (if (php/=== r (php/aget sb i))
-            true
-            (recur (php/+ i 3))))))))
+          -1
+          (let [t (php/aget sb i)]
+            (if (if (php/>= r t) (php/< r (php/aget sb (php/+ i 1))) false)
+              (php/- r t)
+              (recur (php/+ i 3)))))))))
 
 (defn- compute-upper-shades
   "Per-column NEAREST upper-span (ceiling-drop) data from the flat
@@ -631,11 +616,11 @@
    Shading reuses the flat WALL fog formula at the event's own corrected
    distance/side (the same `idx-raw` shape `compute-wall-shades` uses),
    so a ceiling slice reads as 'more wall'. Unlike the floor riser -
-   which paints a flat plain-dark constant (`tier-riser-fill`) so a step
-   never blends into the textured floor - the ceiling slice keeps the
-   wall shade: there is no adjacent floor texture for it to blend into,
-   so a distinct plain fill would only make it read as a hole. A future
-   pass can add a ceiling tint if playtesting wants one.
+   which shades a distinct dark-slate gradient (`tier-riser-ramp`) so a
+   step never blends into the textured floor - the ceiling slice keeps
+   the wall shade: there is no adjacent floor texture for it to blend
+   into, so a distinct slate fill would only make it read as a hole. A
+   future pass can add a ceiling tint if playtesting wants one.
 
    `pd`/`svh`/`eye-z` are the same projection inputs `compute-riser-
    shades` takes; `haze-shift`/`stbl`/`ctbl` dim it exactly like
@@ -948,7 +933,7 @@
    floordxs floordys pfx pfy floor-dperp-sub floor-level-sub                ; floor-cast
    tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow  ; wall spans + shades
    shades-tex-u shades-tex-level shades-tex-px                              ; wall texture
-   riser-top riser-bot riser-shade tier-top-tex step-bands                 ; risers + plain-dark tier tops (#370), farther step faces (#375)
+   riser-top riser-bot step-bands                 ; risers + plain-dark tier tops (#370), farther step faces (#375)
    upper-top upper-bot upper-shade                                        ; upper wall-slices (#387)
    mids lowers emask eheads ebodys elegss                                  ; enemy glyph rows
    e-stop e-sbot e-vtop e-vbot e-sx e-sxr e-spx e-sw e-sh e-fade           ; sprite window
@@ -1042,13 +1027,13 @@
                   ;; pack them base-256 (the same key shape as the
                   ;; halfblock cache). Negative values mark the
                   ;; composite kinds resolved below:
-                  ;;   -1 minimap placeholder  -2 riser face (#370)
+                  ;;   -1 minimap placeholder  -2 riser face (#370,#402)
                   ;;   -3 sky flat (blood)     -4 floor flat
                   ;;   -5 enemy glyph zone      -6 top edge
                   ;;   -7 top shadow            -8 bot edge
                   ;;   -9 bot shadow            -10 wall flat
                   ;;   -11 tier-top floor (#370) -12 upper slice (#387)
-                  ;;   -13 step lip (#375)
+                  ;; -2 / -11 carry their gradient ramp index in slot 1.
               (cond
                 mini?
                 (php/aset pack-reg 0 -1)
@@ -1058,21 +1043,26 @@
                 (if in-blood?
                   (php/aset pack-reg 0 -3)
                   (php/aset pack-reg 0 sky-pack-row))
-                (if has-riser2? (php/=== r2 rtop2) false)
-                (php/aset pack-reg 0 -13)
-                (if has-riser2? (if (php/> r2 rtop2) (php/< r2 rbot2) false) false)
-                (php/aset pack-reg 0 -2)
+                ;; Nearest riser face: pack -2 + the ramp index (depth into
+                ;; the face, r2-rtop2 clamped) in slot 1, so the resolver
+                ;; shades it top-lit -> shadow-base (#402). r2==rtop2 -> idx
+                ;; 0, the lit lip / countable-stairs edge (#375).
+                (if has-riser2? (if (php/>= r2 rtop2) (php/< r2 rbot2) false) false)
+                (do (php/aset pack-reg 0 -2)
+                    (php/aset pack-reg 1 (php/min (php/- r2 rtop2) (php/- tier-riser-steps 1))))
                 (if has-riser2? (php/< r2 rtop2) false)
-                ;; Plateau above the nearest riser: each farther step is a
-                ;; lit front edge (-13) at its face top, a dark rise-face
-                ;; (-2) below it, and a light tread/platform (-11) in the
-                ;; gaps. That lip keeps stairs countable when treads
-                ;; collapse to sub-row at a shallow angle (#375).
-                (if (row-at-farther-face-top? (php/aget step-bands col) r2)
-                  (php/aset pack-reg 0 -13)
-                  (if (row-in-farther-face? (php/aget step-bands col) r2)
-                    (php/aset pack-reg 0 -2)
-                    (php/aset pack-reg 0 -11)))
+                ;; Plateau above the nearest riser: a farther step's shaded
+                ;; face (-2 + its own ramp index) where the row lands in one,
+                ;; else the receding tier-top surface (-11 + a recede index
+                ;; growing with height above the step). Turns a flat block
+                ;; into countable, shaded steps (#375, #402).
+                (let [vs (farther-face-vstep (php/aget step-bands col) r2)]
+                  (if (php/>= vs 0)
+                    (do (php/aset pack-reg 0 -2)
+                        (php/aset pack-reg 1 (php/min vs (php/- tier-riser-steps 1))))
+                    (do (php/aset pack-reg 0 -11)
+                        (php/aset pack-reg 1 (php/min (php/intval (php// (php/- rtop2 r2) 3))
+                                                      (php/- tier-top-steps 1))))))
                 (php/>= r2 (if has-riser2? rbot2 floor-from))
                 (if (if in-blood? true floor-flat?)
                   (php/aset pack-reg 0 -4)
@@ -1165,29 +1155,26 @@
                 (when (php/< pack 0)
                   (cond
                     (php/=== pack -1)  (php/aset cell-reg 0 sky-r2)
-                    (php/=== pack -2)  (php/aset cell-reg 0 (buf-get riser-shade col))
+                        ;; Riser face (#370, #402): the shaded step face.
+                        ;; Slot 1 carries the depth-into-face index; the
+                        ;; face shades top-lit -> shadow-base down its
+                        ;; height (index 0 = the lit lip). Blood wash wins.
+                    (php/=== pack -2)  (php/aset cell-reg 0
+                                                 (if in-blood? blood-sky-r2
+                                                     (php/aget tier-riser-ramp (php/aget pack-reg 1))))
                     (php/=== pack -12) (php/aset cell-reg 0 (buf-get upper-shade col))
                     (php/=== pack -3)  (php/aset cell-reg 0 blood-sky-r2)
                         ;; Intentional alias: the blood floor reuses the
                         ;; blood sky row — one uniform red wash.
                     (php/=== pack -4)  (php/aset cell-reg 0 (if in-blood? blood-sky-r2 flr-r2))
-                        ;; Tier-top floor (#370): blood wash still wins
-                        ;; (matches the -4 floor case); otherwise paint the
-                        ;; per-column plain-dark surface cell (`tier-top-fill`)
-                        ;; from compute-riser-shades - a flat slate distinct
-                        ;; from the textured floor so a raised tier reads.
-                    ;; tier-top-tex is set for exactly the columns that
-                    ;; carry a riser, and pack -11 only fires there, so the
-                    ;; cell is always present - no fallback (an `or` here
-                    ;; would closure-compile in the per-cell path).
+                        ;; Tier-top surface (#370, #402): the receding
+                        ;; tread / platform. Slot 1 carries the recede
+                        ;; index (brighter near the step, darker toward the
+                        ;; horizon), a distinct dark slate so a tier never
+                        ;; blends into the textured floor. Blood wash wins.
                     (php/=== pack -11) (php/aset cell-reg 0
-                                                 (if in-blood? blood-sky-r2 (buf-get tier-top-tex col)))
-                        ;; Step lip (#375): the lit front edge of a tread,
-                        ;; one brighter-slate constant so each stair stays
-                        ;; countable. Blood wash still wins, like the tier
-                        ;; top.
-                    (php/=== pack -13) (php/aset cell-reg 0
-                                                 (if in-blood? blood-sky-r2 tier-lip-fill))
+                                                 (if in-blood? blood-sky-r2
+                                                     (php/aget tier-top-ramp (php/aget pack-reg 1))))
                     (php/=== pack -5)  (cond
                                          (php/< r2 (buf-get mids col))
                                          (php/aset cell-reg 0 (buf-get eheads col))
@@ -1380,7 +1367,7 @@
    floordxs floordys pfx pfy floor-dperp-sub floor-level-sub                ; floor-cast
    tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow  ; wall spans + shades
    shades-tex-u shades-tex-level shades-tex-px                              ; wall texture
-   riser-top riser-bot riser-shade tier-top-tex step-bands                 ; risers + plain-dark tier tops (#370), farther step faces (#375)
+   riser-top riser-bot step-bands                 ; risers + plain-dark tier tops (#370), farther step faces (#375)
    upper-top upper-bot upper-shade                                         ; upper wall-slices (#387)
    mids lowers emask eheads ebodys elegss                                  ; enemy glyph rows
    e-stop e-sbot e-vtop e-vbot e-sx e-sxr e-spx e-sw e-sh e-fade           ; sprite window
@@ -1480,34 +1467,30 @@
                       (php/aset cell-reg 0 (if in-blood?
                                              blood-sky-row
                                              (if subpixel? sky-hb-row sky-plain)))
-                          ;; Step lip (#375): the lit front edge of the
-                          ;; nearest tread, one brighter-slate constant so
-                          ;; the step reads even when its tread collapses.
-                      (if has-riser? (php/=== row rtop) false)
-                      (php/aset cell-reg 0 (if in-blood? blood-flr-row tier-lip-fill))
-                          ;; Riser face (#370): the step's rise, painted with
-                          ;; the plain-dark face constant (`tier-riser-fill`)
-                          ;; from compute-riser-shades - a flat border distinct
-                          ;; from the walls + floor.
-                      (if has-riser? (if (php/> row rtop) (php/< row rbot) false) false)
-                      (php/aset cell-reg 0 (buf-get riser-shade col))
-                          ;; Tier-top floor (#370): the raised tier's own
-                          ;; ground, in the thin band between the far wall's
-                          ;; bottom and the riser's top. Paints the per-column
-                          ;; plain-dark surface constant (`tier-top-fill`) from
-                          ;; compute-riser-shades - flat slate distinct from the
-                          ;; textured floor; blood wash still wins.
+                          ;; Nearest riser face (#370, #402): the step's
+                          ;; rise, shaded top-lit -> shadow-base by the row's
+                          ;; depth into the face (`tier-riser-ramp`); row 0
+                          ;; (== rtop) is the lit lip, the countable-stairs
+                          ;; edge (#375). Blood wash still wins.
+                      (if has-riser? (if (php/>= row rtop) (php/< row rbot) false) false)
+                      (php/aset cell-reg 0 (if in-blood? blood-flr-row
+                                               (php/aget tier-riser-ramp
+                                                         (php/min (php/- row rtop) (php/- tier-riser-steps 1)))))
                       (if has-riser? (php/< row rtop) false)
-                          ;; Plateau above the nearest riser: each farther
-                          ;; step is a lit lip (`tier-lip-fill`) at its face
-                          ;; top, a dark rise-face (`riser-shade`) below,
-                          ;; and a light tread/platform in the gaps. Turns a
-                          ;; flat block into countable stacked steps (#375).
-                      (if (row-at-farther-face-top? (php/aget step-bands col) row)
-                        (php/aset cell-reg 0 (if in-blood? blood-flr-row tier-lip-fill))
-                        (if (row-in-farther-face? (php/aget step-bands col) row)
-                          (php/aset cell-reg 0 (buf-get riser-shade col))
-                          (php/aset cell-reg 0 (if in-blood? blood-flr-row (buf-get tier-top-tex col)))))
+                          ;; Plateau above the nearest riser: a farther
+                          ;; step's shaded face where the row lands in one,
+                          ;; else the receding tier-top surface (brighter
+                          ;; near the step, darker toward the horizon). Turns
+                          ;; a flat block into countable, shaded steps
+                          ;; (#375, #402). Blood wash wins in either case.
+                      (let [vs (farther-face-vstep (php/aget step-bands col) row)]
+                        (if (php/>= vs 0)
+                          (php/aset cell-reg 0 (if in-blood? blood-flr-row
+                                                   (php/aget tier-riser-ramp (php/min vs (php/- tier-riser-steps 1)))))
+                          (php/aset cell-reg 0 (if in-blood? blood-flr-row
+                                                   (php/aget tier-top-ramp
+                                                             (php/min (php/intval (php// (php/- rtop row) 3))
+                                                                      (php/- tier-top-steps 1)))))))
                           ;; Floor: cast the ground plane and sample the
                           ;; stone texture. Player + per-row perp-distance
                           ;; × the column's floor basis gives the world
@@ -2062,9 +2045,8 @@
         ;; :spans stream (#369). Empty on flat worlds -> every array below
         ;; comes back empty, so the row loop's `riser-top` aget reads nil
         ;; for every column and its extra branches never fire.
-        {:riser-top riser-top :riser-bot riser-bot :riser-shade riser-shade
-         :riser-dist riser-dist :tier-top-tex tier-top-tex
-         :step-bands step-bands}
+        {:riser-top riser-top :riser-bot riser-bot
+         :riser-dist riser-dist :step-bands step-bands}
         (compute-riser-shades (:spans cast-result) scene-pd svh eye-z pr)
         ;; Upper wall-slice faces (#387), the ceiling mirror of the riser
         ;; block above, from the flat :uspans stream (#386). Empty on
@@ -2558,7 +2540,7 @@
                             floordxs floordys pfx pfy floor-dperp-sub floor-level-sub
                             tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow
                             shades-tex-u shades-tex-level shades-tex-px
-                            riser-top riser-bot riser-shade tier-top-tex step-bands
+                            riser-top riser-bot step-bands
                             upper-top upper-bot upper-shade
                             mids lowers emask eheads ebodys elegss
                             e-stop e-sbot e-vtop e-vbot e-sx e-sxr e-spx e-sw e-sh e-fade
@@ -2574,7 +2556,7 @@
                             floordxs floordys pfx pfy floor-dperp-sub floor-level-sub
                             tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow
                             shades-tex-u shades-tex-level shades-tex-px
-                            riser-top riser-bot riser-shade tier-top-tex step-bands
+                            riser-top riser-bot step-bands
                             upper-top upper-bot upper-shade
                             mids lowers emask eheads ebodys elegss
                             e-stop e-sbot e-vtop e-vbot e-sx e-sxr e-spx e-sw e-sh e-fade

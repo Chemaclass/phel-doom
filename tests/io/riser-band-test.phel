@@ -1,37 +1,29 @@
-;; Multi-step stair painter (#375 verticality): `row-in-farther-face?`
-;; classifies a plateau screen row as inside one of the FARTHER stacked
-;; step faces (so it paints dark) vs a tread/platform surface (light).
-;; The nearest step face is handled by the emitters' fast-path range
-;; test; this helper walks only the farther bands compute-riser-shades
-;; packs (stride 3: top, bot, dist near->far).
+;; Multi-step stair painter (#375 verticality, #402 shading):
+;; `farther-face-vstep` returns a plateau screen row's vertical depth into
+;; whichever FARTHER stacked step face it lands in (0 at the lit leading
+;; edge, growing toward the shadowed base - the index into
+;; `tier-riser-ramp`), or -1 if the row is a tread / platform surface.
+;; The nearest step face is shaded by the emitters directly off riser-top.
 (ns phel-doom-tests.io.riser-band-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.io.render.main :refer [row-in-farther-face? row-at-farther-face-top?]))
+  (:require phel-doom.io.render.main :refer [farther-face-vstep]))
 
-(deftest no-bands-is-false
-  (is (= false (row-in-farther-face? nil 5))
+(deftest no-bands-is-minus-one
+  (is (= -1 (farther-face-vstep nil 5))
       "a column with no farther steps (nil band list) is never a face"))
 
 (deftest single-farther-face-band
   ;; one farther step face spanning rows [10, 14)
   (let [sb (php/array 10 14 3.0)]
-    (is (= false (row-in-farther-face? sb 9))  "row above the face top is a tread")
-    (is (= true  (row-in-farther-face? sb 10)) "top row is inside the face [inclusive]")
-    (is (= true  (row-in-farther-face? sb 13)) "last face row is inside")
-    (is (= false (row-in-farther-face? sb 14)) "bot row is outside the face [exclusive]")))
+    (is (= -1 (farther-face-vstep sb 9))  "row above the face top is a tread")
+    (is (= 0  (farther-face-vstep sb 10)) "top row is depth 0 (the lit lip)")
+    (is (= 3  (farther-face-vstep sb 13)) "last face row is depth 3")
+    (is (= -1 (farther-face-vstep sb 14)) "bot row is outside the face [exclusive]")))
 
 (deftest two-stacked-farther-faces
   ;; nearer-of-the-farther face [10,14), the next one up [5,9)
   (let [sb (php/array 10 14 3.0 5 9 4.0)]
-    (is (= true  (row-in-farther-face? sb 12)) "inside the lower farther face")
-    (is (= false (row-in-farther-face? sb 9))  "the tread gap between the two faces")
-    (is (= true  (row-in-farther-face? sb 7))  "inside the higher farther face")
-    (is (= false (row-in-farther-face? sb 4))  "above every face is the platform top")))
-
-(deftest face-top-is-the-lit-lip
-  (let [sb (php/array 10 14 3.0 5 9 4.0)]
-    (is (= true  (row-at-farther-face-top? sb 10)) "top of the lower farther face is a lip")
-    (is (= true  (row-at-farther-face-top? sb 5))  "top of the higher farther face is a lip")
-    (is (= false (row-at-farther-face-top? sb 13)) "an interior face row is not the lip")
-    (is (= false (row-at-farther-face-top? sb 9))  "a bottom row is not the lip")
-    (is (= false (row-at-farther-face-top? nil 5)) "no bands -> no lip")))
+    (is (= 2  (farther-face-vstep sb 12)) "depth 2 into the lower farther face")
+    (is (= -1 (farther-face-vstep sb 9))  "the tread gap between the two faces")
+    (is (= 2  (farther-face-vstep sb 7))  "depth 2 into the higher farther face")
+    (is (= -1 (farther-face-vstep sb 4))  "above every face is the platform top")))

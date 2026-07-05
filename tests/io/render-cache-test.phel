@@ -385,7 +385,7 @@
   ;; sits above a visible tier-top floor sliver, which sits above the
   ;; riser face, which sits above the near-tier floor - all four zones
   ;; in one column.
-  (is (= "9d56b002c2f6c29ad69e47ad5fa9c2ab"
+  (is (= "7e8b6bb969dd80615685d3214a33bd5a"
          (php/md5 (frame->string (stair-world 1.5 1.5) stats 120 30)))))
 
 (deftest test-riser-scene-from-above-pinned
@@ -399,7 +399,7 @@
 (deftest test-riser-scene-px2-pinned
   ;; Pixel-doubled path exercises the compact-cast-2 span-copy + the
   ;; separate pack-reg -2/-11 resolution branch, not the px1 loop above.
-  (is (= "2e3a86592b99209655565795e726e876"
+  (is (= "76293207fe71a08fe0c046fbdaf80270"
          (php/md5 (frame->string (stair-world 1.5 1.5) (assoc stats :px2? true) 120 30)))))
 
 ;; ---------------------------------------------------------------------
@@ -493,7 +493,7 @@
   ;; At the spawn (11.5, 15.5) on the ground tier, looking north up the
   ;; staircase: the three risers + tier tops stack ahead, the 0.75
   ;; platform capping the far end.
-  (is (= "64804569a74f75d79cd82113c52e4c92"
+  (is (= "af74ddb86c4ba7c183577042ca9ad100"
          (php/md5 (frame->string (showcase-world 11.5 15.5 look-north 0.0) stats 120 30)))))
 
 (deftest test-showcase-stairs-from-above-pinned
@@ -505,7 +505,7 @@
 
 (deftest test-showcase-stairs-px2-pinned
   ;; Pixel-doubled path over the same from-below viewpoint.
-  (is (= "256f00d43b9977af5749469fa7ea6f48"
+  (is (= "a0df1c7e5707fa621264d990c38a70c5"
          (php/md5 (frame->string (showcase-world 11.5 15.5 look-north 0.0) (assoc stats :px2? true) 120 30)))))
 
 (deftest test-showcase-stairs-distinct
@@ -521,26 +521,27 @@
   (is (not= (frame->string (showcase-world 11.5 15.5 look-north 0.0) stats 120 30)
             (frame->string (showcase-flat-world 11.5 15.5 look-north) stats 120 30))))
 
-(deftest test-riser-face-plain-dark-fills-present
-  ;; The step FACE and tier-top SURFACE paint as their plain dark slate
-  ;; fills (distinct from the textured grey floor, for legible stairs),
-  ;; not a bare gap - regression guard for the pack-reg -2 / cell-reg
-  ;; wiring independent of the exact byte hash above.
+(deftest test-riser-face-shaded-slate-present
+  ;; The step FACE and tier-top SURFACE paint as their SHADED dark-slate
+  ;; gradients (#402) - distinct from the textured grey floor (legible
+  ;; stairs) but with depth, not a flat sticker. The lit top of the ramp
+  ;; (index 0, also the step lip) and the tier-top near-shade must both
+  ;; render - a regression guard for the -2 / -11 gradient wiring,
+  ;; independent of the exact byte hash above.
   (let [s (frame->string (stair-world 1.5 1.5) stats 120 30)]
-    (is (php/str_contains s "\e[48;2;32;36;52m") "riser face fill present")
-    (is (php/str_contains s "\e[48;2;56;62;82m") "tier-top surface fill present")))
+    (is (php/str_contains s "\e[48;2;96;104;132m") "riser face lit top (ramp 0) present")
+    (is (php/str_contains s "\e[48;2;72;79;104m") "tier-top surface near-shade present")))
 
-(deftest test-showcase-stairs-multi-step-lip-present
+(deftest test-showcase-stairs-multi-step-present
   ;; The multi-step painter (#375) turns a staircase from one flat block
-  ;; into countable steps: each step paints a lit front-edge lip
-  ;; (`tier-lip-fill`) above its dark rise-face. Looking up the showcase
-  ;; stairs, the frame must carry that lip AND MORE THAN ONE separate
-  ;; dark rise-face run (stacked steps, not a single collapsed block) -
-  ;; a hash-independent, OS-agnostic guard on the feature.
-  (let [s     (frame->string (showcase-world 11.5 15.5 look-north 0.0) stats 120 30)
-        faces (php/substr_count s "\e[48;2;32;36;52m")]
-    (is (php/str_contains s "\e[48;2;92;100;128m") "step lip highlight present")
-    (is (php/> faces 1) "more than one dark rise-face run = stacked steps")))
+  ;; into countable steps, each shaded top-lit -> shadow-base (#402).
+  ;; Looking up the showcase stairs, the lit leading edge of the ramp
+  ;; (index 0) must appear MORE THAN ONCE - one per visible step, i.e.
+  ;; stacked steps rather than a single collapsed block. Hash-independent,
+  ;; OS-agnostic guard on the feature.
+  (let [s    (frame->string (showcase-world 11.5 15.5 look-north 0.0) stats 120 30)
+        lips (php/substr_count s "\e[48;2;96;104;132m")]
+    (is (php/> lips 1) "more than one lit step edge = countable stacked steps")))
 
 ;; ---------------------------------------------------------------------
 ;; Enemy sprite occlusion by variable-height geometry (epic #375). Before

@@ -2,7 +2,7 @@
   (:require phel-doom.core.rng :as rng)
   (:require phel-doom.core.state      :refer [max-backpacks max-lives new-player new-world with-enemies])
   (:require phel-doom.core.map        :refer [cell-door cell-door-blue cell-door-boss cell-door-red cell-door-yellow count-secrets parse-layout place-exit random-grid random-spawn scatter-walls seed-secrets])
-  (:require phel-doom.core.enemy      :refer [default-wander-fraction promote-wanderers spawn-enemies spawn-enemies-mixed])
+  (:require phel-doom.core.enemy      :refer [default-wander-fraction new-enemy promote-wanderers spawn-enemies spawn-enemies-mixed])
   (:require phel-doom.core.enemy-ai   :refer [aggression-for])
   (:require phel-doom.core.enemies    :refer [enemy-types type-spec default-lives-for])
   (:require phel-doom.core.difficulty :refer [normalise scale-cfg]))
@@ -298,6 +298,16 @@
    {:enemy :demon :chase 1.0 :name "demons"
     :enemies [{:type :demon :count 5}
               {:type :imp   :count 2}]
+    ;; Fixed spawns ON the staircase (issue #375 showcase): two demons on
+    ;; the raised 0.75 platform (rows 4-8, cols 8-13) and an imp on the
+    ;; fz-0.5 middle tread (row 9). The player spawns south (11.5, 15.5)
+    ;; looking north up the stairs, so on entry these read STANDING on the
+    ;; tiers (feet-anchor #395) with the lower imp partly hidden behind the
+    ;; nearer riser (cross-tier occlusion #394); then they chase down the
+    ;; treads. Cell centres = (col+0.5, row+0.5).
+    :enemy-spawns [{:type :demon :x 10.5 :y 6.5}
+                   {:type :demon :x 12.5 :y 6.5}
+                   {:type :imp   :x 11.5 :y 9.5}]
     ;; No :walls: scatter-walls would drop random pillars onto the
     ;; staircase treads (#372). The layout is the whole room.
     :layout showcase-layout}
@@ -808,8 +818,28 @@
                                                          (php// php/M_PI 180.0)))
                                 (:fz-grid built)
                                 (:cz-grid built))
-         spawned     (spawn-enemies-mixed grid specs
+         random-foes (spawn-enemies-mixed grid specs
                                           enemy-min-spawn-dist px py)
+         ;; Authored fixed-position spawns (issue #375 showcase): a level
+         ;; may pin `:enemy-spawns [{:type kw :x fx :y fy [:lives n]}]` to
+         ;; stand monsters on specific cells - used by L2 to put demons on
+         ;; the raised staircase platform + treads so the tier feet-anchor
+         ;; (#395) and cross-tier sprite occlusion (#394) are visible in
+         ;; play, not just in tests. Render reads each one's cell `fz` on
+         ;; the fly, so no per-enemy `:z` is stored. Merged into the roster
+         ;; BEFORE the tagging pipeline below so they get the SAME nightmare
+         ;; stamp, aggression, and wander treatment as the random mob (a
+         ;; separate append silently skipped the nightmare respawn). They
+         ;; carry no `:state`, so the AI defaults them to :aware (chase),
+         ;; and any that promote-wanderers leaves dormant simply hold their
+         ;; tier until the player's LOS wakes them.
+         authored    (apply vector
+                            (map (fn [s]
+                                   (new-enemy (:x s) (:y s)
+                                              (or (:lives s) (default-lives-for (:type s)))
+                                              (:type s)))
+                                 (or (:enemy-spawns cfg) [])))
+         spawned     (into random-foes authored)
          ;; Nightmare: stamp every spawned enemy so respawn picks the
          ;; shorter delay range AND the :max-concurrent cap is bypassed
          ;; (see core/enemy.phel/tick-one). Other difficulties get no

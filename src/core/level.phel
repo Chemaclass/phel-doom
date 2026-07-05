@@ -296,6 +296,11 @@
    ;; patrol the floor. Keeps the L2 identity (name, demon+imp mix, chase
    ;; 1.0, shotgun drop).
    {:enemy :demon :chase 1.0 :name "demons"
+    ;; Face north up the staircase on entry (angle -pi/2 = -y) so the tier
+    ;; showcase - enemies standing on the platform/treads - lands in view
+    ;; without the player having to turn (issue #375). Other levels keep
+    ;; the random facing.
+    :spawn-angle (php/* -0.5 php/M_PI)
     :enemies [{:type :demon :count 5}
               {:type :imp   :count 2}]
     ;; Fixed spawns ON the staircase (issue #375 showcase): two demons on
@@ -813,9 +818,16 @@
                        (:grid built))
          [px py]     spawn
          specs       (normalise-enemies cfg)
+         ;; Spawn facing: random by default, but a level may pin
+         ;; `:spawn-angle` (radians) so a hand-authored showcase faces its
+         ;; feature on entry - L2 looks north up the staircase. The random
+         ;; draw is consumed EITHER way, so overriding the angle does not
+         ;; shift the rest of the level's RNG stream (walls/enemies/pickups
+         ;; stay byte-identical to a random-facing build).
+         rand-angle  (php/* (rng/int! 360) (php// php/M_PI 180.0))
+         angle       (or (:spawn-angle cfg) rand-angle)
          world       (new-world grid
-                                (new-player px py (php/* (rng/int! 360)
-                                                         (php// php/M_PI 180.0)))
+                                (new-player px py angle)
                                 (:fz-grid built)
                                 (:cz-grid built))
          random-foes (spawn-enemies-mixed grid specs

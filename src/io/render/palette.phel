@@ -485,3 +485,47 @@
     (if (php/<= dc dg)
       (php/+ 16 (php/* 36 ri) (php/* 6 gi) bi)
       (php/+ 232 gidx))))
+
+;; ---------------------------------------------------------------------
+;; Textured riser face, iteration 2 (#404). The first cut sampled the
+;; plain grey wall texture for step faces: it showed real material, but a
+;; step's mortar/stone pattern read as literally the same texture as the
+;; floor right below it - the #384 failure ("a tier that matches the
+;; floor is exactly what made platforms and stairs hard to parse"),
+;; just moved from the tier-TOP to the riser FACE. This table keeps the
+;; texture's PATTERN (so a face still shows material, not a flat
+;; sticker) but recolors every texel into the `tier-riser-ramp` dark-
+;; slate family instead of grey, so a face stays visually distinct from
+;; the floor while no longer being a flat gradient either.
+;;
+;; Indexed `[level][texel]` like `tex-fade-table` (level 0-23, the same
+;; haze index `compute-wall-shades`/`compute-riser-shades` compute) so a
+;; farther riser still dims with distance; haze pulls toward
+;; `tier-riser-ramp`'s own shadow-base (26,29,42) rather than black, so a
+;; maximally-hazed face lands in the same family the flat ramp used, not
+;; a jarring off-hue black. `texel` is a `wall-tex-px` code (232-255
+;; grayscale ramp only - `code-r` reads its luma directly since r=g=b
+;; there). Cells are truecolor strings (not 256-quantized), the same
+;; convention `tier-riser-ramp`/`tier-top-ramp` already use, so a face
+;; blends smoothly into the lit lip / tier-top plateau above it (same
+;; colour system, no seam between the two).
+(def tier-riser-tex
+  (let [t (php/array)]
+    (loop [lvl 0]
+      (when (php/< lvl 24)
+        (let [row  (php/array)
+              frac (php// lvl 23.0)]
+          (loop [c 0]
+            (when (php/< c 256)
+              (let [luma (php/aget code-r c)
+                    r0   (php/min 255.0 (php/+ 20.0 (php/* luma 0.55)))
+                    g0   (php/min 255.0 (php/+ 24.0 (php/* luma 0.6)))
+                    b0   (php/min 255.0 (php/+ 34.0 (php/* luma 0.75)))
+                    r    (php/intval (php/+ 26.0 (php/* (php/- r0 26.0) frac)))
+                    g    (php/intval (php/+ 29.0 (php/* (php/- g0 29.0) frac)))
+                    b    (php/intval (php/+ 42.0 (php/* (php/- b0 42.0) frac)))]
+                (php/aset row c (str "\e[48;2;" r ";" g ";" b "m ")))
+              (recur (php/+ c 1))))
+          (php/aset t lvl row))
+        (recur (php/+ lvl 1))))
+    t))

@@ -10,7 +10,7 @@
   (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-reload-ready paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-weapon-hud])
   (:require phel-doom.io.render.sprites :refer [paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
-  (:require phel-doom.core.projection :refer [char-aspect wall-px pitch-rows project-height])
+  (:require phel-doom.core.projection :refer [char-aspect wall-px pitch-rows project-height floor-cast-num])
   (:require phel-doom.core.perf :refer [render-scale])
   (:require phel-doom.core.format :refer [format-duration])
   (:require phel-doom.core.version :refer [version]))
@@ -213,21 +213,28 @@
   (php/=== "1" (php/getenv "PHEL_DOOM_FLAT_WALLTEX")))
 
 (def floor-cast-k
-  "Numerator of the floor-cast perpendicular distance: a floor cell `p`
-   pixels below the horizon sits at perp-distance `floor-cast-k / p`.
-   Derived from the wall projection with a half-unit camera eye height:
-   `proj-dist * 0.5 / char-aspect`."
+  "Flat-baseline numerator of the floor-cast perpendicular distance: a
+   floor cell `p` pixels below the horizon at eye height 0.5 sits at
+   perp-distance `floor-cast-k / p` = `proj-dist * 0.5 / char-aspect`.
+   The live floor cast now scales this by the camera eye height via
+   `projection/floor-cast-num` (`floor-cast-k-eye`), so this constant is
+   the byte-identity anchor: the reference value the eye-aware path
+   collapses to at eye-z=0.5, named here and in the projection unit tests."
   (php// (php/* proj-dist 0.5) char-aspect))
 
 (defn- build-floor-dperp
   "Per-row perpendicular ground distance for floor-casting. Row centres
-   below the horizon (`vh/2`) map to `floor-cast-k / (row+0.5 - vh/2)`,
-   clamped to `max-depth`. Rows at/above the horizon get `max-depth`
-   (never sampled as floor — walls/sky cover them). One pass over vh.
+   below the horizon (`vh/2`) map to `k / (row+0.5 - vh/2)`, clamped to
+   `max-depth`. Rows at/above the horizon get `max-depth` (never sampled
+   as floor — walls/sky cover them). One pass over vh.
+   `k` is the eye-height-aware numerator (`floor-cast-num proj-dist eye-z
+   0.0`); it collapses to the flat `floor-cast-k` const at eye-z=0.5, so
+   a level gaze on flat ground stays byte-identical. Raising the eye
+   scales `k` up, so the ground recedes faster when the player climbs.
    `pr` (scene rows, default 0) shears the horizon down/up for look
    up/down so the floor plane tracks the pitched wall band; pr=0 keeps
    the table identical."
-  [^int vh & [pr-arg]]
+  [^int vh ^float k & [pr-arg]]
   (let [pr     (or pr-arg 0)
         arr    (php/array)
         center (php/+ (php/* 0.5 vh) pr)]
@@ -236,7 +243,7 @@
         (let [p (php/- (php/+ r 0.5) center)]
           (php/aset arr r (if (php/<= p 0.0)
                             max-depth
-                            (php/min max-depth (php// floor-cast-k p)))))
+                            (php/min max-depth (php// k p)))))
         (recur (php/+ r 1))))
     arr))
 
@@ -536,8 +543,12 @@
         riser-dist  (php/array)
         riser-u     (php/array)
         riser-level (php/array)
+        ;; Nearest riser's tier height per column - the height its tread
+        ;; sits at, so the perspective tread cast samples the ground at the
+        ;; right elevation (#375 realism follow-up).
+        riser-z1    (php/array)
         ;; Per-column list of the FARTHER step faces (every riser beyond
-        ;; the nearest), stride 5: [top bot dist u level ...] near->far.
+        ;; the nearest), stride 6: [top bot dist u level z1] near->far.
         ;; Absent for a single-step column; drives `farther-face-band` /
         ;; `farther-face-vstep` so a staircase paints each step, not one
         ;; flat block (#375), each textured on its own (#404). Spans for
@@ -573,31 +584,32 @@
               (php/aset riser-bot   col bot)
               (php/aset riser-dist  col d-corr)
               (php/aset riser-u     col u)
-              (php/aset riser-level col level))
+              (php/aset riser-level col level)
+              (php/aset riser-z1    col z1))
             ;; farther riser (behind the nearest, up the staircase):
-            ;; append its face band (incl. its own texture coordinates)
-            ;; for the plateau subdivision.
+            ;; append its face band (texture coords + tier height z1) for
+            ;; the plateau subdivision.
             (let [cur (php/aget step-bands col)]
               (if (php/=== nil cur)
-                (php/aset step-bands col (php/array top bot d-corr u level))
-                (do (php/array_push cur top bot d-corr u level)
+                (php/aset step-bands col (php/array top bot d-corr u level z1))
+                (do (php/array_push cur top bot d-corr u level z1)
                     (php/aset step-bands col cur))))))
         (recur (php/+ base 8))))
     {:riser-top riser-top :riser-bot riser-bot
      :riser-dist riser-dist :riser-u riser-u :riser-level riser-level
-     :step-bands step-bands}))
+     :riser-z1 riser-z1 :step-bands step-bands}))
 
 (defn- farther-face-band
   "Base index into `sb` of the FARTHER step-face band screen row `r` lands
    in, or -1 if it lands in none. `sb` is the per-column band list
-   `compute-riser-shades` packs (stride 5: face-top, face-bot, dist, u,
-   level, near->far) holding every riser BEYOND the nearest one; nil when
-   the column has no farther step.
+   `compute-riser-shades` packs (stride 6: face-top, face-bot, dist, u,
+   level, z1, near->far) holding every riser BEYOND the nearest one; nil
+   when the column has no farther step.
 
    Returns the band's base index (not a depth) so a caller can pull its
-   own `top`/`bot`/`u`/`level` for texture sampling (#404) - `farther-
-   face-vstep` derives the shading depth from the same scan for callers
-   that only need that."
+   own `top`/`bot`/`u`/`level`/`z1` for texture sampling (#404) + the
+   perspective tread cast - `farther-face-vstep` derives the shading depth
+   from the same scan for callers that only need that."
   [sb ^int r]
   (if (php/=== nil sb)
     -1
@@ -608,13 +620,34 @@
           (let [t (php/aget sb i)]
             (if (if (php/>= r t) (php/< r (php/aget sb (php/+ i 1))) false)
               i
-              (recur (php/+ i 5)))))))))
+              (recur (php/+ i 6)))))))))
+
+(defn tread-height-at
+  "World floor height of the tread capping plateau screen row `r` in a
+   riser column - the tier height the perspective tread cast samples the
+   ground at. A tread row (row < rtop, not inside a farther face) caps the
+   step whose face is immediately below it: the face with the SMALLEST top
+   row that is still below `r` (higher on screen = a tread receding toward
+   the horizon caps a taller, farther step). `sb` is the stride-6 step-band
+   list (`[top bot dist u level z1] ...` near->far) or nil; `rtop`/`zr` are
+   the nearest riser's top row + tier height, always the fallback since a
+   tread row is always above the nearest lip. Only called for genuine tread
+   rows (where `farther-face-band` already returned -1)."
+  [sb ^int rtop ^float zr ^int r]
+  (let [n (if (php/=== nil sb) 0 (php/count sb))]
+    (loop [i 0 best-top rtop best-z zr]
+      (if (php/>= i n)
+        best-z
+        (let [ft (php/aget sb i)]
+          (if (if (php/> ft r) (php/< ft best-top) false)
+            (recur (php/+ i 6) ft (php/aget sb (php/+ i 5)))
+            (recur (php/+ i 6) best-top best-z)))))))
 
 (defn farther-face-vstep
   "Screen row `r`'s vertical depth into whichever of a column's FARTHER
    stacked step faces it lands in, or -1 if it lands in none. `sb` is the
-   per-column band list `compute-riser-shades` packs (stride 5: face-top,
-   face-bot, dist, u, level, near->far) holding every riser BEYOND the
+   per-column band list `compute-riser-shades` packs (stride 6: face-top,
+   face-bot, dist, u, level, z1, near->far) holding every riser BEYOND the
    nearest one; nil when the column has no farther step.
 
    The return is `r - face-top` (0 at the lit leading edge, growing toward
@@ -974,10 +1007,10 @@
   [parts center-cap                                       ; output bufs (returned, php-array by value)
    vw vh svw svh                                          ; viewport + scene dims
    sky-gradient sky-sub-codes floor-gradient blood-sky-gradient blood-cols  ; gradients
-   floordxs floordys pfx pfy floor-dperp-sub floor-level-sub                ; floor-cast
+   floordxs floordys pfx pfy floor-dperp-sub floor-level-sub floor-dperp floor-level eye-z flr-center  ; floor-cast + perspective-tread cast
    tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow  ; wall spans + shades
    shades-tex-u shades-tex-level shades-tex-px                              ; wall texture
-   riser-top riser-bot riser-u riser-level step-bands  ; nearest riser + farther step bands; textured faces, shaded tier-top (#370,#375,#402,#404)
+   riser-top riser-bot riser-u riser-level riser-z1 step-bands  ; nearest riser + farther step bands; textured faces, perspective tier-top (#370,#375,#402,#404)
    upper-top upper-bot upper-shade                                        ; upper wall-slices (#387)
    mids lowers emask eheads ebodys elegss                                  ; enemy glyph rows
    e-stop e-sbot e-vtop e-vbot e-sx e-sxr e-spx e-sw e-sh e-fade           ; sprite window
@@ -1076,8 +1109,9 @@
                   ;;   -5 enemy glyph zone      -6 top edge
                   ;;   -7 top shadow            -8 bot edge
                   ;;   -9 bot shadow            -10 wall flat
-                  ;;   -11 tier-top floor (#370) -12 upper slice (#387)
-                  ;; -2 / -11 carry their gradient ramp index in slot 1.
+                  ;;   -12 upper slice (#387)
+                  ;; -2 carries a READY cell string in slot 1 (riser face,
+                  ;; lit lip, or perspective tread - #370/#404).
               (cond
                 mini?
                 (php/aset pack-reg 0 -1)
@@ -1104,13 +1138,12 @@
                     (php/aset pack-reg 1 (php/aget (php/aget tier-riser-tex (php/aget riser-level col))
                                                    (php/aget wall-tex-px (php/+ (php/* rrow 64) (php/aget riser-u col)))))))
                 (if has-riser2? (php/< r2 rtop2) false)
-                ;; Plateau above the nearest riser: a farther step's own lip
-                ;; + textured face (#404 iter 2, same recipe as the nearest
-                ;; one, just the matched band's own top/bot/u/level) where
-                ;; the row lands in one, else the receding tier-top surface
-                ;; (-11 + a recede index growing with height above the
-                ;; step). Turns a flat block into countable, textured steps
-                ;; (#375, #402, #404).
+                ;; Plateau above the nearest riser: where the row lands in a
+                ;; farther step's FACE, pack its own lip + textured face (#404
+                ;; iter 2, same recipe as the nearest one off the matched
+                ;; band's top/bot/u/level); otherwise it is a TREAD, perspective
+                ;; floor-cast into a ready pack -2 string below. Turns a flat
+                ;; block into countable, textured steps (#375, #402, #404).
                 (let [sb (php/aget step-bands col)
                       fi (farther-face-band sb r2)]
                   (if (php/>= fi 0)
@@ -1124,9 +1157,31 @@
                           (php/aset pack-reg 0 -2)
                           (php/aset pack-reg 1 (php/aget (php/aget tier-riser-tex (php/aget sb (php/+ fi 4)))
                                                          (php/aget wall-tex-px (php/+ (php/* frow 64) (php/aget sb (php/+ fi 3)))))))))
-                    (do (php/aset pack-reg 0 -11)
-                        (php/aset pack-reg 1 (php/min (php/intval (php// (php/- rtop2 r2) 3))
-                                                      (php/- tier-top-steps 1))))))
+                    ;; Tread / platform in true perspective (whole-cell): the
+                    ;; row-remap trick reuses the base floor-dperp / floor-level
+                    ;; tables (no per-cell pow, matches px1), recoloured through
+                    ;; tier-riser-tex so tread + riser read as one stone
+                    ;; material. A tread at/above eye height (looking up a tall
+                    ;; tier) is not floor-cast-able -> the old slate ramp. Both
+                    ;; store a ready string via pack -2.
+                    (let [z-tread (tread-height-at sb rtop2 (php/aget riser-z1 col) r2)
+                          eye-gap (php/- eye-z z-tread)]
+                      (php/aset pack-reg 0 -2)
+                      (if (php/<= eye-gap 0.05)
+                        (php/aset pack-reg 1 (php/aget tier-top-ramp
+                                                       (php/min (php/intval (php// (php/- rtop2 r2) 3))
+                                                                (php/- tier-top-steps 1))))
+                        (let [ratio (php// eye-z eye-gap)
+                              rp    (php/max 0 (php/min (php/- svh 1)
+                                                        (php/intval (php/round (php/+ (php/- flr-center 0.5)
+                                                                                      (php/* ratio (php/- (php/+ r2 0.5) flr-center)))))))
+                              dperp (buf-get floor-dperp rp)
+                              lvl   (buf-get floor-level rp)
+                              fx    (php/+ pfx (php/* dperp (buf-get floordxs col)))
+                              fy    (php/+ pfy (php/* dperp (buf-get floordys col)))
+                              tex   (php/aget floor-tex-px (php/+ (php/* (php/intval (php/* (php/- fy (php/floor fy)) 64)) 64)
+                                                                  (php/intval (php/* (php/- fx (php/floor fx)) 64))))]
+                          (php/aset pack-reg 1 (php/aget (php/aget tier-riser-tex lvl) tex)))))))
                 (php/>= r2 (if has-riser2? rbot2 floor-from))
                 (if (if in-blood? true floor-flat?)
                   (php/aset pack-reg 0 -4)
@@ -1233,14 +1288,6 @@
                         ;; Intentional alias: the blood floor reuses the
                         ;; blood sky row — one uniform red wash.
                     (php/=== pack -4)  (php/aset cell-reg 0 (if in-blood? blood-sky-r2 flr-r2))
-                        ;; Tier-top surface (#370, #402): the receding
-                        ;; tread / platform. Slot 1 carries the recede
-                        ;; index (brighter near the step, darker toward the
-                        ;; horizon), a distinct dark slate so a tier never
-                        ;; blends into the textured floor. Blood wash wins.
-                    (php/=== pack -11) (php/aset cell-reg 0
-                                                 (if in-blood? blood-sky-r2
-                                                     (php/aget tier-top-ramp (php/aget pack-reg 1))))
                     (php/=== pack -5)  (cond
                                          (php/< r2 (buf-get mids col))
                                          (php/aset cell-reg 0 (buf-get eheads col))
@@ -1282,13 +1329,11 @@
                                          true
                                          (if (php/=== pack -4)
                                            true
-                                           (if (php/=== pack -11)
-                                             true
-                                             (if (php/=== pack -7)
+                                           (if (php/=== pack -7)
+                                             plain?
+                                             (if (php/=== pack -9)
                                                plain?
-                                               (if (php/=== pack -9)
-                                                 plain?
-                                                 (if (php/=== pack -10) plain? false))))))))))
+                                               (if (php/=== pack -10) plain? false)))))))))
                           ;; Overlay merge: tracer/pickup buffer wins the whole
                           ;; block; a sprite quad overrides per quadrant with
                           ;; transparent texels keeping the base pair.
@@ -1433,7 +1478,7 @@
    floordxs floordys pfx pfy floor-dperp-sub floor-level-sub                ; floor-cast
    tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow  ; wall spans + shades
    shades-tex-u shades-tex-level shades-tex-px                              ; wall texture
-   riser-top riser-bot riser-u riser-level step-bands  ; nearest riser + farther step bands; textured faces, shaded tier-top (#370,#375,#402,#404)
+   riser-top riser-bot riser-u riser-level riser-z1 step-bands  ; nearest riser + farther step bands; textured faces, perspective tier-top (#370,#375,#402,#404)
    upper-top upper-bot upper-shade                                         ; upper wall-slices (#387)
    mids lowers emask eheads ebodys elegss                                  ; enemy glyph rows
    e-stop e-sbot e-vtop e-vbot e-sx e-sxr e-spx e-sw e-sh e-fade           ; sprite window
@@ -1441,7 +1486,7 @@
    wsub-top wsub-bot wsub-mix wsub-skylim wsub-floorfrom                   ; wall sub-sample
    floor-flat? tex-fade-table bg-cell-cache                                ; fog + bg cache
    sky-hb tex-on? subpixel? quad? flat-walltex?                            ; px1 render-mode flags
-   floor-dperp floor-level                                                 ; floor-cast (whole-row)
+   floor-dperp floor-level eye-z flr-center                                ; floor-cast (whole-row) + perspective-tread cast
    mini-col0 mini-row-lo mini-row-hi                                       ; minimap window
    cap-col cap-row                                                         ; centre-cell capture
    ;; seam group: consumed only via the non-hygienic `seam-shade!` macro
@@ -1549,15 +1594,13 @@
                                                    (php/aget (php/aget tier-riser-tex (php/aget riser-level col))
                                                              (php/aget wall-tex-px (php/+ (php/* rrow 64) (php/aget riser-u col))))))))
                       (if has-riser? (php/< row rtop) false)
-                          ;; Plateau above the nearest riser: a farther
-                          ;; step's own lip + textured face (#404 iter 2,
-                          ;; same recipe as the nearest one, just the matched
-                          ;; band's own top/bot/u/level) where the row lands
-                          ;; in one, else the receding tier-top surface
-                          ;; (brighter near the step, darker toward the
-                          ;; horizon). Turns a flat block into countable,
-                          ;; textured steps (#375, #402, #404). Blood wash
-                          ;; wins in every case.
+                          ;; Plateau above the nearest riser: where the row
+                          ;; lands in a farther step's FACE, paint its own lip
+                          ;; + textured face (#404 iter 2, same recipe as the
+                          ;; nearest one off the matched band's top/bot/u/level);
+                          ;; otherwise it is a TREAD, perspective floor-cast
+                          ;; below. Turns a flat block into countable, textured
+                          ;; steps (#375, #402, #404). Blood wash wins in every case.
                       (let [sb (php/aget step-bands col)
                             fi (farther-face-band sb row)]
                         (if (php/>= fi 0)
@@ -1570,10 +1613,38 @@
                                 (php/aset cell-reg 0 (if in-blood? blood-flr-row
                                                          (php/aget (php/aget tier-riser-tex (php/aget sb (php/+ fi 4)))
                                                                    (php/aget wall-tex-px (php/+ (php/* frow 64) (php/aget sb (php/+ fi 3))))))))))
-                          (php/aset cell-reg 0 (if in-blood? blood-flr-row
-                                                   (php/aget tier-top-ramp
-                                                             (php/min (php/intval (php// (php/- rtop row) 3))
-                                                                      (php/- tier-top-steps 1)))))))
+                              ;; Tread / platform: cast the raised-tier ground
+                              ;; plane in true perspective. A tread at height
+                              ;; z-tread shows, at row `row`, the world point
+                              ;; the FLAT floor shows at the remapped row `rp`
+                              ;; (p scales by eye-z/(eye-z - z)), so the base
+                              ;; floor-dperp / floor-level tables are reused -
+                              ;; no per-cell pow, px2-safe. The floor texel is
+                              ;; recoloured through tier-riser-tex (the riser
+                              ;; face LUT) so tread + riser read as one stone
+                              ;; material, distinct from the grey floor (#384),
+                              ;; receding with distance-true fog. A tread at or
+                              ;; above eye height (looking UP at a tall tier)
+                              ;; is not floor-cast-able -> the old slate ramp.
+                          (let [z-tread (tread-height-at sb rtop (php/aget riser-z1 col) row)
+                                eye-gap (php/- eye-z z-tread)]
+                            (if (php/<= eye-gap 0.05)
+                              (php/aset cell-reg 0 (if in-blood? blood-flr-row
+                                                       (php/aget tier-top-ramp
+                                                                 (php/min (php/intval (php// (php/- rtop row) 3))
+                                                                          (php/- tier-top-steps 1)))))
+                              (let [ratio (php// eye-z eye-gap)
+                                    rp    (php/max 0 (php/min (php/- vh 1)
+                                                              (php/intval (php/round (php/+ (php/- flr-center 0.5)
+                                                                                            (php/* ratio (php/- (php/+ row 0.5) flr-center)))))))
+                                    dperp (buf-get floor-dperp rp)
+                                    lvl   (buf-get floor-level rp)
+                                    fx    (php/+ pfx (php/* dperp (buf-get floordxs col)))
+                                    fy    (php/+ pfy (php/* dperp (buf-get floordys col)))
+                                    tex   (php/aget floor-tex-px (php/+ (php/* (php/intval (php/* (php/- fy (php/floor fy)) 64)) 64)
+                                                                        (php/intval (php/* (php/- fx (php/floor fx)) 64))))]
+                                (php/aset cell-reg 0 (if in-blood? blood-flr-row
+                                                         (php/aget (php/aget tier-riser-tex lvl) tex))))))))
                           ;; Floor: cast the ground plane and sample the
                           ;; stone texture. Player + per-row perp-distance
                           ;; × the column's floor basis gives the world
@@ -1853,6 +1924,10 @@
         ;; at terminal resolution (vh, not svh), so it tracks the sprite
         ;; head using the vh-scaled offset.
         pr-full                            (pitch-rows (or (:pitch (:player world)) 0.0) vh)
+        ;; Scene-row horizon centre the floor tables are built around
+        ;; (0.5·svh + pr): the perspective-tread cast remaps a tread row
+        ;; about this centre to reuse floor-dperp / floor-level.
+        flr-center                         (php/+ (php/* 0.5 svh) pr)
         bloody?                            (php/> (or (get stats :iframes) 0.0) 0.0)
         ;; Walls + sky + floor are ALL pure grayscale: enemy colours
         ;; pop against neutral stonework, and far walls fade toward
@@ -1975,9 +2050,19 @@
         ;; res arrays drive the legacy single-texel floor; the sub arrays
         ;; (2× vertical) drive the half-block floor.
         {:x pfx :y pfy}                    (:player world)
-        floor-dperp                        (build-floor-dperp svh pr)
+        ;; Camera eye height: 0.5 + the player's own tier elevation (#371).
+        ;; Bound here, above the floor tables, so the floor cast recedes
+        ;; correctly from a raised vantage; a missing :z reads 0.0 so a
+        ;; level gaze on flat ground stays byte-identical.
+        eye-z                              (php/+ 0.5 (get (:player world) :z 0.0))
+        ;; Eye-height-aware floor-cast numerators. At eye-z=0.5 these equal
+        ;; the flat floor-cast-k / -k-sub consts to the bit (same operands),
+        ;; so the pinned flat frame is unchanged.
+        floor-cast-k-eye                   (floor-cast-num proj-dist eye-z 0.0)
+        floor-cast-k-sub-eye               (php/* 2.0 floor-cast-k-eye)
+        floor-dperp                        (build-floor-dperp svh floor-cast-k-eye pr)
         floor-level                        (build-floor-level floor-dperp svh)
-        floor-dperp-sub                    (build-floor-dperp-sub (if px2? (php/* 2 svh) svh) floor-cast-k-sub pr-sub)
+        floor-dperp-sub                    (build-floor-dperp-sub (if px2? (php/* 2 svh) svh) floor-cast-k-sub-eye pr-sub)
         floor-level-sub                    (build-floor-level-sub floor-dperp-sub (if px2? (php/* 2 svh) svh))
         _                                  (when debug?
                                              (record-cast-ms!
@@ -2110,11 +2195,6 @@
                              blood-cols
                              scene-pd
                              pr)
-        ;; Camera eye height: 0.5 (today's flat-ground constant) plus the
-        ;; player's own elevation. `:z` lands in the parallel #371; a
-        ;; missing key reads as 0.0 so this stays byte-identical to the
-        ;; hardcoded 0.5 everywhere else in the file until that lands.
-        eye-z                               (php/+ 0.5 (get (:player world) :z 0.0))
         ;; Flat per-cell floor-height hot array (#375, indexed y*mapw+x),
         ;; so the enemy zone pass can anchor each billboard's feet on the
         ;; tier it stands on rather than the flat z=0 ground. Read via a
@@ -2130,7 +2210,7 @@
         ;; for every column and its extra branches never fire.
         {:riser-top riser-top :riser-bot riser-bot
          :riser-dist riser-dist :riser-u riser-u :riser-level riser-level
-         :step-bands step-bands}
+         :riser-z1 riser-z1 :step-bands step-bands}
         (compute-riser-shades (:spans cast-result) haze-shift scene-pd svh eye-z pr)
         ;; Upper wall-slice faces (#387), the ceiling mirror of the riser
         ;; block above, from the flat :uspans stream (#386). Empty on
@@ -2621,10 +2701,10 @@
             (emit-scene-px2 parts center-cap
                             vw vh svw svh
                             sky-gradient sky-sub-codes floor-gradient blood-sky-gradient blood-cols
-                            floordxs floordys pfx pfy floor-dperp-sub floor-level-sub
+                            floordxs floordys pfx pfy floor-dperp-sub floor-level-sub floor-dperp floor-level eye-z flr-center
                             tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow
                             shades-tex-u shades-tex-level shades-tex-px
-                            riser-top riser-bot riser-u riser-level step-bands
+                            riser-top riser-bot riser-u riser-level riser-z1 step-bands
                             upper-top upper-bot upper-shade
                             mids lowers emask eheads ebodys elegss
                             e-stop e-sbot e-vtop e-vbot e-sx e-sxr e-spx e-sw e-sh e-fade
@@ -2640,7 +2720,7 @@
                             floordxs floordys pfx pfy floor-dperp-sub floor-level-sub
                             tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow
                             shades-tex-u shades-tex-level shades-tex-px
-                            riser-top riser-bot riser-u riser-level step-bands
+                            riser-top riser-bot riser-u riser-level riser-z1 step-bands
                             upper-top upper-bot upper-shade
                             mids lowers emask eheads ebodys elegss
                             e-stop e-sbot e-vtop e-vbot e-sx e-sxr e-spx e-sw e-sh e-fade
@@ -2648,7 +2728,7 @@
                             wsub-top wsub-bot wsub-mix wsub-skylim wsub-floorfrom
                             floor-flat? tex-fade-table bg-cell-cache
                             sky-hb tex-on? subpixel? quad? flat-walltex?
-                            floor-dperp floor-level
+                            floor-dperp floor-level eye-z flr-center
                             mini-col0 mini-row-lo mini-row-hi
                             cap-col cap-row
                             floor-code-at seam-darken-16 seam-darken-8 seam-darken-5 ftab hb))]

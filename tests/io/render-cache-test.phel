@@ -385,7 +385,7 @@
   ;; sits above a visible tier-top floor sliver, which sits above the
   ;; riser face, which sits above the near-tier floor - all four zones
   ;; in one column.
-  (is (= "7ece5347cbb6859a66d9d2a75c8b8619"
+  (is (= "48bab226bd66e925221d17186f4fe86b"
          (php/md5 (frame->string (stair-world 1.5 1.5) stats 120 30)))))
 
 (deftest test-riser-scene-from-above-pinned
@@ -398,8 +398,8 @@
 
 (deftest test-riser-scene-px2-pinned
   ;; Pixel-doubled path exercises the compact-cast-2 span-copy + the
-  ;; separate pack-reg -2/-11 resolution branch, not the px1 loop above.
-  (is (= "9d77396e6cead0dcc7669b8ea450ef1d"
+  ;; separate pack-reg -2 resolution branch, not the px1 loop above.
+  (is (= "2c9ea8c3c45f035fa94f914812d58624"
          (php/md5 (frame->string (stair-world 1.5 1.5) (assoc stats :px2? true) 120 30)))))
 
 ;; ---------------------------------------------------------------------
@@ -493,19 +493,19 @@
   ;; At the spawn (11.5, 15.5) on the ground tier, looking north up the
   ;; staircase: the three risers + tier tops stack ahead, the 0.75
   ;; platform capping the far end.
-  (is (= "cac8f146bb011de5c3c32e6835097814"
+  (is (= "66c59bbb363e3b27e376f62797f51724"
          (php/md5 (frame->string (showcase-world 11.5 15.5 look-north 0.0) stats 120 30)))))
 
 (deftest test-showcase-stairs-from-above-pinned
   ;; Standing ON the platform (11.5, 6.5, z=0.75) looking south back down
   ;; the stairs: the descending treads read from above, ground floor
   ;; beyond.
-  (is (= "e6e407b5e5d101f10d02f8b5593e3ca6"
+  (is (= "2658a71c93c44fb83b98a5785495fdbb"
          (php/md5 (frame->string (showcase-world 11.5 6.5 look-south 0.75) stats 120 30)))))
 
 (deftest test-showcase-stairs-px2-pinned
   ;; Pixel-doubled path over the same from-below viewpoint.
-  (is (= "a0df1c7e5707fa621264d990c38a70c5"
+  (is (= "3470a55474718540375a8a5c7e4656fe"
          (php/md5 (frame->string (showcase-world 11.5 15.5 look-north 0.0) (assoc stats :px2? true) 120 30)))))
 
 (deftest test-showcase-stairs-distinct
@@ -521,27 +521,45 @@
   (is (not= (frame->string (showcase-world 11.5 15.5 look-north 0.0) stats 120 30)
             (frame->string (showcase-flat-world 11.5 15.5 look-north) stats 120 30))))
 
+(defn- warm-stone-cell?
+  "True if the frame carries a warm real-stone tier cell: a 48;2 truecolor
+   BG with r>g>b, the `tier-riser-tex` family the perspective treads + riser
+   faces sample. The neutral grey floor/wall (r=g=b) never produces one, and
+   `stair-grid` has no amber doors, so this cleanly proves tiers render as
+   warm stone distinct from the ground."
+  [s]
+  (let [m (php/array)]
+    (php/preg_match_all "/\\x1b\\[48;2;(\\d+);(\\d+);(\\d+)m/" s m)
+    (let [rs (php/aget m 1) gs (php/aget m 2) bs (php/aget m 3)
+          n  (php/count rs)]
+      (loop [i 0]
+        (if (php/>= i n)
+          false
+          (if (if (php/> (php/intval (php/aget rs i)) (php/intval (php/aget gs i)))
+                (php/> (php/intval (php/aget gs i)) (php/intval (php/aget bs i)))
+                false)
+            true
+            (recur (php/+ i 1))))))))
+
 (deftest test-riser-face-lip-and-tier-top-present
-  ;; The step FACE is slate-tinted textured stone (#404) topped by a lit
-  ;; lip (`tier-riser-ramp` index 0), and the tier-top SURFACE is the
-  ;; receding slate gradient (#402) - both distinct from the textured grey
-  ;; floor (legible stairs), not a flat sticker. The lit lip and the
-  ;; tier-top near-shade must both render: a regression guard for the -2 /
-  ;; -11 riser wiring, independent of the exact byte hash above (which
-  ;; pins the varying textured body cells).
+  ;; The step FACE + perspective tread render as warm real-stone
+  ;; (`tier-riser-tex`), crowned by a lit lip (`tier-riser-ramp` index 0),
+  ;; all distinct from the neutral grey floor (r=g=b) so stairs stay
+  ;; legible. Both the lit lip and a warm-stone tier cell must render: a
+  ;; hash-independent guard on the -2 riser/tread wiring (#404 + perspective
+  ;; treads).
   (let [s (frame->string (stair-world 1.5 1.5) stats 120 30)]
-    (is (php/str_contains s "\e[48;2;96;104;132m") "step lip (ramp 0) present")
-    (is (php/str_contains s "\e[48;2;72;79;104m") "tier-top surface near-shade present")))
+    (is (php/str_contains s "\e[48;2;150;138;116m") "step lip (ramp 0) present")
+    (is (warm-stone-cell? s) "warm-stone tier surface present, distinct from grey floor")))
 
 (deftest test-showcase-stairs-multi-step-present
   ;; The multi-step painter (#375) turns a staircase from one flat block
-  ;; into countable steps, each a slate-tinted textured face (#404) capped
-  ;; by a lit lip. Looking up the showcase stairs, that lit leading edge
-  ;; must appear MORE THAN ONCE - one per visible step, i.e. stacked steps
-  ;; rather than a single collapsed block. Hash-independent, OS-agnostic
-  ;; guard on the feature.
+  ;; into countable steps, each a warm-stone textured face (#404) capped by
+  ;; a lit lip. Looking up the showcase stairs, that lit leading edge must
+  ;; appear MORE THAN ONCE - one per visible step, i.e. stacked steps rather
+  ;; than a single collapsed block. Hash-independent, OS-agnostic guard.
   (let [s    (frame->string (showcase-world 11.5 15.5 look-north 0.0) stats 120 30)
-        lips (php/substr_count s "\e[48;2;96;104;132m")]
+        lips (php/substr_count s "\e[48;2;150;138;116m")]
     (is (php/> lips 1) "more than one lit step edge = countable stacked steps")))
 
 ;; ---------------------------------------------------------------------

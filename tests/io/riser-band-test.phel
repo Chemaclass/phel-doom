@@ -2,21 +2,22 @@
 ;; `farther-face-vstep` returns a plateau screen row's vertical depth into
 ;; whichever FARTHER stacked step face it lands in (0 at the lit leading
 ;; edge, growing toward the shadowed base), or -1 if the row is a tread /
-;; platform surface. Bands are stride 5 (`[top bot dist u level ...]`)
-;; since #404 textures each farther face off its own u/level; this test
-;; only exercises the depth math, so the trailing u/level are dummy 0s.
+;; platform surface. Bands are stride 6 (`[top bot dist u level z1 ...]`):
+;; #404 textures each farther face off its own u/level, and the perspective
+;; tread cast reads each face's tier height z1 (the trailing element).
+;; `tread-height-at` selects the tier height of the step a tread row caps.
 ;; The nearest step face is shaded by the emitters directly off riser-top.
 (ns phel-doom-tests.io.riser-band-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.io.render.main :refer [farther-face-vstep]))
+  (:require phel-doom.io.render.main :refer [farther-face-vstep tread-height-at]))
 
 (deftest no-bands-is-minus-one
   (is (= -1 (farther-face-vstep nil 5))
       "a column with no farther steps (nil band list) is never a face"))
 
 (deftest single-farther-face-band
-  ;; one farther step face spanning rows [10, 14)
-  (let [sb (php/array 10 14 3.0 0 0)]
+  ;; one farther step face spanning rows [10, 14), tier height 0.5
+  (let [sb (php/array 10 14 3.0 0 0 0.5)]
     (is (= -1 (farther-face-vstep sb 9))  "row above the face top is a tread")
     (is (= 0  (farther-face-vstep sb 10)) "top row is depth 0 (the lit lip)")
     (is (= 3  (farther-face-vstep sb 13)) "last face row is depth 3")
@@ -24,8 +25,41 @@
 
 (deftest two-stacked-farther-faces
   ;; nearer-of-the-farther face [10,14), the next one up [5,9)
-  (let [sb (php/array 10 14 3.0 0 0 5 9 4.0 0 0)]
+  (let [sb (php/array 10 14 3.0 0 0 0.5 5 9 4.0 0 0 0.75)]
     (is (= 2  (farther-face-vstep sb 12)) "depth 2 into the lower farther face")
     (is (= -1 (farther-face-vstep sb 9))  "the tread gap between the two faces")
     (is (= 2  (farther-face-vstep sb 7))  "depth 2 into the higher farther face")
     (is (= -1 (farther-face-vstep sb 4))  "above every face is the platform top")))
+
+;; ---------------------------------------------------------------------
+;; tread-height-at: world floor height of the tread capping a plateau row.
+;; A tread row (row < rtop, not inside a farther face) caps the step whose
+;; face is immediately below it - the nearest face whose top row is still
+;; below `r`. That step's tier height z1 is where the tread lives, so the
+;; perspective cast samples the ground at the right height. Only called
+;; when farther-face-band already returned -1 (a genuine tread row).
+;; ---------------------------------------------------------------------
+
+(deftest tread-height-no-farther-faces-is-nearest-tier
+  ;; A single-step column (nil band list): every tread caps the nearest
+  ;; riser, so it sits at that riser's tier height zr.
+  (is (= 0.25 (tread-height-at nil 16 0.25 15))
+      "tread just above the nearest lip is the nearest tier"))
+
+(deftest tread-height-nearest-tread-below-a-farther-step
+  ;; nearest riser lip at row 16 (tier 0.25); one farther, higher step
+  ;; face at [10,14) (tier 0.5). Rows between the farther face bottom and
+  ;; the nearest lip are the NEAREST tier's tread.
+  (let [sb (php/array 10 14 3.0 0 0 0.5)]
+    (is (= 0.25 (tread-height-at sb 16 0.25 15))
+        "row 15 (below the farther face) is the nearest tier 0.25")
+    (is (= 0.5 (tread-height-at sb 16 0.25 9))
+        "row 9 (above the farther face) is the farther step's tier 0.5")))
+
+(deftest tread-height-picks-each-step-in-a-two-step-stack
+  ;; nearest riser lip row 16 (tier 0.25); band0 face [10,14) tier 0.5;
+  ;; band1 face [5,9) tier 0.75 - a staircase climbing away.
+  (let [sb (php/array 10 14 3.0 0 0 0.5 5 9 4.0 0 0 0.75)]
+    (is (= 0.25 (tread-height-at sb 16 0.25 15)) "nearest tread -> 0.25")
+    (is (= 0.5  (tread-height-at sb 16 0.25 9))  "band0's tread -> 0.5")
+    (is (= 0.75 (tread-height-at sb 16 0.25 4))  "top platform -> 0.75")))

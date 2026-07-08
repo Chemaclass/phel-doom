@@ -13,30 +13,32 @@
 ;; instead of blending into the floor.
 ;; Riser (step-face) vertical gradient (#402). A flat dark constant made a
 ;; raised tier read as a 2D sticker pasted over the world - no volume. The
-;; face now shades top-lit to shadow-base down its height, giving the
-;; vertical surface depth while keeping the distinct dark-slate hue (so it
-;; never blends into the textured floor). Index 0 is the lit leading edge
-;; (doubles as the step lip - the countable-stairs highlight of #375);
-;; index 5 is the shadowed base where the face meets the tread below.
+;; face now shades top-lit to shadow-base down its height. Warm real-stone
+;; hue (r>=g>=b) so it reads as rock/brick, kept off the neutral grey floor
+;; (which is r=g=b) for legibility. Index 0 is the lit leading edge (the
+;; step lip - the countable-stairs highlight of #375); index 5 is the
+;; shadowed base where the face meets the tread below. Its bright/dark ends
+;; bracket the tier-riser-tex stone the faces + perspective treads sample,
+;; so lip, face and tread all read as one lit stone material.
 (def tier-riser-ramp
-  ["\e[48;2;96;104;132m " ; 0 lit top / lip
-   "\e[48;2;74;81;106m "  ; 1
-   "\e[48;2;58;64;86m "   ; 2
-   "\e[48;2;45;50;68m "   ; 3
-   "\e[48;2;35;39;54m "   ; 4
-   "\e[48;2;26;29;42m "]) ; 5 shadow base
+  ["\e[48;2;150;138;116m " ; 0 lit top / lip (bright warm stone)
+   "\e[48;2;120;110;92m "  ; 1
+   "\e[48;2;96;88;73m "    ; 2
+   "\e[48;2;74;68;56m "    ; 3
+   "\e[48;2;52;47;39m "    ; 4
+   "\e[48;2;34;30;26m "])  ; 5 shadow base
 (def tier-riser-steps 6)
 
-;; Tier-top (tread / platform) recede gradient (#402). The horizontal
-;; surface fogs from bright just above its riser to dark toward the
-;; horizon, so it reads as a receding plane instead of a flat bar. Same
-;; slate hue, one notch lighter than the riser face, so a raised tier +
-;; its stair edges stay legible against the floor.
+;; Tier-top recede gradient - the DEGENERATE fallback only (a tread at or
+;; above eye height, looking UP a tall tier, cannot be floor-cast). Normal
+;; treads perspective-cast the ground through tier-riser-tex (see main.phel);
+;; this flat warm-stone gradient just keeps such a tread reading as a tier
+;; rather than sky. Same warm-stone family as the riser ramp.
 (def tier-top-ramp
-  ["\e[48;2;72;79;104m " ; 0 near (just above the riser)
-   "\e[48;2;60;66;88m "  ; 1
-   "\e[48;2;50;55;74m "  ; 2
-   "\e[48;2;41;45;62m "]) ; 3 far (toward horizon)
+  ["\e[48;2;108;99;83m " ; 0 near (just above the riser)
+   "\e[48;2;90;82;68m "  ; 1
+   "\e[48;2;74;67;56m "  ; 2
+   "\e[48;2;60;54;45m "]) ; 3 far (toward horizon)
 (def tier-top-steps 4)
 (def enemy-head "\e[48;5;196m ")
 (def enemy-body "\e[48;5;52m ")
@@ -493,17 +495,19 @@
 ;; floor right below it - the #384 failure ("a tier that matches the
 ;; floor is exactly what made platforms and stairs hard to parse"),
 ;; just moved from the tier-TOP to the riser FACE. This table keeps the
-;; texture's PATTERN (so a face still shows material, not a flat
-;; sticker) but recolors every texel into the `tier-riser-ramp` dark-
-;; slate family instead of grey, so a face stays visually distinct from
-;; the floor while no longer being a flat gradient either.
+;; texture's PATTERN (so a face still shows material, not a flat sticker)
+;; but recolors every texel into a warm real-stone family (r>=g>=b), so a
+;; face reads as rock/brick, stays distinct from the neutral grey floor
+;; (r=g=b), and is no longer a flat gradient either. The same table skins
+;; the perspective tier-top treads (main.phel), so face + tread are one
+;; continuous stone material.
 ;;
 ;; Indexed `[level][texel]` like `tex-fade-table` (level 0-23, the same
 ;; haze index `compute-wall-shades`/`compute-riser-shades` compute) so a
-;; farther riser still dims with distance; haze pulls toward
-;; `tier-riser-ramp`'s own shadow-base (26,29,42) rather than black, so a
-;; maximally-hazed face lands in the same family the flat ramp used, not
-;; a jarring off-hue black. `texel` is a `wall-tex-px` code (232-255
+;; farther riser still dims with distance; haze pulls toward the warm
+;; shadow-base (34,30,26) rather than black, so a maximally-hazed face
+;; lands in the `tier-riser-ramp` shadow family, not a jarring off-hue
+;; black. `texel` is a `wall-tex-px` code (232-255
 ;; grayscale ramp only - `code-r` reads its luma directly since r=g=b
 ;; there). Cells are truecolor strings (not 256-quantized), the same
 ;; convention `tier-riser-ramp`/`tier-top-ramp` already use, so a face
@@ -518,12 +522,12 @@
           (loop [c 0]
             (when (php/< c 256)
               (let [luma (php/aget code-r c)
-                    r0   (php/min 255.0 (php/+ 20.0 (php/* luma 0.55)))
-                    g0   (php/min 255.0 (php/+ 24.0 (php/* luma 0.6)))
-                    b0   (php/min 255.0 (php/+ 34.0 (php/* luma 0.75)))
-                    r    (php/intval (php/+ 26.0 (php/* (php/- r0 26.0) frac)))
-                    g    (php/intval (php/+ 29.0 (php/* (php/- g0 29.0) frac)))
-                    b    (php/intval (php/+ 42.0 (php/* (php/- b0 42.0) frac)))]
+                    r0   (php/min 255.0 (php/+ 34.0 (php/* luma 0.72)))
+                    g0   (php/min 255.0 (php/+ 30.0 (php/* luma 0.68)))
+                    b0   (php/min 255.0 (php/+ 26.0 (php/* luma 0.62)))
+                    r    (php/intval (php/+ 34.0 (php/* (php/- r0 34.0) frac)))
+                    g    (php/intval (php/+ 30.0 (php/* (php/- g0 30.0) frac)))
+                    b    (php/intval (php/+ 26.0 (php/* (php/- b0 26.0) frac)))]
                 (php/aset row c (str "\e[48;2;" r ";" g ";" b "m ")))
               (recur (php/+ c 1))))
           (php/aset t lvl row))

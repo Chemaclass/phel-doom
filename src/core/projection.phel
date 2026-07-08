@@ -74,6 +74,27 @@
   [^float pitch ^int vh]
   (php/intval (php/round (php/* pitch (php/* pitch-cap vh)))))
 
+(defn ^:pure floor-cast-num
+  {:doc "Eye-height-aware numerator of the floor-cast perpendicular
+         distance: a floor row `p` pixels from the horizon sits at
+         `dperp = (floor-cast-num pd eye-z z) / p`. `z=0` is the base
+         ground plane, `z>0` a raised tier top. `pd` is the wall-height
+         projection numerator (`proj-dist` at full detail, halved in
+         pixel-doubled mode); `eye-z` the camera height (`0.5 + player
+         z`); `z` the surface height.
+
+         Only the eye-above-surface gap `(eye-z - z)` scales the
+         numerator, so raising the eye (climbing) makes the ground
+         recede faster while the horizon stays pitch-governed. The
+         shipped flat floor baked eye=0.5,z=0 into the io-side
+         `floor-cast-k` const; this is the pure, general source of that
+         value, shared by the base floor table and the tier-top treads.
+
+           (floor-cast-num 70.0 0.5 0.0) ; => 17.5 (== floor-cast-k)"
+   :see-also ["tier-top-row-dist" "wall-px"]}
+  [^float pd ^float eye-z ^float z]
+  (php// (php/* (php/- eye-z z) pd) char-aspect))
+
 (defn ^:pure tier-top-row-dist
   "Height-aware perpendicular ground distance for a floor-cast row on a
    RAISED tier (issue #370). `build-floor-dperp` bakes in the flat-floor
@@ -93,7 +114,7 @@
   [^float pd ^float p ^float eye-z ^float z]
   (if (php/<= p 0.0)
     max-depth
-    (php/min max-depth (php// (php/* (php/- eye-z z) pd) (php/* p char-aspect)))))
+    (php/min max-depth (php// (floor-cast-num pd eye-z z) p))))
 
 (defn ^:pure ceiling-top-row-dist
   "Height-aware perpendicular distance for a ceiling-cast row on a

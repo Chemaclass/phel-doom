@@ -118,7 +118,9 @@ Casters still melee on contact (touch ignores range), so cornering is dangerous.
 
 `step-toward`: heading = atan2(enemy→target), step `speed * dt` along heading, slide ±45° / ±90° / ±135° on wall collision. Stop at 0.6 units (no pile-up). Arrival at `:lkp` = 0.9 units → `:dormant`.
 
-**Chase on flat ground**: each candidate step checks walls but no height gates apply since the ground is flat. The coarse slide cascade applies to wall collisions, so the enemy takes the open path available. This is simpler and stays byte-identical to before the verticality systems.
+**Stair-aware routing on tiered worlds (#405)**: the raw heading is greedy - it only tries offsets up to ±135°, so a monster pressed against a tall (multi-`fz-step`) tier face never finds a stair mouth off to the side and stalls at the edge. On a tiered world `advance` builds one BFS flow-field per frame, `chase-dist-field`, flooding OUT from the player's cell over the enemy-traversable graph (a move A→B is an edge when B is in bounds, not a wall, and the rise `floor-z(B) - floor-z(A)` clears one `fz-step`, the same gate as `step-clears?`). Because the flood expands on the reverse edge, a 3-step platform face never propagates reachability up its wall while a 1-step stair mouth does. `step-toward` then aims at `chase-waypoint` - the climbable neighbour with the smallest distance-to-player - so the enemy descends the gradient AROUND the ledge to the stairs and climbs. The field is built ONCE per frame and shared by every enemy (O(cells), not per-enemy). When there is no reachable waypoint the enemy falls back to the greedy heading.
+
+**Chase on flat ground**: each candidate step checks walls but no height gates apply since the ground is flat. No `fz-grid` means no flow-field is built (`advance` passes nil), so `step-toward` takes the greedy heading and stays byte-identical to before the verticality systems.
 
 ### Breaking contact
 

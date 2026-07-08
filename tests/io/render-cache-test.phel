@@ -496,12 +496,23 @@
   (is (= "66c59bbb363e3b27e376f62797f51724"
          (php/md5 (frame->string (showcase-world 11.5 15.5 look-north 0.0) stats 120 30)))))
 
-(deftest test-showcase-stairs-from-above-pinned
-  ;; Standing ON the platform (11.5, 6.5, z=0.75) looking south back down
-  ;; the stairs: the descending treads read from above, ground floor
-  ;; beyond.
-  (is (= "2658a71c93c44fb83b98a5785495fdbb"
-         (php/md5 (frame->string (showcase-world 11.5 6.5 look-south 0.75) stats 120 30)))))
+(deftest test-showcase-stairs-from-above-eye-height
+  ;; Standing ON the platform (11.5, 6.5, z=0.75) looking south back down the
+  ;; stairs: the eye-height floor cast recedes the ground from the raised
+  ;; vantage. Deliberately NOT an md5 pin - at the highest eye-z the floor
+  ;; cast lands a texel on a sub-ULP boundary that diverges between the dev
+  ;; arm64 and CI x86-64 (basic IEEE ops, but libm/FMA differ), so the exact
+  ;; bytes are not cross-platform stable for this one frame. The tier
+  ;; rendering IS pinned by the from-below / px2 / stair goldens (all
+  ;; cross-platform identical); here we guard the BEHAVIOUR that survives the
+  ;; ULP wobble: raising the player changes the floor projection (eye-height
+  ;; actually reaches output) and the render is deterministic within a run.
+  (let [elevated (frame->string (showcase-world 11.5 6.5 look-south 0.75) stats 120 30)
+        grounded (frame->string (showcase-world 11.5 6.5 look-south 0.0) stats 120 30)]
+    (is (not= elevated grounded)
+        "player elevation changes the floor recession (eye-height reaches output)")
+    (is (= elevated (frame->string (showcase-world 11.5 6.5 look-south 0.75) stats 120 30))
+        "elevated render is deterministic within a run")))
 
 (deftest test-showcase-stairs-px2-pinned
   ;; Pixel-doubled path over the same from-below viewpoint.

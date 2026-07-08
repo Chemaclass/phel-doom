@@ -621,6 +621,37 @@
     (is (not (warm-stone-cell? grounded))
         "px2: ground-level floor stays neutral")))
 
+(defn- with-flat-floor [f]
+  ;; PHEL_DOOM_FLAT_FLOOR is read per-frame (floor-textures-enabled?), so
+  ;; toggling it here reaches the next frame->string. Restore the prior
+  ;; value (getenv -> false when unset -> unset again with a bare name).
+  (let [prev (php/getenv "PHEL_DOOM_FLAT_FLOOR")]
+    (php/putenv "PHEL_DOOM_FLAT_FLOOR=1")
+    (try
+      (f)
+      (finally
+        (if (php/=== false prev)
+          (php/putenv "PHEL_DOOM_FLAT_FLOOR")
+          (php/putenv (str "PHEL_DOOM_FLAT_FLOOR=" prev)))))))
+
+(deftest test-raised-tier-floor-flat-mode
+  ;; The flat-floor dev override (PHEL_DOOM_FLAT_FLOOR) has no per-texel
+  ;; sample, so an elevated tier paints one fixed tier stone (tier-riser-ramp
+  ;; index 2) instead of the grey gradient - guards the elevated?+floor-flat?
+  ;; branch in BOTH emitters, which the textured tests above never reach.
+  (with-flat-floor
+   (fn []
+     (let [ramp2      "\e[48;2;96;88;73m "
+           elevated   (frame->string (raised-room-world 0.5) stats 120 30)
+           grounded   (frame->string (raised-room-world 0.0) stats 120 30)
+           elevated-2 (frame->string (raised-room-world 0.5) (assoc stats :px2? true) 120 30)]
+       (is (php/str_contains elevated ramp2)
+           "px1: elevated flat-floor paints the fixed tier stone")
+       (is (php/str_contains elevated-2 ramp2)
+           "px2: elevated flat-floor paints the fixed tier stone")
+       (is (not (php/str_contains grounded ramp2))
+           "ground-level flat-floor keeps the grey gradient (no tier stone)")))))
+
 ;; ---------------------------------------------------------------------
 ;; Enemy sprite occlusion by variable-height geometry (epic #375). Before
 ;; this, sprites were occluded only by full-height walls (`dists`); a

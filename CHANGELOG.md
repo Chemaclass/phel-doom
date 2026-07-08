@@ -42,6 +42,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Fixed
 
+- Enemies route up stairs instead of stalling at a platform edge (issue #405, epic #375): the chase was a greedy angle-offset walk (offsets up to ±135° off the straight line at the player), so a monster pressed against a tall multi-`fz-step` tier face never found a stair mouth off to the side - it bunched at the edge and never climbed to a player on a raised tier. On a tiered world `advance` now builds one BFS flow-field per frame (`chase-dist-field`) from the player over the one-`fz-step`-climbable cell graph and `step-toward` heads toward its next waypoint (`chase-waypoint`), so the enemy routes AROUND the ledge to the stairs and climbs. The field is built once and shared by every enemy (O(cells), not per-enemy); flat worlds build no field and keep the greedy chase byte-identical (guarded by the full existing chase suite, all nil-field). New tests pin the routing (a grounded enemy east of the platform is sent away from the impassable face) and an end-to-end climb out of a 180°-exit tier trap greedy provably cannot escape.
 - Sub-pixel auto-off on macOS Terminal.app (#332): Apple Terminal draws the `▀` half-block with row seams (gray static). Startup reads `$TERM_PROGRAM` and defaults Sub-pixel off on `Apple_Terminal` until the player saves a choice; the in-game toggle and `PHEL_DOOM_SUBPIXEL=1` still force it on. iTerm2 et al. unchanged; render seam + golden hashes untouched.
 
 ## [0.16.0] - 2026-06-27

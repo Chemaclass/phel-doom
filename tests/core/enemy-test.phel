@@ -1,8 +1,9 @@
 (ns phel-doom-tests.core.enemy-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.rng :as rng)
-  (:require phel-doom.core.map :refer [fz-step])
-  (:require phel-doom.core.enemy :refer [default-wander-fraction new-enemy promote-wanderers push-back-enemy spawn-enemies spawn-enemies-mixed shoot pierce spread-shoot splash beam-impact advance tick-scare rear-attacker? type-speed-mul vertical-hit?]))
+  (:require phel-doom.core.map :refer [fz-step parse-layout floor-z])
+  (:require phel-doom.core.level :refer [showcase-layout])
+  (:require phel-doom.core.enemy :refer [default-wander-fraction new-enemy promote-wanderers push-back-enemy spawn-enemies spawn-enemies-mixed shoot pierce spread-shoot splash beam-impact advance tick-scare rear-attacker? type-speed-mul vertical-hit? chase-dist-field chase-waypoint]))
 
 (def open-grid
   "Bordered 10x10 open arena, no interior walls."
@@ -284,6 +285,88 @@
   (let [fz  (step-fz [0.0 0.0 (php/* 2.0 fz-step) 0.0 0.0])
         es' (advance [(new-enemy 1.9 1.5)] step-grid nil fz 3.5 1.5 0.5 0.75 true)]
     (is (< (:x (first es')) 2.0))))
+
+;; ---------------------------------------------------------------------
+;; Stair-aware chase routing (issue #405, epic #375). Greedy chase only
+;; tries offsets up to 135 degrees off the straight line at the player,
+;; so a monster pressed against a tall (multi-fz-step) tier face never
+;; finds a stair mouth off to the side - it stalls at the edge. The
+;; per-frame BFS `chase-dist-field` from the player over the one-step-
+;; climbable graph gives each enemy a next-waypoint cell, so it routes to
+;; the stairs and climbs. Tiered worlds only; flat worlds keep greedy
+;; (guarded byte-identical by every advance test above, all nil-field).
+;; ---------------------------------------------------------------------
+
+(deftest test-chase-field-routes-around-a-tall-tier-face
+  ;; Showcase: player on the 0.75 platform (cell 10,6); an enemy on the
+  ;; ground east of it (cell 14,6) is one cell from the platform's tall
+  ;; east face (13,6 = 0.75, a 3-fz-step rise = impassable). The field
+  ;; must send it to a DIFFERENT neighbour (toward the south stair mouth),
+  ;; never straight west into the face the greedy chase would pick.
+  (let [{:keys [grid fz-grid]} (parse-layout showcase-layout)
+        field                  (chase-dist-field grid fz-grid 10 6)
+        wp                     (chase-waypoint field grid fz-grid 14 6)
+        w                      (:w field)]
+    (is (php/array_key_exists (php/+ (php/* 6 w) 13) (:dist field))
+        "the tier-face cell (13,6) IS in the field - reachable across the platform")
+    (is (not (nil? wp))
+        "the grounded enemy has a routed path to the player")
+    (is (not= wp [13 6])
+        "the waypoint never steps into the impassable tier face (greedy's choice)")))
+
+;; A tier trap greedy provably CANNOT escape: the enemy sits in a 1-wide
+;; shaft directly south of a 0.75 platform cliff; its only open exit is
+;; due south (180 degrees from the northward player), and greedy's offset
+;; cascade tops out at 135 degrees, so greedy stalls forever. The stair
+;; up to the platform is reached only by going south, around, and up.
+(def trap-grid
+  [[1 1 1 1 1 1 1 1]
+   [1 0 0 0 0 0 0 1]
+   [1 0 1 0 1 0 0 1]
+   [1 0 1 0 1 0 0 1]
+   [1 0 1 0 1 0 0 1]
+   [1 0 1 0 1 0 0 1]
+   [1 0 1 0 1 0 0 1]
+   [1 0 0 0 0 0 0 1]
+   [1 1 1 1 1 1 1 1]])
+(def trap-fz
+  ;; col 3 shaft: rows 2,3 = stair (.25,.5) up from the top corridor to
+  ;; the rows 4,5 platform (.75); row 6 is the grounded enemy, walled off
+  ;; from a direct climb by the .75 cliff at (3,5).
+  (let [q fz-step h (php/* 2.0 fz-step) f (php/* 3.0 fz-step)]
+    [[0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0]
+     [0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0]
+     [0.0 0.0 0.0 q   0.0 0.0 0.0 0.0]
+     [0.0 0.0 0.0 h   0.0 0.0 0.0 0.0]
+     [0.0 0.0 0.0 f   0.0 0.0 0.0 0.0]
+     [0.0 0.0 0.0 f   0.0 0.0 0.0 0.0]
+     [0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0]
+     [0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0]
+     [0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0]]))
+
+(deftest test-advance-escapes-180-degree-tier-trap-and-climbs
+  ;; Player on the platform (3.5, 4.5); enemy in the shaft below (3.5, 6.5).
+  ;; Greedy would press north into the cliff and never step due-south, so
+  ;; it stalls. The flow-field routes it SOUTH first (a move greedy can
+  ;; never make), then around and up the stair to the player's tier.
+  (let [step    (fn [es n]
+                  (loop [es es i 0]
+                    (if (php/>= i n) es
+                        (recur (advance es trap-grid nil trap-fz 3.5 4.5 0.05 3.0 true) (php/+ i 1)))))
+        early   (first (step [(new-enemy 3.5 6.5)] 8))
+        climbed (first (step [(new-enemy 3.5 6.5)] 800))]
+    (is (php/> (:y early) 6.5)
+        "routes SOUTH away from the northward player - a move greedy's <=135deg cascade cannot make")
+    (is (php/> (floor-z trap-fz (php/intval (:x climbed)) (php/intval (:y climbed))) 0.0)
+        "eventually climbs onto the stair/platform to reach the player")))
+
+(deftest test-advance-greedy-fallback-on-flat-world-still-chases
+  ;; Byte-identity sentinel: with a nil fz-grid the field is never built,
+  ;; so step-toward takes the pre-#405 greedy heading. A flat chase still
+  ;; closes on the player (mirrors test-advance-moves-enemy-toward-player,
+  ;; here via the 9-arity with fz-grid nil).
+  (let [es' (advance [(new-enemy 5.0 5.0)] open-grid nil nil 8.0 5.0 0.5 0.75 true)]
+    (is (php/> (:x (first es')) 5.0) "flat 9-arity chase still advances toward the player")))
 
 (deftest test-advance-leaves-dead-enemies-untouched
   (let [es' (advance [{:x 5.0 :y 5.0 :alive false}] open-grid 8.0 5.0 0.5 0.75 true)]

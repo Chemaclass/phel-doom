@@ -117,6 +117,75 @@
                      (floor-z fz-grid (php/intval ex) (php/intval ey)))
               fz-step)))
 
+(defn ^:pure chase-dist-field
+  "BFS distance-to-player field for stair-aware chase (issue #405).
+   Floods OUT from the player's cell over the enemy-traversable graph:
+   a move A->B is an edge when B is in bounds, not a `wall?`, and the
+   rise `floor-z(B) - floor-z(A)` clears one `fz-step` - the same gate
+   as `step-clears?`/physics (#371). The flood expands B->A on the
+   REVERSE edge, so a multi-step platform face never propagates
+   reachability up its wall while a one-step stair mouth does; an enemy
+   then descends the gradient AROUND a ledge to the stairs instead of
+   pressing into the edge. Returns `{:dist <php-array idx->steps> :w W}`
+   keyed `y*W + x`; unreachable cells are absent. Only tiered worlds
+   build this (nil `fz-grid` keeps the greedy chase, see `step-toward`)."
+  [grid fz-grid ^int px ^int py]
+  (let [w    (count (first grid))
+        h    (count grid)
+        dist (php/array)
+        q    (php/array)]
+    (php/aset dist (php/+ (php/* py w) px) 0)
+    (php/array_push q px py)
+    (loop [head 0]
+      (if (php/>= head (php/count q))
+        {:dist dist :w w}
+        (let [bx (php/aget q head)
+              by (php/aget q (php/+ head 1))
+              bd (php/aget dist (php/+ (php/* by w) bx))
+              bz (floor-z fz-grid bx by)]
+          (loop [ns [[(php/- bx 1) by] [(php/+ bx 1) by] [bx (php/- by 1)] [bx (php/+ by 1)]]]
+            (when (not (empty? ns))
+              (let [ax (first (first ns))
+                    ay (second (first ns))
+                    ai (php/+ (php/* ay w) ax)]
+                ;; Reverse edge: A->B is the move an enemy WOULD make, so
+                ;; the climb gate reads `bz - floor-z(A)` (rise onto B).
+                (when (and (php/>= ax 0) (php/< ax w) (php/>= ay 0) (php/< ay h)
+                           (not (wall? grid ax ay))
+                           (not (php/array_key_exists ai dist))
+                           (php/<= (php/- bz (floor-z fz-grid ax ay)) fz-step))
+                  (php/aset dist ai (php/+ bd 1))
+                  (php/array_push q ax ay)))
+              (recur (rest ns))))
+          (recur (php/+ head 2)))))))
+
+(defn ^:pure chase-waypoint
+  "Next cell an enemy at (ex, ey) should step to under a `chase-dist-field`:
+   the in-bounds, non-`wall?`, one-`fz-step`-climbable neighbour with the
+   smallest distance-to-player (the next cell on the shortest stair-aware
+   path). Returns `[nx ny]` or nil when no reachable neighbour exists, in
+   which case `step-toward` falls back to the greedy heading."
+  [field grid fz-grid ^int ex ^int ey]
+  (let [dist (:dist field)
+        w    (:w field)
+        ez   (floor-z fz-grid ex ey)]
+    (loop [ns   [[(php/- ex 1) ey] [(php/+ ex 1) ey] [ex (php/- ey 1)] [ex (php/+ ey 1)]]
+           best nil
+           bd   nil]
+      (if (empty? ns)
+        best
+        (let [ax (first (first ns))
+              ay (second (first ns))
+              ai (php/+ (php/* ay w) ax)]
+          (if (and (not (wall? grid ax ay))
+                   (php/array_key_exists ai dist)
+                   (php/<= (php/- (floor-z fz-grid ax ay) ez) fz-step))
+            (let [d (php/aget dist ai)]
+              (if (or (nil? bd) (php/< d bd))
+                (recur (rest ns) [ax ay] d)
+                (recur (rest ns) best bd)))
+            (recur (rest ns) best bd)))))))
+
 (defn- try-step
   "Attempt to step `dist` units from (ex, ey) along `angle`. Returns
    [nx ny] if the destination cell is open (not a `wall?`) AND its
@@ -147,11 +216,15 @@
 (defn- step-toward
   "Walk one frame of `speed` * dt toward (target-x, target-y). The enemy
    slides around obstacles via pick-step's offset cascade instead of
-   bumping forever. Heads straight at the player; a floor-height rise
-   bigger than one fz-step blocks the same way a wall does (issue #371),
-   so a monster climbs stairs but can't scale a taller ledge. `fz-grid`
-   nil (flat worlds / legacy callers) keeps the pre-#371 wall-only gate."
-  [enemy grid fz-grid ^float target-x ^float target-y ^float dt ^float speed]
+   bumping forever. A floor-height rise bigger than one fz-step blocks
+   the same way a wall does (issue #371), so a monster climbs stairs but
+   can't scale a taller ledge. When a `field` (BFS `chase-dist-field`,
+   #405) is present the enemy heads toward its next waypoint cell so the
+   chase ROUTES around a tall tier face to the stair mouth rather than
+   pressing into it; with no field (flat worlds / legacy callers) OR no
+   reachable waypoint it falls back to the direct heading, so those paths
+   are byte-identical to the pre-#405 greedy chase."
+  [enemy grid fz-grid field ^float target-x ^float target-y ^float dt ^float speed]
   (let [ex   (:x enemy)
         ey   (:y enemy)
         dx   (php/- target-x ex)
@@ -159,7 +232,12 @@
         dist (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
     (if (php/<= dist stop-dist)
       enemy
-      (let [hit (pick-step grid fz-grid ex ey (php/* speed dt) (php/atan2 dy dx))]
+      (let [wp      (when field (chase-waypoint field grid fz-grid (php/intval ex) (php/intval ey)))
+            desired (if wp
+                      (php/atan2 (php/- (php/+ (second wp) 0.5) ey)
+                                 (php/- (php/+ (first wp) 0.5) ex))
+                      (php/atan2 dy dx))
+            hit     (pick-step grid fz-grid ex ey (php/* speed dt) desired)]
         (if hit
           (assoc enemy :x (first hit) :y (second hit))
           enemy)))))
@@ -578,8 +656,11 @@
 
    `fz-grid` (issue #371) gates step-toward's movement the same way
    physics/try-move gates the player: nil (legacy callers, flat worlds)
-   is a no-op so pre-#371 chase behaviour is unchanged."
-  [e grid pgrid fz-grid ^float player-x ^float player-y ^float dt ^float speed all-enemies revive?]
+   is a no-op so pre-#371 chase behaviour is unchanged. `field` is the
+   shared per-frame `chase-dist-field` (#405, nil on flat worlds) that
+   lets the chase route up stairs; `advance` builds it once and threads
+   it through here to `step-toward`."
+  [e grid pgrid fz-grid field ^float player-x ^float player-y ^float dt ^float speed all-enemies revive?]
   (cond
     (:alive e)                (let [;; Per-frame AI pipeline. Order matters:
                                     ;;
@@ -624,7 +705,7 @@
                                                   (let [target (target-pos wandered player-x player-y)
                                                         mul    (or (get type-speed-mul (:type wandered)) 1.0)]
                                                     (if target
-                                                      (step-toward wandered grid fz-grid (:x target) (:y target) dt (php/* speed mul))
+                                                      (step-toward wandered grid fz-grid field (:x target) (:y target) dt (php/* speed mul))
                                                       wandered))
                                                   wandered)
                                     flash'      (php/max 0.0 (php/- (or (:hit-flash-secs wandered) 0.0) dt))]
@@ -674,7 +755,9 @@
    for the LOS observe pass. The 9-arity form additionally carries
    `fz-grid` (issue #371) so enemies get the same step-up rule as the
    player and can chase up stairs; both shorter forms pass `fz-grid`
-   nil, which is a no-op gate (flat worlds / legacy callers).
+   nil, which is a no-op gate (flat worlds / legacy callers). On a
+   tiered world the 9-arity also builds the shared `chase-dist-field`
+   once (#405) so the chase routes to the stairs, not into a tier edge.
 
    `revive?`, when false, freezes every dead enemy in place — used on
    L10 once the boss is down so neither the cyberdemon nor its capped
@@ -684,9 +767,14 @@
   ([es g pg x y delta sp rev?]
    (advance es g pg nil x y delta sp rev?))
   ([es g pg fz x y delta sp rev?]
-   (apply vector
-          (map (fn [e] (tick-one e g pg fz x y delta sp es rev?))
-               es))))
+   ;; #405: one BFS flow-field from the player, shared across every enemy
+   ;; this frame, so a monster routes to the stairs instead of stalling at
+   ;; a tall tier edge. Tiered worlds only (nil fz -> nil field -> the
+   ;; greedy chase, byte-identical); O(cells) once per frame, not per enemy.
+   (let [field (when fz (chase-dist-field g fz (php/intval x) (php/intval y)))]
+     (apply vector
+            (map (fn [e] (tick-one e g pg fz field x y delta sp es rev?))
+                 es)))))
 
 (def scare-trigger-dist
   "World-units. When the nearest alive enemy crosses inbound under this

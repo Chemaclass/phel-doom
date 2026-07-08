@@ -574,6 +574,54 @@
     (is (php/> lips 1) "more than one lit step edge = countable stacked steps")))
 
 ;; ---------------------------------------------------------------------
+;; #404: floor-cast tier tint. Standing ON a raised tier, the ground the
+;; player walks on must render in that tier's warm-stone slate (the same
+;; `tier-riser-tex` family the treads/riser faces sample), not the neutral
+;; base-floor grey. A uniform raised-height room isolates the NEAR floor:
+;; no cell-to-cell rise means no riser/tread painter fires (see the strict
+;; `nfz > cfz` span gate in engine.phel), so the ONLY warm-stone cell that
+;; can appear is the floor-cast ground itself. The tint gates on player
+;; :z > 0, so the identical room at z=0 stays neutral - which is why every
+;; z=0 golden above is byte-identical.
+;; ---------------------------------------------------------------------
+
+(def raised-room-grid
+  [(vec (repeat 8 1))
+   (into [1] (into (vec (repeat 6 0)) [1]))
+   (into [1] (into (vec (repeat 6 0)) [1]))
+   (into [1] (into (vec (repeat 6 0)) [1]))
+   (vec (repeat 8 1))])
+
+(def raised-room-fz (vec (repeat 5 (vec (repeat 8 0.5)))))
+
+(defn- raised-room-world [^float z]
+  (mark-visible-cells
+   (assoc-in (new-world raised-room-grid (new-player 3.5 2.5 0.0) raised-room-fz)
+             [:player :z] z)))
+
+(deftest test-raised-tier-floor-renders-slate
+  (let [elevated (frame->string (raised-room-world 0.5) stats 120 30)
+        grounded (frame->string (raised-room-world 0.0) stats 120 30)]
+    (is (warm-stone-cell? elevated)
+        "standing on a raised tier, the near floor renders as warm-stone slate")
+    (is (not (warm-stone-cell? grounded))
+        "the identical room at ground level keeps the neutral base floor")
+    (is (not= elevated grounded)
+        "player elevation reaches the floor colour")))
+
+(deftest test-raised-tier-floor-slate-px2
+  ;; px2 uses a DEDICATED floor fade param, so the elevated tint reaches
+  ;; the floor without bleeding into wall shading (walls keep the shared
+  ;; tex-fade-table). Guards the shared-param trap in emit-scene-px2.
+  (let [px2-stats (assoc stats :px2? true)
+        elevated  (frame->string (raised-room-world 0.5) px2-stats 120 30)
+        grounded  (frame->string (raised-room-world 0.0) px2-stats 120 30)]
+    (is (warm-stone-cell? elevated)
+        "px2: raised-tier near floor is warm-stone")
+    (is (not (warm-stone-cell? grounded))
+        "px2: ground-level floor stays neutral")))
+
+;; ---------------------------------------------------------------------
 ;; Enemy sprite occlusion by variable-height geometry (epic #375). Before
 ;; this, sprites were occluded only by full-height walls (`dists`); a
 ;; raised tier or lowered ceiling nearer than the enemy did NOT hide it,

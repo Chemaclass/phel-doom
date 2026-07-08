@@ -1016,7 +1016,7 @@
    e-stop e-sbot e-vtop e-vbot e-sx e-sxr e-spx e-sw e-sh e-fade           ; sprite window
    sprites-on bp-trc                                                       ; sprite/blood flags
    wsub-top wsub-bot wsub-mix wsub-skylim wsub-floorfrom                   ; wall sub-sample
-   floor-flat? tex-fade-table bg-cell-cache                                ; fog + bg cache
+   floor-flat? elevated? tex-fade-table bg-cell-cache                      ; fog + bg cache (elevated?: #404 tier floor tint)
    ;; seam group: consumed only via the non-hygienic `seam-shade!` macro
    ;; (frame_math.phel) which captures these by name - not "unused".
    floor-code-at seam-darken-16 seam-darken-8 seam-darken-5                ; seam shading (via seam-shade!)
@@ -1183,8 +1183,28 @@
                                                                   (php/intval (php/* (php/- fx (php/floor fx)) 64))))]
                           (php/aset pack-reg 1 (php/aget (php/aget tier-riser-tex lvl) tex)))))))
                 (php/>= r2 (if has-riser2? rbot2 floor-from))
-                (if (if in-blood? true floor-flat?)
+                (cond
+                  in-blood?
                   (php/aset pack-reg 0 -4)
+                      ;; #404: near floor of the tier the player stands on
+                      ;; -> the warm `tier-riser-tex` stone via a ready -2
+                      ;; string (truecolor, exact match to the tread faces),
+                      ;; one representative sub-sample (dp1). Colour only;
+                      ;; geometry stays the z=0 cast. Low-detail -> one fixed
+                      ;; tier stone. Blood still wins (checked first).
+                  elevated?
+                  (if floor-flat?
+                    (do (php/aset pack-reg 0 -2)
+                        (php/aset pack-reg 1 (php/aget tier-riser-ramp 2)))
+                    (let [fx1  (php/+ pfx (php/* dp1 (buf-get floordxs col)))
+                          fy1  (php/+ pfy (php/* dp1 (buf-get floordys col)))
+                          tex1 (php/aget floor-tex-px (php/+ (php/* (php/intval (php/* (php/- fy1 (php/floor fy1)) 64)) 64)
+                                                             (php/intval (php/* (php/- fx1 (php/floor fx1)) 64))))]
+                      (php/aset pack-reg 0 -2)
+                      (php/aset pack-reg 1 (php/aget (php/aget tier-riser-tex (php/aget floor-level-sub s4b)) tex1))))
+                  floor-flat?
+                  (php/aset pack-reg 0 -4)
+                  :else
                   (let [fdx (buf-get floordxs col)
                         fdy (buf-get floordys col)
                         fx0 (php/+ pfx (php/* dp0 fdx))
@@ -1484,7 +1504,7 @@
    e-stop e-sbot e-vtop e-vbot e-sx e-sxr e-spx e-sw e-sh e-fade           ; sprite window
    sprites-on bp-trc                                                       ; sprite/blood flags
    wsub-top wsub-bot wsub-mix wsub-skylim wsub-floorfrom                   ; wall sub-sample
-   floor-flat? tex-fade-table bg-cell-cache                                ; fog + bg cache
+   floor-flat? elevated? tex-fade-table bg-cell-cache                      ; fog + bg cache (elevated?: #404 tier floor tint)
    sky-hb tex-on? subpixel? quad? flat-walltex?                            ; px1 render-mode flags
    floor-dperp floor-level eye-z flr-center                                ; floor-cast (whole-row) + perspective-tread cast
    mini-col0 mini-row-lo mini-row-hi                                       ; minimap window
@@ -1652,8 +1672,27 @@
                           ;; the row's floor level. Blood-band columns +
                           ;; the flat-floor flag keep the grey gradient.
                       (php/>= row (if has-riser? rbot (if mixw? (php/aget wsub-floorfrom col) bot)))
-                      (if (if in-blood? true floor-flat?)
-                        (php/aset cell-reg 0 (if in-blood? blood-flr-row flr-plain))
+                      (cond
+                        in-blood?
+                        (php/aset cell-reg 0 blood-flr-row)
+                            ;; #404: standing on a raised tier, paint the near
+                            ;; floor the same warm `tier-riser-tex` stone as the
+                            ;; adjacent tread/riser faces (truecolor, colour-only
+                            ;; - geometry stays the z=0 cast). Low-detail floor
+                            ;; has no per-texel sample, so it takes one fixed
+                            ;; tier stone. Blood still wins (checked first).
+                        elevated?
+                        (if floor-flat?
+                          (php/aset cell-reg 0 (php/aget tier-riser-ramp 2))
+                          (let [fx (php/+ pfx (php/* dp-cell (buf-get floordxs col)))
+                                fy (php/+ pfy (php/* dp-cell (buf-get floordys col)))
+                                tx (php/intval (php/* (php/- fx (php/floor fx)) 64))
+                                ty (php/intval (php/* (php/- fy (php/floor fy)) 64))
+                                tc (php/aget floor-tex-px (php/+ (php/* ty 64) tx))]
+                            (php/aset cell-reg 0 (php/aget (php/aget tier-riser-tex (buf-get floor-level row)) tc))))
+                        floor-flat?
+                        (php/aset cell-reg 0 flr-plain)
+                        :else
                         (if (and subpixel? (not flat-walltex?))
                           (if quad?
                               ;; Quad floor: 2×2 ground texels per cell at
@@ -2674,6 +2713,18 @@
           ;; (px1 dotimes row + px2 dotimes r2) to avoid recomputing it vh
           ;; (or svh) times per frame. Byte-identical output guaranteed.
           floor-flat?         (if floor-tex-on? false true)
+          ;; #404 floor-cast tier tint. Standing on a raised tier (eye-z >
+          ;; 0.5, i.e. player :z > 0) the ground the camera casts is the
+          ;; tier the player stands on, so both emitters paint the near
+          ;; floor with the same truecolor `tier-riser-tex` stone the
+          ;; tread/riser faces already use (via the -2 / cell-reg ready-
+          ;; string path), instead of the base grey - the floor reads as
+          ;; one continuous material with the steps. Colour only; the floor
+          ;; geometry stays the z=0 cast (the issue calls a correct
+          ;; per-tier height projection a bonus, not required). A frame
+          ;; constant, so ground-level + every flat world stay a dead
+          ;; comparison in the floor cond -> byte-identical.
+          elevated?           (php/> eye-z 0.5)
           ;; Pin the referred frame-math globals as frame-level locals so
           ;; inner references resolve to a PHP local variable instead of a
           ;; Phel::getDefinition() call (two array lookups + singleton probe)
@@ -2710,7 +2761,7 @@
                             e-stop e-sbot e-vtop e-vbot e-sx e-sxr e-spx e-sw e-sh e-fade
                             sprites-on bp-trc
                             wsub-top wsub-bot wsub-mix wsub-skylim wsub-floorfrom
-                            floor-flat? tex-fade-table bg-cell-cache
+                            floor-flat? elevated? tex-fade-table bg-cell-cache
                             floor-code-at seam-darken-16 seam-darken-8 seam-darken-5
                             hits cap-sr cap-scl cap-bot? cap-right?
                             mini-scol0 mini-srow-lo mini-srow-hi)
@@ -2726,7 +2777,7 @@
                             e-stop e-sbot e-vtop e-vbot e-sx e-sxr e-spx e-sw e-sh e-fade
                             sprites-on bp-trc
                             wsub-top wsub-bot wsub-mix wsub-skylim wsub-floorfrom
-                            floor-flat? tex-fade-table bg-cell-cache
+                            floor-flat? elevated? tex-fade-table bg-cell-cache
                             sky-hb tex-on? subpixel? quad? flat-walltex?
                             floor-dperp floor-level eye-z flr-center
                             mini-col0 mini-row-lo mini-row-hi

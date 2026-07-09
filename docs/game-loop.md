@@ -84,6 +84,8 @@ The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself; the g
 
 `apply-physics` translates and returns the updated player position; collision, the locked-door bump cue, AND the floor-height step-up rule (issue #371) all resolve inside `physics/try-move`. A destination cell's `fz` rise of at most `map/fz-step` (0.25) above the player's `:z` is walkable and snaps `:z` to it (stairs); stepping down any depth is always allowed and also snaps `:z`; a bigger rise blocks the move exactly like a wall. Every shipped level is still flat (`fz` 0.0 everywhere), so the gate is a no-op there and `:z` stays 0.0 - byte-identical to the pre-#371 behaviour. See [state.md](state.md) for the field contract.
 
+`apply-physics` also advances the head-bob walk cycle (#411): it measures the actual ground distance covered this frame and adds it (scaled by `bob-phase-per-unit`) to the world's `:bob-phase`, wrapped into `[0, 2*pi)`. Zero distance (standing still, or shoved against a wall) settles `:bob-phase` back to exactly 0.0, so a resting frame renders byte-identical. Amplitude is a render-only concern (the View bob setting via `projection/bob-rows`); physics only tracks the phase.
+
 ## Frame timing + adaptive FPS
 
 - **60 fps target** (16.667 ms) at every terminal size, via `core/perf.phel`. The old big-screen 30fps cap was removed - it was an artificial ceiling (see `docs/performance.md`).

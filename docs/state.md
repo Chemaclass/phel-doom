@@ -50,6 +50,7 @@ Pure data shapes that every other module operates on. `src/core/state.phel`.
  :flash-secs <float seconds>  ; 1-frame white impact flash
  :fx         <vector of blood splatters>
  :game-time  <float seconds>  ; pause-aware clock for render pulses
+ :bob-phase  <float radians>  ; head-bob walk cycle (#411); 0.0 at rest, advanced by distance in apply-physics
  :mag           <int 0..mag-size>     ; rounds in the loaded magazine
  :ammo-reserve  <int 0..max-reserve>  ; spare ammo pool; drained on reload
  :reload-cooldown  <float seconds>    ; drives the reload drop animation

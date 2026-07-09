@@ -7,6 +7,7 @@
                                             navigate valid-difficulty?
                                             music-volume sfx-scalar music-ceiling
                                             mouse-sensitivity mouse-sensitivity-neutral
+                                            view-bob-intensity
                                             pause-menu-options pause-menu-count
                                             pause-menu-move pause-menu-action]))
 
@@ -28,14 +29,15 @@
   (is (= false (:fast-walls default-settings)))
   (is (= true (:subpixel default-settings)) "sub-pixel half-blocks on by default")
   (is (= false (:truecolor default-settings)) "truecolor off by default (256-palette parity)")
-  (is (= false (:quad default-settings)) "quad detail off by default"))
+  (is (= false (:quad default-settings)) "quad detail off by default")
+  (is (= 0 (:view-bob default-settings)) "head bob off by default (#411, shipped look unchanged)"))
 
 (deftest test-page-has-all-fields-in-order
   ;; Mouse + Sensitivity (#246) sit after Run timer, before the
-  ;; accessibility block.
-  (is (= 14 (field-count)))
+  ;; accessibility block. View bob (#411) is appended last.
+  (is (= 15 (field-count)))
   (is (= [:music :sfx :minimap :difficulty :crosshair :timer
-          :mouse :sensitivity :high-contrast :colorblind :fast-walls :subpixel :truecolor :quad]
+          :mouse :sensitivity :high-contrast :colorblind :fast-walls :subpixel :truecolor :quad :view-bob]
          (map :key page-fields))))
 
 (deftest test-field-at-returns-descriptor-or-nil
@@ -50,7 +52,8 @@
   (is (= :subpixel (:key (field-at 11))))
   (is (= :truecolor (:key (field-at 12))))
   (is (= :quad (:key (field-at 13))))
-  (is (nil? (field-at 14)))
+  (is (= :view-bob (:key (field-at 14))))
+  (is (nil? (field-at 15)))
   (is (nil? (field-at -1))))
 
 ;; ---------------------------------------------------------------------
@@ -89,8 +92,8 @@
 (deftest test-move-cursor-steps-and-wraps
   (is (= 1 (move-cursor 0 1)))
   (is (= 0 (move-cursor 1 -1)))
-  (is (= 13 (move-cursor 0 -1)) "up from the first field wraps to the last")
-  (is (= 0 (move-cursor 13 1)) "down from the last field wraps to the first"))
+  (is (= 14 (move-cursor 0 -1)) "up from the first field wraps to the last")
+  (is (= 0 (move-cursor 14 1)) "down from the last field wraps to the first"))
 
 ;; ---------------------------------------------------------------------
 ;; adjust: per-kind value changes
@@ -244,6 +247,32 @@
     (is (approx? 1.0 (php/* low high)) "equidistant percents are reciprocals")
     (is (php/< low 1.0) "below neutral is slower than 1.0x")
     (is (php/> low 0.0) "but never fully off (unlike the old 0% = 0.0)")))
+
+;; ---------------------------------------------------------------------
+;; View bob (issue #411): a :pct amplitude for the walk-cycle head bob,
+;; 0 = off (default).
+;; ---------------------------------------------------------------------
+
+(deftest test-coerce-clamps-view-bob-into-0-100
+  (is (= 100 (:view-bob (coerce-settings {:view-bob 250}))) "clamps to 100")
+  (is (= 0   (:view-bob (coerce-settings {:view-bob -40}))) "clamps to 0")
+  (is (= 0   (:view-bob (coerce-settings {}))) "missing -> default 0"))
+
+(deftest test-adjust-view-bob-steps-by-ten-and-clamps
+  (is (= 10 (:view-bob (adjust default-settings :view-bob 1))))
+  (is (= 0  (:view-bob (adjust default-settings :view-bob -1))) "clamps at 0")
+  (is (= 100 (:view-bob (adjust (assoc default-settings :view-bob 100) :view-bob 1))) "clamps at 100"))
+
+(deftest test-view-bob-intensity-maps-percent-to-unit-interval
+  ;; Linear pct -> [0.0, 1.0] amplitude scalar (like sfx-scalar).
+  (is (= 0.0 (view-bob-intensity (assoc default-settings :view-bob 0))))
+  (is (= 1.0 (view-bob-intensity (assoc default-settings :view-bob 100))))
+  (is (= 0.6 (view-bob-intensity (assoc default-settings :view-bob 60)))))
+
+(deftest test-view-bob-intensity-nil-settings-is-off
+  ;; Headless / golden-frame callers pass no :settings map; that must read
+  ;; as off (0.0) so those frames stay byte-identical.
+  (is (= 0.0 (view-bob-intensity nil))))
 
 (deftest test-adjust-unknown-field-is-noop
   (is (= default-settings (adjust default-settings :nope 1))))

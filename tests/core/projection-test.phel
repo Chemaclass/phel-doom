@@ -2,6 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.engine :refer [max-depth])
   (:require phel-doom.core.projection :refer [wall-px project-height pitch-rows pitch-cap
+                                              bob-rows bob-cap
                                               sprite-half-rows tier-top-row-dist
                                               ceiling-top-row-dist floor-cast-num]))
 
@@ -107,6 +108,55 @@
   ;; index gradient arrays / add to integer wall tops cleanly.
   (is (php/is_int (pitch-rows 0.37 30)))
   (is (php/is_int (pitch-rows -0.81 44))))
+
+;; ---------------------------------------------------------------------
+;; bob-rows: distance-driven head-bob horizon shear (issue #411). A
+;; sibling of pitch-rows that swings the horizon on a walk-cycle phase,
+;; scaled by the View bob intensity setting in [0, 1].
+;; ---------------------------------------------------------------------
+
+(def half-pi (php/* 0.5 php/M_PI))
+
+(deftest bob-rows-zero-phase-is-zero
+  ;; Byte-identical-at-rest contract: phase 0 (the resting phase set by
+  ;; physics) shears by nothing at any height / intensity.
+  (is (= 0 (bob-rows 0.0 1.0 30)))
+  (is (= 0 (bob-rows 0.0 1.0 24)))
+  (is (= 0 (bob-rows 0.0 0.5 44))))
+
+(deftest bob-rows-zero-intensity-is-zero
+  ;; View bob off (intensity 0, the default) never shears, even at the
+  ;; peak of the walk cycle - so an off frame is byte-identical.
+  (is (= 0 (bob-rows half-pi 0.0 30)))
+  (is (= 0 (bob-rows (php/* 1.5 php/M_PI) 0.0 44))))
+
+(deftest bob-rows-swings-both-ways
+  ;; sin(phase): the up half of the cycle shears one way, the down half
+  ;; the other, symmetric about the horizon.
+  (is (php/> (bob-rows half-pi 1.0 30) 0))
+  (is (php/< (bob-rows (php/* 1.5 php/M_PI) 1.0 30) 0)))
+
+(deftest bob-rows-antisymmetric-in-phase
+  ;; Opposite points of the cycle give equal-and-opposite shear.
+  (is (= (php/- 0 (bob-rows half-pi 1.0 30))
+         (bob-rows (php/- 0 half-pi) 1.0 30))))
+
+(deftest bob-rows-grows-with-intensity
+  ;; A higher View bob setting nods further. vh 40: full = round(0.05*40)
+  ;; = 2, half = round(1.0) = 1, so the two are distinct (not a rounding
+  ;; artefact that would pass without scaling by intensity).
+  (is (php/> (bob-rows half-pi 1.0 40) (bob-rows half-pi 0.5 40))))
+
+(deftest bob-rows-caps-at-bob-cap-fraction
+  ;; Peak of the cycle at full intensity shears by exactly
+  ;; round(bob-cap * vh) rows.
+  (is (= (php/intval (php/round (php/* bob-cap 40))) (bob-rows half-pi 1.0 40))))
+
+(deftest bob-rows-returns-int
+  ;; Integer scene-row offset, so it adds to pitch-rows and integer wall
+  ;; tops cleanly.
+  (is (php/is_int (bob-rows 1.1 0.7 30)))
+  (is (php/is_int (bob-rows 0.0 0.0 44))))
 
 ;; ---------------------------------------------------------------------
 ;; sprite-half-rows: half the on-screen billboard height (rows) the

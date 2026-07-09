@@ -141,6 +141,10 @@ Looking up/down is a pure **vertical shear of the horizon**, not a re-projection
 
 The crosshair stays fixed (it is a weapon sight, not part of the world). Because every offset is **additive and 0 at `pitch = 0`**, a level gaze renders byte-for-byte identically to the no-pitch path (pinned by `render-cache-test/test-frame-bytes-pinned`).
 
+### Head bob: a second term into `pr` (#411)
+
+The walk-cycle head bob is another additive horizon shear on top of pitch. `bob-rows phase intensity vh` = `round(intensity * bob-cap * vh * sin(phase))` (`bob-cap` = 0.05, a fraction of pitch's 0.4), and `frame->string` adds it to the same `pr` (and `pr-full`), so it rides every shear site above for free. `phase` is the world's `:bob-phase`, advanced by ground distance in `physics/apply-physics` and settled to 0 at rest; `intensity` is the View bob setting mapped to `[0, 1]`. Both `phase = 0` (at rest) and `intensity = 0` (setting off, the default) give 0 rows, so a resting or bob-off frame is byte-identical. Unlike pitch, the bob is NOT fed to the hit gate (`combat/aim-pr` uses true pitch only) - the nod is cosmetic and must never change where a shot lands.
+
 ## Sprite anchoring (feet on the floor)
 
 Enemy billboards are anchored by their **feet**, not their centre. The renderer stands each sprite on a projected row and draws the body UPWARD by its pixel height `h`. On flat ground the feet land exactly on the floor surface row at every distance. The grounding shadow, the face glyph, and the floating HP digit all derive from this row anchor.

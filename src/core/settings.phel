@@ -22,7 +22,7 @@
   {:music 60 :sfx 90 :minimap false :difficulty :normal
    :crosshair :cross :timer false :high-contrast false :colorblind :none
    :mouse true :sensitivity 50 :fast-walls false :subpixel true :truecolor false
-   :quad false})
+   :quad false :view-bob 0})
 
 (def difficulty-choices
   "Difficulty keywords the enum field cycles through, easiest first.
@@ -88,7 +88,12 @@
    ;; horizontal floor texel detail — collapsing back to the ▀ cell elsewhere
    ;; so flat / far surfaces stay cheap. Only with Sub-pixel on; ANDed with
    ;; PHEL_DOOM_QUAD / PHEL_DOOM_NO_QUAD env overrides. Composes with Truecolor.
-   {:key :quad           :label "Quad detail"    :kind :bool}])
+   {:key :quad           :label "Quad detail"    :kind :bool}
+   ;; :view-bob (#411) is the walk-cycle head-bob amplitude. 0 (default) =
+   ;; off, so the shipped moving look is unchanged; higher nods the whole
+   ;; horizon further. Accessibility: a motion-sensitive player leaves it
+   ;; at 0. render scales projection/bob-cap by view-bob-intensity of it.
+   {:key :view-bob       :label "View bob"       :kind :pct}])
 
 (defn field-count
   "How many rows the settings page has."
@@ -143,7 +148,8 @@
      :fast-walls     (boolean (get m :fast-walls (:fast-walls default-settings)))
      :subpixel       (boolean (get m :subpixel (:subpixel default-settings)))
      :truecolor      (boolean (get m :truecolor (:truecolor default-settings)))
-     :quad           (boolean (get m :quad (:quad default-settings)))}))
+     :quad           (boolean (get m :quad (:quad default-settings)))
+     :view-bob       (clamp-pct (get m :view-bob (:view-bob default-settings)))}))
 
 (defn resolve-subpixel
   "Effective startup `:subpixel` (#332). A terminal that draws the ▀
@@ -271,6 +277,15 @@
    io/sound multiplies each effect's volume by this."
   [settings]
   (php// (php/intval (:sfx settings)) 100.0))
+
+(defn view-bob-intensity
+  "Walk-cycle head-bob amplitude scalar [0.0, 1.0] for the current View
+   bob percent (#411), consumed by `projection/bob-rows` at each render
+   horizon site. 0% (default) = off. A nil `settings` (headless /
+   golden-frame callers that carry no `:settings` map) reads as off, so
+   those frames stay byte-identical."
+  [settings]
+  (php// (clamp-pct (get (or settings {}) :view-bob 0)) 100.0))
 
 (def mouse-sensitivity-neutral
   "The Sensitivity percent that maps to the neutral 1.0x mouselook

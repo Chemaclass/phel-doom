@@ -10,7 +10,7 @@
   (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-reload-ready paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-weapon-hud])
   (:require phel-doom.io.render.sprites :refer [paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
-  (:require phel-doom.core.projection :refer [char-aspect wall-px pitch-rows project-height floor-cast-num])
+  (:require phel-doom.core.projection :refer [char-aspect wall-px pitch-rows bob-rows project-height floor-cast-num])
   (:require phel-doom.core.perf :refer [render-scale])
   (:require phel-doom.core.format :refer [format-duration])
   (:require phel-doom.core.version :refer [version]))
@@ -1966,7 +1966,18 @@
         ;; pr=0 (default, no pitch) leaves every site at its original
         ;; centre, so the render is byte-identical to the no-pitch path.
         ;; POSITIVE pitch (look up) => POSITIVE pr => band slides DOWN.
-        pr                                 (pitch-rows (or (:pitch (:player world)) 0.0) svh)
+        ;; View bob (#411) adds a walk-cycle term to the SAME pr, so the
+        ;; whole scene nods together. bob-int 0 (View bob off, the default)
+        ;; or bob-ph 0 (at rest) contributes exactly 0 rows, so a bob-off /
+        ;; resting frame stays byte-identical to the no-bob path. A moving
+        ;; bob varies pr, so the (vh, pr)-keyed frame-gradients memo below
+        ;; rebuilds more often; benched negligible (worst case, pr flipping
+        ;; every frame: +0.04ms @120x30, +0.28ms @180x40 vs a 5-7ms frame)
+        ;; and only paid with View bob on. See docs/performance.md.
+        bob-ph                             (or (:bob-phase world) 0.0)
+        bob-int                            (get stats :view-bob 0.0)
+        pr                                 (php/+ (pitch-rows (or (:pitch (:player world)) 0.0) svh)
+                                                  (bob-rows bob-ph bob-int svh))
         ;; Sub-row twin: the half-block sky / floor-cast tables index at
         ;; 2 sub-rows per SCENE row at full detail and 2 per PASSED-vh row
         ;; in px2 (where the table is built at 2·svh). They scale `pr` by
@@ -1976,7 +1987,8 @@
         ;; Full-resolution pitch shear (rows): the HP-flash overlay floats
         ;; at terminal resolution (vh, not svh), so it tracks the sprite
         ;; head using the vh-scaled offset.
-        pr-full                            (pitch-rows (or (:pitch (:player world)) 0.0) vh)
+        pr-full                            (php/+ (pitch-rows (or (:pitch (:player world)) 0.0) vh)
+                                                  (bob-rows bob-ph bob-int vh))
         ;; Scene-row horizon centre the floor tables are built around
         ;; (0.5·svh + pr): the perspective-tread cast remaps a tread row
         ;; about this centre to reuse floor-dperp / floor-level.

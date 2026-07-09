@@ -50,6 +50,12 @@ Wide terminals are render-bound, not cadence-bound: the cost is the per-column c
 (defn render-scale    [cols rows] standard-scale)
 ```
 
+## View bob and the gradient memo (issue #411)
+
+The sky/floor gradient bundle (`frame-gradients`) is a single-slot memo keyed on `(vh, pr)`, so it rebuilds only when the viewport height or the horizon offset changes. Camera pitch already moves `pr` (a look-around rebuilds it), but a static gaze holds the cache. Head bob (#411) adds a walk-cycle term to `pr`, so with **View bob on and the player moving** the key changes and the bundle rebuilds more often - the very scenario the setting targets.
+
+Measured worst case (a synthetic bench flipping `pr` every single frame, i.e. rebuild every frame): **+0.04ms at 120x30, +0.28ms at 180x40**, against a 5-7ms frame and the 16ms ceiling. The real cost is a fraction of that: `bob-rows` is quantized to whole rows, so `pr` only changes a few times per bob cycle, not every frame. View bob defaults OFF, so the shipped look pays nothing. Given the sub-0.3ms worst case, the bob term is baked straight into `pr` (one add at the two `pitch-rows` sites) rather than decoupled from the memo key; a decouple would add hot-path complexity for no measurable win.
+
 ## PHP runtime: OPcache + JIT
 
 Two settings matter most:

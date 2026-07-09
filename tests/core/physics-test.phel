@@ -396,6 +396,44 @@
     (is (> (:heartbeat-phase w-low) (:heartbeat-phase w-mid)))))
 
 ;; ---------------------------------------------------------------------
+;; bob-phase (#411): distance-driven head-bob walk cycle. Advances by the
+;; ACTUAL ground distance covered this frame (so it stays put against a
+;; wall), and settles to exactly 0.0 at rest for a byte-identical frame.
+;; ---------------------------------------------------------------------
+
+(deftest test-apply-physics-bob-phase-advances-when-moving
+  (let [w0 (assoc (assoc-in empty-world [:moves :fwd] 3) :bob-phase 0.0)
+        w1 (apply-physics w0 0.1)]
+    (is (php/> (:bob-phase w1) 0.0))))
+
+(deftest test-apply-physics-bob-phase-settles-to-zero-at-rest
+  ;; No movement counters held: any accumulated phase resets to 0.0 so
+  ;; the standing-still frame renders byte-identical.
+  (let [w0 (assoc empty-world :bob-phase 2.0)
+        w1 (apply-physics w0 0.1)]
+    (is (= 0.0 (:bob-phase w1)))))
+
+(deftest test-apply-physics-bob-phase-does-not-advance-against-a-wall
+  ;; Distance-driven, not intent-driven: a forward press blocked by a
+  ;; wall covers zero ground, so the bob must NOT advance - it resets.
+  ;; (Same wall-block setup as the counter-decay test above.)
+  (let [w0 (assoc (assoc-in open-world [:moves :fwd] 3) :bob-phase 1.5)
+        w1 (apply-physics w0 1.0)]
+    (is (= 1.5 (:x (:player w1))) "player stayed put")
+    (is (= 0.0 (:bob-phase w1)))))
+
+(deftest test-apply-physics-bob-phase-wraps-below-two-pi
+  ;; Walk many frames: the phase stays wrapped into [0, 2*pi) so sin()
+  ;; never sees an unbounded argument.
+  (let [wn (loop [w (assoc empty-world :bob-phase 0.0) i 0]
+             (if (php/< i 50)
+               (recur (apply-physics (assoc-in w [:moves :fwd] 3) 0.1)
+                      (php/+ i 1))
+               w))]
+    (is (php/>= (:bob-phase wn) 0.0))
+    (is (php/< (:bob-phase wn) (php/* 2.0 php/M_PI)))))
+
+;; ---------------------------------------------------------------------
 ;; tick-blood-drops: each existing drop falls + ages; expired ones get
 ;; pruned. Spawn is randomised so we test the deterministic parts.
 ;; ---------------------------------------------------------------------

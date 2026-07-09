@@ -41,6 +41,14 @@
    responsive without overshooting the clamp on a single key blip."
   1.2)
 
+(def bob-phase-per-unit
+  "Radians of head-bob walk-cycle phase advanced per world-unit of ground
+   covered (#411). Feel knob, sibling of `move-hold-frames`: distance-
+   driven so a faster stride nods faster. `M_PI`/unit is one full up-down
+   nod every two cells. Amplitude is a separate, render-side setting
+   (`projection/bob-rows`); physics only tracks the phase."
+  php/M_PI)
+
 (def sprint-multiplier
   "Speed multiplier applied to longitudinal + lateral motion while the
    sprint slot is on AND stamina is available. Turn-speed is NOT
@@ -235,12 +243,40 @@
         (counter-on? m :strafe-left)
         (counter-on? m :strafe-right))))
 
+(defn- ^:pure moved-dist
+  "Euclidean ground distance the player covered between two worlds. Reads
+   ACTUAL position, so a wall-blocked frame reports 0 even though a move
+   was requested."
+  [before after]
+  (let [pb (:player before)
+        pa (:player after)
+        dx (php/- (:x pa) (:x pb))
+        dy (php/- (:y pa) (:y pb))]
+    (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))))
+
+(defn- ^:pure advance-bob-phase
+  "Advance `:bob-phase` by the ground `dist` covered this frame, wrapped
+   into [0, 2*pi). The bob tracks ACTUAL locomotion, so zero distance -
+   whether standing idle OR holding a key against a wall (no progress) -
+   recentres the phase to exactly 0.0: the head settles level when you
+   aren't going anywhere, and a resting frame renders byte-identical. A
+   smooth ease-to-centre is a possible feel follow-up; the hard reset
+   keeps the at-rest frame byte-identical in a single frame."
+  [world ^float dist]
+  (if (php/> dist 0.0)
+    (assoc world :bob-phase
+           (php/fmod (php/+ (or (:bob-phase world) 0.0)
+                            (php/* dist bob-phase-per-unit))
+                     (php/* 2.0 php/M_PI)))
+    (assoc world :bob-phase 0.0)))
+
 (defn apply-physics
   "Per-frame: rotate, shear the look up/down pitch, then translate using
-   the new heading, then decay every counter by one frame. Translation
-   deltas read both `:moves` AND the sprint state (via sprint-factor) so
-   sprint intent x stamina > 0 x not-blocked yields a 1.6x boost. Pitch is
-   a pure camera shear (no effect on translation), clamped by `clamp-pitch`."
+   the new heading, advance the head-bob phase by the ground covered, then
+   decay every counter by one frame. Translation deltas read both `:moves`
+   AND the sprint state (via sprint-factor) so sprint intent x stamina > 0
+   x not-blocked yields a 1.6x boost. Pitch is a pure camera shear (no
+   effect on translation), clamped by `clamp-pitch`."
   [world ^float dt]
   (let [moves   (:moves world)
         turned  (apply-rotation world (turn-delta moves dt))
@@ -248,7 +284,8 @@
         walked  (apply-translation pitched
                                    (longitudinal-delta pitched dt)
                                    (lateral-delta pitched dt))]
-    (decay-move-counters walked)))
+    (advance-bob-phase (decay-move-counters walked)
+                       (moved-dist pitched walked))))
 
 (defn tick-stamina
   "Drain stamina while sprinting + moving, regenerate while not (after

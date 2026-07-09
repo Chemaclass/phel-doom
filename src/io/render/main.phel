@@ -1008,6 +1008,7 @@
    vw vh svw svh                                          ; viewport + scene dims
    sky-gradient sky-sub-codes floor-gradient blood-sky-gradient blood-cols  ; gradients
    floordxs floordys pfx pfy floor-dperp-sub floor-level-sub floor-dperp floor-level eye-z flr-center  ; floor-cast + perspective-tread cast
+   floor-dperp-tier-sub floor-level-tier-sub                               ; near-floor-you-stand-on cast, own tier height (#416b)
    tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow  ; wall spans + shades
    shades-tex-u shades-tex-level shades-tex-px                              ; wall texture
    riser-top riser-bot riser-u riser-level riser-z1 step-bands  ; nearest riser + farther step bands; textured faces, perspective tier-top (#370,#375,#402,#404)
@@ -1201,12 +1202,13 @@
                   (if floor-flat?
                     (do (php/aset pack-reg 0 -2)
                         (php/aset pack-reg 1 (php/aget tier-riser-ramp 2)))
-                    (let [fx1  (php/+ pfx (php/* dp1 (buf-get floordxs col)))
-                          fy1  (php/+ pfy (php/* dp1 (buf-get floordys col)))
-                          tex1 (php/aget floor-tex-px (php/+ (php/* (php/intval (php/* (php/- fy1 (php/floor fy1)) 64)) 64)
-                                                             (php/intval (php/* (php/- fx1 (php/floor fx1)) 64))))]
+                    (let [dp1-tier (php/aget floor-dperp-tier-sub s4b)
+                          fx1      (php/+ pfx (php/* dp1-tier (buf-get floordxs col)))
+                          fy1      (php/+ pfy (php/* dp1-tier (buf-get floordys col)))
+                          tex1     (php/aget floor-tex-px (php/+ (php/* (php/intval (php/* (php/- fy1 (php/floor fy1)) 64)) 64)
+                                                                 (php/intval (php/* (php/- fx1 (php/floor fx1)) 64))))]
                       (php/aset pack-reg 0 -2)
-                      (php/aset pack-reg 1 (php/aget (php/aget tier-riser-tex (php/aget floor-level-sub s4b)) tex1))))
+                      (php/aset pack-reg 1 (php/aget (php/aget tier-riser-tex (php/aget floor-level-tier-sub s4b)) tex1))))
                   floor-flat?
                   (php/aset pack-reg 0 -4)
                   :else
@@ -1512,6 +1514,7 @@
    floor-flat? elevated? tex-fade-table bg-cell-cache                      ; fog + bg cache (elevated?: #404 tier floor tint)
    sky-hb tex-on? subpixel? quad? flat-walltex?                            ; px1 render-mode flags
    floor-dperp floor-level eye-z flr-center                                ; floor-cast (whole-row) + perspective-tread cast
+   floor-dperp-tier floor-level-tier                                       ; near-floor-you-stand-on cast, own tier height (#416b)
    mini-col0 mini-row-lo mini-row-hi                                       ; minimap window
    cap-col cap-row                                                         ; centre-cell capture
    ;; seam group: consumed only via the non-hygienic `seam-shade!` macro
@@ -1691,12 +1694,13 @@
                         elevated?
                         (if floor-flat?
                           (php/aset cell-reg 0 (php/aget tier-riser-ramp 2))
-                          (let [fx (php/+ pfx (php/* dp-cell (buf-get floordxs col)))
-                                fy (php/+ pfy (php/* dp-cell (buf-get floordys col)))
-                                tx (php/intval (php/* (php/- fx (php/floor fx)) 64))
-                                ty (php/intval (php/* (php/- fy (php/floor fy)) 64))
-                                tc (php/aget floor-tex-px (php/+ (php/* ty 64) tx))]
-                            (php/aset cell-reg 0 (php/aget (php/aget tier-riser-tex (buf-get floor-level row)) tc))))
+                          (let [dp-tier (buf-get floor-dperp-tier row)
+                                fx      (php/+ pfx (php/* dp-tier (buf-get floordxs col)))
+                                fy      (php/+ pfy (php/* dp-tier (buf-get floordys col)))
+                                tx      (php/intval (php/* (php/- fx (php/floor fx)) 64))
+                                ty      (php/intval (php/* (php/- fy (php/floor fy)) 64))
+                                tc      (php/aget floor-tex-px (php/+ (php/* ty 64) tx))]
+                            (php/aset cell-reg 0 (php/aget (php/aget tier-riser-tex (buf-get floor-level-tier row)) tc))))
                         floor-flat?
                         (php/aset cell-reg 0 flr-plain)
                         :else
@@ -2101,6 +2105,14 @@
         ;; correctly from a raised vantage; a missing :z reads 0.0 so a
         ;; level gaze on flat ground stays byte-identical.
         eye-z                              (php/+ 0.5 (get (:player world) :z 0.0))
+        ;; #404 floor-cast tier tint / #416(b) near-floor recession.
+        ;; Standing on a raised tier (eye-z > 0.5, i.e. player :z > 0) the
+        ;; ground the camera casts is the tier the player stands on. A
+        ;; frame constant, so ground-level + every flat world stay a dead
+        ;; comparison in the floor cond below -> byte-identical. Bound
+        ;; here (moved up from its old spot near floor-flat?) so it can
+        ;; gate the tier floor-cast tables built right after.
+        elevated?                          (php/> eye-z 0.5)
         ;; Eye-height-aware floor-cast numerators. At eye-z=0.5 these equal
         ;; the flat floor-cast-k / -k-sub consts to the bit (same operands),
         ;; so the pinned flat frame is unchanged.
@@ -2110,6 +2122,29 @@
         floor-level                        (build-floor-level floor-dperp svh)
         floor-dperp-sub                    (build-floor-dperp-sub (if px2? (php/* 2 svh) svh) floor-cast-k-sub-eye pr-sub)
         floor-level-sub                    (build-floor-level-sub floor-dperp-sub (if px2? (php/* 2 svh) svh))
+        ;; #416(b): the floor the player STANDS ON casts at the player's
+        ;; own tier height, not the world-z=0 plane the `-eye` tables use
+        ;; (that bug scaled `eye-z - 0` up on a tall tier, so the plateau
+        ;; receded too fast). eye-z is always 0.5 above the player's own
+        ;; tier, so the near floor reduces to the height-INDEPENDENT
+        ;; `floor-cast-k` consts for ANY tier height - reused directly
+        ;; rather than recomputing `eye-z - player-z`, whose float noise
+        ;; (`(0.5+0.9)-0.9` != 0.5 to the bit) would leak into which texel
+        ;; is sampled. Gated on `elevated?` + render mode (px1 reads the
+        ;; cell pair, px2 the sub pair), so flat/grounded frames build
+        ;; neither table and stay byte-identical.
+        floor-dperp-tier                   (if (and elevated? (not px2?))
+                                             (build-floor-dperp svh floor-cast-k pr)
+                                             nil)
+        floor-level-tier                   (if (and elevated? (not px2?))
+                                             (build-floor-level floor-dperp-tier svh)
+                                             nil)
+        floor-dperp-tier-sub               (if (and elevated? px2?)
+                                             (build-floor-dperp-sub (php/* 2 svh) floor-cast-k-sub pr-sub)
+                                             nil)
+        floor-level-tier-sub               (if (and elevated? px2?)
+                                             (build-floor-level-sub floor-dperp-tier-sub (php/* 2 svh))
+                                             nil)
         _                                  (when debug?
                                              (record-cast-ms!
                                               (php/* (php/- (php/microtime true) t-cast-start) 1000.0)))
@@ -2720,18 +2755,9 @@
           ;; (px1 dotimes row + px2 dotimes r2) to avoid recomputing it vh
           ;; (or svh) times per frame. Byte-identical output guaranteed.
           floor-flat?         (if floor-tex-on? false true)
-          ;; #404 floor-cast tier tint. Standing on a raised tier (eye-z >
-          ;; 0.5, i.e. player :z > 0) the ground the camera casts is the
-          ;; tier the player stands on, so both emitters paint the near
-          ;; floor with the same truecolor `tier-riser-tex` stone the
-          ;; tread/riser faces already use (via the -2 / cell-reg ready-
-          ;; string path), instead of the base grey - the floor reads as
-          ;; one continuous material with the steps. Colour only; the floor
-          ;; geometry stays the z=0 cast (the issue calls a correct
-          ;; per-tier height projection a bonus, not required). A frame
-          ;; constant, so ground-level + every flat world stay a dead
-          ;; comparison in the floor cond -> byte-identical.
-          elevated?           (php/> eye-z 0.5)
+          ;; elevated? / floor-dperp-tier / floor-level-tier(-sub): bound
+          ;; up near eye-z (above), so they can gate the near-floor tier
+          ;; tables built there (#404 tier tint, #416(b) tier recession).
           ;; Pin the referred frame-math globals as frame-level locals so
           ;; inner references resolve to a PHP local variable instead of a
           ;; Phel::getDefinition() call (two array lookups + singleton probe)
@@ -2760,6 +2786,7 @@
                             vw vh svw svh
                             sky-gradient sky-sub-codes floor-gradient blood-sky-gradient blood-cols
                             floordxs floordys pfx pfy floor-dperp-sub floor-level-sub floor-dperp floor-level eye-z flr-center
+                            floor-dperp-tier-sub floor-level-tier-sub
                             tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow
                             shades-tex-u shades-tex-level shades-tex-px
                             riser-top riser-bot riser-u riser-level riser-z1 step-bands
@@ -2787,6 +2814,7 @@
                             floor-flat? elevated? tex-fade-table bg-cell-cache
                             sky-hb tex-on? subpixel? quad? flat-walltex?
                             floor-dperp floor-level eye-z flr-center
+                            floor-dperp-tier floor-level-tier
                             mini-col0 mini-row-lo mini-row-hi
                             cap-col cap-row
                             floor-code-at seam-darken-16 seam-darken-8 seam-darken-5 ftab hb))]

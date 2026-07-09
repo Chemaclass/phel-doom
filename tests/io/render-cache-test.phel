@@ -653,6 +653,59 @@
            "ground-level flat-floor keeps the grey gradient (no tier stone)")))))
 
 ;; ---------------------------------------------------------------------
+;; #416(b): near-floor (plateau) recession rate. The floor the player
+;; STANDS on must cast at the player's OWN tier height, not the hardcoded
+;; world z=0 - so the eye-to-floor gap (`eye-z - z`) is ALWAYS 0.5 (eye-z
+;; = 0.5 + tier z), and the plateau recedes at the grounded rate whatever
+;; the absolute tier height. Before the fix it cast at z=0 with the raised
+;; eye-z, so a taller tier scaled the recession numerator up and the near
+;; floor dropped away too fast.
+;;
+;; We can NOT compare whole frames across tier heights: eye-z also drives
+;; wall/horizon projection (projection/project-height), so a taller tier
+;; legitimately shifts where the walls end and the floor begins. The
+;; invariant the fix guarantees is narrower - the near-floor APRON (the
+;; rows that are floor at BOTH heights, i.e. below the eye-z-shifted
+;; wall/seam) must render byte-identical across heights. A wide room
+;; (player faces +x, so the 20-col width is view DEPTH) gives a deep apron
+;; with real recession spread, so a z=0 regression would differ there.
+;; ---------------------------------------------------------------------
+
+(def wide-tier-grid
+  (into [(vec (repeat 20 1))]
+        (into (vec (repeat 5 (into [1] (into (vec (repeat 18 0)) [1]))))
+              [(vec (repeat 20 1))])))
+
+(defn- wide-tier-world
+  "wide-tier-grid at a UNIFORM floor height `tier-z`, player standing on it
+   (`:z` = `tier-z`). Uniform height => no cell-to-cell rise => `:spans`
+   stays empty, so the only floor path exercised is the near-floor-you-
+   stand-on branch #416b touches."
+  [^float tier-z]
+  (mark-visible-cells
+   (assoc-in (new-world wide-tier-grid (new-player 2.5 3.5 0.0)
+                        (vec (repeat 7 (vec (repeat 20 tier-z)))))
+             [:player :z] tier-z)))
+
+(defn- near-floor-apron
+  "The last 8 rendered rows - the near-floor zone that stays floor at any
+   tier height (below the eye-z-shifted wall/seam)."
+  [frame]
+  (let [rows (php/explode "\n" frame)]
+    (php/implode "\n" (php/array_slice rows (php/- (php/count rows) 8)))))
+
+(deftest test-near-floor-apron-is-tier-height-independent
+  (is (= (near-floor-apron (frame->string (wide-tier-world 0.5) stats 120 30))
+         (near-floor-apron (frame->string (wide-tier-world 0.75) stats 120 30)))
+      "the near floor on a raised tier recedes identically at any absolute tier height"))
+
+(deftest test-near-floor-apron-is-tier-height-independent-px2
+  (let [px2-stats (assoc stats :px2? true)]
+    (is (= (near-floor-apron (frame->string (wide-tier-world 0.5) px2-stats 120 30))
+           (near-floor-apron (frame->string (wide-tier-world 0.75) px2-stats 120 30)))
+        "px2: near-floor recession is tier-height-independent")))
+
+;; ---------------------------------------------------------------------
 ;; Enemy sprite occlusion by variable-height geometry (epic #375). Before
 ;; this, sprites were occluded only by full-height walls (`dists`); a
 ;; raised tier or lowered ceiling nearer than the enemy did NOT hide it,

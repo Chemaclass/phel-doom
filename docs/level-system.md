@@ -7,14 +7,14 @@
 | # | Name | Type | Enemies |
 |---|---|---|---|
 | 1 | imps | random | 4 imps |
-| 2 | demons | staircase showcase (variable-height) | 5 demons + 2 imps + 3 more fixed on the stairs + shotgun |
-| 3 | cacodemons | hand-authored flat chamber | 4 cacos + 2 demons + 2 imps + chaingun |
-| 4 | barons | hand-authored flat chamber + blue lock | 3 barons + 3 demons |
-| 5 | cyberdemons | hand-authored flat chamber + red lock | 5 cyberdemons + 2 imps |
-| 6 | spectres | hand-authored flat chamber | 4 spectres + 2 imps + 1 caco |
-| 7 | revenants | hand-authored flat chamber + yellow lock | 4 revenants + 2 demons + 1 baron |
-| 8 | archvile court | hand-authored flat chamber | 2 archviles + 3 cacos + 2 mancubi |
-| 9 | the brood | random mix | 3 pinkies + 3 barons + 2 mancubi |
+| 2 | demons | staircase showcase (variable-height) | 3 demons + 1 imp + 3 more fixed on the stairs (2 demons + 1 imp) + shotgun |
+| 3 | cacodemons | hand-authored flat chamber | 3 cacos + 2 demons + 2 imps + chaingun |
+| 4 | barons | hand-authored flat chamber + blue lock | 3 barons + 4 demons + 2 imps |
+| 5 | cyberdemons | hand-authored flat chamber + red lock | 2 cyberdemons + 4 imps |
+| 6 | spectres | hand-authored flat chamber | 6 spectres + 3 imps + 1 caco |
+| 7 | revenants | hand-authored flat chamber + yellow lock | 5 revenants + 2 demons + 1 baron |
+| 8 | archvile court | hand-authored flat chamber | 2 archviles + 3 cacos + 3 mancubi |
+| 9 | the brood | random mix | 6 pinkies + 4 barons + 2 mancubi |
 | 10 | the final | hand-authored boss arena | 1 cyberdemon boss (50 HP) + 2 imps (max 1 alive) |
 
 ## Catalog
@@ -32,13 +32,13 @@ Non-locked procgen levels seed up to 2 secret passages (see [map.md](map.md)) th
     :layout l2-layout}
    ;; L3: hand-authored flat chamber.
    {:enemy :caco :chase 1.2 :name "cacodemons"
-    :enemies [{:type :caco :count 4} {:type :demon :count 2} {:type :imp :count 2}]
+    :enemies [{:type :caco :count 3} {:type :demon :count 2} {:type :imp :count 2}]
     :layout l3-layout}
    {:size [44 28] :walls 55 :enemy :baron :chase 1.4 :name "barons" :door-lock :blue
     :enemies [{:type :baron :count 3} {:type :demon :count 3}]}
    ;; L5: hand-authored flat chamber + red lock.
    {:enemy :cyber :chase 1.6 :name "cyberdemons" :door-lock :red
-    :enemies [{:type :cyber :count 5} {:type :imp :count 2}]
+    :enemies [{:type :cyber :count 2} {:type :imp :count 4}]
     :layout l5-layout}
    ;; L6-L8: hand-authored flat chambers.
    ;; L10: :layout + :switches, :door-lock :boss.

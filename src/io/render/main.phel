@@ -10,6 +10,7 @@
   (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-reload-ready paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-pistol-hud paint-weapon-hud])
   (:require phel-doom.io.render.sprites :refer [paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
+  (:require phel-doom.core.combat :refer [fire-extralight fire-anim-seconds])
   (:require phel-doom.core.projection :refer [char-aspect wall-px pitch-rows bob-rows project-height floor-cast-num])
   (:require phel-doom.core.perf :refer [render-scale])
   (:require phel-doom.core.format :refer [format-duration])
@@ -344,8 +345,11 @@
                  :door-tex-boost :sky-code-grad :floor-code-grad
                  :blood-sky-code-grad :blood-floor-code-grad}
    `blood-cols` per-col directional blood mask (from build-blood-cols)
-   `haze-shift` int 0-23: how many shade-table steps to pull walls
-                toward black. Doors are kept bright as a nav cue.
+   `haze-shift` shade-table steps to pull walls toward black (int, top
+                23). Usually >= 0 (the near-death haze); a firing frame's
+                muzzle extralight (#413) can drive it slightly negative,
+                brightening walls - the idx clamp below absorbs it. Doors
+                are kept bright as a nav cue.
    `pd`         wall-height projection numerator: `proj-dist` at full
                 detail, half of it in pixel-doubled mode (scene rows are
                 two terminal rows tall, so heights halve to keep the
@@ -447,10 +451,12 @@
                                    (php/min 23
                                             (php/+ (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 0.6) 23))
                                                    (if (php/=== (buf-get sides col) 0) 3 0))))
-                  ;; Haze pulls every wall cell toward index 0 (black)
-                  ;; by `haze-shift` steps. 0 = full visibility; values
-                  ;; come from frame->string based on player lives.
-                  idx     (php/max 0 (php/- idx-raw haze-shift))]
+                  ;; Haze pulls every wall cell toward index 0 (black) by
+                  ;; `haze-shift` steps. 0 = full visibility; values come
+                  ;; from frame->string based on player lives. A negative
+                  ;; shift (muzzle extralight #413) brightens, so clamp the
+                  ;; top at 23 too or idx runs past the shade table.
+                  idx     (php/max 0 (php/min 23 (php/- idx-raw haze-shift)))]
               (let [plain     (buf-get stbl-l idx)
                     shd-idx   (php/max 0 (php/- idx 3))
                     shd-bg    (buf-get stbl-l shd-idx)
@@ -521,8 +527,10 @@
    platform between steps) is unaffected - it keeps the `tier-top-ramp`
    depth gradient (see farther-face-vstep / the emitters).
 
-   `haze-shift` is the same near-death haze the wall path applies (int
-   0-23, see `compute-wall-shades`). `pd` is the wall-height projection
+   `haze-shift` is the same shade-table shift the wall path applies (see
+   `compute-wall-shades`; usually 0-23, but a firing frame's muzzle
+   extralight can push it slightly negative, absorbed by the idx clamp).
+   `pd` is the wall-height projection
    numerator (scene_pd: proj-dist at full detail, halved in px2); `svh`
    is the scene viewport height `project-height` centres rows on; `eye-z`
    is the camera height.
@@ -574,7 +582,9 @@
                                         (php/+ (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// d-corr max-depth))) 0.6) 23))
                                                (if (php/=== side 0) 3 0))))
               u       (php/min 63 (php/intval (php/* wallx 64)))
-              level   (php/max 0 (php/- idx-raw haze-shift))]
+              ;; min 23 too: a negative haze (muzzle extralight #413) would
+              ;; otherwise index past the shade table's bright end.
+              level   (php/max 0 (php/min 23 (php/- idx-raw haze-shift)))]
           (if (php/=== nil (php/aget riser-top col))
             ;; nearest riser: the fast-path fields the emitters read
             ;; directly + the enemy z-buffer distance + the texture
@@ -727,7 +737,9 @@
                                    (php/min 23
                                             (php/+ (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// d-corr max-depth))) 0.6) 23))
                                                    (if (php/=== side 0) 3 0))))
-                  idx     (php/max 0 (php/- idx-raw haze-shift))]
+                  ;; min 23: a negative haze (muzzle extralight #413) must
+                  ;; not push idx past the bright end of the shade table.
+                  idx     (php/max 0 (php/min 23 (php/- idx-raw haze-shift)))]
               (php/aset upper-top  col (php/+ (php/intval (php/round top-f)) pr))
               (php/aset upper-bot  col (php/+ (php/intval (php/round bot-f)) pr))
               (php/aset upper-dist col d-corr)
@@ -2254,8 +2266,13 @@
         ;; player is to dying. Sky / floor untouched; doors keep their
         ;; full-brightness pulse so the exit stays findable.
         ;; HP is a half-heart pool (10 = full): haze ramps over the last
-        ;; ~3 hearts, deepening toward the last half-heart.
-        haze-shift                         (haze-shift-for-lives (get stats :lives))
+        ;; ~3 hearts, deepening toward the last half-heart. The muzzle flash
+        ;; (#413) subtracts a brief extralight for the frame or two after a
+        ;; shot, so the net shift can go negative (walls brighten); the 3
+        ;; wall/riser/upper shade kernels clamp idx to [0,23] to absorb it.
+        haze-shift                         (php/- (haze-shift-for-lives (get stats :lives))
+                                                  (fire-extralight (or (get stats :fire-anim) 0.0)
+                                                                   (or (get stats :fire-anim-duration) fire-anim-seconds)))
         ;; Per-column wall geometry + shade arrays. compute-wall-shades
         ;; CREATES them fresh and returns them (PHP arrays are passed
         ;; by value so a mutating helper can't mutate the caller's

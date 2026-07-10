@@ -5,7 +5,7 @@
   (:require phel-doom.core.enemy :refer [new-enemy])
   (:require phel-doom.core.loot :refer [pick-loot-weapon roll-loot-kind])
   (:require phel-doom.core.combat
-            :refer [aim-angle-offset arm-berserk armory-reserve closest-attacker attacker-side attacker-octant berserk? berserk-damage-mul berserk-melee-mul berserk-mul-for berserk-seconds can-fire? apply-heat damage-step empty-click-seconds enemy-hit-damage fire-shot hit-damage-for hit-player-at hit-stop-for hit-stop-tough-seconds hit-stop-boss-seconds invuln? invuln-seconds knockback mag-size player-immune? push-sfx reload reloading? tick-armory tick-shooting]))
+            :refer [aim-angle-offset arm-berserk armory-reserve closest-attacker attacker-side attacker-octant berserk? berserk-damage-mul berserk-melee-mul berserk-mul-for berserk-seconds can-fire? apply-heat damage-step empty-click-seconds enemy-hit-damage fire-anim-seconds fire-extralight fire-shot hit-damage-for hit-player-at hit-stop-for hit-stop-tough-seconds hit-stop-boss-seconds invuln? invuln-seconds knockback mag-size muzzle-extralight-steps muzzle-flash-fraction player-immune? push-sfx reload reloading? tick-armory tick-shooting]))
 
 ;; ---------------------------------------------------------------------
 ;; closest-attacker: selection rule.
@@ -1249,3 +1249,47 @@
   (let [near (aim-angle-offset 70 120)
         far  (aim-angle-offset 110 120)]
     (is (php/> far near) "a column nearer the edge offsets the shot more")))
+
+;; ---------------------------------------------------------------------
+;; fire-extralight (#413): the muzzle briefly brightens the room by a few
+;; shade-table steps for ~1-2 frames after a shot. The renderer subtracts
+;; this from `haze-shift`, so a positive value lifts walls toward the
+;; bright end. Must be 0 when not firing (fire-anim 0) so a resting frame
+;; is byte-identical to the no-extralight renderer.
+;; ---------------------------------------------------------------------
+
+(deftest test-fire-extralight-zero-when-not-firing
+  (is (= 0 (fire-extralight 0.0 fire-anim-seconds))
+      "fire-anim 0 (idle) -> no extralight, byte-identical frame"))
+
+(deftest test-fire-extralight-zero-degenerate-duration
+  ;; A 0 duration must not divide-by-zero its way into a false flash.
+  (is (= 0 (fire-extralight 0.0 0.0))))
+
+(deftest test-fire-extralight-lit-on-fresh-shot
+  ;; A shot just fired (fire-anim near its peak) lights the room.
+  (is (= muzzle-extralight-steps (fire-extralight fire-anim-seconds fire-anim-seconds))
+      "peak fire-anim -> full extralight")
+  (is (= muzzle-extralight-steps (fire-extralight (php/* 0.9 fire-anim-seconds) fire-anim-seconds))
+      "still within the flash window one frame in"))
+
+(deftest test-fire-extralight-dark-after-window
+  ;; Past the brief window the recoil animation still plays but the room
+  ;; is dark again, so the flash reads as 1-2 frames, not the whole 0.13s.
+  (is (= 0 (fire-extralight (php/* 0.5 fire-anim-seconds) fire-anim-seconds))
+      "half-way through the fire anim -> flash already over"))
+
+(deftest test-fire-extralight-window-boundary
+  ;; The gate is `fire-anim > duration*(1 - fraction)`. With fraction 0.25
+  ;; and duration 0.13 the threshold is 0.0975; pick values that straddle
+  ;; it (not round multiples) so the test actually exercises the math.
+  (let [thr (php/* fire-anim-seconds (php/- 1.0 muzzle-flash-fraction))]
+    (is (= muzzle-extralight-steps (fire-extralight (php/+ thr 0.001) fire-anim-seconds))
+        "just inside the window -> lit")
+    (is (= 0 (fire-extralight (php/- thr 0.001) fire-anim-seconds))
+        "just outside the window -> dark")))
+
+(deftest test-fire-extralight-returns-int
+  ;; haze-shift is an int index into the shade table; the extralight
+  ;; subtrahend must be too, not a float.
+  (is (php/is_int (fire-extralight fire-anim-seconds fire-anim-seconds))))

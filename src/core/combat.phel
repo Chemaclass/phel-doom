@@ -74,6 +74,36 @@
    dips (a too-short window collapsed the kick into one frame)."
   0.13)
 
+(def muzzle-flash-fraction
+  "Fraction of `fire-anim-seconds` the muzzle extralight stays lit for
+   (#413). A fraction, not an absolute window, so it can never outlast the
+   fire animation itself. 0.25 of 0.13s is ~1-2 frames at 60fps: the gun
+   flashes the room, not a sustained glow over the whole recoil."
+  0.25)
+
+(def muzzle-extralight-steps
+  "Shade-table steps the muzzle flash brightens walls by while lit (#413).
+   Subtracted from the near-death `haze-shift` in the renderer, so it pulls
+   walls toward the bright end of the 24-step table. Untuned by feel yet -
+   picked as a visible-but-subtle lift; adjust once play-tested."
+  4)
+
+(defn ^:pure fire-extralight
+  "Shade-table steps the muzzle flash brightens the room by, given the
+   decaying `fire-anim` timer and its `fire-anim-duration` (#413). The
+   flash is lit only while `fire-anim` is within the first
+   `muzzle-flash-fraction` of the animation (i.e. the frame or two right
+   after a shot), then goes dark for the rest of the recoil. Returns 0
+   when idle (`fire-anim` 0) or for a degenerate 0 duration, so a resting
+   frame stays byte-identical to the no-extralight renderer.
+     (fire-extralight 0.0 0.13)  ; => 0  (idle)
+     (fire-extralight 0.13 0.13) ; => muzzle-extralight-steps (just fired)"
+  [^float fire-anim ^float fire-anim-duration]
+  (if (and (php/> fire-anim-duration 0.0)
+           (php/> fire-anim (php/* fire-anim-duration (php/- 1.0 muzzle-flash-fraction))))
+    muzzle-extralight-steps
+    0))
+
 (def hit-marker-seconds
   "How long the crosshair hit-marker (`✗` kill / `×` wound) stays lit
    after a shot connects. A brief game-feel flash, sized like the recoil

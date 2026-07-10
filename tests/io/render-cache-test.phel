@@ -69,6 +69,40 @@
         "View bob on but at rest (bob-phase 0) stays the golden frame")
     (is (not= resting peak) "a mid-stride bob shifts the whole scene")))
 
+(deftest test-muzzle-extralight-brightens-only-while-firing
+  ;; End-to-end wiring (#413): the muzzle extralight is 0 with no :fire-anim,
+  ;; so an idle frame is byte-identical to the golden; a shot (fire-anim at
+  ;; peak) lifts the near-death haze and brightens the walls. This pins the
+  ;; byte-identical-at-rest contract and that firing is actually plumbed;
+  ;; the min-23 CLAMP is guarded by the level-10 test below (this lives-5
+  ;; scene's net shift is too shallow to push any wall index past 23).
+  (let [firing (php/md5 (frame->string world (assoc stats :fire-anim 0.1) 120 30))]
+    (is (= "abb07892edff384c05b8833cb74748d9"
+           (php/md5 (frame->string world stats 120 30)))
+        "not firing (no :fire-anim) stays the golden frame - byte-identical")
+    (is (= "027bb3001db54f892cd314b159623c9c" firing)
+        "a fresh shot brightens the walls to this exact frame")
+    (is (not= "abb07892edff384c05b8833cb74748d9" firing)
+        "firing genuinely changes the scene bytes")))
+
+(deftest test-muzzle-extralight-clamps-the-negative-haze
+  ;; Premise (seeded like the golden-geometry cases below): level 10 at
+  ;; level gaze has walls near enough that a firing frame's negative net
+  ;; haze shift (#413) pushes their shade index past 23. The min-23 clamp
+  ;; in the three shade kernels absorbs that overflow; WITHOUT it `buf-get`
+  ;; on the shade table returns nil and frame->string throws - so this test
+  ;; ERRORS if any clamp is dropped. That is a real crash in normal play
+  ;; (level 10, lives 5, a shot near a wall), not a synthetic edge case.
+  ;; The pinned hash also byte-regresses the brightened frame.
+  (rng/seed! 10)
+  (let [w10    (mark-visible-cells (build-world 10 5 0 :normal #{:pistol}))
+        s10    (assoc stats :level 10)
+        firing (php/md5 (frame->string w10 (assoc s10 :fire-anim 0.1) 120 30))]
+    (is (= "9918b972be515438805342426a17ee8b" firing)
+        "level-10 firing brightens to this exact clamped frame")
+    (is (not= firing (php/md5 (frame->string w10 s10 120 30)))
+        "firing genuinely brightens the walls vs the resting frame")))
+
 ;; The golden hash above pins a single config (level 1, level gaze). The
 ;; px2 / px1 scene emitters branch on scene geometry - sky above the wall
 ;; top, textured floor below the wall bottom, and the graduated seam

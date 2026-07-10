@@ -6,7 +6,7 @@
   (:require phel-doom.io.render.frame-math :refer [sprite-h aggro-distance project-enemy collect-enemy-projs pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.weapon-sprites-data :refer [baked-weapons weapon-flashes])
   (:require phel-doom.core.engine :refer [proj-dist])
-  (:require phel-doom.core.projection :refer [wall-px])
+  (:require phel-doom.core.projection :refer [wall-px weapon-bob-rows weapon-bob-cols])
   (:require phel-doom.core.format :refer [format-duration])
   (:require phel-doom.core.map :refer [find-door-cell]))
 
@@ -1168,12 +1168,20 @@
    energy burst for the bfg / plasma / rocket. See weapon-row-string for
    the per-row byte-saving (cursor-skip + SGR dedup)."
   [parts stats spr vw vh floor-gradient flash]
-  (let [w     (:w spr)
-        rows  (php/intdiv (:h spr) 2)
-        px    (:px spr)
-        shift (php/- (reload-offset stats) (recoil-offset stats))
-        c0    (php/max 1 (php/+ (php/intdiv (php/- vw w) 2) 1))
-        r0    (php/+ (php/- vh rows) 1)]
+  (let [w       (:w spr)
+        rows    (php/intdiv (:h spr) 2)
+        px      (:px spr)
+        ;; Idle bob/sway (#412): the gun dips + sways on the walk cycle,
+        ;; sharing :bob-phase and the View bob intensity with head-bob.
+        ;; Both settle to 0 at rest, so a standing frame is byte-identical.
+        bob-ph  (or (:bob-phase stats) 0.0)
+        bob-int (get stats :view-bob 0.0)
+        vbob    (weapon-bob-rows bob-ph bob-int vh)
+        hbob    (weapon-bob-cols bob-ph bob-int vw)
+        shift   (php/+ (php/- (reload-offset stats) (recoil-offset stats)) vbob)
+        c0      (php/max 1 (php/min (php/+ (php/- vw w) 1)
+                                    (php/+ (php/+ (php/intdiv (php/- vw w) 2) 1) hbob)))
+        r0      (php/+ (php/- vh rows) 1)]
     (dotimes [j rows]
       (let [sr (php/+ r0 j shift)]
         (when (and (php/<= sr vh) (php/>= sr 1))
@@ -1187,7 +1195,8 @@
       (let [fw    (:w flash)
             frows (php/intdiv (:h flash) 2)
             fpx   (:px flash)
-            fc0   (php/max 1 (php/+ (php/intdiv (php/- vw fw) 2) 1))
+            fc0   (php/max 1 (php/min (php/+ (php/- vw fw) 1)
+                                      (php/+ (php/+ (php/intdiv (php/- vw fw) 2) 1) hbob)))
             ftop  (php/+ (php/- r0 frows) shift 1)]
         (dotimes [j frows]
           (let [sr (php/+ ftop j)]

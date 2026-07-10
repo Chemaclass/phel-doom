@@ -3,6 +3,8 @@
   (:require phel-doom.core.engine :refer [max-depth])
   (:require phel-doom.core.projection :refer [wall-px project-height pitch-rows pitch-cap
                                               bob-rows bob-cap
+                                              weapon-bob-rows weapon-bob-cols
+                                              weapon-bob-cap weapon-sway-cap
                                               sprite-half-rows tier-top-row-dist
                                               ceiling-top-row-dist floor-cast-num]))
 
@@ -157,6 +159,69 @@
   ;; tops cleanly.
   (is (php/is_int (bob-rows 1.1 0.7 30)))
   (is (php/is_int (bob-rows 0.0 0.0 44))))
+
+;; ---------------------------------------------------------------------
+;; weapon-bob-rows / weapon-bob-cols: idle viewmodel bob + sway (#412).
+;; Share `:bob-phase` and the View bob intensity with head-bob, but the
+;; gun traces a downward bowl (|sin| vertical, always dips, never rises
+;; above rest) with a left-right sway (sin horizontal) - not a horizon
+;; shear.
+;; ---------------------------------------------------------------------
+
+(deftest weapon-bob-zero-phase-is-zero
+  ;; Byte-identical-at-rest: phase 0 leaves the gun at its resting anchor
+  ;; in both axes at any height / width / intensity.
+  (is (= 0 (weapon-bob-rows 0.0 1.0 30)))
+  (is (= 0 (weapon-bob-cols 0.0 1.0 120)))
+  (is (= 0 (weapon-bob-rows 0.0 0.5 44)))
+  (is (= 0 (weapon-bob-cols 0.0 0.5 80))))
+
+(deftest weapon-bob-zero-intensity-is-zero
+  ;; Motion setting off (the default) never moves the gun, even at the
+  ;; peak of the walk cycle.
+  (is (= 0 (weapon-bob-rows half-pi 0.0 30)))
+  (is (= 0 (weapon-bob-cols half-pi 0.0 120))))
+
+(deftest weapon-bob-rows-only-dips
+  ;; |sin| bowl: both peaks of the walk cycle push the gun DOWN (positive
+  ;; row shift = lower on screen); it never rises above rest. This is what
+  ;; distinguishes it from head-bob's symmetric sin swing.
+  (is (php/> (weapon-bob-rows half-pi 1.0 40) 0))
+  (is (php/> (weapon-bob-rows (php/* 1.5 php/M_PI) 1.0 40) 0)))
+
+(deftest weapon-bob-rows-peaks-twice-per-cycle
+  ;; |sin| => the two half-cycle peaks give the same downward dip.
+  (is (= (weapon-bob-rows half-pi 1.0 40)
+         (weapon-bob-rows (php/* 1.5 php/M_PI) 1.0 40))))
+
+(deftest weapon-bob-cols-sways-both-ways
+  ;; sin(phase): the gun sweeps right on the up half, left on the down.
+  (is (php/> (weapon-bob-cols half-pi 1.0 120) 0))
+  (is (php/< (weapon-bob-cols (php/* 1.5 php/M_PI) 1.0 120) 0)))
+
+(deftest weapon-bob-cols-antisymmetric-in-phase
+  ;; Opposite points of the cycle sway equal-and-opposite.
+  (is (= (php/- 0 (weapon-bob-cols half-pi 1.0 120))
+         (weapon-bob-cols (php/- 0 half-pi) 1.0 120))))
+
+(deftest weapon-bob-grows-with-intensity
+  ;; vh 40 vertical: full = round(0.04*40) = 2, half = round(0.8) = 1.
+  ;; vw 80 horizontal: full = round(0.02*80) = 2, half = round(0.8) = 1.
+  (is (php/> (weapon-bob-rows half-pi 1.0 40) (weapon-bob-rows half-pi 0.5 40)))
+  (is (php/> (weapon-bob-cols half-pi 1.0 80) (weapon-bob-cols half-pi 0.5 80))))
+
+(deftest weapon-bob-caps-at-cap-fraction
+  ;; Peak of the cycle at full intensity: round(weapon-bob-cap * vh) rows
+  ;; down, round(weapon-sway-cap * vw) cols across.
+  (is (= (php/intval (php/round (php/* weapon-bob-cap 40))) (weapon-bob-rows half-pi 1.0 40)))
+  (is (= (php/intval (php/round (php/* weapon-sway-cap 120))) (weapon-bob-cols half-pi 1.0 120))))
+
+(deftest weapon-bob-returns-int
+  ;; Integer row / col offsets, so they fold into the sprite anchor cleanly.
+  (is (php/is_int (weapon-bob-rows 1.1 0.7 30)))
+  (is (php/is_int (weapon-bob-cols 1.1 0.7 120)))
+  (is (php/is_int (weapon-bob-rows 0.0 0.0 44)))
+  (is (php/is_int (weapon-bob-cols 0.0 0.0 80))))
 
 ;; ---------------------------------------------------------------------
 ;; sprite-half-rows: half the on-screen billboard height (rows) the

@@ -229,6 +229,8 @@ Camera pitch (arrow keys or mouse, issue #243) is rendered as a pure **vertical 
 
 **Head bob (#411)** rides the same `pr`. When the View bob setting is on, `pr` (and its full-resolution twin `pr-full`) gains a second additive term, `projection/bob-rows((:bob-phase world), intensity, vh)`, so walls, floor, sky and enemies nod together on the walk cycle. `:bob-phase` is distance-driven in `core/physics.phel` and settles to 0 at rest; `bob-rows` is `round(intensity * bob-cap * vh * sin(phase))` with `bob-cap` = 0.05 (a subtle 1-2 row nod, far below `pitch-cap`). Both `intensity = 0` (setting off, the default) and `phase = 0` (at rest) return exactly 0, so a bob-off or standing frame stays byte-identical. The bob is deliberately NOT added to the combat hit gate (`combat/aim-pr` keeps true pitch), so a cosmetic nod never moves where a shot lands.
 
+**Weapon bob (#412)** shares the same `:bob-phase` and View bob intensity, applied to the viewmodel anchor in `paint-weapon-sprite` instead of the horizon. Two terms fold into the sprite's existing `shift`/`c0`: `projection/weapon-bob-rows` = `round(intensity * weapon-bob-cap * vh * abs(sin(phase)))` (`weapon-bob-cap` = 0.04) drops the gun on each footfall (`abs(sin)` = a downward bowl, so the gun dips but never rises above rest, unlike the symmetric head-bob), and `projection/weapon-bob-cols` = `round(intensity * weapon-sway-cap * vw * sin(phase))` (`weapon-sway-cap` = 0.02) sways it left/right. The muzzle flash tracks both. `c0` is clamped so the sway never runs the sprite off-screen. Same byte-identical contract: `intensity = 0` or `phase = 0` yields 0 in both axes, so a resting / bob-off frame draws the gun exactly where the no-bob path did.
+
 
 ## Half-block sub-pixel rendering (floor / walls / sky)
 

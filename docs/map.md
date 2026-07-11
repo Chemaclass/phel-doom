@@ -41,36 +41,6 @@ Every cell is one of these ints. Constants exported so no module uses raw `0/1/2
 
 `wall?` / `passable?` use the same lock colour resolution, so the player can't walk through locked doors but the raycaster still blocks rays on them (stay visually solid until traversed).
 
-## Floor heights (fz)
-
-Issue #368 (variable-floor-heights epic #375): each cell carries a floor height alongside its type. Heights live in a separate `fz-grid` (vector of vectors of floats), not in the cell int.
-
-```phel
-(def fz-step 0.25)        ; height quantum; stairs rise one step per cell
-(quantize-fz 0.3)         ; => 0.25 - snap raw input to the nearest step
-(floor-z fz-grid x y)     ; height at (x, y); out-of-bounds or nil grid = 0.0
-```
-
-Quantization happens in loaders (layout parsing), so stored data is always clean multiples of `fz-step` and `floor-z` stays a bare read.
-
-Layouts author heights with digit chars: `1` / `2` / `3` parse as `cell-floor` with fz 0.25 / 0.5 / 0.75. `parse-layout` returns `{:grid :spawn :fz-grid}`; a digit-free layout yields an all-zero `fz-grid`. Procgen grids carry no heights (flat world).
-
-Casting, rendering, and physics all honor fz per epic #375: the raycaster's DDA engine supports multi-span columns (issue #369), the renderer paints risers and tier tops (issue #379), and player physics honor step-clears? (issue #371) so the player snaps up staircases cell-by-cell. The showcase level (L2) demonstrates the staircase mechanic.
-
-## Ceiling heights (cz)
-
-Issue #385 (epic #375 Phase 3) mirrors `fz` for ceilings: each cell carries a ceiling height in a separate `cz-grid`, defaulting to `1.0` (full height). A cell with raised `fz` and lowered `cz` is a window gap.
-
-```phel
-(ceiling-z cz-grid x y)   ; height at (x, y); out-of-bounds or nil grid = 1.0
-```
-
-Layouts author lowered ceilings with lowercase chars: `a` / `b` / `c` parse as `cell-floor` with cz 0.75 / 0.5 / 0.25 (quantized to `fz-step`, the shared quantum). `parse-layout` returns `{:grid :spawn :fz-grid :cz-grid}`; a layout with no lowercase chars yields an all-`1.0` `cz-grid`. `new-world` stores `:cz-grid` with a flat PHP twin `:pcz` (indexed `y * width + x`) and a build-time `:cz-flat?` flag, exactly like `:pfz` / `:fz-flat?`.
-
-Note: each layout char sets EITHER floor height (`1`/`2`/`3`) OR ceiling height (`a`/`b`/`c`), not both, so no single char authors a window gap (raised `fz` + lowered `cz`) on one cell yet. A combined-authoring char is left for the #387 render / #388 physics sub-issues that first need it.
-
-Ceilings are now fully wired through the pipeline: the cast emits ceiling-drop `:uspans` (#386), the renderer paints the upper wall slice (#387), and physics + combat honor the gap (#388). Passability uses `headroom-clears?`: a cell is walk-through only when its opening `ceiling-z - floor-z` is at least `player-height` (one `fz-step`, 0.25), so a lowered lintel that pinches the opening blocks walking while staying see-through. Combat's `cast-shot-dist` stops a shot at a lintel whose ceiling has dropped to or below the muzzle height. `player-height` equals one `fz-step` precisely so every flat-ceiling level - including L2's fz-0.75 platform under a full cz-1.0 ceiling (opening 0.25) - stays walkable and shootable, i.e. behaviour is unchanged on all shipped levels. Enemy chase parity for the headroom gate is deferred (enemies still use the wall + step-up gate only), consistent with the epic's other deferred enemy-elevation work; no shipped level has lowered ceilings to exercise it.
-
 ## Random map generation
 
 ```phel
@@ -148,5 +118,3 @@ Minimap: dim `T` (off) / bright `T` (on).
 ```
 
 Off-map = wall means the raycaster skips range checks: keeps stepping until a non-floor cell (or max-depth). One branch saved per ray step.
-
-Floor heights follow the same defensive pattern with a different default: `(floor-z fz-grid 99 99)` returns `0.0` (ground level), as does a nil `fz-grid`, so consumers never see nil.

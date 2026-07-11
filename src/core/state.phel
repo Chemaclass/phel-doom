@@ -5,13 +5,9 @@
   "Create a player record with floating-point position and angle in
    radians. `:pitch` is the look up/down shear as a normalised fraction
    in [-1.0, 1.0] (0 = level, 1 = full up, -1 = full down); fresh
-   players spawn looking level so the default view is unchanged. `:z`
-   is the floor height under the player's feet (issue #371); every
-   shipped level spawns on an fz-0.0 cell, so a static 0.0 default is
-   correct on day one - physics/try-move snaps it to the real cell fz
-   the first time the player steps onto a tiered floor."
+   players spawn looking level so the default view is unchanged."
   [x y angle]
-  {:x x :y y :angle angle :pitch 0.0 :z 0.0})
+  {:x x :y y :angle angle :pitch 0.0})
 
 (def max-pitch
   "Hard cap on the absolute value of the player's `:pitch` look
@@ -92,152 +88,95 @@
    cooldown) while not."
   100.0)
 
-;; Width read from the first row: grids are rectangular by construction
-;; (random-grid + parse-layout), ragged input is not defended against.
-(defn- flat-fz [grid]
-  (let [row (into [] (map (fn [_] 0.0) (range 0 (count (first grid)))))]
-    (into [] (map (fn [_] row) (range 0 (count grid))))))
-
-;; Ceiling default is full-height 1.0 (issue #385), the mirror of flat-fz.
-(defn- flat-cz [grid]
-  (let [row (into [] (map (fn [_] 1.0) (range 0 (count (first grid)))))]
-    (into [] (map (fn [_] row) (range 0 (count grid))))))
-
-;; Row-major flatten: index y * width + x, one aget in future hot loops.
-;; Structural (height-agnostic), so both :pfz and :pcz go through it.
-(defn- fz->pfz [fz-grid]
-  (to-php-array (apply concat fz-grid)))
-
-(defn- all-flat? [fz-grid]
-  ;; Loose ==: savegame JSON decodes 0.0 as int 0; === would misflag
-  ;; loaded flat worlds as tiered.
-  (every? (fn [row] (every? (fn [z] (php/== 0.0 z)) row)) fz-grid))
-
-(defn- all-full-ceiling? [cz-grid]
-  ;; Mirror of all-flat? for ceilings; loose == for JSON-decoded 1.0.
-  (every? (fn [row] (every? (fn [z] (php/== 1.0 z)) row)) cz-grid))
-
 (defn rebuild-pgrid
-  "Re-derive `:pgrid` from `:grid`, `:pfz` from `:fz-grid`, and `:pcz`
-   from `:cz-grid`. Call after any in-game mutation of the grid (secret
-   reveal, switch toggle, door open) so the raycaster's hot-path
-   PHP-array views stay in sync with the persistent Phel vectors. Without
-   this the 3D view paints the pre-mutation cell (player walks through a
-   wall that still visually looks solid). A missing `:fz-grid` defaults to
-   flat zeros (pre-#368 saves) and a missing `:cz-grid` to full-height
-   1.0 (pre-#385 saves), so old saves load clean."
+  "Re-derive `:pgrid` from `:grid`. Call after any in-game mutation of the
+   grid (secret reveal, switch toggle, door open) so the raycaster's
+   hot-path PHP-array view stays in sync with the persistent Phel vector.
+   Without this the 3D view paints the pre-mutation cell (player walks
+   through a wall that still visually looks solid)."
   [world]
-  (let [fz (or (:fz-grid world) (flat-fz (:grid world)))
-        cz (or (:cz-grid world) (flat-cz (:grid world)))]
-    (assoc world
-           :pgrid (to-php-array (map to-php-array (:grid world)))
-           :fz-grid fz
-           :pfz (fz->pfz fz)
-           :fz-flat? (all-flat? fz)
-           :cz-grid cz
-           :pcz (fz->pfz cz)
-           :cz-flat? (all-full-ceiling? cz))))
+  (assoc world
+         :pgrid (to-php-array (map to-php-array (:grid world)))))
 
 (defn new-world
   {:doc "Bundle map grid and player into the world state. Stores a PHP-native
          copy of the grid under :pgrid so the raycast hot loop can read cells
-         via aget instead of going through Phel's persistent-vector dispatch.
-         The optional fz-grid (per-cell floor heights, issue #368) lands under
-         :fz-grid with a flat PHP twin :pfz indexed y * width + x; nil (the
-         2/3-arity forms) derives an all-zeros flat world. The optional
-         cz-grid (per-cell ceiling heights, issue #385) mirrors it under
-         :cz-grid / :pcz / :cz-flat?, defaulting to a full-height (1.0)
-         ceiling."
+         via aget instead of going through Phel's persistent-vector dispatch."
    :see-also ["new-player" "build-world" "rebuild-pgrid"]
    :example "(new-world grid (new-player 5.0 5.0 0.0)) ; => world map"}
-  ([grid player] (new-world grid player nil nil))
-  ([grid player fz-grid] (new-world grid player fz-grid nil))
-  ([grid player fz-grid cz-grid]
-   (let [fz (or fz-grid (flat-fz grid))
-         cz (or cz-grid (flat-cz grid))]
-     {:grid      grid
-      :pgrid     (to-php-array (map to-php-array grid))
-      :fz-grid   fz
-      :pfz       (fz->pfz fz)
-      ;; Build-time flatness flag: do-cast selects the legacy zero-cost
-      ;; DDA march for flat worlds (the per-step fz read measured
-      ;; +13-16% cast time, see #369).
-      :fz-flat?  (all-flat? fz)
-      ;; Ceiling twin (issue #385): full-height 1.0 default, flat flag
-      ;; for the future ceiling-cast fast path.
-      :cz-grid   cz
-      :pcz       (fz->pfz cz)
-      :cz-flat?  (all-full-ceiling? cz)
-      :width     (count (first grid))
-      :height    (count grid)
-      :player    player
+  ([grid player]
+   {:grid      grid
+    :pgrid     (to-php-array (map to-php-array grid))
+    :width     (count (first grid))
+    :height    (count grid)
+    :player    player
    ;; Fog-of-war automap: PHP array keyed by (y * width + x). nil /
    ;; missing = unseen (minimap paints uniform dim block); 1 = visited
    ;; (paints normally). `engine/mark-visible-cells` stamps cells
    ;; within line-of-sight of the player each frame.
-      :visited   (php/array)
-      :full-map? false
+    :visited   (php/array)
+    :full-map? false
    ;; Switches (issue #62): vector of {:at [x y] :targets [[x y] ...]}.
    ;; Level builder populates from the per-level config; play.phel /
    ;; try-toggle-switch reads :at and applies map/toggle-switch on the
    ;; F-key edge.
-      :switches  []
+    :switches  []
    ;; Soulsphere (issue #68). Per-level pickup spawn vector + the
    ;; decay clock for the over-cap portion of `:lives`.
-      :soulspheres        []
-      :soul-decay-secs    0.0
+    :soulspheres        []
+    :soul-decay-secs    0.0
    ;; Armor shards (issue #68): common pickup that adds +1 armor
    ;; over the normal `max-armor` cap, up to `armor-shard-cap`.
    ;; No decay - shards are a permanent buffer (DOOM-style helmet
    ;; bonus) so the player can stockpile them across rooms.
-      :armor-shards       []
-      :show-map  false
-      :paused    false
-      :help?     false
-      :debug?    false
-      :sound-on  true
-      :enemies   []
-      :projectiles []
-      :hit-stop-secs 0.0
-      :hearts    []
-      :armors    []
-      :ammo-boxes []
-      :armor     0
-      :kills     0
-      :streak    0
-      :streak-secs 0.0
-      :lives     max-lives
-      :iframes     0.0
-      :fire-anim   0.0
-      :intro-secs  0.0
-      :flash-secs  0.0
-      :fire-cooldown 0.0
-      :reload-cooldown 0.0
-      :empty-click-secs 0.0
+    :armor-shards       []
+    :show-map  false
+    :paused    false
+    :help?     false
+    :debug?    false
+    :sound-on  true
+    :enemies   []
+    :projectiles []
+    :hit-stop-secs 0.0
+    :hearts    []
+    :armors    []
+    :ammo-boxes []
+    :armor     0
+    :kills     0
+    :streak    0
+    :streak-secs 0.0
+    :lives     max-lives
+    :iframes     0.0
+    :fire-anim   0.0
+    :intro-secs  0.0
+    :flash-secs  0.0
+    :fire-cooldown 0.0
+    :reload-cooldown 0.0
+    :empty-click-secs 0.0
    ;; Powerup timers. Decayed each frame in combat/decay-timers.
    ;; While > 0 the buff is active; render samples them for the
    ;; full-screen tint, combat reads them for damage / vulnerability
    ;; mods.
-      :berserk-secs    0.0
-      :berserks        []
-      :invuln-secs     0.0
-      :invulns         []
+    :berserk-secs    0.0
+    :berserks        []
+    :invuln-secs     0.0
+    :invulns         []
    ;; Backpack stacking (issue #68 part 3). `:backpack-level` 0..N
    ;; replaces the old boolean. Effective reserve cap is `base * (1 +
    ;; level)` so each pickup adds one base's worth. Capped at
    ;; `max-backpacks` so reserve growth has a known ceiling.
-      :backpack-level  0
-      :backpacks       []
+    :backpack-level  0
+    :backpacks       []
    ;; Keycards. :held-keys is a set of collected colour kws
    ;; (e.g. #{:blue}). :keycards is the per-level pickup vector.
-      :held-keys       #{}
-      :keycards        []
+    :held-keys       #{}
+    :keycards        []
    ;; Transient HUD cue: armed by physics/try-move when the player
    ;; bumps a locked door without the matching keycard. Render
    ;; paints 'NEED <COLOUR> KEY' centred over the 3D view while
    ;; the timer is > 0; combat/decay-timers ticks it down.
-      :locked-door-bump-secs    0.0
-      :locked-door-bump-colour  nil
+    :locked-door-bump-secs    0.0
+    :locked-door-bump-colour  nil
    ;; Weapons. :weapon is the active slot. :weapon-state is the
    ;; per-weapon mag/reserve table (catalogue lives in weapons.phel).
    ;; :mag and :ammo-reserve mirror the active weapon's live state so
@@ -251,25 +190,25 @@
    ;; the pre-#324 centre-aim. The play loop stamps concrete cells from
    ;; controls/mouse-aim while the mouse is on and resets them to nil on a
    ;; resize or when the mouse is off (see reset-reticle).
-      :aim-col        nil
-      :aim-row        nil
-      :weapon         :pistol
+    :aim-col        nil
+    :aim-row        nil
+    :weapon         :pistol
    ;; Fresh runs only own the pistol. Shotgun + chaingun must be
    ;; found on the map (level.phel/maybe-spawn-weapon-pickup).
-      :owned-weapons  #{:pistol}
-      :weapon-state   (initial-weapon-state)
-      :mag           10
-      :ammo-reserve  30
-      :heat        0.0
-      :jam-secs    0.0
-      :heartbeat-phase 0.0
-      :heartbeat-tick? false
-      :bob-phase   0.0
-      :blood-drops         []
-      :prev-min-enemy-dist 1.0e9
-      :scare-secs          0.0
-      :fx          []
-      :game-time   0.0
+    :owned-weapons  #{:pistol}
+    :weapon-state   (initial-weapon-state)
+    :mag           10
+    :ammo-reserve  30
+    :heat        0.0
+    :jam-secs    0.0
+    :heartbeat-phase 0.0
+    :heartbeat-tick? false
+    :bob-phase   0.0
+    :blood-drops         []
+    :prev-min-enemy-dist 1.0e9
+    :scare-secs          0.0
+    :fx          []
+    :game-time   0.0
    ;; Sprint pool + latches. :stamina decays while sprinting (and
    ;; moving), regenerates while not. :sprint-cooldown-secs holds
    ;; regen back for a short window after the player lets go so a
@@ -277,18 +216,18 @@
    ;; latches true when stamina hits 0 mid-sprint and unlatches when
    ;; stamina recovers past sprint-engage-threshold — prevents
    ;; stutter-sprint at empty.
-      :stamina                  max-stamina
-      :sprint-cooldown-secs     0.0
-      :sprint-blocked?          false
-      :moves      {:fwd          0
-                   :back         0
-                   :strafe-left  0
-                   :strafe-right 0
-                   :turn-left    0
-                   :turn-right   0
-                   :sprint       0
-                   :pitch-up     0
-                   :pitch-down   0}})))
+    :stamina                  max-stamina
+    :sprint-cooldown-secs     0.0
+    :sprint-blocked?          false
+    :moves      {:fwd          0
+                 :back         0
+                 :strafe-left  0
+                 :strafe-right 0
+                 :turn-left    0
+                 :turn-right   0
+                 :sprint       0
+                 :pitch-up     0
+                 :pitch-down   0}}))
 
 (defn gain-life
   "Heal one full heart (2 HP), capped at max-lives. Heart pickups grant

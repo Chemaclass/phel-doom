@@ -8,8 +8,7 @@
                                        switch-on? toggle-switch
                                        toggle-switch-cell toggle-target-cell
                                        parse-layout place-exit scatter-walls
-                                       random-grid random-spawn seed-secrets
-                                       fz-step quantize-fz floor-z ceiling-z])
+                                       random-grid random-spawn seed-secrets])
   (:require phel-doom.core.rng :as rng))
 
 (deftest test-walls-on-perimeter
@@ -198,112 +197,6 @@
                            "####"])
         g   (:grid out)]
     (is (= cell-floor (get-in g [1 1])))))
-
-;; ---------------------------------------------------------------------
-;; Floor heights (issue #368): per-cell fz data, quantized 0.25 steps.
-;; Data layer only — cast/render/physics still assume a flat world.
-;; ---------------------------------------------------------------------
-
-(deftest test-fz-step-pinned
-  ;; Physics step-up rule + layout digit chars rely on the literal value.
-  (is (= 0.25 fz-step)))
-
-(deftest test-floor-z-reads-heights
-  (let [fz [[0.0 0.25]
-            [0.5 0.75]]]
-    (is (= 0.0 (floor-z fz 0 0)))
-    (is (= 0.25 (floor-z fz 1 0)))
-    (is (= 0.5 (floor-z fz 0 1)))
-    (is (= 0.75 (floor-z fz 1 1)))))
-
-(deftest test-floor-z-oob-returns-zero
-  ;; OOB reads default to ground level so consumers never see nil.
-  ;; Covers each guard: negative x, negative y, over-length col,
-  ;; missing row, and a nil grid (world built without heights).
-  (let [fz [[0.25 0.25]
-            [0.25 0.25]]]
-    (is (= 0.0 (floor-z fz -1 0)))
-    (is (= 0.0 (floor-z fz 0 -1)))
-    (is (= 0.0 (floor-z fz 5 0)))
-    (is (= 0.0 (floor-z fz 0 5)))
-    (is (= 0.0 (floor-z nil 1 1)))))
-
-(deftest test-quantize-fz-snaps-to-quarter-steps
-  ;; Non-round inputs must snap, exact steps must pass through.
-  (is (= 0.25 (quantize-fz 0.3)))
-  (is (= 0.5 (quantize-fz 0.4)))
-  (is (= 0.75 (quantize-fz 0.75)))
-  (is (= 0.0 (quantize-fz 0.0))))
-
-;; ---------------------------------------------------------------------
-;; Ceiling heights (issue #385, epic #375 Phase 3): per-cell `cz`, the
-;; mirror of `fz`. Default 1.0 (full-height ceiling); a lowered cell
-;; drops it. `ceiling-z` defaults OOB / nil to 1.0 so consumers never
-;; see nil, symmetric to `floor-z`'s 0.0.
-;; ---------------------------------------------------------------------
-
-(deftest test-ceiling-z-reads-heights
-  (let [cz [[1.0 0.75]
-            [0.5 0.25]]]
-    (is (= 1.0 (ceiling-z cz 0 0)))
-    (is (= 0.75 (ceiling-z cz 1 0)))
-    (is (= 0.5 (ceiling-z cz 0 1)))
-    (is (= 0.25 (ceiling-z cz 1 1)))))
-
-(deftest test-ceiling-z-oob-returns-full-height
-  ;; OOB / nil default to 1.0 (full ceiling), mirroring floor-z's 0.0.
-  (let [cz [[0.5 0.5]
-            [0.5 0.5]]]
-    (is (= 1.0 (ceiling-z cz -1 0)))
-    (is (= 1.0 (ceiling-z cz 0 -1)))
-    (is (= 1.0 (ceiling-z cz 5 0)))
-    (is (= 1.0 (ceiling-z cz 0 5)))
-    (is (= 1.0 (ceiling-z nil 1 1)))))
-
-(deftest test-parse-layout-authors-lowered-ceilings
-  ;; Lowercase a/b/c drop the ceiling to cz 0.75/0.5/0.25; every other
-  ;; cell keeps the full-height 1.0 default. Geometry stays plain floor.
-  (let [out (parse-layout ["#####"
-                           "#ab@#"
-                           "#c..#"
-                           "#####"])
-        cz  (:cz-grid out)]
-    (is (= 0.75 (get (get cz 1) 1)) "'a' -> cz 0.75")
-    (is (= 0.5 (get (get cz 1) 2)) "'b' -> cz 0.5")
-    (is (= 1.0 (get (get cz 1) 3)) "'@' keeps full-height ceiling")
-    (is (= 0.25 (get (get cz 2) 1)) "'c' -> cz 0.25")
-    (is (= 1.0 (get (get cz 2) 2)) "'.' keeps full-height ceiling")
-    ;; lowered-ceiling cells are still walkable floor geometrically
-    (is (= cell-floor (get (get (:grid out) 1) 1)))))
-
-(deftest test-parse-layout-digits-set-floor-height
-  ;; Digit chars author raised floor tiers: geometry stays cell-floor,
-  ;; height lands in :fz-grid.
-  (let [out (parse-layout ["#####"
-                           "#123#"
-                           "#.@.#"
-                           "#####"])
-        g   (:grid out)
-        fz  (:fz-grid out)]
-    (is (= cell-floor (get-in g [1 1])))
-    (is (= cell-floor (get-in g [1 2])))
-    (is (= cell-floor (get-in g [1 3])))
-    (is (= 0.25 (get-in fz [1 1])))
-    (is (= 0.5 (get-in fz [1 2])))
-    (is (= 0.75 (get-in fz [1 3])))
-    (is (= 0.0 (get-in fz [2 1])))
-    (is (= 0.0 (get-in fz [2 2])))))
-
-(deftest test-parse-layout-fz-defaults-flat
-  ;; Digit-free layouts stay flat: :fz-grid present, grid dims, all 0.0.
-  (let [out (parse-layout ["####"
-                           "#.@#"
-                           "####"])
-        g   (:grid out)
-        fz  (:fz-grid out)]
-    (is (= (count g) (count fz)))
-    (is (= (count (first g)) (count (first fz))))
-    (is (every? (fn [row] (every? (fn [z] (= 0.0 z)) row)) fz))))
 
 ;; ---------------------------------------------------------------------
 ;; Secret walls (issue #61): hidden passage cells the player reveals

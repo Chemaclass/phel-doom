@@ -89,19 +89,16 @@ After `build-world` from `core/level.phel` stamps level metadata, the world also
 
 On grid mutation (door turning into floor, etc.) **both** must update. See `pickup-hearts` in `core/pickups.phel` and door logic in `commands/play.phel`. `rebuild-pgrid` is called after any grid edit to keep the PHP mirror in sync.
 
-The same source-of-truth / hot-twin split applies to floor heights (issue #368): `:fz-grid` is a Phel vector of vectors of floats; `:pfz` is a flat PHP float array indexed `y * width + x` (one `aget` per read in hot loops). `new-world` takes an optional third `fz-grid` argument (nil = all-zero flat world), and `rebuild-pgrid` re-derives `:pfz` too, defaulting a missing `:fz-grid` to zeros so pre-#368 saves load clean. Both also stamp `:fz-flat?` (true when every cell is at ground level): the raycaster reads it once per frame to pick the zero-cost legacy DDA march on flat worlds and the span-emitting march on tiered ones (issue #369).
-
 ## The player
 
 ```phel
 {:x       <float world units>
  :y       <float>
  :angle   <float radians>
- :pitch   <float look up/down fraction in [-1, 1], 0 = level>
- :z       <float floor height under the player's feet, 0.0 = ground level>}
+ :pitch   <float look up/down fraction in [-1, 1], 0 = level>}
 ```
 
-`new-player x y angle` creates the player at a world position and facing angle, spawning at `:z 0.0`; every shipped level's spawn cell is at ground level, so a static default is correct without threading the level's `fz-grid` through spawn. `move-player` does delta translation (no collision); `turn-player` does delta angle. `change-pitch` updates camera look. Collision AND the floor-height step-up rule are handled at `physics/try-move` (issue #371): a destination cell's `fz` rise of at most `map/fz-step` (0.25) above `:z` is walkable and snaps `:z` to it (stairs); stepping down any depth is always allowed and also snaps `:z` (no gravity/fall lerp in this phase); a bigger rise blocks the move exactly like a wall. Flat worlds keep every cell's `fz` at 0.0, so the gate is a no-op there and `:z` stays 0.0.
+`new-player x y angle` creates the player at a world position and facing angle. `move-player` does delta translation (no collision); `turn-player` does delta angle. `change-pitch` updates camera look. Collision is handled at `physics/try-move`: a destination cell blocks the move only when it is a wall or a locked door the player lacks the key for; any open floor cell is walkable.
 
 ## Movement counters (`:moves`)
 
@@ -148,6 +145,4 @@ Float-seconds countdowns on the world, decayed by `decay-timers` in `core/combat
 
 ## Flat world design
 
-Every shipped level is still flat (`fz` 0.0 everywhere) and the ceiling stays a flat plane (z = 1); construction stays simple (one `new-world` call), updates lightweight (`assoc`/`update`), and tests literal (`(is (= expected (tick-world ...)))`). Trade-off: no compiler help on key names, so `frame-stats` centralizes all reads to catch typos.
-
-Issue #368 started loosening this: worlds carry per-cell floor heights (`:fz-grid` / `:pfz`). Issue #369 taught the raycaster to march past floor-height risers. Issue #371 taught physics the step-up rule (this doc's "The player" section) so both the player AND enemies (`core/enemy.phel`'s `step-toward` -> `try-step` -> `step-clears?`) can climb a one-`fz-step` rise; enemies don't carry their own `:z` field - they read their current cell's `fz` on the fly from the `fz-grid` threaded into `enemy/advance`, since that is the only place the value is needed (matches how sprite rendering plans to read cell `fz` directly rather than caching it per-enemy). Render still projects every world at a fixed eye height until #370 lands.
+Every level is flat: the floor is a single plane (z = 0) and the ceiling a full-height plane (z = 1). Construction stays simple (one `new-world` call), updates lightweight (`assoc`/`update`), and tests literal (`(is (= expected (tick-world ...)))`). Trade-off: no compiler help on key names, so `frame-stats` centralizes all reads to catch typos.

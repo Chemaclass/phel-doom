@@ -1,6 +1,6 @@
 (ns phel-doom.core.enemy
   (:require phel-doom.core.rng :as rng)
-  (:require phel-doom.core.map        :refer [random-spawn wall? floor-z fz-step])
+  (:require phel-doom.core.map        :refer [random-spawn wall?])
   (:require phel-doom.core.enemies    :refer [resists? default-lives-for])
   (:require phel-doom.core.engine     :refer [proj-dist])
   (:require phel-doom.core.projection :refer [sprite-half-rows wall-px])
@@ -107,97 +107,15 @@
         t (php/* 0.75 php/M_PI)]
     [0.0 q (php/- 0.0 q) h (php/- 0.0 h) t (php/- 0.0 t)]))
 
-(defn- ^:pure step-clears? [fz-grid ^float ex ^float ey ^int nix ^int niy]
-  ;; Same rule as physics/try-move (issue #371): rises up to one
-  ;; fz-step are climbable, stepping down any depth is always allowed.
-  ;; No fz-grid (nil, flat worlds) means every cell is 0.0 - a no-op
-  ;; gate so pre-#371 chase behaviour is unchanged on flat levels.
-  (or (nil? fz-grid)
-      (php/<= (php/- (floor-z fz-grid nix niy)
-                     (floor-z fz-grid (php/intval ex) (php/intval ey)))
-              fz-step)))
-
-(defn ^:pure chase-dist-field
-  "BFS distance-to-player field for stair-aware chase (issue #405).
-   Floods OUT from the player's cell over the enemy-traversable graph:
-   a move A->B is an edge when B is in bounds, not a `wall?`, and the
-   rise `floor-z(B) - floor-z(A)` clears one `fz-step` - the same gate
-   as `step-clears?`/physics (#371). The flood expands B->A on the
-   REVERSE edge, so a multi-step platform face never propagates
-   reachability up its wall while a one-step stair mouth does; an enemy
-   then descends the gradient AROUND a ledge to the stairs instead of
-   pressing into the edge. Returns `{:dist <php-array idx->steps> :w W}`
-   keyed `y*W + x`; unreachable cells are absent. Only tiered worlds
-   build this (nil `fz-grid` keeps the greedy chase, see `step-toward`)."
-  [grid fz-grid ^int px ^int py]
-  (let [w    (count (first grid))
-        h    (count grid)
-        dist (php/array)
-        q    (php/array)]
-    (php/aset dist (php/+ (php/* py w) px) 0)
-    (php/array_push q px py)
-    (loop [head 0]
-      (if (php/>= head (php/count q))
-        {:dist dist :w w}
-        (let [bx (php/aget q head)
-              by (php/aget q (php/+ head 1))
-              bd (php/aget dist (php/+ (php/* by w) bx))
-              bz (floor-z fz-grid bx by)]
-          (loop [ns [[(php/- bx 1) by] [(php/+ bx 1) by] [bx (php/- by 1)] [bx (php/+ by 1)]]]
-            (when (not (empty? ns))
-              (let [ax (first (first ns))
-                    ay (second (first ns))
-                    ai (php/+ (php/* ay w) ax)]
-                ;; Reverse edge: A->B is the move an enemy WOULD make, so
-                ;; the climb gate reads `bz - floor-z(A)` (rise onto B).
-                (when (and (php/>= ax 0) (php/< ax w) (php/>= ay 0) (php/< ay h)
-                           (not (wall? grid ax ay))
-                           (not (php/array_key_exists ai dist))
-                           (php/<= (php/- bz (floor-z fz-grid ax ay)) fz-step))
-                  (php/aset dist ai (php/+ bd 1))
-                  (php/array_push q ax ay)))
-              (recur (rest ns))))
-          (recur (php/+ head 2)))))))
-
-(defn ^:pure chase-waypoint
-  "Next cell an enemy at (ex, ey) should step to under a `chase-dist-field`:
-   the in-bounds, non-`wall?`, one-`fz-step`-climbable neighbour with the
-   smallest distance-to-player (the next cell on the shortest stair-aware
-   path). Returns `[nx ny]` or nil when no reachable neighbour exists, in
-   which case `step-toward` falls back to the greedy heading."
-  [field grid fz-grid ^int ex ^int ey]
-  (let [dist (:dist field)
-        w    (:w field)
-        ez   (floor-z fz-grid ex ey)]
-    (loop [ns   [[(php/- ex 1) ey] [(php/+ ex 1) ey] [ex (php/- ey 1)] [ex (php/+ ey 1)]]
-           best nil
-           bd   nil]
-      (if (empty? ns)
-        best
-        (let [ax (first (first ns))
-              ay (second (first ns))
-              ai (php/+ (php/* ay w) ax)]
-          (if (and (not (wall? grid ax ay))
-                   (php/array_key_exists ai dist)
-                   (php/<= (php/- (floor-z fz-grid ax ay) ez) fz-step))
-            (let [d (php/aget dist ai)]
-              (if (or (nil? bd) (php/< d bd))
-                (recur (rest ns) [ax ay] d)
-                (recur (rest ns) best bd)))
-            (recur (rest ns) best bd)))))))
-
 (defn- try-step
   "Attempt to step `dist` units from (ex, ey) along `angle`. Returns
-   [nx ny] if the destination cell is open (not a `wall?`) AND its
-   floor-height rise from the enemy's current cell clears the
-   fz-step gate (issue #371, `step-clears?`), nil otherwise."
-  [grid fz-grid ^float ex ^float ey ^float dist ^float angle]
+   [nx ny] if the destination cell is open (not a `wall?`), nil otherwise."
+  [grid ^float ex ^float ey ^float dist ^float angle]
   (let [nx  (php/+ ex (php/* dist (php/cos angle)))
         ny  (php/+ ey (php/* dist (php/sin angle)))
         nix (php/intval nx)
         niy (php/intval ny)]
-    (if (or (wall? grid nix niy)
-            (not (step-clears? fz-grid ex ey nix niy)))
+    (if (wall? grid nix niy)
       nil
       [nx ny])))
 
@@ -206,25 +124,18 @@
    destination cell is open. nil if the enemy is sealed in. The cascade
    first cuts corners, then slides along walls, then backs out of dead
    ends, so a monster routes around obstacles instead of bumping forever."
-  [grid fz-grid ^float ex ^float ey ^float step ^float desired]
+  [grid ^float ex ^float ey ^float step ^float desired]
   (loop [offsets chase-angle-offsets]
     (cond
       (empty? offsets) nil
-      :else            (let [hit (try-step grid fz-grid ex ey step (php/+ desired (first offsets)))]
+      :else            (let [hit (try-step grid ex ey step (php/+ desired (first offsets)))]
                          (if hit hit (recur (rest offsets)))))))
 
 (defn- step-toward
   "Walk one frame of `speed` * dt toward (target-x, target-y). The enemy
    slides around obstacles via pick-step's offset cascade instead of
-   bumping forever. A floor-height rise bigger than one fz-step blocks
-   the same way a wall does (issue #371), so a monster climbs stairs but
-   can't scale a taller ledge. When a `field` (BFS `chase-dist-field`,
-   #405) is present the enemy heads toward its next waypoint cell so the
-   chase ROUTES around a tall tier face to the stair mouth rather than
-   pressing into it; with no field (flat worlds / legacy callers) OR no
-   reachable waypoint it falls back to the direct heading, so those paths
-   are byte-identical to the pre-#405 greedy chase."
-  [enemy grid fz-grid field ^float target-x ^float target-y ^float dt ^float speed]
+   bumping forever."
+  [enemy grid ^float target-x ^float target-y ^float dt ^float speed]
   (let [ex   (:x enemy)
         ey   (:y enemy)
         dx   (php/- target-x ex)
@@ -232,12 +143,8 @@
         dist (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
     (if (php/<= dist stop-dist)
       enemy
-      (let [wp      (when field (chase-waypoint field grid fz-grid (php/intval ex) (php/intval ey)))
-            desired (if wp
-                      (php/atan2 (php/- (php/+ (second wp) 0.5) ey)
-                                 (php/- (php/+ (first wp) 0.5) ex))
-                      (php/atan2 dy dx))
-            hit     (pick-step grid fz-grid ex ey (php/* speed dt) desired)]
+      (let [desired (php/atan2 dy dx)
+            hit     (pick-step grid ex ey (php/* speed dt) desired)]
         (if hit
           (assoc enemy :x (first hit) :y (second hit))
           enemy)))))
@@ -259,17 +166,11 @@
 
 (defn vertical-hit?
   "True when the screen-centre crosshair is vertically ON the enemy's
-   drawn billboard. The feet anchor mirrors the renderer EXACTLY (#396):
-   the enemy stands on its OWN cell floor height `enemy-fz` (read from
-   `fz-grid` at the enemy's cell), so
-   `feet-row = round(svh/2 - (enemy-fz - eye-z) * wall-px(proj-dist, dist)) + pr`
-   where `eye-z = 0.5 + player z`. On flat ground (`enemy-fz` 0, `eye-z`
-   0.5) this reduces to the old `svh/2 + 0.5*wall-px`, so shooting on
-   flat-ceiling levels is unchanged; on a raised tier the shootable band
-   moves up in lockstep with the drawn sprite, so see == shoot. The body
-   spans `[feet-row - h, feet-row]` where `h = 2 * sprite-half-rows`. The
-   crosshair is at the FIXED centre `svh/2` (it does NOT shear with pitch -
-   see `paint-crosshair`), so a shot connects iff
+   drawn billboard (issue #243). Enemies stand on flat ground, so
+   `feet-row = round(svh/2 + 0.5 * wall-px(proj-dist, dist)) + pr`. The
+   body spans `[feet-row - h, feet-row]` where `h = 2 * sprite-half-rows`.
+   The crosshair is at the FIXED centre `svh/2` (it does NOT shear with
+   pitch - see `paint-crosshair`), so a shot connects iff
    `(feet-row - h) <= svh/2 <= feet-row`.
 
    Because `feet-row` carries the `pr` shear but the crosshair does not,
@@ -279,12 +180,10 @@
 
    `svh` nil disables the gate (legacy / test callers that pre-date
    vertical aim): with no scene height there is nothing to project
-   against, so the call behaves exactly like the old XY-only hitscan.
-   `fz-grid` nil (a flat / hand-built world) reads `enemy-fz` as 0.0."
-  [enemy ^float dist svh ^int pr fz-grid ^float eye-z]
+   against, so the call behaves exactly like the old XY-only hitscan."
+  [enemy ^float dist svh ^int pr]
   (or (nil? svh)
-      (let [enemy-fz (floor-z fz-grid (php/intval (:x enemy)) (php/intval (:y enemy)))
-            feet-row (php/+ (php/intval (php/round (php/- (php// svh 2.0) (php/* (php/- enemy-fz eye-z) (wall-px proj-dist dist))))) pr)
+      (let [feet-row (php/+ (php/intval (php/round (php/+ (php// svh 2.0) (php/* 0.5 (wall-px proj-dist dist))))) pr)
             h        (php/intval (php/* 2.0 (sprite-half-rows svh dist (sprite-scale-for enemy))))
             cross    (php/intdiv svh 2)]
         (and (php/<= (php/- feet-row h) cross)
@@ -302,19 +201,14 @@
    `svh` (scene rows) + `pr` (`projection/pitch-rows` of the camera
    pitch, scene rows) add the vertical aim gate (issue #243): a hit must
    land on the enemy's drawn billboard, not just its XY column, so aiming
-   at the floor / sky misses. Enemies stand on flat ground (fz=0,
-   eye-z=0.5). `svh` nil (the short arities) disables the gate, which
-   is identical to looking level on flat floors - so legacy callers stay
+   at the floor / sky misses. `svh` nil (the short arities) disables the
+   gate, which is identical to looking level - so legacy callers stay
    byte-for-byte unchanged."
   ([es0 ^float px0 ^float py0 ^float a0 ^float wd0 ^float hr0 ^float mr0]
    (shoot es0 px0 py0 a0 wd0 hr0 mr0 1 nil nil 0))
   ([es1 ^float px1 ^float py1 ^float a1 ^float wd1 ^float hr1 ^float mr1 ^int dmg1 dtype1]
    (shoot es1 px1 py1 a1 wd1 hr1 mr1 dmg1 dtype1 nil 0))
-  ;; 11-arity shim (pre-#396 callers, incl. issue #243 tests): no tier
-  ;; height -> flat anchor (fz-grid nil, eye-z 0.5), byte-identical gate.
-  ([es2 ^float px2 ^float py2 ^float a2 ^float wd2 ^float hr2 ^float mr2 ^int dmg2 dtype2 svh2 ^int pr2]
-   (shoot es2 px2 py2 a2 wd2 hr2 mr2 dmg2 dtype2 svh2 pr2 nil 0.5))
-  ([es' ^float x' ^float y' ^float a' ^float wd' ^float hr ^float max-r ^int damage damage-type svh ^int pr fz-grid ^float eye-z]
+  ([es' ^float x' ^float y' ^float a' ^float wd' ^float hr ^float max-r ^int damage damage-type svh ^int pr]
    (let [cos-a (php/cos a')
          sin-a (php/sin a')]
      (let [best (loop [i      0
@@ -330,7 +224,7 @@
                                       (let [proj (php/+ (php/* dx cos-a) (php/* dy sin-a))]
                                         (when (and (php/> proj 0.0) (php/< proj best-d)
                                                    (php/< proj wd')
-                                                   (vertical-hit? e proj svh pr fz-grid eye-z))
+                                                   (vertical-hit? e proj svh pr))
                                           (let [perp-x (php/- dx (php/* proj cos-a))
                                                 perp-y (php/- dy (php/* proj sin-a))]
                                             (let [perp2 (php/+ (php/* perp-x perp-x) (php/* perp-y perp-y))]
@@ -449,14 +343,11 @@
 
    `svh` + `pr` add the same vertical aim gate as `shoot` (issue #243):
    only enemies whose drawn billboard the screen-centre crosshair sits on
-   are pierced. Enemies stand on flat ground (fz=0, eye-z=0.5). `svh` nil
-   (the 9-arity form) disables the gate, matching the old XY-only behaviour."
+   are pierced. `svh` nil (the 9-arity form) disables the gate, matching
+   the old XY-only behaviour."
   ([es0 ^float px0 ^float py0 ^float a0 ^float wd0 ^float hr0 ^float mr0 ^int dmg0 dtype0]
    (pierce es0 px0 py0 a0 wd0 hr0 mr0 dmg0 dtype0 nil 0))
-  ;; 11-arity shim (pre-#396): flat anchor (fz-grid nil, eye-z 0.5).
-  ([es2 ^float px2 ^float py2 ^float a2 ^float wd2 ^float hr2s ^float mr2 ^int dmg2 dtype2 svh2 ^int pr2]
-   (pierce es2 px2 py2 a2 wd2 hr2s mr2 dmg2 dtype2 svh2 pr2 nil 0.5))
-  ([enemies ^float px ^float py ^float angle ^float wall-dist ^float hit-radius ^float max-range ^int damage damage-type svh ^int pr fz-grid ^float eye-z]
+  ([enemies ^float px ^float py ^float angle ^float wall-dist ^float hit-radius ^float max-range ^int damage damage-type svh ^int pr]
    (let [cos-a (php/cos angle)
          sin-a (php/sin angle)
          cap   (php/min wall-dist max-range)
@@ -473,7 +364,7 @@
                in?   (and (:alive e)
                           (php/> proj 0.0)
                           (php/< proj cap)
-                          (vertical-hit? e proj svh pr fz-grid eye-z)
+                          (vertical-hit? e proj svh pr)
                           (php/<= (php/+ (php/* perpx perpx) (php/* perpy perpy)) hr2))]
            (if (not in?)
              (recur (php/+ i 1) (conj acc e) killed best-d hit-pos tough)
@@ -518,14 +409,11 @@
    `svh` + `pr` add the same vertical aim gate as `shoot` (issue #243):
    an enemy must be drawn under the screen-centre crosshair to be the
    primary OR a graze, so a shot fired at the floor / sky whiffs the
-   whole cone. Enemies stand on flat ground (fz=0, eye-z=0.5). `svh` nil
-   (the 11-arity form) disables the gate, matching the old cone-only behaviour."
+   whole cone. `svh` nil (the 11-arity form) disables the gate, matching
+   the old cone-only behaviour."
   ([es0 ^float px0 ^float py0 ^float a0 ^float wd0 ^float ha0 ^float mr0 ^int pdmg0 ^int gdmg0 ^int mt0 dtype0]
    (spread-shoot es0 px0 py0 a0 wd0 ha0 mr0 pdmg0 gdmg0 mt0 dtype0 nil 0))
-  ;; 13-arity shim (pre-#396): flat anchor (fz-grid nil, eye-z 0.5).
-  ([es2 ^float px2 ^float py2 ^float a2 ^float wd2 ^float ha2 ^float mr2 ^int pdmg2 ^int gdmg2 ^int mt2 dtype2 svh2 ^int pr2]
-   (spread-shoot es2 px2 py2 a2 wd2 ha2 mr2 pdmg2 gdmg2 mt2 dtype2 svh2 pr2 nil 0.5))
-  ([enemies ^float px ^float py ^float angle ^float wall-dist ^float half-angle ^float max-range ^int primary-dmg ^int graze-dmg ^int max-targets damage-type svh ^int pr fz-grid ^float eye-z]
+  ([enemies ^float px ^float py ^float angle ^float wall-dist ^float half-angle ^float max-range ^int primary-dmg ^int graze-dmg ^int max-targets damage-type svh ^int pr]
    (let [cos-a    (php/cos angle)
          sin-a    (php/sin angle)
          cos-half (php/cos half-angle)
@@ -535,7 +423,7 @@
          ;; projects against, so it doubles as the gate's `dist`.
          in-shot? (fn [e ^float dx ^float dy ^float proj]
                     (and (in-cone? dx dy cos-a sin-a cos-half cap)
-                         (vertical-hit? e proj svh pr fz-grid eye-z)))
+                         (vertical-hit? e proj svh pr)))
          primary  (loop [i 0 best -1 best-d cap]
                     (if (php/>= i (count enemies))
                       best
@@ -652,15 +540,8 @@
    chase expectations still hold.
 
    `revive?` false suspends every dead enemy's timer (boss dead on L10
-   → no more respawns of boss OR minions, the run is winding down).
-
-   `fz-grid` (issue #371) gates step-toward's movement the same way
-   physics/try-move gates the player: nil (legacy callers, flat worlds)
-   is a no-op so pre-#371 chase behaviour is unchanged. `field` is the
-   shared per-frame `chase-dist-field` (#405, nil on flat worlds) that
-   lets the chase route up stairs; `advance` builds it once and threads
-   it through here to `step-toward`."
-  [e grid pgrid fz-grid field ^float player-x ^float player-y ^float dt ^float speed all-enemies revive?]
+   → no more respawns of boss OR minions, the run is winding down)."
+  [e grid pgrid ^float player-x ^float player-y ^float dt ^float speed all-enemies revive?]
   (cond
     (:alive e)                (let [;; Per-frame AI pipeline. Order matters:
                                     ;;
@@ -705,7 +586,7 @@
                                                   (let [target (target-pos wandered player-x player-y)
                                                         mul    (or (get type-speed-mul (:type wandered)) 1.0)]
                                                     (if target
-                                                      (step-toward wandered grid fz-grid field (:x target) (:y target) dt (php/* speed mul))
+                                                      (step-toward wandered grid (:x target) (:y target) dt (php/* speed mul))
                                                       wandered))
                                                   wandered)
                                     flash'      (php/max 0.0 (php/- (or (:hit-flash-secs wandered) 0.0) dt))]
@@ -752,29 +633,17 @@
    test callers don't have to build a PHP-array grid mirror; the AI
    then falls through to the enemy's existing `:state` (default
    `:aware` → they chase as before). The 8-arity form carries `pgrid`
-   for the LOS observe pass. The 9-arity form additionally carries
-   `fz-grid` (issue #371) so enemies get the same step-up rule as the
-   player and can chase up stairs; both shorter forms pass `fz-grid`
-   nil, which is a no-op gate (flat worlds / legacy callers). On a
-   tiered world the 9-arity also builds the shared `chase-dist-field`
-   once (#405) so the chase routes to the stairs, not into a tier edge.
+   for the LOS observe pass.
 
    `revive?`, when false, freezes every dead enemy in place — used on
    L10 once the boss is down so neither the cyberdemon nor its capped
    minions ever come back."
   ([enemies grid player-x player-y dt speed revive?]
-   (advance enemies grid nil nil player-x player-y dt speed revive?))
+   (advance enemies grid nil player-x player-y dt speed revive?))
   ([es g pg x y delta sp rev?]
-   (advance es g pg nil x y delta sp rev?))
-  ([es g pg fz x y delta sp rev?]
-   ;; #405: one BFS flow-field from the player, shared across every enemy
-   ;; this frame, so a monster routes to the stairs instead of stalling at
-   ;; a tall tier edge. Tiered worlds only (nil fz -> nil field -> the
-   ;; greedy chase, byte-identical); O(cells) once per frame, not per enemy.
-   (let [field (when fz (chase-dist-field g fz (php/intval x) (php/intval y)))]
-     (apply vector
-            (map (fn [e] (tick-one e g pg fz field x y delta sp es rev?))
-                 es)))))
+   (apply vector
+          (map (fn [e] (tick-one e g pg x y delta sp es rev?))
+               es))))
 
 (def scare-trigger-dist
   "World-units. When the nearest alive enemy crosses inbound under this

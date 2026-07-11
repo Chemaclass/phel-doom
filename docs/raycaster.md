@@ -52,7 +52,7 @@ Returns raw (uncorrected) distance. Detailed tuple `[dist side hx hy]` is comput
 
 ```phel
 (defn cast-frame [world ^int width ^int scale]
-  ...returns {:dists :hits :sides :hxs :hys :wallxs :floordxs :floordys :spans :uspans})
+  ...returns {:dists :hits :sides :hxs :hys :wallxs :floordxs :floordys})
 ```
 
 Cast `width / scale` rays; return the parallel PHP arrays (one per output column).
@@ -62,40 +62,6 @@ Cast `width / scale` rays; return the parallel PHP arrays (one per output column
 - `hxs, hys`: hit cell coordinates
 - `wallxs`: wall-hit fraction in [0, 1) - the texture U coordinate (frac of world-y on a vertical face, world-x on a horizontal face, from the raw perpendicular distance)
 - `floordxs, floordys`: floor-cast basis = ray direction / cos(offset). A floor cell at per-row perpendicular distance `dperp` sits at world `player + dperp * (floordx, floordy)`, so the renderer needs no per-cell trig (two mul-adds + a frac for the texture sample)
-- `spans`: flat riser-event stream for floor heights (see Multi-span cast below); empty on flat frames
-- `uspans`: flat upper-span stream for ceiling drops (see Upper-span cast below); empty on full-height frames
-
-## Multi-span cast: floor risers
-
-Issue #369 (epic #375): the DDA no longer treats the first hit as the whole story. While marching, each cell boundary where the floor height (`:pfz`, see map.md) RISES emits one span event - the visible riser face between the two tiers - and the march continues to the real wall (or max-depth) exactly as before. The classic 8 arrays keep holding the final wall hit, which is always the LAST span of a column; on a flat map the stream is empty and the arrays alone describe the frame.
-
-`:spans` is one flat PHP array, stride 8 per event:
-
-| slot | field | meaning |
-|---|---|---|
-| +0 | col | the ray's BASE output column (one event per ray; with scale > 1 the render layer fans out, same as wall samples) |
-| +1 | d-corr | fish-eye corrected distance to the riser boundary |
-| +2 | z0 | floor height of the cell being left (riser bottom) |
-| +3 | z1 | floor height of the cell being entered (riser top) |
-| +4 | side | 0 = x-line, 1 = y-line - same convention as `sides` |
-| +5 | hx, +6 hy | integer coords of the entered (higher) cell |
-| +7 | wallx | texture U in [0, 1) at the crossing, same formula as `wallxs` |
-
-Guarantees and rules:
-
-- **Rise-only.** Step-downs are backfaces (invisible from above) and never emit. The march still tracks the current cell height across drops, so a down-then-up profile emits the second riser with the correct `z0`.
-- **Ordering.** Events arrive in ascending distance within a ray and ascending base col across rays - render can scan the stream once.
-- **Occlusion.** A riser behind a wall/door/secret never emits: blocking cells exit the march before the height check.
-- **No early-out.** The march always reaches the wall/max-depth; deciding that stacked risers fill a screen column needs projection (eye height, pitch), which is render's knowledge (#370). Authorable heights cap at fz 0.75 (layout digits 1-3), so no riser can fill a column by itself.
-- **Cost.** Zero on flat worlds: `new-world` / `rebuild-pgrid` stamp a build-time `:fz-flat?` flag, and do-cast selects the legacy 4-var march (no fz reads, no extra loop var) when it is set - measured, the always-on span march cost +13-16% cast time on flat maps. Tiered worlds run the span march: one subscript + float compare per continue step, plus the event push at each rise.
-
-## Upper-span cast: ceiling drops
-
-Issue #386 (epic #375 Phase 3): the mirror of floor risers, for ceilings. Where the ceiling height (`:pcz`, see map.md) DROPS between cells, the march emits one `:uspans` event - the visible upper wall slice hanging down from the higher ceiling. A cell with a raised floor AND a lowered ceiling is a window gap. `:uspans` has the identical stride-8 shape as `:spans`, but `cz1 < cz0` (the ceiling got lower); `+2 cz0` is the ceiling being left, `+3 cz1` the lower ceiling entered.
-
-- **Drop-only.** A ceiling that rises back up is a backface (invisible from below), mirror of the floor rise-only rule.
-- **Three march variants.** do-cast selects once per frame on the build-time `:fz-flat?` / `:cz-flat?` flags: both flat -> legacy; tiered floor + flat ceiling -> floor-span march (#369); lowered ceiling -> a COMBINED march tracking both floor and ceiling. The first two are byte-identical to before, so tiered-floor levels (e.g. L2) and flat levels are unchanged; only lowered-ceiling worlds pay for ceiling tracking.
-- **Cost.** Zero on full-height worlds (the combined march is never selected). On a lowered-ceiling world the combined march reads both `:pfz` and `:pcz` per step and computes the crossing coordinate once per continue step: measured ~+53% cast vs the flat legacy march. No shipped level has lowered ceilings, so this is future-content cost only.
 
 ## Two key details
 
@@ -124,7 +90,6 @@ Edge rays travel further than central rays to reach the same wall plane. Multipl
 
 - `wall-px num dist` = `num / ((max 0.3 dist) * char-aspect)`. `num` is `proj-dist` for a one-unit wall, or `n * proj-dist` for an n-sub-row half-block slice. The 0.3 floor stops a surface in the player's own cell projecting to an infinite slice. Both the cell-resolution wall path (`compute-wall-shades`) and the half-block sub-pixel path (`build-wall-sub-bounds`) call it, so they agree to the last bit.
 - `project-height pd vh dist eye-z z` = `vh/2 - (z - eye-z) * (wall-px pd dist)`. The horizon (z = eye-z) sits at `vh/2`; points above the eye rise, below sink. The flat wall is the case `eye-z = 0.5` with `z = 1` (top) and `z = 0` (bottom).
-- `floor-cast-num pd eye-z z` = `(eye-z - z) * pd / char-aspect`. The eye-height-aware numerator of the floor-cast perpendicular distance: a floor/tread row `p` pixels from the horizon sits at `dperp = floor-cast-num / p`. `z = 0` is the base ground plane, `z > 0` a raised tier top; it is the inverse of `project-height` (`tier-top-row-dist` is `min(max-depth, floor-cast-num / p)` with a `p <= 0` guard). Only the eye-above-surface gap `(eye-z - z)` scales it, so climbing (larger `eye-z`) makes the ground recede faster while the horizon stays pitch-governed. At `eye-z = 0.5`, `z = 0` it equals the io-side `floor-cast-k` constant (`proj-dist * 0.5 / char-aspect`) to the bit, so flat-ground floor casting is byte-identical. The renderer uses it for the base floor table and, via the algebraically-equal row-remap `rp = center + eye-z/(eye-z - z) * (row - center)`, for the perspective tier-top treads (see rendering.md "Tier-top floor").
 - `char-aspect` (2.0) lives here too, as the canonical projection constant alongside `proj-dist`, so the kernel stays pure `core/` with no `io/` dependency.
 
 ## Look up/down (pitch): horizon shear

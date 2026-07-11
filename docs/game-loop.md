@@ -66,7 +66,7 @@ The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself; the g
 | `switch-weapon` (1-8) | Key-edge swap active weapon (no-op while reloading) | `core/weapons` |
 | `try-reveal-secret` / `try-toggle-switch` | F-key adjacent: secret reveal OR switch toggle + targets | `commands/play` |
 | `mark-visible-cells` | Stamp LOS cells onto `:visited` (fog-of-war reveal) | `core/engine` |
-| `tick-stamina` + `apply-physics` | Drain sprint pool; rotate + translate (with Z step/fall) + ease pending fall + decay counters | `core/physics` |
+| `tick-stamina` + `apply-physics` | Drain sprint pool; rotate + translate + decay counters | `core/physics` |
 | `pickup-*` (x10) | Hearts, armor, armor-shards, ammo, berserk, invuln, soulsphere, backpack, weapon, keycards | `core/pickups` |
 | `tick-enemies` | Step alive enemies; tick respawn + AI + hit-flash | `core/enemy`, `core/enemy_ai` |
 | `tick-projectiles` | Spawn bolts from released casters; march + cull; resolve player impacts | `core/projectile` |
@@ -80,9 +80,9 @@ The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself; the g
 
 `tick-world` calls no IO. Every cue (pickups, combat, secret reveal, switch) enqueues `{:name :vol}` on `:sfx` via `push-sfx`. Queue reset at tick top, drained + emitted by game-loop after tick, gated on `:sound-on`. Keeps tick pure so tests run full frame sequences without side effects. See [audio.md](audio.md).
 
-## Physics + floor height
+## Physics
 
-`apply-physics` translates and returns the updated player position; collision, the locked-door bump cue, AND the floor-height step-up rule (issue #371) all resolve inside `physics/try-move`. A destination cell's `fz` rise of at most `map/fz-step` (0.25) above the player's `:z` is walkable and snaps `:z` to it (stairs); stepping down any depth is always allowed and also snaps `:z`; a bigger rise blocks the move exactly like a wall. Every shipped level is still flat (`fz` 0.0 everywhere), so the gate is a no-op there and `:z` stays 0.0 - byte-identical to the pre-#371 behaviour. See [state.md](state.md) for the field contract.
+`apply-physics` translates and returns the updated player position; collision and the locked-door bump cue both resolve inside `physics/try-move`. A destination cell blocks the move only when it is a wall or a locked door the player lacks the key for; any open floor cell is walkable. See [state.md](state.md) for the field contract.
 
 `apply-physics` also advances the head-bob walk cycle (#411): it measures the actual ground distance covered this frame and adds it (scaled by `bob-phase-per-unit`) to the world's `:bob-phase`, wrapped into `[0, 2*pi)`. Zero distance (standing still, or shoved against a wall) settles `:bob-phase` back to exactly 0.0, so a resting frame renders byte-identical. Amplitude is a render-only concern (the View bob setting via `projection/bob-rows`); physics only tracks the phase.
 

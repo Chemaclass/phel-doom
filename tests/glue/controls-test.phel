@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.glue.controls
             :refer [key-states refresh-from-keys rising-edges initial-key-snapshot
-                    nav-deltas refresh-move mouse-aim edge-pan-rate mouse-look-gain]))
+                    nav-deltas refresh-move mouse-aim reticle-axis edge-pan-rate]))
 
 (def blank-moves
   {:fwd          0
@@ -491,7 +491,32 @@
   [^float a ^float b]
   (php/< (php/abs (php/- a b)) 1.0e-9))
 
-;; --- edge-pan-rate: 0-based pointer cell -> per-frame edge-fallback rate ---
+;; --- reticle-axis: 1-based pointer cell -> 0-based clamped reticle cell ---
+
+(deftest test-reticle-axis-is-one-to-one
+  ;; The reticle tracks the pointer cell exactly (1-based -> 0-based, so Cx
+  ;; 60 -> col 59), one cell per pointer cell, and returns an INT so the
+  ;; glyph / highlight / shot share one integer column.
+  (is (= 59 (reticle-axis 60 120)) "pointer cell 60 -> reticle col 59")
+  (is (= 79 (reticle-axis 80 120)) "pointer cell 80 -> reticle col 79")
+  (is (= 20 (php/- (reticle-axis 80 120) (reticle-axis 60 120)))
+      "20 pointer cells -> 20 reticle cells (1:1)"))
+
+(deftest test-reticle-axis-clamps-to-viewport
+  ;; The reticle never leaves the viewport: the right/left edges clamp to
+  ;; the last/first cell, and a pointer PAST the window pins at that edge
+  ;; (the pointer-drift robustness - aiming never freezes mid-screen).
+  (is (= 119 (reticle-axis 120 120)) "right edge clamps to col 119")
+  (is (= 0 (reticle-axis 1 120)) "left edge clamps to col 0")
+  (is (= 119 (reticle-axis 200 120)) "pointer past the window pins at the edge")
+  (is (= 0 (reticle-axis -50 120)) "pointer left of the window pins at col 0"))
+
+(deftest test-reticle-axis-degenerate-axis-is-nil
+  ;; A nil / <=1 axis length has no viewport to clamp into.
+  (is (nil? (reticle-axis 60 nil)) "nil len -> nil")
+  (is (nil? (reticle-axis 60 1)) "len 1 -> nil"))
+
+;; --- edge-pan-rate: 0-based reticle cell -> per-frame pan rate ---
 
 (deftest test-edge-pan-rate-center-region-is-zero
   ;; The inner ~70% centre region adds NO edge turn (the 1:1 delta look
@@ -519,130 +544,120 @@
   (is (= 0.0 (edge-pan-rate 60.0 nil 0.16)) "nil len -> 0")
   (is (= 0.0 (edge-pan-rate 0.0 1 0.16)) "len 1 -> 0"))
 
-;; --- mouse-aim: fixed-centre crosshair + delta mouselook + fire ---
+;; --- mouse-aim: movable reticle + edge-pan + fire ---
 
-(deftest test-mouse-aim-crosshair-is-always-centred
-  ;; The gun fires dead-ahead, so aim-col/aim-row are nil whatever the
-  ;; pointer does (resting, mid-screen, at an edge).
-  (is (nil? (:aim-col (mouse-aim "" center-pos 1.0 look-dims))) "resting -> nil reticle")
-  (is (nil? (:aim-col (mouse-aim "\e[<35;80;15M" center-pos 1.0 look-dims))) "moved -> still nil")
-  (is (nil? (:aim-col (mouse-aim "\e[<35;120;15M" center-pos 1.0 look-dims))) "at edge -> still nil")
-  (is (nil? (:aim-row (mouse-aim "\e[<35;60;1M" center-pos 1.0 look-dims))) "nil reticle row too"))
-
-(deftest test-mouse-aim-no-motion-no-turn
-  ;; No report this frame (pointer unchanged, interior): zero delta and no
-  ;; edge fallback in the centre region, so the camera holds still.
+(deftest test-mouse-aim-center-no-bytes-pins-reticle-center
+  ;; Pointer cached at centre, no input this frame: the reticle sits at the
+  ;; centre cell, no pan (centre region), no fire, pos carried forward.
   (let [r (mouse-aim "" center-pos 1.0 look-dims)]
-    (is (= 0.0 (:yaw r)) "no motion -> no yaw")
-    (is (= 0.0 (:pitch r)) "no motion -> no pitch")
+    (is (= 59 (:aim-col r)) "reticle at centre col")
+    (is (= 14 (:aim-row r)) "reticle at centre row")
+    (is (= 0.0 (:yaw r)) "centre region -> no yaw")
+    (is (= 0.0 (:pitch r)) "centre region -> no pitch")
     (is (= false (:fire? r)))
     (is (= false (:fire-held? r)))
     (is (= center-pos (:pos r)) "cached pointer carried forward")))
 
-(deftest test-mouse-aim-delta-turns-camera-1to1
-  ;; Moving the pointer RIGHT yaws right (+), LEFT yaws left (-), by the
-  ;; columns moved scaled by mouse-look-gain: 20 columns from centre ->
-  ;; gain*20/70 rad (the raw 1:1 is 20/70; fov-proj-dist 120 = proj-dist 70).
-  (let [right (mouse-aim "\e[<35;80;15M" center-pos 1.0 look-dims)
-        left  (mouse-aim "\e[<35;40;15M" center-pos 1.0 look-dims)]
-    (is (php/> (:yaw right) 0.0) "pointer right -> yaw right")
-    (is (approx? (php/* mouse-look-gain (php// 20.0 70.0)) (:yaw right)) "20 columns -> gain*20/70 rad")
-    (is (php/< (:yaw left) 0.0) "pointer left -> yaw left")
-    (is (approx? (php/* mouse-look-gain (php// -20.0 70.0)) (:yaw left)) "left is the mirror")
-    (is (= 0.0 (:pitch right)) "horizontal move at mid-row -> no pitch")))
+(deftest test-mouse-aim-tracks-pointer-one-to-one
+  ;; A hover (b=35) moves the reticle to the pointer's cell, 1:1, with no
+  ;; pan while it stays in the centre region.
+  (let [r (mouse-aim "\e[<35;80;15M" center-pos 1.0 look-dims)]
+    (is (= 79 (:aim-col r)) "reticle follows the pointer column 1:1")
+    (is (= 14 (:aim-row r)) "row unchanged at mid-screen")
+    (is (= 0.0 (:yaw r)) "still centre region -> no pan")
+    (is (= [80 15] (:pos r)) "pos trails the latest report")))
 
-(deftest test-mouse-aim-delta-pitch-1to1
-  ;; Moving the pointer DOWN looks down (-pitch), UP looks up (+pitch), by
-  ;; the rows moved scaled by mouse-look-gain: 5 rows -> gain*5/12 fraction
-  ;; (rows grow downward, so down is negative). y 20 / y 10 stay inside the
-  ;; row band, so no edge contamination.
-  (let [down (mouse-aim "\e[<35;60;20M" center-pos 1.0 look-dims)
-        up   (mouse-aim "\e[<35;60;10M" center-pos 1.0 look-dims)]
-    (is (php/< (:pitch down) 0.0) "pointer down -> look down (-pitch)")
-    (is (approx? (php/* mouse-look-gain (php// -5.0 12.0)) (:pitch down)) "5 rows down -> -gain*5/12")
-    (is (php/> (:pitch up) 0.0) "pointer up -> look up (+pitch)")
-    (is (approx? (php/* mouse-look-gain (php// 5.0 12.0)) (:pitch up)) "5 rows up -> +gain*5/12")
-    (is (= 0.0 (:yaw down)) "vertical move at mid-col -> no yaw")))
+(deftest test-mouse-aim-clamps-reticle-at-right-edge-and-pans
+  ;; Pushing the pointer to / past the right edge pins the reticle at the
+  ;; last column AND edge-pans the camera right (the aim-beyond-view move).
+  (let [edge (mouse-aim "\e[<35;120;15M" center-pos 1.0 look-dims)
+        past (mouse-aim "\e[<35;200;15M" center-pos 1.0 look-dims)]
+    (is (= 119 (:aim-col edge)) "reticle pinned at the right edge col")
+    (is (php/> (:yaw edge) 0.0) "right edge edge-pans the camera right")
+    (is (= 119 (:aim-col past)) "pointer past the window keeps the reticle pinned")
+    (is (php/> (:yaw past) 0.0) "and edge-pan keeps turning - aiming never freezes")))
 
-(deftest test-mouse-aim-delta-is-linear
-  ;; The turn is proportional to the distance moved: 20 columns yaws twice
-  ;; as far as 10 columns.
-  (let [d10 (:yaw (mouse-aim "\e[<35;70;15M" center-pos 1.0 look-dims))
-        d20 (:yaw (mouse-aim "\e[<35;80;15M" center-pos 1.0 look-dims))]
-    (is (approx? (php/* 2.0 d10) d20) "2x the pointer move -> 2x the yaw")))
+(deftest test-mouse-aim-left-edge-pans-left
+  (let [r (mouse-aim "\e[<35;1;15M" center-pos 1.0 look-dims)]
+    (is (= 0 (:aim-col r)) "reticle pinned at the left edge col")
+    (is (php/< (:yaw r) 0.0) "left edge edge-pans the camera left")))
 
-(deftest test-mouse-aim-sensitivity-scales-the-look
-  ;; Sensitivity scales the WHOLE look: 2x sens doubles the delta turn, 0
-  ;; disables it; a click still fires at 0.
-  (let [s1 (:yaw (mouse-aim "\e[<35;80;15M" center-pos 1.0 look-dims))
-        s2 (:yaw (mouse-aim "\e[<35;80;15M" center-pos 2.0 look-dims))
-        s0 (:yaw (mouse-aim "\e[<35;80;15M" center-pos 0.0 look-dims))]
-    (is (approx? (php/* 2.0 s1) s2) "2x sensitivity -> 2x yaw")
-    (is (= 0.0 s0) "0 sensitivity -> no turn"))
+(deftest test-mouse-aim-top-edge-looks-up
+  ;; Pointer at the top band: reticle pins at row 0 and pitch is POSITIVE
+  ;; (look up) - rows grow downward, so the top of the screen is +pitch.
+  (let [r (mouse-aim "\e[<35;60;1M" center-pos 1.0 look-dims)]
+    (is (= 0 (:aim-row r)) "reticle pinned at the top row")
+    (is (php/> (:pitch r) 0.0) "top band looks UP (+pitch)")
+    (is (= 0.0 (:yaw r)) "vertical pointer at mid-col -> no yaw")))
+
+(deftest test-mouse-aim-bottom-edge-looks-down
+  (let [r (mouse-aim "\e[<35;60;30M" center-pos 1.0 look-dims)]
+    (is (= 29 (:aim-row r)) "reticle pinned at the bottom row")
+    (is (php/< (:pitch r) 0.0) "bottom band looks DOWN (-pitch)")))
+
+(deftest test-mouse-aim-held-at-edge-keeps-panning-without-bytes
+  ;; The whole point of the model: once the reticle is parked in the edge
+  ;; band, the camera keeps panning every frame with NO new bytes, because
+  ;; the pan rate is read from the cached pointer position. So a pointer
+  ;; that left the window at an edge keeps the camera turning.
+  (let [r (mouse-aim "" right-edge-pos 1.0 look-dims)]
+    (is (php/> (:yaw r) 0.0) "held at the right edge keeps panning right"))
+  (let [r (mouse-aim "" left-edge-pos 1.0 look-dims)]
+    (is (php/< (:yaw r) 0.0) "held at the left edge keeps panning left"))
+  (let [r (mouse-aim "" top-edge-pos 1.0 look-dims)]
+    (is (php/> (:pitch r) 0.0) "held at the top keeps looking up"))
+  (let [r (mouse-aim "" bottom-edge-pos 1.0 look-dims)]
+    (is (php/< (:pitch r) 0.0) "held at the bottom keeps looking down")))
+
+(deftest test-mouse-aim-returning-to-center-stops-pan
+  ;; Bringing the pointer back to centre re-centres the reticle and stops
+  ;; the pan: precise 1:1 aim resumes with no camera drift.
+  (let [r (mouse-aim "\e[<35;60;15M" right-edge-pos 1.0 look-dims)]
+    (is (= 59 (:aim-col r)) "reticle back at centre col")
+    (is (= 0.0 (:yaw r)) "back in the centre region -> pan stops")))
+
+(deftest test-mouse-aim-last-report-wins
+  ;; A position report advances the cached pointer to the reported cell so
+  ;; the next frame reads from there; the LAST report wins within a frame.
+  (let [r (mouse-aim "\e[<35;120;15M" center-pos 1.0 look-dims)]
+    (is (= [120 15] (:pos r)) "pos updated to the report"))
+  (let [r (mouse-aim "\e[<35;90;15M\e[<35;120;15M" center-pos 1.0 look-dims)]
+    (is (= [120 15] (:pos r)) "the last report in the frame wins")))
+
+(deftest test-mouse-aim-sensitivity-scales-pan-not-reticle
+  ;; Sensitivity scales ONLY the edge-pan rate; the reticle tracks the
+  ;; pointer 1:1 regardless, so the aim always sits under the pointer.
+  (is (= 79 (:aim-col (mouse-aim "\e[<35;80;15M" center-pos 2.0 look-dims)))
+      "reticle is 1:1 at any sensitivity")
+  (is (approx? (php/* 2.0 (:yaw (mouse-aim "" right-edge-pos 1.0 look-dims)))
+               (:yaw (mouse-aim "" right-edge-pos 2.0 look-dims)))
+      "2x sensitivity doubles the edge-pan yaw")
+  (is (= 0.0 (:yaw (mouse-aim "" right-edge-pos 0.0 look-dims)))
+      "0 sensitivity = no pan")
+  ;; Even at 0 sensitivity a click still fires (the look is disabled, not
+  ;; the trigger).
   (let [r (mouse-aim "\e[<0;60;15M" center-pos 0.0 look-dims)]
-    (is (= true (:fire? r)) "click fires even at 0 sensitivity")))
+    (is (= true (:fire? r)) "click fires regardless of sensitivity")))
 
-(deftest test-mouse-aim-edge-pan-needs-active-push
-  ;; A pointer RESTING in the edge band (no report this frame) adds NO spin,
-  ;; so an OS pointer that can't be hidden and sits near a border does NOT
-  ;; drift the camera on its own.
-  (is (= 0.0 (:yaw (mouse-aim "" right-edge-pos 1.0 look-dims))) "parked at right edge -> no spin")
-  (is (= 0.0 (:yaw (mouse-aim "" left-edge-pos 1.0 look-dims))) "parked at left edge -> no spin")
-  (is (= 0.0 (:pitch (mouse-aim "" top-edge-pos 1.0 look-dims))) "parked at top -> no spin")
-  (is (= 0.0 (:pitch (mouse-aim "" bottom-edge-pos 1.0 look-dims))) "parked at bottom -> no spin"))
-
-(deftest test-mouse-aim-edge-pan-fires-on-push-into-band
-  ;; Actively pushing DEEPER into the band adds the edge spin ON TOP of the
-  ;; delta (so you can turn past the view); retreating toward centre adds
-  ;; none (clean delta back). 110 / 118 are both in the right band (~101+).
-  (let [push-r     (:yaw (mouse-aim "\e[<35;118;15M" [110 15] 1.0 look-dims))
-        delta-only (php/* mouse-look-gain (php// 8.0 70.0))]
-    (is (php/> push-r delta-only) "pushing right into the band adds edge spin beyond the delta"))
-  (let [retreat (:yaw (mouse-aim "\e[<35;110;15M" [118 15] 1.0 look-dims))]
-    (is (php/< retreat 0.0) "retreating from the right edge turns back cleanly (no positive edge)"))
-  ;; Vertical twin: pushing down into the bottom band looks further down than
-  ;; the bare delta (24 is interior, 28 is in the band).
-  (let [push-d     (:pitch (mouse-aim "\e[<35;60;28M" [60 24] 1.0 look-dims))
-        delta-only (php/* mouse-look-gain (php// -4.0 12.0))]
-    (is (php/< push-d delta-only) "pushing down into the band looks further down than the delta")))
-
-(deftest test-mouse-aim-interior-has-no-edge-creep
-  ;; A pointer resting in the centre region (no motion) adds NO turn: the
-  ;; fallback only fires at the border, so ordinary aiming never creeps.
-  (let [r (mouse-aim "" [75 15] 1.0 look-dims)]
-    (is (= 0.0 (:yaw r)) "resting mid-screen -> no creep")
-    (is (= 0.0 (:pitch r)) "resting mid-screen -> no pitch creep")))
-
-(deftest test-mouse-aim-first-frame-nil-prev-no-jolt
-  ;; First frame / post-resize: prev-pos is nil, so even a report far from
-  ;; centre yields NO delta turn (the view holds steady, no seed jolt); the
-  ;; report just establishes the baseline pointer for next frame.
-  (let [r (mouse-aim "\e[<35;80;15M" nil 1.0 look-dims)]
-    (is (= 0.0 (:yaw r)) "nil prev -> no delta yaw")
-    (is (= 0.0 (:pitch r)) "nil prev -> no delta pitch")
-    (is (= [80 15] (:pos r)) "but the pointer baseline is established"))
-  (let [r (mouse-aim "" nil 1.0 look-dims)]
-    (is (= 0.0 (:yaw r)) "nil prev, no report -> no turn")
-    (is (= nil (:pos r)) "pos stays nil")))
-
-(deftest test-mouse-aim-last-report-wins-and-drives-delta
-  ;; Multiple reports in a frame collapse to the LAST pointer; the delta is
-  ;; measured from prev-pos to that final cell (100 is still interior, so no
-  ;; edge component muddies the value).
-  (let [r (mouse-aim "\e[<35;90;15M\e[<35;100;15M" center-pos 1.0 look-dims)]
-    (is (= [100 15] (:pos r)) "the last report in the frame wins")
-    (is (approx? (php/* mouse-look-gain (php// 40.0 70.0)) (:yaw r)) "delta is centre(60)->100 = 40 columns")))
-
-(deftest test-mouse-aim-no-dims-is-inert
-  ;; Without [rows cols] there is no viewport to scale the delta or band, so
-  ;; the look is inert - but fire intent still parses, so a non-loop caller
-  ;; is unaffected.
+(deftest test-mouse-aim-no-dims-has-no-reticle-or-pan
+  ;; Without [rows cols] there is no viewport to clamp into or band to pan
+  ;; from, so the reticle + pan are inert - but fire intent still parses, so
+  ;; a non-loop caller is unaffected.
   (let [r (mouse-aim "\e[<35;120;15M" center-pos 1.0)]
-    (is (nil? (:aim-col r)) "no dims -> nil reticle")
-    (is (= 0.0 (:yaw r)) "no dims -> no yaw")
+    (is (nil? (:aim-col r)) "no dims -> no reticle column")
+    (is (= 0.0 (:yaw r)) "no dims -> no pan")
     (is (= 0.0 (:pitch r)) "no dims -> no pitch"))
   (let [r (mouse-aim "\e[<0;60;15M" center-pos 1.0)]
     (is (= true (:fire? r)) "fire still parses with no dims")))
+
+(deftest test-mouse-aim-nil-pos-no-report-has-no-reticle
+  ;; No cached pointer and no report this frame: nothing to place the
+  ;; reticle from, so no reticle / no pan / no fire.
+  (let [r (mouse-aim "" nil 1.0 look-dims)]
+    (is (nil? (:aim-col r)) "nil pos, no report -> no reticle")
+    (is (= 0.0 (:yaw r)) "nil pos -> no pan")
+    (is (= false (:fire? r)))
+    (is (= nil (:pos r)) "pos stays nil")))
 
 ;; --- fire intent + report parsing (independent of the look model) ---
 
@@ -658,18 +673,19 @@
     (is (= false (:fire? r)) "release does not fire")
     (is (= false (:fire-held? r)) "release is not held")))
 
-(deftest test-mouse-aim-left-drag-is-held-fire-and-turns
+(deftest test-mouse-aim-left-drag-is-held-fire-and-pans
   ;; A left DRAG (b=32: motion bit + button 0) feeds auto-fire weapons and,
-  ;; being a motion report, also moves the pointer so the camera turns.
+  ;; being a position report, moves the reticle to the pointer - here the
+  ;; right edge, so the camera edge-pans right.
   (let [r (mouse-aim "\e[<32;120;15M" center-pos 1.0 look-dims)]
     (is (= false (:fire? r)) "a drag is not a fresh press edge")
     (is (= true (:fire-held? r)) "but it holds the trigger for auto-fire")
-    (is (php/> (:yaw r) 0.0) "and the drag turns the camera toward the pointer")))
+    (is (php/> (:yaw r) 0.0) "and the drag pins the reticle at the edge -> pans")))
 
-(deftest test-mouse-aim-press-then-move-fires-and-turns
+(deftest test-mouse-aim-press-then-move-fires-and-pans
   (let [r (mouse-aim "\e[<0;60;15M\e[<35;120;15M" center-pos 1.0 look-dims)]
     (is (= true (:fire? r)) "the press in the frame still fires")
-    (is (php/> (:yaw r) 0.0) "and the move turns the camera")))
+    (is (php/> (:yaw r) 0.0) "and the move to the edge pans the camera")))
 
 (deftest test-mouse-aim-wheel-tick-adds-no-fire
   ;; A scroll-wheel tick (b=64) carries no aim intent: no fire.
@@ -710,7 +726,7 @@
   ;; A drain holding both WASD bytes and an SGR report: mouse-aim only
   ;; reads the SGR part; the 'w'/'d' are the keyboard path's job.
   (let [r (mouse-aim "w\e[<35;120;15Md" center-pos 1.0 look-dims)]
-    (is (php/> (:yaw r) 0.0) "the embedded report still turns the camera")
+    (is (php/> (:yaw r) 0.0) "the embedded report pins the reticle at the edge -> pans")
     (is (= [120 15] (:pos r)) "pos comes from the SGR part only")))
 
 (deftest test-mouse-aim-bytes-do-not-leak-into-key-parsing

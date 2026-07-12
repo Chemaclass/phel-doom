@@ -15,6 +15,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Weapon idle bob + sway while walking (#412): the first-person gun dips on each footfall and sways side to side on the View bob walk cycle, reading as a held weapon. Reuses the **View bob** setting and `:bob-phase`; off by default, byte-identical at rest.
 - Weapon-fire extralight (#413): firing briefly brightens surrounding walls for a frame or two, a muzzle-light stand-in. Rides the near-death haze scalar as a brief negative shift, cannot overlap the red damage flash; not firing is byte-identical.
 
+### Changed
+
+- Mouse aim pins the crosshair to the pointer again (#324): the `+` reticle now follows the mouse 1:1 and the gun fires toward wherever it points, replacing the fixed-centre delta mouselook. Pushing the reticle into the outer screen band edge-pans the camera so you can still turn past the view; a reticle parked at an edge keeps panning. Sensitivity scales only the edge-pan rate now - the aim stays 1:1 with the pointer. Mouse-off / keyboard-only play is byte-identical (reticle centres, shot fires dead ahead).
+
 ### Performance
 
 - Cast loop hoists per-column constants + inlines the cell probe (#347): -55%/-63%/-66% on `cast-frame` at 80/120/180 columns; byte-identical.

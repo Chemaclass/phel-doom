@@ -1,7 +1,7 @@
 (ns phel-doom.commands.play
   (:require phel.cli :as cli)
   (:require phel.string :as str)
-  (:require phel-doom.core.state :refer [advance-game-time backpack-level clamp-pitch decay-soul-overcap max-lives max-stamina turn-player rebuild-pgrid reset-reticle set-reticle toggle-debug toggle-map toggle-pause toggle-sound])
+  (:require phel-doom.core.state :refer [advance-game-time backpack-level clamp-pitch decay-soul-overcap max-lives max-stamina turn-player rebuild-pgrid reset-reticle toggle-debug toggle-map toggle-pause toggle-sound])
   (:require phel-doom.core.map      :refer [door? reveal-secret secret? switch? toggle-switch])
   (:require phel-doom.glue.controls :refer [refresh-from-keys key-states rising-edges
                                             initial-key-snapshot nav-deltas mouse-aim])
@@ -127,7 +127,7 @@
    `controls/mouse-aim` result; `:yaw` rotates `:angle` (same path as a
    keyboard turn) and `:pitch` shears `:pitch` clamped to [-1, 1] via
    `clamp-pitch` (same saturation as the ↑/↓ keys). Both come from the
-   edge-pan rate while the reticle sits in the outer band, so a reticle in
+   edge-pan rate while the pointer sits in the outer band, so a pointer in
    the screen interior (zero yaw/pitch) is a no-op and the keyboard look is
    untouched. Pure; the game loop calls it only on an unpaused frame so the
    camera can't drift while a menu is up."
@@ -528,15 +528,11 @@
    ;; timer in the HUD strip. Both are pure overlay reads.
    :crosshair            (or (:crosshair (:settings world)) :cross)
    :run-timer?           (boolean (:timer (:settings world)))
-   ;; Mouselook on flag (#246): the crosshair IS the mouse aim point (no
+   ;; Mouse on flag (#246): the centre crosshair IS the weapon aim point (no
    ;; visible OS pointer), so paint-crosshair forces a minimal centre dot
-   ;; even when the player set Crosshair to :off, so mouse-aiming always has
+   ;; even when the player set Crosshair to :off, so mouse play always has
    ;; an aim indicator.
    :mouse                (boolean (:mouse (:settings world)))
-   ;; Movable aim crosshair (#324): the reticle cell the gun aims at, so
-   ;; render draws the `+` there. nil (mouse off / not placed) centres it.
-   :aim-col              (:aim-col world)
-   :aim-row              (:aim-row world)
    ;; Accessibility (issue #200): high-contrast HUD un-dims the dim/grey
    ;; HUD elements (compass, empty hearts, reserve ammo) for low-quality
    ;; terminals.
@@ -820,20 +816,19 @@
                 ms        (or (:ms frame) live-ms)
                 now-keys  (key-states keys)
                 edges0    (rising-edges now-keys prev-keys)
-                ;; Movable crosshair (#324): parse the same drained byte
-                ;; string for SGR mouse reports. The `+` reticle
-                ;; (`:aim-col`/`:aim-row`) follows the pointer 1:1 and the gun
-                ;; fires toward it; `:yaw`/`:pitch` edge-pan the CAMERA while
-                ;; the reticle sits in the outer band (applied before the tick
-                ;; so the frame renders with the new aim + heading). A left
-                ;; click ORs into the existing space-fire edges so a mouse
-                ;; click shoots exactly like space (held button feeds
-                ;; auto-fire weapons). `:pos` threads forward as the next
-                ;; frame's cached pointer; seed it to nil at game start AND on
-                ;; a resize so the reticle re-baselines (centred until the next
-                ;; report) instead of pinning a coordinate-shifted cell. The
+                ;; Centre-locked crosshair (#324): parse the same drained byte
+                ;; string for SGR mouse reports. The `+` and the gun stay at
+                ;; screen centre; the mouse only EDGE-PANS the CAMERA -
+                ;; `:yaw`/`:pitch` are non-zero only while the pointer is
+                ;; pushed into the outer band (applied before the tick so the
+                ;; frame renders with the new heading). A left click ORs into
+                ;; the existing space-fire edges so a mouse click shoots exactly
+                ;; like space (held button feeds auto-fire weapons). `:pos`
+                ;; threads forward as the next frame's cached pointer; seed it
+                ;; to nil at game start AND on a resize so the edge-pan
+                ;; re-baselines instead of panning from a stale position. The
                 ;; live `[rows cols]` gives mouse-aim the axis lengths the
-                ;; reticle + edge band need.
+                ;; edge band needs.
                 mouse-on? (boolean (:mouse (:settings world)))
                 mpos      (if (not= [rows cols] dims) nil prev-mpos)
                 look      (mouse-aim keys mpos
@@ -852,30 +847,22 @@
               :else
               ;; Stamp the scene height AND width the renderer will use this
               ;; frame so the hitscan gates project against the exact view the
-              ;; player sees: `:scene-rows` for the vertical gate (#243),
-              ;; `:scene-cols` (= the cast width vw) for the off-centre
-              ;; reticle-column aim (#324). Same `:debug?`-aware HUD
-              ;; reservation as draw-frame's frame-stats, so the hit check and
-              ;; the draw agree.
-              (let [scened  (assoc world
-                                   :scene-rows (scene-rows rows {:debug? (:debug? world)})
-                                   :scene-cols cols)
-                    ;; Movable crosshair (#324): place the `+` at the reticle
-                    ;; cell mouse-aim derived from the pointer (`:aim-col`/
-                    ;; `:aim-row`), so the hitscan fires toward it, then
-                    ;; apply-mouse-look adds the edge-pan camera turn - both
-                    ;; BEFORE the tick so this frame renders + fires with the
-                    ;; new aim + heading. Mouse off / paused centres the reticle
-                    ;; (reset-reticle's nil sentinel) so keyboard-only play
-                    ;; fires dead ahead, and a menu can't drift the view. On a
-                    ;; resize the cached pointer was dropped (mpos nil) so
-                    ;; aim-col/row come back nil until the next report - centred,
-                    ;; no jump.
+              ;; player sees: `:scene-rows` for the vertical gate (#243).
+              ;; Same `:debug?`-aware HUD reservation as draw-frame's
+              ;; frame-stats, so the hit check and the draw agree.
+              (let [scened  (assoc world :scene-rows (scene-rows rows {:debug? (:debug? world)}))
+                    ;; Centre-locked crosshair (#324): the `+` and the gun stay
+                    ;; at screen centre (reset-reticle's nil sentinel), so the
+                    ;; hitscan always fires dead ahead exactly like keyboard-only
+                    ;; play. The mouse only EDGE-PANS the camera: apply-mouse-look
+                    ;; folds the edge-pan yaw/pitch (non-zero only while the
+                    ;; pointer is pushed into the outer band) BEFORE the tick, so
+                    ;; this frame renders with the new heading; gated on not
+                    ;; paused so a menu can't drift the view.
+                    centred (reset-reticle scened)
                     aimed   (if (and mouse-on? (not (:paused world)))
-                              (apply-mouse-look
-                               (set-reticle scened (:aim-col look) (:aim-row look))
-                               look)
-                              (reset-reticle scened))
+                              (apply-mouse-look centred look)
+                              centred)
                     ticked0 (tick-world aimed keys (php// ms 1000.0) edges)
                   ;; Pause overlay (#203): while paused (and not in the H
                   ;; info panel) the navigable pause MENU is up. up/down move

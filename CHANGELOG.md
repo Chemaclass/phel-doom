@@ -17,7 +17,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Changed
 
-- Mouse aim pins the crosshair to the pointer again (#324): the `+` reticle now follows the mouse 1:1 and the gun fires toward wherever it points, replacing the fixed-centre delta mouselook. Pushing the reticle into the outer screen band edge-pans the camera so you can still turn past the view; a reticle parked at an edge keeps panning. Sensitivity scales only the edge-pan rate now - the aim stays 1:1 with the pointer. Mouse-off / keyboard-only play is byte-identical (reticle centres, shot fires dead ahead).
+- Mouse now edge-pans the camera instead of motion-delta mouselook (#324): the `+` crosshair stays fixed at screen centre and the gun fires dead ahead, and pushing the mouse pointer into the outer screen band pans the camera so you can turn past the view (a pointer parked at an edge keeps panning). Sensitivity scales the edge-pan rate. Mouse-off / keyboard-only play is byte-identical.
 
 ### Performance
 

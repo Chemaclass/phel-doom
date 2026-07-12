@@ -338,54 +338,55 @@
 ;;     bit  5   : motion (a drag / bare-move report, `b & 32`)
 ;;     bit  6   : wheel      (`b & 64`)
 ;;
-;; MOVABLE AIM CROSSHAIR (#324): a `+` reticle follows the pointer 1:1 and
-;; the gun fires toward wherever it points (the off-centre hitscan lives in
-;; core/combat, fed the reticle column). A terminal can only report
+;; CENTRE-LOCKED AIM + EDGE-PAN CAMERA (#324): the `+` crosshair and the gun
+;; stay fixed at screen centre (the weapon always fires dead ahead down
+;; `:angle`); the mouse only PANS the camera. A terminal can only report
 ;; ABSOLUTE cell coords and offers NO pointer lock / warp / hide (#313), so
-;; the reticle is the pointer's absolute cell CLAMPED to the viewport:
-;;     aim-col = reticle-axis(pointer_x, cols)
-;;     aim-row = reticle-axis(pointer_y, rows)
+;; the pointer is tracked as its absolute cell CLAMPED to the viewport:
+;;     ptr-col = reticle-axis(pointer_x, cols)
+;;     ptr-row = reticle-axis(pointer_y, rows)
 ;; Clamped-absolute is the whole point: when the OS pointer wanders off the
-;; window the reticle PINS at the border (it can't follow past the edge),
-;; and an EDGE-PAN turns the camera so the player can still aim beyond the
-;; current view - aiming never freezes mid-screen the way a raw 1:1
-;; mouselook would. The central region is pure 1:1 reticle movement with NO
-;; camera turn; only the OUTER BAND pans:
-;;     yaw   =  edge-pan-rate(aim-col, cols, mouse-yaw-rate-max)   * sens
-;;     pitch = -edge-pan-rate(aim-row, rows, mouse-pitch-rate-max) * sens
-;; Holding the reticle in the band keeps panning every frame with no new
+;; window it PINS at the border (it can't go past the edge), and the
+;; EDGE-PAN keeps turning the camera so the player can swing the view - the
+;; turn never freezes the way a raw motion-delta mouselook would when the OS
+;; stops reporting at the border. The central region adds NO camera turn;
+;; only the OUTER BAND pans:
+;;     yaw   =  edge-pan-rate(ptr-col, cols, mouse-yaw-rate-max)   * sens
+;;     pitch = -edge-pan-rate(ptr-row, rows, mouse-pitch-rate-max) * sens
+;; Holding the pointer in the band keeps panning every frame with no new
 ;; bytes, because the rate is read from the CACHED pointer position - so a
 ;; pointer parked at (or past) an edge keeps the camera turning until the
-;; player brings it back. `mouse-enable` sends `\e[>3p` to hide the OS arrow
-;; where the terminal supports it (#295); where it can't (#313) the startup
-;; notice tells the player the visible arrow is cosmetic.
+;; player brings it back to the centre region. `mouse-enable` sends `\e[>3p`
+;; to hide the OS arrow where the terminal supports it (#295); where it can't
+;; (#313) the startup notice tells the player the visible arrow is cosmetic.
 ;;
 ;; This stays PURE: it consumes the drained byte string, the previous
-;; pointer position and the live [rows cols], and returns the reticle
-;; position + per-frame edge-pan yaw/pitch + fire intent; io/input owns the
-;; escape emission + STDIN read + the periodic mouse re-arm.
+;; pointer position and the live [rows cols], and returns the clamped pointer
+;; cell + per-frame edge-pan yaw/pitch + fire intent; io/input owns the
+;; escape emission + STDIN read + the periodic mouse re-arm. The play loop
+;; keeps the crosshair centre-locked and uses only the yaw/pitch pan.
 ;; =====================================================================
 
 (def mouse-edge-band-frac
   "Fraction of each half-axis, measured from the screen EDGE inward, where
-   the reticle edge-pans the camera (#324). 0.30 leaves the central ~70% of
-   each half as a pure 1:1 aim region (no camera turn) and pans only in the
-   outer 30% near each border, ramping in from 0 at the band's inner lip to
-   the max rate at the very edge. Picked wide enough that the player can
-   comfortably park the reticle in the band to swing the view, yet tight
-   enough that ordinary centre-screen aiming never creeps the camera."
+   the pointer edge-pans the camera (#324). 0.30 leaves the central ~70% of
+   each half as a no-turn region and pans only in the outer 30% near each
+   border, ramping in from 0 at the band's inner lip to the max rate at the
+   very edge. Picked wide enough that the player can comfortably park the
+   pointer in the band to swing the view, yet tight enough that an ordinary
+   centre-screen pointer never creeps the camera."
   0.30)
 
 (def mouse-yaw-rate-max
-  "Radians of yaw per frame when the reticle is pinned to the far LEFT /
+  "Radians of yaw per frame when the pointer is pinned to the far LEFT /
    RIGHT edge, before the player's sensitivity multiplier (#324). At 60fps
    0.16 rad/frame sweeps a full 360 in ~0.65s held at the edge, so a player
-   can swing the view fast by pushing the reticle to a border yet still aim
-   finely in the centre region (the rate eases in from the band lip)."
+   can swing the view fast by pushing the pointer to a border yet keep the
+   camera still in the centre region (the rate eases in from the band lip)."
   0.16)
 
 (def mouse-pitch-rate-max
-  "Look up/down `:pitch` FRACTION per frame when the reticle is pinned to
+  "Look up/down `:pitch` FRACTION per frame when the pointer is pinned to
    the top / bottom edge, before sensitivity (#324). The pitch axis is a
    clamped fraction in [-1, 1] (state/clamp-pitch), so 0.06/frame ramps
    from level to fully-up (or down) in ~17 edge-held frames (~0.3s) and
@@ -442,13 +443,12 @@
 (defn- fold-mouse-event
   "Fold one parsed SGR event [b x y final] into the running accumulator
    `{:fire? :held? :pos}` (#324). A position report advances `:pos` to the
-   reported cell so the reticle + edge-pan read the latest known pointer
-   spot; a fresh left press sets `:fire?`; a left press / drag sets
-   `:held?`. A scroll-WHEEL tick carries no aim intent, so it is not a fire
-   - but `:pos` still trails it so a following motion places the reticle
-   from the true pointer cell. The reticle only cares WHERE the pointer is,
-   never how far it jumped, so a leave-and-return simply re-tracks from
-   wherever it reappears."
+   reported cell so the edge-pan reads the latest known pointer spot; a fresh
+   left press sets `:fire?`; a left press / drag sets `:held?`. A scroll-WHEEL
+   tick carries no aim intent, so it is not a fire - but `:pos` still trails
+   it so a following motion pans from the true pointer cell. The pan only
+   cares WHERE the pointer is, never how far it jumped, so a leave-and-return
+   simply re-reads from wherever it reappears."
   [acc b x y final]
   {:fire? (or (:fire? acc) (left-press? b final))
    :held? (or (:held? acc) (left-down? b final))
@@ -463,18 +463,17 @@
     :else       0.0))
 
 (defn reticle-axis
-  "Map a 1-based pointer cell `p` to the reticle's 0-based viewport cell on
-   an axis `len` cells long, CLAMPED into `[0, len-1]` (#324). 1:1 with the
-   pointer (`col = p - 1`), INDEPENDENT of Sensitivity, so the `+` sits
-   exactly under the cell the mouse points at and the gun fires 1:1 with it;
-   Sensitivity scales only the edge-pan swing, never the aim. The clamp PINS
-   the reticle at the first / last cell when the pointer sits at or beyond the
-   window edge, so an OS pointer drifting out of the window leaves the reticle
-   on the border (where edge-pan takes over) instead of losing it. Returns an
-   int (nearest whole cell) so the reticle glyph, the scene highlight and the
-   shot share one integer column - a fractional cell tripped PHP's float->int
-   intdiv deprecation in render. Returns nil when `len` is nil or `<= 1` (a
-   degenerate axis has no viewport to place the reticle in)."
+  "Map a 1-based pointer cell `p` to a 0-based viewport cell on an axis `len`
+   cells long, CLAMPED into `[0, len-1]` (#324). 1:1 with the pointer
+   (`col = p - 1`), INDEPENDENT of Sensitivity. This is the clamped pointer
+   position `edge-pan-rate` reads to decide the camera swing; the crosshair
+   itself stays centre-locked, so this is not a drawn reticle. The clamp PINS
+   the value at the first / last cell when the pointer sits at or beyond the
+   window edge, so an OS pointer drifting out of the window pins on the border
+   (where edge-pan takes over) instead of being lost. Returns an int (nearest
+   whole cell) so the band math works on one integer column - a fractional
+   cell tripped PHP's float->int intdiv deprecation. Returns nil when `len` is
+   nil or `<= 1` (a degenerate axis has no viewport to place the pointer in)."
   [p len]
   (if (or (nil? len) (php/<= len 1))
     nil
@@ -484,13 +483,13 @@
   "Edge-pan rate (#324) for a 0-based reticle cell `r` on an axis `len`
    cells long, ramping out to `max-rate` at the screen edge. The inner
    centre region (everything but the outer `mouse-edge-band-frac` of each
-   half-axis) produces NO turn - pure 1:1 aim - then an EASE-IN ramp
-   (frac^2, gentle at the band lip) reaches `max-rate` at the far edge cell,
-   signed by which side of centre the reticle is on. Returns 0.0 inside the
-   centre region, when `len` is nil, or when `len <= 1` (a degenerate axis),
-   so a missing dimension never auto-pans. The mirror of the band that
-   `reticle-axis` clamps the reticle into: the reticle can only reach the
-   panning band by being pushed against a border."
+   half-axis) produces NO turn - the crosshair stays centre-locked - then an
+   EASE-IN ramp (frac^2, gentle at the band lip) reaches `max-rate` at the
+   far edge cell, signed by which side of centre `r` is on. Returns 0.0
+   inside the centre region, when `len` is nil, or when `len <= 1` (a
+   degenerate axis), so a missing dimension never auto-pans. The mirror of
+   the band that `reticle-axis` clamps into: the pan only fires when the
+   pointer is pushed against a border."
   [r len ^float max-rate]
   (if (or (nil? len) (php/<= len 1))
     0.0
@@ -509,16 +508,20 @@
           (php/* (php/* max-rate eased) (sign off)))))))
 
 (defn mouse-aim
-  "Pure SGR-mouse reader for the movable aim crosshair (#324, was #246).
-   Parses the drained byte string `keys` for xterm SGR mouse reports,
+  "Pure SGR-mouse reader for centre-locked aim + edge-pan camera (#324, was
+   #246). Parses the drained byte string `keys` for xterm SGR mouse reports,
    caches the latest pointer position (carrying `prev-pos` `[x y]` forward
    when no report arrives this frame), and returns:
 
-     {:aim-col    reticle column (0-based viewport cell), the gun's aim
-                  point; nil when `dims` is omitted / nil
-      :aim-row    reticle row (0-based viewport cell); nil without `dims`
+     {:aim-col    the clamped pointer column (0-based viewport cell) that
+                  feeds the edge-pan; nil when `dims` is omitted / nil. The
+                  play loop keeps the crosshair centre-locked, so this is
+                  NOT drawn as a movable reticle - it is the pointer cell the
+                  band math reads.
+      :aim-row    the clamped pointer row (0-based viewport cell); nil without
+                  `dims`
       :yaw        signed radians to add to the player's :angle THIS frame,
-                  an edge-pan RATE that is non-zero only while the reticle
+                  an edge-pan RATE that is non-zero only while the pointer
                   sits in the outer band (0 in the centre region)
       :pitch      signed fraction to add to the player's :pitch (look up is
                   +, look down is -; clamp via state/clamp-pitch), the
@@ -530,25 +533,24 @@
                   auto-fire weapons like the :fire-held space path)
       :pos        the pointer position to thread into the next frame}
 
-   Movable crosshair (#324): a terminal offers NO pointer lock / warp /
-   hide, so the reticle is the pointer's ABSOLUTE cell clamped to the
-   viewport (`reticle-axis`), tracking it 1:1 (aim is Sensitivity-independent,
-   so the `+` sits exactly under the pointer and the shot is 1:1 with it).
-   Pushing the reticle into the outer band edge-pans the camera
-   (`edge-pan-rate`), applied EVERY frame from the cached `:pos` - so an
-   empty `keys` string still returns the edge-pan yaw/pitch from the last
-   known position, and a pointer that left the window at an edge keeps the
-   camera turning. Pitch y is NEGATED: screen rows grow DOWNWARD, so a
-   reticle near the TOP looks UP (+pitch).
+   Centre-locked aim (#324): the `+` crosshair and the gun stay at screen
+   centre; the mouse only PANS the camera. A terminal offers NO pointer lock
+   / warp / hide, so the pointer is tracked as its ABSOLUTE cell clamped to
+   the viewport (`reticle-axis`). Pushing that clamped pointer into the outer
+   band edge-pans the camera (`edge-pan-rate`), applied EVERY frame from the
+   cached `:pos` - so an empty `keys` string still returns the edge-pan
+   yaw/pitch from the last known position, and a pointer that left the window
+   at an edge keeps the camera turning. Pitch y is NEGATED: screen rows grow
+   DOWNWARD, so a pointer near the TOP looks UP (+pitch).
 
-   `sensitivity` is a positive scalar (1.0 = neutral) scaling ONLY the
-   edge-pan camera-swing rate, never the 1:1 reticle aim (0 stills the swing
-   but still lets a click fire). `dims` is the live `[rows cols]`; it
-   supplies the axis lengths the reticle + band need. Omitting it (or nil)
-   yields a nil reticle and zero yaw/pitch - the aim is inert without knowing
-   the viewport - while fire intent still parses, so non-loop callers are
-   unaffected. A non-mouse sequence (kitty CSI-u key, arrow, F-key) matches
-   nothing, so the keyboard path is never disturbed."
+   `sensitivity` is a positive scalar (1.0 = neutral) scaling the edge-pan
+   camera-swing rate (0 stills the swing but still lets a click fire). `dims`
+   is the live `[rows cols]`; it supplies the axis lengths the clamp + band
+   need. Omitting it (or nil) yields a nil pointer cell and zero yaw/pitch -
+   the pan is inert without knowing the viewport - while fire intent still
+   parses, so non-loop callers are unaffected. A non-mouse sequence (kitty
+   CSI-u key, arrow, F-key) matches nothing, so the keyboard path is never
+   disturbed."
   [keys prev-pos ^float sensitivity & [dims]]
   (let [matches (php/array)
         rows    (when (some? dims) (get dims 0))
@@ -564,9 +566,9 @@
       (loop [i 0 acc {:fire? false :held? false :pos prev-pos}]
         (if (php/>= i n)
           (let [pos     (:pos acc)
-                ;; The reticle + edge-pan read the FINAL cached position, so
-                ;; a held (motionless) pointer keeps producing the same
-                ;; reticle + pan with no new bytes - the escape-proof model.
+                ;; The edge-pan reads the FINAL cached position, so a held
+                ;; (motionless) pointer keeps producing the same pan with no
+                ;; new bytes - the escape-proof model.
                 x       (when (some? pos) (get pos 0))
                 y       (when (some? pos) (get pos 1))
                 aim-col (when (some? pos) (reticle-axis x cols))
@@ -576,7 +578,7 @@
              :yaw        (if (some? aim-col)
                            (php/* (edge-pan-rate aim-col cols mouse-yaw-rate-max) sensitivity)
                            0.0)
-             ;; Negate the pitch rate: a reticle near the TOP (smaller row)
+             ;; Negate the pitch rate: a pointer near the TOP (smaller row)
              ;; must look UP (+pitch) even though rows grow downward.
              :pitch      (if (some? aim-row)
                            (php/- 0 (php/* (edge-pan-rate aim-row rows mouse-pitch-rate-max) sensitivity))

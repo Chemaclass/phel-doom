@@ -34,23 +34,6 @@
   (let [speeds (map (fn [n] (:chase-speed (build-world n 5))) (range 1 10))]
     (is (= speeds (sort speeds)) "L1-L9 chase speed is monotonic non-decreasing")))
 
-(deftest test-l2-stands-enemies-on-raised-tiers
-  ;; #375 showcase: L2 pins fixed `:enemy-spawns` ON the staircase (two
-  ;; demons on the 0.75 platform, an imp on the 0.5 tread) so the tier
-  ;; feet-anchor (#395) and cross-tier sprite occlusion (#394) are visible
-  ;; in play, not just in unit tests. At least the three authored spawns
-  ;; must stand on a raised-fz cell (random spawns may add more).
-  (rng/seed! 2)
-  (let [w       (build-world 2 5)
-        pfz     (:pfz w)
-        mw      (:width w)
-        on-tier (filter (fn [e]
-                          (php/> (php/aget pfz (php/+ (php/* (php/intval (:y e)) mw)
-                                                      (php/intval (:x e))))
-                                 0.0))
-                        (:enemies w))]
-    (is (php/>= (count on-tier) 3) "L2 stands at least the 3 authored enemies on raised tiers")))
-
 (deftest test-early-levels-mix-shooter-and-melee
   ;; L1 stays a pure melee tutorial; L2-L5 salt a melee secondary into
   ;; the headline type so no early room is single-type monotony. L3
@@ -336,8 +319,8 @@
 (deftest test-showcase-level-loads-and-keeps-l2-identity
   ;; The showcase rides on L2: it must still be the "demons" room (name,
   ;; primary enemy, chase) and a demon + imp mix so the difficulty curve
-  ;; and weapon-drop progression are untouched - only the geometry is now
-  ;; hand-authored verticality.
+  ;; and weapon-drop progression are untouched. The geometry is now a
+  ;; flat 24x18 hand-authored chamber (no verticality).
   (let [w     (build-world 2 5)
         types (set (map :type (:enemies w)))]
     (is (= "demons" (:level-name w)))
@@ -345,8 +328,8 @@
     (is (= 1.0      (:chase-speed w)))
     (is (contains? types :demon) "demons present")
     (is (contains? types :imp)   "imp escort present")
-    ;; Hand-authored layout parsed (not random-grid): 24x18 with the
-    ;; south spawn @ at cell centre (11.5, 15.5).
+    ;; Hand-authored layout parsed (not random-grid): a flat 24x18 chamber
+    ;; with the south spawn @ at cell centre (11.5, 15.5).
     (is (= 24  (count (first (:grid w)))))
     (is (= 18  (count (:grid w))))
     (is (= 11.5 (:x (:player w))))
@@ -430,43 +413,3 @@
       ;; Random: the exit is not pinned to one spot across seeds.
       (is (php/> (php/count (php/array_unique positions)) 1)
           (str "level " lv " exit position varies with the seed")))))
-
-;; ---------------------------------------------------------------------
-;; Floor heights (issue #368): every shipped level loads flat EXCEPT the
-;; L2 staircase showcase (#372). Pins the zero-behavior-change guarantee
-;; for the flat levels and that L2 actually carries raised cells.
-;; ---------------------------------------------------------------------
-
-(deftest test-build-world-fz-defaults-flat-every-level
-  (foreach [lv (range 1 (php/+ num-levels 1))]
-    (rng/seed! (php/* 42 lv))
-    (let [w     (build-world lv 5)
-          fz    (:fz-grid w)
-          flat? (every? (fn [row] (every? (fn [z] (= 0.0 z)) row)) fz)]
-      (is (= (:height w) (count fz)) (str "level " lv " fz-grid height matches"))
-      (is (= (:width w) (count (first fz))) (str "level " lv " fz-grid width matches"))
-      ;; L2 is the staircase showcase; every other level is flat.
-      (if (php/=== 2 lv)
-        (is (not flat?) "level 2 (staircase showcase) has raised cells")
-        (is flat? (str "level " lv " is flat")))
-      (is (= (php/* (:width w) (:height w)) (php/count (:pfz w)))
-          (str "level " lv " pfz sized width*height")))))
-
-;; ---------------------------------------------------------------------
-;; Ceiling heights (issue #385, epic #375 Phase 3): every shipped level
-;; loads flat-ceiling (cz 1.0 everywhere) - no level authors lowered
-;; ceilings yet, so this pins the zero-behavior-change guarantee.
-;; ---------------------------------------------------------------------
-
-(deftest test-build-world-cz-defaults-full-height-every-level
-  (foreach [lv (range 1 (php/+ num-levels 1))]
-    (rng/seed! (php/* 42 lv))
-    (let [w  (build-world lv 5)
-          cz (:cz-grid w)]
-      (is (= (:height w) (count cz)) (str "level " lv " cz-grid height matches"))
-      (is (= (:width w) (count (first cz))) (str "level " lv " cz-grid width matches"))
-      (is (every? (fn [row] (every? (fn [z] (= 1.0 z)) row)) cz)
-          (str "level " lv " has a full-height ceiling"))
-      (is (= true (:cz-flat? w)) (str "level " lv " cz-flat? set"))
-      (is (= (php/* (:width w) (:height w)) (php/count (:pcz w)))
-          (str "level " lv " pcz sized width*height")))))

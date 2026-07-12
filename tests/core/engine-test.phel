@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.map    :refer [default-grid])
   (:require phel-doom.core.state  :refer [new-world new-player])
-  (:require phel-doom.core.engine :refer [cast-ray cast-shot-dist cast-frame mark-visible-cells max-depth visited? visit-radius fov-proj-dist fov-clamp-width fov-max-deg proj-dist]))
+  (:require phel-doom.core.engine :refer [cast-ray cast-frame mark-visible-cells max-depth visited? visit-radius fov-proj-dist fov-clamp-width fov-max-deg proj-dist]))
 
 (def pgrid (to-php-array (map to-php-array default-grid)))
 
@@ -52,52 +52,6 @@
   ;; from (1.5, 1.5) facing north (-y), wall at y=1 → distance ~0.5
   (let [d (cast-ray pgrid 1.5 1.5 (- 0 (/ php/M_PI 2.0)))]
     (is (< d 1.0))))
-
-;; ---------------------------------------------------------------------
-;; cast-shot-dist: window-gap shoot-through (issue #388, epic #375). A
-;; hitscan/projectile travels at the muzzle height `shot-z` (eye level,
-;; ~0.5) and passes through a floor cell UNLESS its ceiling drops to or
-;; below the shot line (`cz <= shot-z`) - a lowered lintel stops the shot
-;; just like a wall. Full-height ceilings never block, so every shipped
-;; flat-ceiling level is behaviour-neutral (identical to `cast-ray`).
-;; ---------------------------------------------------------------------
-
-;; 8-wide corridor open along y=1, walls top/bottom + far east at x=7.
-(def shot-corridor
-  [[1 1 1 1 1 1 1 1]
-   [0 0 0 0 0 0 0 1]
-   [1 1 1 1 1 1 1 1]])
-(def shot-flat-fz (vec (repeat 3 (vec (repeat 8 0.0)))))
-(defn- shot-world [cz-mid]
-  (new-world shot-corridor (new-player 1.5 1.5 0.0) shot-flat-fz
-             [(vec (repeat 8 1.0)) cz-mid (vec (repeat 8 1.0))]))
-
-(deftest test-cast-shot-dist-flat-ceiling-matches-cast-ray
-  ;; Full-height ceiling everywhere: the shot behaves exactly like the
-  ;; wall-only cast-ray - the neutrality contract for shipped levels.
-  (let [w   (shot-world (vec (repeat 8 1.0)))
-        px  1.5 py  1.5 ang 0.0]
-    (is (= (cast-ray (:pgrid w) px py ang)
-           (cast-shot-dist (:pgrid w) (:pcz w) (:width w) 0.5 px py ang)))))
-
-(deftest test-cast-shot-dist-lowered-lintel-stops-shot-early
-  ;; Cell (4,1) ceiling drops to 0.2, below the 0.5 shot line: the shot
-  ;; stops at that lintel, nearer than the far wall the plain cast reaches.
-  (let [w    (shot-world [1.0 1.0 1.0 1.0 0.2 1.0 1.0 1.0])
-        px   1.5 py   1.5 ang  0.0
-        wall (cast-ray (:pgrid w) px py ang)
-        shot (cast-shot-dist (:pgrid w) (:pcz w) (:width w) 0.5 px py ang)]
-    (is (< shot wall) "the lowered lintel stops the shot before the wall")
-    (is (< (php/abs (php/- shot 2.5)) 0.001) "stops at the x=4 lintel (~2.5 away)")))
-
-(deftest test-cast-shot-dist-high-lintel-does-not-block
-  ;; Cell (4,1) ceiling at 0.75, ABOVE the 0.5 shot line: the shot clears
-  ;; it and travels on to the far wall, same as the flat-ceiling cast.
-  (let [w   (shot-world [1.0 1.0 1.0 1.0 0.75 1.0 1.0 1.0])
-        px  1.5 py  1.5 ang 0.0]
-    (is (= (cast-ray (:pgrid w) px py ang)
-           (cast-shot-dist (:pgrid w) (:pcz w) (:width w) 0.5 px py ang))
-        "a lintel above the shot line is see-through and shoot-through")))
 
 ;; ---------------------------------------------------------------------
 ;; DDA correctness (issue #2): pin the hit details cast-frame surfaces
@@ -156,10 +110,7 @@
     (is (= 8 (php/count (:hys c))))
     (is (= 8 (php/count (:wallxs c))))
     (is (= 8 (php/count (:floordxs c))))
-    (is (= 8 (php/count (:floordys c))))
-    ;; :spans is a flat EVENT stream, not column-parallel — presence
-    ;; pin only (empty here: chamber floor is flat).
-    (is (php/is_array (:spans c)))))
+    (is (= 8 (php/count (:floordys c))))))
 
 (deftest test-cast-frame-floor-basis-fisheye-corrected
   ;; :floordxs/:floordys are the ray direction divided by cos(offset),
@@ -231,208 +182,6 @@
         (is (php/!== nil (php/aget (:dists c) i)))
         (is (php/!== nil (php/aget (:hits  c) i)))
         (recur (php/+ i 1))))))
-
-;; ---------------------------------------------------------------------
-;; Multi-span cast (issue #369): the DDA marches past floor-height
-;; risers (:pfz from #368) and emits a flat span-event stream under
-;; :spans, stride 8: [col d-corr z0 z1 side hx hy wallx]. Only RISES
-;; emit (step-downs are backfaces); the existing 8 arrays stay the
-;; final wall hit. Render ignores :spans until #370.
-;; ---------------------------------------------------------------------
-
-(def corridor-grid
-  ;; 9-wide east corridor, player at (1.5, 1.5) facing east (angle 0).
-  [[1 1 1 1 1 1 1 1 1]
-   [1 0 0 0 0 0 0 0 1]
-   [1 1 1 1 1 1 1 1 1]])
-
-(def flat9 [0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0])
-
-(defn- corridor-world [mid-fz]
-  (new-world corridor-grid (new-player 1.5 1.5 0.0) [flat9 mid-fz flat9]))
-
-(defn- span-at
-  ;; Read field i of event e from the stride-8 flat stream.
-  [spans e i]
-  (php/aget spans (php/+ (php/* e 8) i)))
-
-(deftest test-cast-frame-flat-world-spans-empty
-  ;; 2-arity worlds (all existing call sites) cast with zero span events.
-  (let [w (new-world chamber-grid (new-player 2.5 2.5 0.0))
-        c (cast-frame w 8 1)]
-    (is (php/is_array (:spans c)))
-    (is (= 0 (php/count (:spans c))))))
-
-(deftest test-cast-frame-single-riser-emits-one-span
-  ;; fz 0 -> 0.25 at x=3: one riser event at the x=3.0 boundary,
-  ;; dist 1.5 from the player at x=1.5. The 0.25 -> 0 step-down at
-  ;; x=4 is a backface and must NOT emit.
-  (let [w  (corridor-world [0.0 0.0 0.0 0.25 0.0 0.0 0.0 0.0 0.0])
-        c  (cast-frame w 1 1)
-        sp (:spans c)]
-    (is (= 8 (php/count sp)) "exactly one stride-8 event")
-    (is (= 0 (span-at sp 0 0)) "base col")
-    (is (< (php/abs (php/- (span-at sp 0 1) 1.5)) 0.01) "corrected dist")
-    (is (= 0.0 (span-at sp 0 2)) "z0 = height left")
-    (is (= 0.25 (span-at sp 0 3)) "z1 = height entered")
-    (is (= 0 (span-at sp 0 4)) "x-line -> side 0")
-    (is (= 3 (span-at sp 0 5)) "hx = entered cell x")
-    (is (= 1 (span-at sp 0 6)) "hy = entered cell y")
-    (is (< (php/abs (php/- (span-at sp 0 7) 0.5)) 0.02) "wallx mid-face")))
-
-(deftest test-cast-frame-staircase-emits-ascending-spans
-  ;; Three risers in a row: events come back in ascending distance
-  ;; order and chain z0/z1 (each event's z0 is the previous z1). The
-  ;; 0.75 -> 0 drop at x=6 emits nothing; the far wall still lands in
-  ;; the classic arrays.
-  (let [w  (corridor-world [0.0 0.0 0.0 0.25 0.5 0.75 0.0 0.0 0.0])
-        c  (cast-frame w 1 1)
-        sp (:spans c)]
-    (is (= 24 (php/count sp)) "three events, no step-down event")
-    (is (< (span-at sp 0 1) (span-at sp 1 1)))
-    (is (< (span-at sp 1 1) (span-at sp 2 1)))
-    (is (= (span-at sp 0 3) (span-at sp 1 2)) "z chains 0.25")
-    (is (= (span-at sp 1 3) (span-at sp 2 2)) "z chains 0.5")
-    (is (= 1 (php/aget (:hits c) 0)) "final wall hit unchanged")))
-
-(deftest test-cast-frame-riser-behind-wall-no-span
-  ;; The ray stops at the wall BEFORE reaching the raised cells, so no
-  ;; event leaks from occluded geometry.
-  (let [g [[1 1 1 1 1 1 1 1 1]
-           [1 0 0 1 0 0 1 0 1]
-           [1 1 1 1 1 1 1 1 1]]
-        w (new-world g (new-player 1.5 1.5 0.0)
-                     [flat9 [0.0 0.0 0.0 0.0 0.5 0.5 0.0 0.0 0.0] flat9])
-        c (cast-frame w 1 1)]
-    (is (= 0 (php/count (:spans c))))
-    (is (< (php/abs (php/- (php/aget (:dists c) 0) 1.5)) 0.01)
-        "wall hit unchanged")))
-
-;; ---------------------------------------------------------------------
-;; Upper-span cast (issue #386): the combined march tracks ceiling height
-;; (:pcz from #385) alongside floor and emits a flat :uspans stream where
-;; the ceiling DROPS, mirror of :spans. Behavior-neutral on flat-ceiling
-;; worlds (empty :uspans). Render ignores :uspans until #387.
-;; ---------------------------------------------------------------------
-
-(def full9 [1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0])
-
-(defn- ceil-corridor-world [mid-cz]
-  (new-world corridor-grid (new-player 1.5 1.5 0.0) [flat9 flat9 flat9] [full9 mid-cz full9]))
-
-(deftest test-cast-frame-flat-ceiling-uspans-empty
-  ;; Full-height worlds (every shipped level) cast with zero upper events.
-  (let [w (new-world chamber-grid (new-player 2.5 2.5 0.0))
-        c (cast-frame w 8 1)]
-    (is (php/is_array (:uspans c)))
-    (is (= 0 (php/count (:uspans c))))))
-
-(deftest test-cast-frame-single-ceiling-drop-emits-one-uspan
-  ;; cz 1.0 -> 0.75 at x=3: one drop event at the x=3.0 boundary, dist
-  ;; 1.5 from the player at x=1.5. cz0 = ceiling left, cz1 = lower entered.
-  (let [w  (ceil-corridor-world [1.0 1.0 1.0 0.75 1.0 1.0 1.0 1.0 1.0])
-        c  (cast-frame w 1 1)
-        sp (:uspans c)]
-    (is (= 8 (php/count sp)) "exactly one stride-8 upper event")
-    (is (= 0 (span-at sp 0 0)) "base col")
-    (is (< (php/abs (php/- (span-at sp 0 1) 1.5)) 0.01) "corrected dist")
-    (is (= 1.0 (span-at sp 0 2)) "cz0 = ceiling left")
-    (is (= 0.75 (span-at sp 0 3)) "cz1 = ceiling entered (lower)")
-    (is (= 0 (span-at sp 0 4)) "x-line -> side 0")
-    (is (= 3 (span-at sp 0 5)) "hx = entered cell x")
-    (is (= 1 (span-at sp 0 6)) "hy = entered cell y")))
-
-(deftest test-cast-frame-ceiling-raise-is-backface-no-uspan
-  ;; A ceiling that rises back up (0.75 -> 1.0 at x=4) is a backface, like
-  ;; a floor step-down: only the drop at x=3 emits, so exactly one event.
-  (let [w (ceil-corridor-world [1.0 1.0 1.0 0.75 1.0 1.0 1.0 1.0 1.0])
-        c (cast-frame w 1 1)]
-    (is (= 8 (php/count (:uspans c))) "only the drop emits, not the raise-back")))
-
-(deftest test-cast-frame-window-gap-emits-floor-and-upper-span
-  ;; A window-gap cell (raised floor AND lowered ceiling at x=3) emits
-  ;; BOTH a floor span and an upper span - the combined march tracks both.
-  (let [w (new-world corridor-grid (new-player 1.5 1.5 0.0)
-                     [flat9 [0.0 0.0 0.0 0.25 0.0 0.0 0.0 0.0 0.0] flat9]
-                     [full9 [1.0 1.0 1.0 0.75 1.0 1.0 1.0 1.0 1.0] full9])
-        c (cast-frame w 1 1)]
-    (is (= 8 (php/count (:spans c))) "floor rise still emits a span")
-    (is (= 8 (php/count (:uspans c))) "ceiling drop emits an upper span")
-    (is (= 0.25 (span-at (:spans c) 0 3)) "floor span z1")
-    (is (= 0.75 (span-at (:uspans c) 0 3)) "upper span cz1")))
-
-(deftest test-cast-frame-step-down-only-no-span
-  ;; Player stands ON the raised tier; the only height change ahead is
-  ;; a drop. Backface -> zero events.
-  (let [w (corridor-world [0.25 0.25 0.25 0.0 0.0 0.0 0.0 0.0 0.0])
-        c (cast-frame w 1 1)]
-    (is (= 0 (php/count (:spans c))))))
-
-(deftest test-cast-frame-span-z0-is-player-cell-fz
-  ;; cfz must initialize from the PLAYER's cell height, not 0.0: on a
-  ;; 0.25 tier a rise to 0.5 is a quarter-height riser (z0 0.25), not a
-  ;; half-height one. Also pins that a later step-down updated nothing.
-  (let [w  (corridor-world [0.25 0.25 0.5 0.0 0.0 0.0 0.0 0.0 0.0])
-        c  (cast-frame w 1 1)
-        sp (:spans c)]
-    (is (= 8 (php/count sp)))
-    (is (= 0.25 (span-at sp 0 2)) "z0 = player tier height")
-    (is (= 0.5 (span-at sp 0 3)))
-    (is (< (php/abs (php/- (span-at sp 0 1) 0.5)) 0.01) "boundary x=2.0")))
-
-(deftest test-cast-frame-south-riser-side-1
-  ;; y-line branch parity + pfz indexed with MAP width (3), not the
-  ;; viewport width (1): a vertical corridor cast south. Riser at
-  ;; (1, 3), boundary y=3.0, dist 1.5.
-  (let [g  [[1 1 1]
-            [1 0 1]
-            [1 0 1]
-            [1 0 1]
-            [1 0 1]
-            [1 1 1]]
-        fz [[0.0 0.0 0.0]
-            [0.0 0.0 0.0]
-            [0.0 0.0 0.0]
-            [0.0 0.25 0.0]
-            [0.0 0.0 0.0]
-            [0.0 0.0 0.0]]
-        w  (new-world g (new-player 1.5 1.5 (/ php/M_PI 2.0)) fz)
-        c  (cast-frame w 1 1)
-        sp (:spans c)]
-    (is (= 8 (php/count sp)))
-    (is (< (php/abs (php/- (span-at sp 0 1) 1.5)) 0.01))
-    (is (= 1 (span-at sp 0 4)) "y-line -> side 1")
-    (is (= 1 (span-at sp 0 5)) "hx")
-    (is (= 3 (span-at sp 0 6)) "hy")
-    (is (< (php/abs (php/- (span-at sp 0 7) 0.5)) 0.02) "wallx mid-face")))
-
-(deftest test-cast-frame-fz-does-not-change-wall-outputs
-  ;; Byte-identity guard behind the golden render hashes: raised floors
-  ;; must not perturb ANY of the 8 classic outputs.
-  (let [wa (new-world corridor-grid (new-player 1.5 1.5 0.0))
-        wb (corridor-world [0.0 0.0 0.0 0.25 0.5 0.75 0.0 0.0 0.0])
-        a  (cast-frame wa 8 1)
-        b  (cast-frame wb 8 1)]
-    (is (php/== (:dists a) (:dists b)))
-    (is (php/== (:hits a) (:hits b)))
-    (is (php/== (:sides a) (:sides b)))
-    (is (php/== (:hxs a) (:hxs b)))
-    (is (php/== (:hys a) (:hys b)))
-    (is (php/== (:wallxs a) (:wallxs b)))
-    (is (php/== (:floordxs a) (:floordxs b)))
-    (is (php/== (:floordys a) (:floordys b)))))
-
-(deftest test-cast-frame-scale-2-spans-once-per-ray
-  ;; scale=2 replicates WALL samples across output columns, but each
-  ;; ray emits its span once, tagged with the ray's BASE column.
-  (let [w  (corridor-world [0.0 0.0 0.0 0.25 0.0 0.0 0.0 0.0 0.0])
-        c  (cast-frame w 8 2)
-        sp (:spans c)]
-    (is (= 32 (php/count sp)) "4 rays x one event each")
-    (is (= 0 (span-at sp 0 0)))
-    (is (= 2 (span-at sp 1 0)))
-    (is (= 4 (span-at sp 2 0)))
-    (is (= 6 (span-at sp 3 0)))))
 
 ;; ---------------------------------------------------------------------
 ;; Paused-frame cast cache: while `:paused` is truthy AND the player

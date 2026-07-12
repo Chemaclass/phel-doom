@@ -11,7 +11,7 @@
   (:require phel-doom.io.render.sprites :refer [paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
   (:require phel-doom.core.combat :refer [fire-extralight fire-anim-seconds])
-  (:require phel-doom.core.projection :refer [char-aspect wall-px pitch-rows bob-rows project-height floor-cast-num])
+  (:require phel-doom.core.projection :refer [char-aspect wall-px pitch-rows bob-rows])
   (:require phel-doom.core.perf :refer [render-scale])
   (:require phel-doom.core.format :refer [format-duration])
   (:require phel-doom.core.version :refer [version]))
@@ -214,13 +214,9 @@
   (php/=== "1" (php/getenv "PHEL_DOOM_FLAT_WALLTEX")))
 
 (def floor-cast-k
-  "Flat-baseline numerator of the floor-cast perpendicular distance: a
-   floor cell `p` pixels below the horizon at eye height 0.5 sits at
-   perp-distance `floor-cast-k / p` = `proj-dist * 0.5 / char-aspect`.
-   The live floor cast now scales this by the camera eye height via
-   `projection/floor-cast-num` (`floor-cast-k-eye`), so this constant is
-   the byte-identity anchor: the reference value the eye-aware path
-   collapses to at eye-z=0.5, named here and in the projection unit tests."
+  "Numerator of the floor-cast perpendicular distance: a floor cell `p`
+   pixels below the horizon at eye height 0.5 sits at perp-distance
+   `floor-cast-k / p` = `proj-dist * 0.5 / char-aspect`."
   (php// (php/* proj-dist 0.5) char-aspect))
 
 (defn- build-floor-dperp
@@ -228,10 +224,7 @@
    below the horizon (`vh/2`) map to `k / (row+0.5 - vh/2)`, clamped to
    `max-depth`. Rows at/above the horizon get `max-depth` (never sampled
    as floor — walls/sky cover them). One pass over vh.
-   `k` is the eye-height-aware numerator (`floor-cast-num proj-dist eye-z
-   0.0`); it collapses to the flat `floor-cast-k` const at eye-z=0.5, so
-   a level gaze on flat ground stays byte-identical. Raising the eye
-   scales `k` up, so the ground recedes faster when the player climbs.
+   `k` is the floor-cast numerator (`floor-cast-k`).
    `pr` (scene rows, default 0) shears the horizon down/up for look
    up/down so the floor plane tracks the pitched wall band; pr=0 keeps
    the table identical."
@@ -1664,8 +1657,8 @@
         ;; HP is a half-heart pool (10 = full): haze ramps over the last
         ;; ~3 hearts, deepening toward the last half-heart. The muzzle flash
         ;; (#413) subtracts a brief extralight for the frame or two after a
-        ;; shot, so the net shift can go negative (walls brighten); the 3
-        ;; wall/riser/upper shade kernels clamp idx to [0,23] to absorb it.
+        ;; shot, so the net shift can go negative (walls brighten); the
+        ;; wall shade kernel clamps idx to [0,23] to absorb it.
         haze-shift                         (php/- (haze-shift-for-lives (get stats :lives))
                                                   (fire-extralight (or (get stats :fire-anim) 0.0)
                                                                    (or (get stats :fire-anim-duration) fire-anim-seconds)))
@@ -1890,49 +1883,49 @@
                     ;; (`dists`, above); enemies stand on flat ground, so the
                     ;; window is the full box [e-top, e-bot).
                     (do
-                        (if spr
+                      (if spr
                                ;; Sprite path: stash the billboard box
                                ;; (e-stop/e-sbot drive the sprite-y sampling).
                                ;; Wall tops/bots stay untouched so transparent
                                ;; pixels show the wall behind.
-                          (do
-                            (buf-set e-stop c e-top)
-                            (buf-set e-sbot c e-bot)
-                            (buf-set e-sx c (sprite-col-x sw col ehw c))
-                            (buf-set e-sxr c (sprite-subcol-x sw col ehw c))
-                            (buf-set e-spx c spx)
-                            (buf-set e-sw c sw)
-                            (buf-set e-sh c sh)
-                            (buf-set e-fade c sfade)
-                            (buf-set emask c true))
-                          (do
-                            (buf-set tops c e-top)
-                            (buf-set bots c e-bot)
-                            (buf-set mids c e-mid)
-                            (buf-set lowers c e-lower)
+                        (do
+                          (buf-set e-stop c e-top)
+                          (buf-set e-sbot c e-bot)
+                          (buf-set e-sx c (sprite-col-x sw col ehw c))
+                          (buf-set e-sxr c (sprite-subcol-x sw col ehw c))
+                          (buf-set e-spx c spx)
+                          (buf-set e-sw c sw)
+                          (buf-set e-sh c sh)
+                          (buf-set e-fade c sfade)
+                          (buf-set emask c true))
+                        (do
+                          (buf-set tops c e-top)
+                          (buf-set bots c e-bot)
+                          (buf-set mids c e-mid)
+                          (buf-set lowers c e-lower)
                                    ;; Cyberdemon: carve a boss silhouette out of
                                    ;; the rectangle so the form reads as helmet +
                                    ;; arms + 2 legs instead of a giant imp brick.
-                            (let [[ph pb pl] (if (and (php/=== (:type proj) :cyber)
-                                                      body-code)
-                                               (boss-col-paint
-                                                (php// (php/abs (php/- c col))
-                                                       (php/max 1 hw))
-                                                fhead fbody flegs body-code body-fade
-                                                (buf-get shades-normal c))
-                                               [fhead fbody flegs])]
-                              (buf-set eheads c ph)
-                              (buf-set ebodys c pb)
-                              (buf-set elegss c pl))
-                            (buf-set emask c true)))
+                          (let [[ph pb pl] (if (and (php/=== (:type proj) :cyber)
+                                                    body-code)
+                                             (boss-col-paint
+                                              (php// (php/abs (php/- c col))
+                                                     (php/max 1 hw))
+                                              fhead fbody flegs body-code body-fade
+                                              (buf-get shades-normal c))
+                                             [fhead fbody flegs])]
+                            (buf-set eheads c ph)
+                            (buf-set ebodys c pb)
+                            (buf-set elegss c pl))
+                          (buf-set emask c true)))
                                ;; Track nearest enemy distance for this col so
                                ;; pickups behind it occlude properly. Multiple
                                ;; enemies on the same col → keep the closest.
                                ;; The shadow pass below also reads this to keep
                                ;; only the front enemy's grounding shadow.
-                        (let [prev (buf-get edists c)]
-                          (when (or (php/=== prev nil) (php/< d prev))
-                            (buf-set edists c d))))))
+                      (let [prev (buf-get edists c)]
+                        (when (or (php/=== prev nil) (php/< d prev))
+                          (buf-set edists c d)))))
                   (recur (php/+ c 1)))))))))
     ;; Grounding shadows, second pass. The shadow goes into blood-paint
     ;; (top-priority overlay), so it can't be painted inline during the
@@ -2114,9 +2107,6 @@
           ;; (px1 dotimes row + px2 dotimes r2) to avoid recomputing it vh
           ;; (or svh) times per frame. Byte-identical output guaranteed.
           floor-flat?         (if floor-tex-on? false true)
-          ;; elevated? / floor-dperp-tier / floor-level-tier(-sub): bound
-          ;; up near eye-z (above), so they can gate the near-floor tier
-          ;; tables built there (#404 tier tint, #416(b) tier recession).
           ;; Pin the referred frame-math globals as frame-level locals so
           ;; inner references resolve to a PHP local variable instead of a
           ;; Phel::getDefinition() call (two array lookups + singleton probe)

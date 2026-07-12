@@ -11,25 +11,26 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Weapon-fire extralight (issue #413): firing now briefly brightens the surrounding walls for a frame or two, so a shot reads as lighting the room, the feasible stand-in for a dynamic muzzle light on the PHP interpreter. It rides the existing near-death haze scalar as a brief negative shift and cannot overlap the red damage flash; not firing renders byte-identical to before.
-- Weapon idle bob + sway while walking (issue #412): the first-person gun now dips on each footfall and sways side to side on the same walk cycle as View bob, so it reads as a held weapon instead of a static overlay. Reuses the View bob setting and `:bob-phase`: off by default and byte-identical at rest, raise **View bob** in Settings to enable both the scene nod and the weapon motion.
-- View / head bob while walking (issue #411): a new opt-in **View bob** setting (0-100%, off by default) nods the whole scene (walls, floor, sky, enemies) on a distance-driven walk cycle, so moving reads as a person walking instead of gliding a camera. A `:bob-phase` on the world advances with the ground you cover and settles to 0 at rest, so a standing frame stays byte-identical; the bob is cosmetic and never moves where a shot lands (the hit gate keeps true camera pitch). Shipped look unchanged (default off); raise View bob in Settings to enable, lower it for motion sensitivity.
+- View / head bob while walking (#411): opt-in **View bob** setting (0-100%, off by default) nods the whole scene (walls, floor, sky, enemies) on a distance-driven walk cycle, so moving reads as walking, not gliding. `:bob-phase` advances with distance and settles to 0 at rest, so a standing frame is byte-identical; cosmetic, never moves where a shot lands. Default off, shipped look unchanged.
+- Weapon idle bob + sway while walking (#412): the first-person gun dips on each footfall and sways side to side on the View bob walk cycle, reading as a held weapon. Reuses the **View bob** setting and `:bob-phase`; off by default, byte-identical at rest.
+- Weapon-fire extralight (#413): firing briefly brightens surrounding walls for a frame or two, a muzzle-light stand-in. Rides the near-death haze scalar as a brief negative shift, cannot overlap the red damage flash; not firing is byte-identical.
 
 ### Performance
 
-- Cast loop hoists per-column constants and inlines the cell probe (#347): -55%/-63%/-66% on `cast-frame` at 80/120/180 columns; byte-identical.
-- `cast-ray` + `los-clear?` DDA inline the cell probe and bind loop constants once (#354, #357): -49% on a 360-ray sweep, -42% on `mark-visible-cells`; byte-identical.
-- Removed the per-column closure tax in the cast loop (#345): -39% on `cast-frame`, `engine.php` from 5 closures to 2; byte-identical. See `docs/performance.md`.
-- Per-frame pickup-paint passes skip the common zero-pickup frame (#348); byte-identical.
+- Cast loop hoists per-column constants + inlines the cell probe (#347): -55%/-63%/-66% on `cast-frame` at 80/120/180 columns; byte-identical.
+- `cast-ray` + `los-clear?` DDA inline the cell probe + bind loop constants once (#354, #357): -49% on a 360-ray sweep, -42% on `mark-visible-cells`; byte-identical.
+- Dropped the per-column closure tax in the cast loop (#345): -39% on `cast-frame`, `engine.php` 5 closures to 2; byte-identical.
+- Pickup-paint passes skip the zero-pickup frame (#348); byte-identical.
 - Quad-detail floor cells skip re-quantise on cache hits (#346): `:quad` path only, off by default; byte-identical.
 
 ### Removed
 
-- Removed the verticality / tier system again (epic #375, the second build): reverts all the unreleased tier work - per-cell floor + ceiling heights `fz` / `cz` (#368/#385), player + enemy step-up physics (#371), multi-span cast risers + lowered-ceiling upper spans (#369/#386), tier render (riser faces, tier tops, upper wall slices, textured stone, eye-height floor recession) + cross-height sprite occlusion (#370/#394/#395/#404/#416b), floor-height hitscan anchoring + window-gap shot blocking (#396/#388), stair-routing enemy AI (#405), and the L2 staircase showcase (#372). The game is a single flat floor (z = 0) and full-height ceiling everywhere again; L2 is a flat demon chamber keeping its identity. The look up/down pitch aim (#243) and view / weapon bob (#411/#412/#413) stay (camera effects that need no height data, not verticality). Old tiered saves load fine (ignored height keys dropped on next rebuild); flat levels render byte-identical. See docs/adr/0001-remove-verticality-tier-system.md.
+- Removed the verticality / tier system again (epic #375, second build): reverts all unreleased tier work - per-cell floor + ceiling heights `fz` / `cz` (#368/#385), player + enemy step-up physics (#371), multi-span cast risers + lowered-ceiling upper spans (#369/#386), tier render (riser faces, tier tops, upper wall slices, textured stone, eye-height floor recession) + cross-height sprite occlusion (#370/#394/#395/#404/#416b), floor-height hitscan anchoring + window-gap shot blocking (#396/#388), stair-routing enemy AI (#405), and the L2 staircase showcase (#372). Game is a single flat floor (z = 0) with full-height ceilings again. Pitch aim (#243) and view / weapon bob (#411/#412/#413) stay (camera effects, not verticality). Old tiered saves still load (height keys dropped on rebuild); flat levels render byte-identical. See docs/adr/0001-remove-verticality-tier-system.md.
 
 ### Fixed
 
-- Enemy counts rebalanced by room size and threat weight (HP x per-hit damage): L5 no longer stacks five boss-tier cyberdemons (now 2 cyberdemons + imp fodder) that out-gunned the L10 boss, and the sparse large halls (L4, L6, L9) are populated so difficulty ramps up smoothly instead of spiking. Each level keeps its identity (headline monster, mix, chase speed, locks); L1 tutorial and L10 boss are untouched.
+- Enemy counts rebalanced by room size and threat weight (HP x per-hit damage): L5 no longer stacks five boss-tier cyberdemons (now 2 + imp fodder) that out-gunned the L10 boss; sparse large halls (L4, L6, L9) are populated so difficulty ramps smoothly. Each level keeps its identity; L1 tutorial and L10 boss untouched.
+- L2 demon room is no longer a bare box: it scatters random interior wall pillars (`:walls`) like every other room, so the fight has cover and the layout varies per run. Walls are pocket-sealed into one connected floor region and the single exit lands on a random reachable wall, so no run dead-ends.
 - Sub-pixel auto-off on macOS Terminal.app (#332): Apple Terminal draws the `▀` half-block with row seams, so startup defaults Sub-pixel off on `Apple_Terminal` until the player saves a choice; the in-game toggle and `PHEL_DOOM_SUBPIXEL=1` still force it on.
 
 ## [0.16.0] - 2026-06-27

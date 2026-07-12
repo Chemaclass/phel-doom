@@ -17,7 +17,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Changed
 
-- Faster mouse turn (#324): bumped `mouse-look-gain` 3.0 -> 5.0 so the mouse actually swings the view. A terminal maps the pointer to a coarse cell grid, so one full-width swipe is only ~80-180 pointer columns before the border stops reporting; at 3.0 a full swipe barely turned half-around, at 5.0 one swipe covers most of a turn. Sensitivity still scales on top; keyboard-only play is unchanged.
+- Mouse turn is faster + survives the pointer leaving the window (#324): bumped `mouse-look-gain` 3.0 -> 5.0 so one mouse swipe covers most of a turn (a terminal maps the pointer to a coarse ~80-180-column cell grid, so 3.0 barely turned half-around per swipe). The edge-pan is now **ungated**: it keeps turning every frame the pointer sits in the outer border band, read from the cached position, so a pointer pinned at (or gone past) a window edge keeps swinging the view instead of freezing - the aim stays usable since no terminal can lock/hide the OS pointer (#313). A pointer resting mid-screen still never drifts. Ghostty joins the startup notice that the visible arrow is cosmetic. Keyboard-only play is unchanged.
 
 ### Performance
 

@@ -17,7 +17,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Changed
 
-- Mouse now edge-pans the camera instead of motion-delta mouselook (#324): the `+` crosshair stays fixed at screen centre and the gun fires dead ahead, and pushing the mouse pointer into the outer screen band pans the camera so you can turn past the view (a pointer parked at an edge keeps panning). Sensitivity scales the edge-pan rate. Mouse-off / keyboard-only play is byte-identical.
+- Faster mouse turn (#324): bumped `mouse-look-gain` 3.0 -> 5.0 so the mouse actually swings the view. A terminal maps the pointer to a coarse cell grid, so one full-width swipe is only ~80-180 pointer columns before the border stops reporting; at 3.0 a full swipe barely turned half-around, at 5.0 one swipe covers most of a turn. Sensitivity still scales on top; keyboard-only play is unchanged.
 
 ### Performance
 

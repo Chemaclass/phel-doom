@@ -582,24 +582,27 @@
   (let [r (mouse-aim "\e[<0;60;15M" center-pos 0.0 look-dims)]
     (is (= true (:fire? r)) "click fires even at 0 sensitivity")))
 
-(deftest test-mouse-aim-edge-pan-needs-active-push
-  ;; A pointer RESTING in the edge band (no report this frame) adds NO spin,
-  ;; so an OS pointer that can't be hidden and sits near a border does NOT
-  ;; drift the camera on its own.
-  (is (= 0.0 (:yaw (mouse-aim "" right-edge-pos 1.0 look-dims))) "parked at right edge -> no spin")
-  (is (= 0.0 (:yaw (mouse-aim "" left-edge-pos 1.0 look-dims))) "parked at left edge -> no spin")
-  (is (= 0.0 (:pitch (mouse-aim "" top-edge-pos 1.0 look-dims))) "parked at top -> no spin")
-  (is (= 0.0 (:pitch (mouse-aim "" bottom-edge-pos 1.0 look-dims))) "parked at bottom -> no spin"))
+(deftest test-mouse-aim-edge-pan-holds-at-edge
+  ;; A pointer PINNED at (or gone past) a border keeps panning every frame
+  ;; from the CACHED position (ungated, #324) with no new report. A terminal
+  ;; cannot lock / confine / hide the pointer, so it drifts to the border and
+  ;; can leave the window; the held edge-pan is what keeps the aim from
+  ;; freezing there - the turn stays "embedded" even though the arrow can't.
+  (is (php/> (:yaw (mouse-aim "" right-edge-pos 1.0 look-dims)) 0.0) "held at right edge keeps panning right")
+  (is (php/< (:yaw (mouse-aim "" left-edge-pos 1.0 look-dims)) 0.0) "held at left edge keeps panning left")
+  (is (php/> (:pitch (mouse-aim "" top-edge-pos 1.0 look-dims)) 0.0) "held at top keeps looking up")
+  (is (php/< (:pitch (mouse-aim "" bottom-edge-pos 1.0 look-dims)) 0.0) "held at bottom keeps looking down"))
 
 (deftest test-mouse-aim-edge-pan-fires-on-push-into-band
-  ;; Actively pushing DEEPER into the band adds the edge spin ON TOP of the
-  ;; delta (so you can turn past the view); retreating toward centre adds
-  ;; none (clean delta back). 110 / 118 are both in the right band (~101+).
+  ;; Pushing DEEPER into the band adds the edge spin ON TOP of the delta (so
+  ;; you can turn past the view); retreating toward centre still nets a turn
+  ;; BACK (the negative delta dominates the small residual edge-pan until the
+  ;; pointer clears the band). 110 / 118 are both in the right band (~101+).
   (let [push-r     (:yaw (mouse-aim "\e[<35;118;15M" [110 15] 1.0 look-dims))
         delta-only (php/* mouse-look-gain (php// 8.0 70.0))]
     (is (php/> push-r delta-only) "pushing right into the band adds edge spin beyond the delta"))
   (let [retreat (:yaw (mouse-aim "\e[<35;110;15M" [118 15] 1.0 look-dims))]
-    (is (php/< retreat 0.0) "retreating from the right edge turns back cleanly (no positive edge)"))
+    (is (php/< retreat 0.0) "retreating from the right edge nets a turn back (delta dominates)"))
   ;; Vertical twin: pushing down into the bottom band looks further down than
   ;; the bare delta (24 is interior, 28 is in the band).
   (let [push-d     (:pitch (mouse-aim "\e[<35;60;28M" [60 24] 1.0 look-dims))

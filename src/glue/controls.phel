@@ -398,8 +398,14 @@
    This gain speeds the whole interior turn up to a brisk default; the
    Sensitivity slider then scales further on top (0.33x..3x), so the live
    turn rate is `mouse-look-gain * sensitivity` times 1:1. Tune this one
-   number for the default feel."
-  3.0)
+   number for the default feel.
+
+   5.0: a terminal maps the pointer to a coarse CELL grid (~80-180 cols
+   wide), so one full-width swipe is only that many pointer columns of
+   travel before the pointer hits the border and reporting stops. 3.0 read
+   too slow there (a full swipe barely turned half-around); 5.0 makes one
+   swipe cover most of a turn so the mouse actually swings the view."
+  5.0)
 
 (defn- look-yaw-per-cell
   "Radians of yaw per pointer COLUMN moved. The engine's per-column ray
@@ -529,9 +535,9 @@
                   shape whether the mouse is on or off
       :aim-row    nil (same fixed-centre crosshair)
       :yaw        signed radians to add to the player's :angle THIS frame:
-                  the pointer's horizontal travel since last frame (1:1
-                  mouselook) PLUS an edge-pan rate while the pointer is
-                  pushed deeper into the outer band
+                  the pointer's horizontal travel since last frame PLUS an
+                  edge-pan rate (every frame the pointer sits in the outer
+                  band, cached so it keeps turning with no new reports)
       :pitch      signed fraction to add to the player's :pitch (look up is
                   +, look down is -; clamp via state/clamp-pitch): the
                   vertical pointer travel plus the vertical edge-pan
@@ -544,19 +550,23 @@
 
    Mouselook (#324): the crosshair is FIXED at screen centre and the gun
    fires dead-ahead; the mouse turns the CAMERA. The per-frame pointer DELTA
-   yaws / pitches the view 1:1 (`look-yaw-per-cell` / `look-pitch-per-cell`
-   give one rendered column / row of turn per pointer column / row moved). A
-   terminal cannot warp the pointer (#313), so the OS clamps it at the window
-   border and stops reporting; an EDGE FALLBACK (`edge-pan-rate`) adds turn
-   ONLY while the pointer is actively pushed DEEPER into the outer band, so
-   you can keep turning past the view by pushing toward an edge while a
-   resting / retreating pointer never self-spins. Pitch is NEGATED: rows grow DOWNWARD, so
+   yaws / pitches the view (`look-yaw-per-cell` / `look-pitch-per-cell` scaled
+   by `mouse-look-gain`) so moving the mouse in the screen interior turns the
+   view. A terminal cannot lock, confine, or reliably hide the pointer (#313),
+   so it drifts to the window border and can leave the window (reporting then
+   stops, which would freeze a pure-delta turn). So the EDGE-PAN
+   (`edge-pan-rate`) fires EVERY frame from the CACHED position while the
+   pointer sits in the outer band - a pointer pinned at (or gone past) a
+   border keeps the camera turning with no new reports, so the aim never
+   freezes and stays 'embedded' even though the visible arrow cannot be. The
+   centre region (~70%) adds no edge-pan, so an unhideable arrow resting
+   mid-screen never self-drifts. Pitch is NEGATED: rows grow DOWNWARD, so
    pushing the pointer UP looks up (+pitch). First frame / post-resize
    `prev-pos` is nil, so there is no delta and the view holds steady until
    real motion arrives (no seed jolt).
 
    `sensitivity` is a positive scalar (1.0 = neutral) scaling the whole look
-   - both the 1:1 delta turn and the edge-pan rate (0 disables the look but
+   - both the delta turn and the edge-pan rate (0 disables the look but
    still lets a click fire). `dims` is the live `[rows cols]`; it supplies
    the axis lengths the delta scaling + edge band need. Omitting it (or nil)
    yields zero yaw/pitch - the look is inert without knowing the viewport -
@@ -595,20 +605,24 @@
                 ;; `moved?` is false exactly when cols/rows (or prev) is nil.
                 yaw-d      (if moved? (php/* (php/* dx (look-yaw-per-cell cols)) sensitivity) 0.0)
                 pitch-d    (if moved? (php/* (php/* (php/- 0 dy) (look-pitch-per-cell rows)) sensitivity) 0.0)
-                ;; Edge fallback: turning past the screen edge, but ONLY
-                ;; while the pointer is actively pushed DEEPER into the outer
-                ;; band (the delta points the same way as the band side, i.e.
-                ;; `dx * rate > 0`). A RESTING pointer (dx/dy 0) or one
-                ;; RETREATING toward centre adds no edge spin - so an OS
-                ;; pointer that can't be hidden (#295/#313) and happens to sit
-                ;; near a border does NOT drift the camera on its own. Push
-                ;; toward an edge to keep turning; stop to hold still. `x`/`y`
-                ;; are 1-based; shift to the 0-based axis edge-pan-rate
-                ;; measures from centre.
+                ;; Edge-pan: turn past the screen edge. A terminal cannot
+                ;; lock, confine, or reliably hide the OS pointer (#313), so
+                ;; the pointer WILL wander to the window border (and can leave
+                ;; the window - the terminal then stops reporting, freezing a
+                ;; pure-delta turn). The edge-pan fires EVERY frame from the
+                ;; cached position (UNGATED, #324): once the pointer sits in
+                ;; the outer band it keeps panning with no new reports, so a
+                ;; pointer pinned at (or gone past) a border keeps the camera
+                ;; turning instead of freezing - the aim stays "embedded"
+                ;; even though the visible arrow can't be. Only the outer
+                ;; ~30% band pans; a pointer resting in the centre region
+                ;; adds nothing (edge-pan-rate is 0 there), so an unhideable
+                ;; arrow parked mid-screen never self-drifts. `x`/`y` are
+                ;; 1-based; shift to the 0-based cell edge-pan-rate measures.
                 yaw-rate   (if (some? x) (edge-pan-rate (php/- x 1) cols mouse-yaw-rate-max) 0.0)
                 pitch-rate (if (some? y) (edge-pan-rate (php/- y 1) rows mouse-pitch-rate-max) 0.0)
-                yaw-e      (if (php/> (php/* dx yaw-rate) 0.0) (php/* yaw-rate sensitivity) 0.0)
-                pitch-e    (if (php/> (php/* dy pitch-rate) 0.0) (php/- 0 (php/* pitch-rate sensitivity)) 0.0)]
+                yaw-e      (php/* yaw-rate sensitivity)
+                pitch-e    (php/- 0 (php/* pitch-rate sensitivity))]
             {:aim-col    nil
              :aim-row    nil
              :yaw        (php/+ yaw-d yaw-e)

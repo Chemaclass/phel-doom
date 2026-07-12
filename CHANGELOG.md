@@ -15,6 +15,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Weapon idle bob + sway while walking (#412): the first-person gun dips on each footfall and sways side to side on the View bob walk cycle, reading as a held weapon. Reuses the **View bob** setting and `:bob-phase`; off by default, byte-identical at rest.
 - Weapon-fire extralight (#413): firing briefly brightens surrounding walls for a frame or two, a muzzle-light stand-in. Rides the near-death haze scalar as a brief negative shift, cannot overlap the red damage flash; not firing is byte-identical.
 
+### Changed
+
+- Mouse turn is faster + survives the pointer leaving the window (#324): bumped `mouse-look-gain` 3.0 -> 5.0 so one mouse swipe covers most of a turn (a terminal maps the pointer to a coarse ~80-180-column cell grid, so 3.0 barely turned half-around per swipe). The edge-pan is now **ungated**: it keeps turning every frame the pointer sits in the outer border band, read from the cached position, so a pointer pinned at (or gone past) a window edge keeps swinging the view instead of freezing - the aim stays usable since no terminal can lock/hide the OS pointer (#313). A pointer resting mid-screen still never drifts. Ghostty joins the startup notice that the visible arrow is cosmetic. Keyboard-only play is unchanged.
+
 ### Performance
 
 - Cast loop hoists per-column constants + inlines the cell probe (#347): -55%/-63%/-66% on `cast-frame` at 80/120/180 columns; byte-identical.

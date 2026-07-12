@@ -29,6 +29,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Fixed
 
+- L2 demon room is no longer a bare box: it now scatters random interior wall pillars like every other room (`:walls`), so the fight has cover and the layout varies per run. As on all levels, the scattered walls are pocket-sealed into one connected floor region and the single exit door is placed at a random reachable wall, so no run can dead-end and the way out is always reachable from spawn.
 - Enemy counts rebalanced by room size and threat weight (HP x per-hit damage): L5 no longer stacks five boss-tier cyberdemons (now 2 cyberdemons + imp fodder) that out-gunned the L10 boss, and the sparse large halls (L4, L6, L9) are populated so difficulty ramps up smoothly instead of spiking. Each level keeps its identity (headline monster, mix, chase speed, locks); L1 tutorial and L10 boss are untouched.
 - Sub-pixel auto-off on macOS Terminal.app (#332): Apple Terminal draws the `▀` half-block with row seams, so startup defaults Sub-pixel off on `Apple_Terminal` until the player saves a choice; the in-game toggle and `PHEL_DOOM_SUBPIXEL=1` still force it on.
 

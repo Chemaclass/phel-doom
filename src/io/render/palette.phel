@@ -6,40 +6,6 @@
 (def sky        "\e[48;5;236m ")
 (def floor      "\e[48;5;239m ")
 
-;; Tier surfaces: raised platforms + stair treads render as a PLAIN dark
-;; slate, distinct from the textured grey floor, with a darker step face.
-;; A flat uniform fill (vs the busy floor texture) plus the surface/face
-;; contrast makes elevation + individual stair edges read at a glance
-;; instead of blending into the floor.
-;; Riser (step-face) vertical gradient (#402). A flat dark constant made a
-;; raised tier read as a 2D sticker pasted over the world - no volume. The
-;; face now shades top-lit to shadow-base down its height. Warm real-stone
-;; hue (r>=g>=b) so it reads as rock/brick, kept off the neutral grey floor
-;; (which is r=g=b) for legibility. Index 0 is the lit leading edge (the
-;; step lip - the countable-stairs highlight of #375); index 5 is the
-;; shadowed base where the face meets the tread below. Its bright/dark ends
-;; bracket the tier-riser-tex stone the faces + perspective treads sample,
-;; so lip, face and tread all read as one lit stone material.
-(def tier-riser-ramp
-  ["\e[48;2;150;138;116m " ; 0 lit top / lip (bright warm stone)
-   "\e[48;2;120;110;92m "  ; 1
-   "\e[48;2;96;88;73m "    ; 2
-   "\e[48;2;74;68;56m "    ; 3
-   "\e[48;2;52;47;39m "    ; 4
-   "\e[48;2;34;30;26m "])  ; 5 shadow base
-(def tier-riser-steps 6)
-
-;; Tier-top recede gradient - the DEGENERATE fallback only (a tread at or
-;; above eye height, looking UP a tall tier, cannot be floor-cast). Normal
-;; treads perspective-cast the ground through tier-riser-tex (see main.phel);
-;; this flat warm-stone gradient just keeps such a tread reading as a tier
-;; rather than sky. Same warm-stone family as the riser ramp.
-(def tier-top-ramp
-  ["\e[48;2;108;99;83m " ; 0 near (just above the riser)
-   "\e[48;2;90;82;68m "  ; 1
-   "\e[48;2;74;67;56m "  ; 2
-   "\e[48;2;60;54;45m "]) ; 3 far (toward horizon)
-(def tier-top-steps 4)
 (def enemy-head "\e[48;5;196m ")
 (def enemy-body "\e[48;5;52m ")
 
@@ -487,49 +453,3 @@
     (if (php/<= dc dg)
       (php/+ 16 (php/* 36 ri) (php/* 6 gi) bi)
       (php/+ 232 gidx))))
-
-;; ---------------------------------------------------------------------
-;; Textured riser face, iteration 2 (#404). The first cut sampled the
-;; plain grey wall texture for step faces: it showed real material, but a
-;; step's mortar/stone pattern read as literally the same texture as the
-;; floor right below it - the #384 failure ("a tier that matches the
-;; floor is exactly what made platforms and stairs hard to parse"),
-;; just moved from the tier-TOP to the riser FACE. This table keeps the
-;; texture's PATTERN (so a face still shows material, not a flat sticker)
-;; but recolors every texel into a warm real-stone family (r>=g>=b), so a
-;; face reads as rock/brick, stays distinct from the neutral grey floor
-;; (r=g=b), and is no longer a flat gradient either. The same table skins
-;; the perspective tier-top treads (main.phel), so face + tread are one
-;; continuous stone material.
-;;
-;; Indexed `[level][texel]` like `tex-fade-table` (level 0-23, the same
-;; haze index `compute-wall-shades`/`compute-riser-shades` compute) so a
-;; farther riser still dims with distance; haze pulls toward the warm
-;; shadow-base (34,30,26) rather than black, so a maximally-hazed face
-;; lands in the `tier-riser-ramp` shadow family, not a jarring off-hue
-;; black. `texel` is a `wall-tex-px` code (232-255
-;; grayscale ramp only - `code-r` reads its luma directly since r=g=b
-;; there). Cells are truecolor strings (not 256-quantized), the same
-;; convention `tier-riser-ramp`/`tier-top-ramp` already use, so a face
-;; blends smoothly into the lit lip / tier-top plateau above it (same
-;; colour system, no seam between the two).
-(def tier-riser-tex
-  (let [t (php/array)]
-    (loop [lvl 0]
-      (when (php/< lvl 24)
-        (let [row  (php/array)
-              frac (php// lvl 23.0)]
-          (loop [c 0]
-            (when (php/< c 256)
-              (let [luma (php/aget code-r c)
-                    r0   (php/min 255.0 (php/+ 34.0 (php/* luma 0.72)))
-                    g0   (php/min 255.0 (php/+ 30.0 (php/* luma 0.68)))
-                    b0   (php/min 255.0 (php/+ 26.0 (php/* luma 0.62)))
-                    r    (php/intval (php/+ 34.0 (php/* (php/- r0 34.0) frac)))
-                    g    (php/intval (php/+ 30.0 (php/* (php/- g0 30.0) frac)))
-                    b    (php/intval (php/+ 26.0 (php/* (php/- b0 26.0) frac)))]
-                (php/aset row c (str "\e[48;2;" r ";" g ";" b "m ")))
-              (recur (php/+ c 1))))
-          (php/aset t lvl row))
-        (recur (php/+ lvl 1))))
-    t))

@@ -1,12 +1,10 @@
 (ns phel-doom-tests.core.projection-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.engine :refer [max-depth])
   (:require phel-doom.core.projection :refer [wall-px project-height pitch-rows pitch-cap
                                               bob-rows bob-cap
                                               weapon-bob-rows weapon-bob-cols
                                               weapon-bob-cap weapon-sway-cap
-                                              sprite-half-rows tier-top-row-dist
-                                              ceiling-top-row-dist floor-cast-num]))
+                                              sprite-half-rows]))
 
 ;; ---------------------------------------------------------------------
 ;; wall-px: the shared projection kernel. num / ((max 0.3 dist) * 2.0).
@@ -267,108 +265,3 @@
   ;; sprite (half-rows 15) still spans the crosshair (|12| <= 15).
   (is (php/<= (php/abs (pitch-rows 1.0 30))
               (sprite-half-rows 30 0.5 1.0))))
-
-;; ---------------------------------------------------------------------
-;; tier-top-row-dist: height-aware floor-cast row distance (issue #370).
-;; General inversion of project-height; build-floor-dperp's
-;; floor-cast-k / p is the special case eye-z=0.5, z=0.0.
-;; ---------------------------------------------------------------------
-
-(deftest tier-top-row-dist-flat-case-matches-floor-cast-k
-  ;; z=0, eye-z=0.5: floor-cast-k = 70 * 0.5 / 2 = 17.5, so p=5 gives 3.5 -
-  ;; the same numerator build-floor-dperp uses for the flat floor.
-  (is (= 3.5 (tier-top-row-dist 70.0 5.0 0.5 0.0))))
-
-(deftest tier-top-row-dist-raised-tier-is-nearer
-  ;; A higher floor (z closer to eye-z) needs a SMALLER perpendicular
-  ;; distance to land on the same screen row - the tier top is "closer"
-  ;; to the horizon than the ground at the same row.
-  (is (php/< (tier-top-row-dist 70.0 5.0 0.5 0.25)
-             (tier-top-row-dist 70.0 5.0 0.5 0.0))))
-
-(deftest tier-top-row-dist-reconciles-with-project-height
-  ;; Round-trip: project-height's row for a given dist/z/eye-z, fed back
-  ;; through tier-top-row-dist at the resulting p, returns the same dist.
-  (let [pd    70.0 vh    30 dist  4.0 eye-z 0.6 z     0.25
-        row   (project-height pd vh dist eye-z z)
-        p     (php/- row (php// vh 2.0))]
-    (is (< (php/abs (php/- dist (tier-top-row-dist pd p eye-z z))) 0.001))))
-
-(deftest tier-top-row-dist-at-or-above-horizon-is-max-depth
-  ;; p <= 0 means the row is at/above the horizon - never sampled as
-  ;; floor, mirrors build-floor-dperp's row >= vh/2 guard.
-  (is (= max-depth (tier-top-row-dist 70.0 0.0 0.5 0.0)))
-  (is (= max-depth (tier-top-row-dist 70.0 -2.0 0.5 0.0))))
-
-(deftest tier-top-row-dist-clamped-to-max-depth
-  ;; A tiny p (row hugging the horizon) would blow up toward infinity;
-  ;; clamp matches build-floor-dperp's ceiling.
-  (is (= max-depth (tier-top-row-dist 70.0 0.001 0.5 0.0))))
-
-;; ---------------------------------------------------------------------
-;; ceiling-top-row-dist: the ceiling mirror of tier-top-row-dist (#387).
-;; z > eye-z projects ABOVE the horizon, so p = row - horizon is negative.
-;; ---------------------------------------------------------------------
-
-(deftest ceiling-top-row-dist-flat-ceiling-case
-  ;; z=1, eye-z=0.5: (z-eye-z)*pd = 0.5*70 = 35; p=-5 gives 35/(5*2) = 3.5,
-  ;; the ceiling mirror of the flat floor's floor-cast-k / p.
-  (is (= 3.5 (ceiling-top-row-dist 70.0 -5.0 0.5 1.0))))
-
-(deftest ceiling-top-row-dist-lower-ceiling-is-nearer
-  ;; A lower ceiling (z closer to eye-z) needs a SMALLER perpendicular
-  ;; distance to land on the same screen row - it hangs "closer" to the
-  ;; horizon than the full-height ceiling at the same row.
-  (is (php/< (ceiling-top-row-dist 70.0 -5.0 0.5 0.75)
-             (ceiling-top-row-dist 70.0 -5.0 0.5 1.0))))
-
-(deftest ceiling-top-row-dist-reconciles-with-project-height
-  ;; Round-trip: project-height's row for a ceiling z/dist/eye-z, fed back
-  ;; through ceiling-top-row-dist at the resulting (negative) p, returns
-  ;; the same dist.
-  (let [pd    70.0 vh    30 dist  4.0 eye-z 0.5 z     0.75
-        row   (project-height pd vh dist eye-z z)
-        p     (php/- row (php// vh 2.0))]
-    (is (< (php/abs (php/- dist (ceiling-top-row-dist pd p eye-z z))) 0.001))))
-
-(deftest ceiling-top-row-dist-at-or-below-horizon-is-max-depth
-  ;; p >= 0 means the row is at/below the horizon - never sampled as
-  ;; ceiling, mirrors tier-top-row-dist's p <= 0 guard.
-  (is (= max-depth (ceiling-top-row-dist 70.0 0.0 0.5 1.0)))
-  (is (= max-depth (ceiling-top-row-dist 70.0 2.0 0.5 1.0))))
-
-(deftest ceiling-top-row-dist-clamped-to-max-depth
-  ;; A tiny |p| (row hugging the horizon) would blow up toward infinity;
-  ;; clamp matches tier-top-row-dist's ceiling.
-  (is (= max-depth (ceiling-top-row-dist 70.0 -0.001 0.5 1.0))))
-
-;; ---------------------------------------------------------------------
-;; floor-cast-num: eye-height-aware floor-cast numerator. dperp = num / p.
-;; z=0 is the base ground plane, z>0 is a raised tier top. The shipped
-;; flat floor baked eye=0.5,z=0 into the io-side floor-cast-k const; this
-;; is the pure, general source of that numerator.
-;; ---------------------------------------------------------------------
-
-(deftest floor-cast-num-flat-matches-floor-cast-k
-  ;; eye 0.5, z 0: 70 * 0.5 / 2 = 17.5 - the exact numerator the flat
-  ;; floor-cast-k const carries, so the eye-aware table stays byte-identical.
-  (is (= 17.5 (floor-cast-num 70.0 0.5 0.0))))
-
-(deftest floor-cast-num-eye-scales-linearly
-  ;; Doubling the eye height doubles the numerator: a floor row projects
-  ;; to twice the distance, so the ground recedes faster when you climb.
-  (is (= 35.0 (floor-cast-num 70.0 1.0 0.0))))
-
-(deftest floor-cast-num-uses-eye-minus-z
-  ;; Only the eye-above-surface gap matters: eye 0.75 over a z=0.25 tier
-  ;; gives the SAME 17.5 as eye 0.5 over z=0 - proves it is (eye-z - z),
-  ;; not eye-z alone (a non-round pair a broken eye-z-only impl fails).
-  (is (= 17.5 (floor-cast-num 70.0 0.75 0.25))))
-
-(deftest floor-cast-num-reconciles-tier-top-row-dist
-  ;; Contract: dperp = floor-cast-num / p equals the wired tier-top-row-dist
-  ;; at the same p (unclamped range), so the renderer's row-remap treads and
-  ;; the pure kernel agree to the bit. p=5 keeps it under max-depth.
-  (is (< (php/abs (php/- (php// (floor-cast-num 70.0 0.5 0.25) 5.0)
-                         (tier-top-row-dist 70.0 5.0 0.5 0.25)))
-         1e-9)))

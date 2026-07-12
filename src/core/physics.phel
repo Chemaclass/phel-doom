@@ -1,7 +1,7 @@
 (ns phel-doom.core.physics
   (:require phel-doom.core.rng :as rng)
   (:require phel-doom.core.state   :refer [max-stamina move-player turn-player clamp-pitch])
-  (:require phel-doom.core.map     :refer [missing-key-for passable? wall? floor-z fz-step headroom-clears?])
+  (:require phel-doom.core.map     :refer [missing-key-for passable? wall?])
   (:require phel-doom.core.weapons :refer [weapon-spec]))
 
 (def locked-bump-secs
@@ -80,43 +80,23 @@
    player can't stutter-sprint at empty."
   20.0)
 
-(defn- ^:pure step-clears? [fz-grid ^float player-z ^int ix ^int iy]
-  ;; Stepping DOWN any depth is always allowed (no gravity/fall in this
-  ;; phase - see physics-test's step-down case); only a RISE is gated,
-  ;; and only up to one fz-step (issue #371). That single rule is stairs.
-  (php/<= (php/- (floor-z fz-grid ix iy) player-z) fz-step))
-
 (defn try-move
   "Translate the player by (dx, dy) unless the destination cell holds a
-   wall, a locked door without the matching keycard, a floor-height rise
-   bigger than one fz-step (issue #371 - a taller rise blocks exactly like
-   a wall), or a window-gap lintel whose vertical opening (`ceiling-z -
-   floor-z`) is under `player-height` (issue #388 - too low to walk under,
-   though still see-through). An allowed move snaps the player's :z to the
-   destination cell's fz, whether stepping up (stairs) or down (no
-   lerp/fall - that is later polish, not built here). Flat-ceiling worlds
-   keep every opening at >= player-height so both height gates are no-ops
-   there (byte-identical to pre-#371/#388 behaviour).
+   wall or a locked door without the matching keycard.
    When a bump is caused specifically by a missing keycard, arm
    :locked-door-bump-secs + record the colour so the render layer can
    paint 'NEED <COLOUR> KEY' over the 3D view, and enqueue a muted `:click`
    deny cue on the :sfx queue. Wall bumps are silent - only the
    locked-door case is informational."
   [world ^float dx ^float dy]
-  (let [{:keys [grid fz-grid cz-grid player held-keys]} world
-        nx                                              (+ (:x player) dx)
-        ny                                              (+ (:y player) dy)
-        ix                                              (php/intval nx)
-        iy                                              (php/intval ny)]
+  (let [{:keys [grid player held-keys]} world
+        nx                              (+ (:x player) dx)
+        ny                              (+ (:y player) dy)
+        ix                              (php/intval nx)
+        iy                              (php/intval ny)]
     (cond
-      (and (passable? grid held-keys ix iy)
-           (step-clears? fz-grid (or (:z player) 0.0) ix iy)
-           ;; Window-gap headroom (#388): a lowered lintel that pinches
-           ;; the opening below player-height blocks walking (but stays
-           ;; see-through). No-op on flat-ceiling levels (clearance >= 1
-           ;; minus the tier fz, always >= player-height for shipped fz).
-           (headroom-clears? fz-grid cz-grid ix iy))
-      (assoc-in (move-player world dx dy) [:player :z] (floor-z fz-grid ix iy))
+      (passable? grid held-keys ix iy)
+      (move-player world dx dy)
 
       :else
       (let [need (missing-key-for grid held-keys ix iy)]

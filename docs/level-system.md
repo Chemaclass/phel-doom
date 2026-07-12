@@ -7,7 +7,7 @@
 | # | Name | Type | Enemies |
 |---|---|---|---|
 | 1 | imps | random | 4 imps |
-| 2 | demons | staircase showcase (variable-height) | 3 demons + 1 imp + 3 more fixed on the stairs (2 demons + 1 imp) + shotgun |
+| 2 | demons | hand-authored flat chamber | 5 demons + 2 imps + shotgun |
 | 3 | cacodemons | hand-authored flat chamber | 3 cacos + 2 demons + 2 imps + chaingun |
 | 4 | barons | hand-authored flat chamber + blue lock | 3 barons + 4 demons + 2 imps |
 | 5 | cyberdemons | hand-authored flat chamber + red lock | 2 cyberdemons + 4 imps |
@@ -87,14 +87,10 @@ When `:enemies` is a vector, each spec spawns its own count + HP and the enemy c
 | `@` | player spawn |
 | `S` | secret wall (press F to reveal) |
 | `T` | switch (toggles target cells via `:switches` config) |
-| `1` / `2` / `3` | floor raised to fz 0.25 / 0.5 / 0.75 (issue #368; casting, rendering, and physics honor fz per epic #375) |
 
 `:layout` supplies GEOMETRY + spawn (+ secrets / switches) only; it authors neither the interior walls nor the exit. `map/scatter-walls` seeds `:walls` random interior wall blobs into each hand-authored room (skipped on `:switches` levels) and seals any cut-off pocket so the floor stays connected; `map/place-exit` then drops exactly one exit door at a random reachable wall - interior pillar or border edge - on EVERY level, and `lock-the-door` applies the `:door-lock`. So the room disposition AND the way out are randomised per run, and finding the exit is part of the game. Enemy spawn still applies.
 
 Switches: `:switches [{:at [cx cy] :targets [[tx ty] ...]}]`. F near `:at` flips targets wall↔floor.
-
-Floor heights: `build-grid` threads the layout's `:fz-grid` into `new-world` (procgen levels pass nil, which defaults to a flat all-zero grid). Omitting digit chars keeps a level flat. L2 uses a 3-tread staircase (fz 0.25, 0.5, 0.75) climbing north from the spawn to a raised platform, showcasing the step-up mechanic. L2 also pins `:enemy-spawns` (a per-level vector of `{:type :x :y [:lives]}`) to stand two demons on the 0.75 platform and an imp on the 0.5 tread, so the enemy tier feet-anchor (#395) and cross-tier sprite occlusion (#394) are visible in play, not just in tests. `build-world` builds these fixed spawns via `new-enemy` (default `:aware`, same depth-scaled `:aggression` as the random mix) and merges them into the random roster before the tag pipeline; render reads each one's cell `fz` on the fly, so no per-enemy `:z` is stored and they descend the stairs at the player. L2 also pins `:spawn-angle` (radians; `-pi/2` = face north) so the player spawns looking up the staircase and the showcase lands on entry without turning; the random spawn-facing draw is still consumed, so overriding it leaves the rest of the level's RNG stream (walls/enemies/pickups) unchanged. Levels without `:spawn-angle` keep the random facing.
-
 
 ### Adding a new room
 

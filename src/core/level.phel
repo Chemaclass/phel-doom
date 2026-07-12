@@ -2,7 +2,7 @@
   (:require phel-doom.core.rng :as rng)
   (:require phel-doom.core.state      :refer [max-backpacks max-lives new-player new-world with-enemies])
   (:require phel-doom.core.map        :refer [cell-door cell-door-blue cell-door-boss cell-door-red cell-door-yellow count-secrets parse-layout place-exit random-grid random-spawn scatter-walls seed-secrets])
-  (:require phel-doom.core.enemy      :refer [default-wander-fraction new-enemy promote-wanderers spawn-enemies spawn-enemies-mixed])
+  (:require phel-doom.core.enemy      :refer [default-wander-fraction promote-wanderers spawn-enemies spawn-enemies-mixed])
   (:require phel-doom.core.enemy-ai   :refer [aggression-for])
   (:require phel-doom.core.enemies    :refer [enemy-types type-spec default-lives-for])
   (:require phel-doom.core.difficulty :refer [normalise scale-cfg]))
@@ -34,28 +34,20 @@
 ;; ---------------------------------------------------------------------
 
 (def showcase-layout
-  "24x18 staircase showcase chamber for L2 (issue #372, epic #375). Spawn
-   `@` is south-of-centre (cell 11, row 15 -> centre 11.5, 15.5). North of
-   the spawn a 3-tread staircase climbs the centre columns (8-13): row 10
-   `1` = fz 0.25, row 9 `2` = 0.5, then rows 8-4 are one contiguous `3`
-   block at fz 0.75 - the top tread merges straight into the raised
-   platform (no riser between them). Walking north snaps the player's :z
-   up one fz-step per tread (physics/step-clears?, #371); the stair reads
-   from below at the spawn and from above on the platform. Open flanks let
-   the player walk around it. The exit door is dropped at a random
-   reachable wall by place-exit (not authored). The L2 entry omits `:walls`
-   so scatter-walls can't chew the tread cells."
+  "Flat 24x18 chamber for the L2 demon room. Spawn `@` is south-of-centre
+   (cell 11, row 15 -> centre 11.5, 15.5). The exit door is dropped at a
+   random reachable wall by place-exit (not authored)."
   ["########################"
    "#......................#"
    "#......................#"
    "#......................#"
-   "#.......333333.........#"
-   "#.......333333.........#"
-   "#.......333333.........#"
-   "#.......333333.........#"
-   "#.......333333.........#"
-   "#.......222222.........#"
-   "#.......111111.........#"
+   "#......................#"
+   "#......................#"
+   "#......................#"
+   "#......................#"
+   "#......................#"
+   "#......................#"
+   "#......................#"
    "#......................#"
    "#......................#"
    "#......................#"
@@ -294,29 +286,10 @@
   [{:size [22 16] :walls 12 :enemy :imp   :enemies 4 :chase 0.8 :name "imps"}
    ;; L2 — the demon room. A flat 24x18 chamber; demons + an imp escort
    ;; patrol the floor. Keeps the L2 identity (name, demon+imp mix, chase
-   ;; 1.0, shotgun drop).
+   ;; 1.0, shotgun drop). A flat 24x18 chamber.
    {:enemy :demon :chase 1.0 :name "demons"
-    ;; Face north up the staircase on entry (angle -pi/2 = -y) so the tier
-    ;; showcase - enemies standing on the platform/treads - lands in view
-    ;; without the player having to turn (issue #375). Other levels keep
-    ;; the random facing.
-    :spawn-angle (php/* -0.5 php/M_PI)
-    ;; Random roster trimmed by the 3 authored staircase spawns below so the
-    ;; L2 total stays 7 (matching neighbour levels) rather than 10.
-    :enemies [{:type :demon :count 3}
-              {:type :imp   :count 1}]
-    ;; Fixed spawns ON the staircase (issue #375 showcase): two demons on
-    ;; the raised 0.75 platform (rows 4-8, cols 8-13) and an imp on the
-    ;; fz-0.5 middle tread (row 9). The player spawns south (11.5, 15.5)
-    ;; looking north up the stairs, so on entry these read STANDING on the
-    ;; tiers (feet-anchor #395) with the lower imp partly hidden behind the
-    ;; nearer riser (cross-tier occlusion #394); then they chase down the
-    ;; treads. Cell centres = (col+0.5, row+0.5).
-    :enemy-spawns [{:type :demon :x 10.5 :y 6.5}
-                   {:type :demon :x 12.5 :y 6.5}
-                   {:type :imp   :x 11.5 :y 9.5}]
-    ;; No :walls: scatter-walls would drop random pillars onto the
-    ;; staircase treads (#372). The layout is the whole room.
+    :enemies [{:type :demon :count 5}
+              {:type :imp   :count 2}]
     :layout showcase-layout}
    ;; L3 introduces the cacodemon shooter; a 50/50 melee mix (demon +
    ;; imp callback) pressures the player up close while they learn to
@@ -731,7 +704,7 @@
   (spawn-unique-pickups grid n))
 
 (defn- build-grid
-  "Build `{:grid :spawn :fz-grid :cz-grid}`. Geometry + spawn come from a hand-authored
+  "Build `{:grid :spawn}`. Geometry + spawn come from a hand-authored
    `:layout` (parsed via map/parse-layout) or the procedural `random-grid`.
    For varied rooms, `:walls` random interior wall blobs are scattered in:
    procgen gets them from `random-grid`; a hand-authored room gets them via
@@ -740,7 +713,7 @@
    hand-placed). `map/place-exit` then drops ONE random reachable exit door
    on any wall, locked per `:door-lock` - the way out differs every run."
   [cfg]
-  (let [{:keys [grid spawn fz-grid cz-grid]}
+  (let [{:keys [grid spawn]}
         (if (:layout cfg)
           (or (parse-layout (:layout cfg))
               (throw (php/new php/InvalidArgumentException
@@ -749,17 +722,11 @@
           (let [[w h] (:size cfg)
                 g     (random-grid w h (:walls cfg))]
             {:grid g :spawn (random-spawn g)}))
-        varied                               (if (and (:layout cfg) (not (:switches cfg)) (:walls cfg))
-                                               (scatter-walls grid spawn (:walls cfg))
-                                               grid)]
-    ;; scatter-walls / place-exit mutate geometry only; a wall dropped on a
-    ;; raised cell keeps its fz (harmless - walls never read floor height).
-    ;; Procgen path carries nil fz-grid / cz-grid; new-world defaults them
-    ;; to flat floor + full-height ceiling.
-    {:grid    (lock-the-door (place-exit varied spawn) (:door-lock cfg))
-     :spawn   spawn
-     :fz-grid fz-grid
-     :cz-grid cz-grid}))
+        varied               (if (and (:layout cfg) (not (:switches cfg)) (:walls cfg))
+                               (scatter-walls grid spawn (:walls cfg))
+                               grid)]
+    {:grid  (lock-the-door (place-exit varied spawn) (:door-lock cfg))
+     :spawn spawn}))
 
 (defn- normalise-enemies
   "Coerce the level's `:enemies` field into a vector of mixed specs
@@ -825,40 +792,10 @@
                        (:grid built))
          [px py]     spawn
          specs       (normalise-enemies cfg)
-         ;; Spawn facing: random by default, but a level may pin
-         ;; `:spawn-angle` (radians) so a hand-authored showcase faces its
-         ;; feature on entry - L2 looks north up the staircase. The random
-         ;; draw is consumed EITHER way, so overriding the angle does not
-         ;; shift the rest of the level's RNG stream (walls/enemies/pickups
-         ;; stay byte-identical to a random-facing build).
          rand-angle  (php/* (rng/int! 360) (php// php/M_PI 180.0))
-         angle       (or (:spawn-angle cfg) rand-angle)
-         world       (new-world grid
-                                (new-player px py angle)
-                                (:fz-grid built)
-                                (:cz-grid built))
-         random-foes (spawn-enemies-mixed grid specs
+         world       (new-world grid (new-player px py rand-angle))
+         spawned     (spawn-enemies-mixed grid specs
                                           enemy-min-spawn-dist px py)
-         ;; Authored fixed-position spawns (issue #375 showcase): a level
-         ;; may pin `:enemy-spawns [{:type kw :x fx :y fy [:lives n]}]` to
-         ;; stand monsters on specific cells - used by L2 to put demons on
-         ;; the raised staircase platform + treads so the tier feet-anchor
-         ;; (#395) and cross-tier sprite occlusion (#394) are visible in
-         ;; play, not just in tests. Render reads each one's cell `fz` on
-         ;; the fly, so no per-enemy `:z` is stored. Merged into the roster
-         ;; BEFORE the tagging pipeline below so they get the SAME nightmare
-         ;; stamp, aggression, and wander treatment as the random mob (a
-         ;; separate append silently skipped the nightmare respawn). They
-         ;; carry no `:state`, so the AI defaults them to :aware (chase),
-         ;; and any that promote-wanderers leaves dormant simply hold their
-         ;; tier until the player's LOS wakes them.
-         authored    (apply vector
-                            (map (fn [s]
-                                   (new-enemy (:x s) (:y s)
-                                              (or (:lives s) (default-lives-for (:type s)))
-                                              (:type s)))
-                                 (or (:enemy-spawns cfg) [])))
-         spawned     (into random-foes authored)
          ;; Nightmare: stamp every spawned enemy so respawn picks the
          ;; shorter delay range AND the :max-concurrent cap is bypassed
          ;; (see core/enemy.phel/tick-one). Other difficulties get no

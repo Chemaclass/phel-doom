@@ -109,66 +109,6 @@
         cell-wall
         (or (get row x) cell-wall)))))
 
-(def fz-step
-  "Floor-height quantum. All per-cell floor heights (fz) snap to
-   multiples of this step; a staircase is a run of cells rising one
-   step at a time. The physics step-up rule (issue #371) will allow
-   climbing exactly one step."
-  0.25)
-
-(defn ^:pure quantize-fz
-  "Snap a raw floor height to the nearest fz-step multiple. Loaders
-   call this so stored height data is always clean and lookups stay
-   bare reads."
-  [z]
-  (php/* fz-step (php/round (php// z fz-step))))
-
-(defn ^:pure floor-z
-  "Read the floor height at integer (x, y) from an fz-grid.
-   Out-of-bounds reads (and a nil grid) return 0.0 - ground level -
-   so consumers never see nil."
-  [fz-grid x y]
-  (if (or (nil? fz-grid) (< x 0) (< y 0))
-    0.0
-    (let [row (get fz-grid y)]
-      (if (nil? row)
-        0.0
-        (or (get row x) 0.0)))))
-
-(defn ^:pure ceiling-z
-  "Read the ceiling height at integer (x, y) from a cz-grid (issue #385,
-   epic #375 Phase 3 - the mirror of `floor-z`). Out-of-bounds reads and
-   a nil grid return 1.0 - a full-height ceiling - so consumers never see
-   nil. A lowered cell (`cz < 1.0`) drops the ceiling; a cell with raised
-   `fz` and lowered `cz` is a window gap."
-  [cz-grid x y]
-  (if (or (nil? cz-grid) (< x 0) (< y 0))
-    1.0
-    (let [row (get cz-grid y)]
-      (if (nil? row)
-        1.0
-        (or (get row x) 1.0)))))
-
-(def player-height
-  "Minimum vertical clearance (`ceiling-z - floor-z`) a cell must offer
-   for the player to walk into it (issue #388, epic #375 Phase 3). Equals
-   one `fz-step`, so every flat-ceiling level stays walkable - even a
-   raised fz-0.75 tier under a full cz-1.0 ceiling has clearance 0.25 and
-   passes - and behaviour there is unchanged. Only a genuinely lowered
-   ceiling (a window-gap lintel) can pinch a cell's opening below this and
-   block walking while the gap stays see-through (the renderer still
-   paints the upper wall slice, #387)."
-  fz-step)
-
-(defn ^:pure headroom-clears?
-  "True when cell (x, y)'s vertical opening (`ceiling-z - floor-z`) is at
-   least `player-height` - the player fits under the ceiling (issue #388).
-   A lowered lintel that pinches the opening below `player-height` blocks
-   walking. Full-height ceilings on any shipped (<= fz-0.75) tier always
-   clear, so this gate is a no-op on flat-ceiling levels."
-  [fz-grid cz-grid x y]
-  (php/>= (php/- (ceiling-z cz-grid x y) (floor-z fz-grid x y)) player-height))
-
 (defn ^:pure wall?
   "True when (x, y) blocks player movement. Solid walls, unrevealed
    secrets, AND switch cells (either state) qualify; doors are
@@ -536,83 +476,51 @@
 ;;   'Y' yellow-locked door
 ;;   'X' boss-locked door (unlocks when boss is killed)
 ;;   '@' floor + records [x y] as the player spawn (cell centre)
-;;   '1' '2' '3' floor raised to fz 0.25 / 0.5 / 0.75 (issue #368)
-;;   'a' 'b' 'c' ceiling lowered to cz 0.75 / 0.5 / 0.25 (issue #385)
 ;;
-;; parse-layout returns {:grid <vec-of-vec> :spawn [x y] :fz-grid
-;; <vec-of-vec> :cz-grid <vec-of-vec>} when the layout is well-formed,
-;; nil when no '@' is found. Used by level.phel when a level entry
-;; carries :layout to bypass the random-grid path.
+;; parse-layout returns {:grid <vec-of-vec> :spawn [x y]} when the layout
+;; is well-formed, nil when no '@' is found. Used by level.phel when a
+;; level entry carries :layout to bypass the random-grid path.
 ;; ---------------------------------------------------------------------
 
 ;; Layout ASCII -> cell value. Cell values are GEOMETRY ONLY (walls, floor,
-;; spawn, secrets, switches); digit chars parse as plain floor here, their
-;; height lands separately in the fz-grid (layout-char->fz below). The exit
-;; door is dropped at a random reachable wall by place-exit (never
-;; authored), so there is no door char here.
+;; spawn, secrets, switches). The exit door is dropped at a random reachable
+;; wall by place-exit (never authored), so there is no door char here.
 (def ^:private layout-char->cell
   {"#" cell-wall
    "." cell-floor
    "@" cell-floor
    "S" cell-secret
-   "T" cell-switch-off
-   "1" cell-floor
-   "2" cell-floor
-   "3" cell-floor
-   "a" cell-floor
-   "b" cell-floor
-   "c" cell-floor})
-
-;; Layout ASCII -> floor height. Multiples of fz-step by construction,
-;; so parse-row needs no quantize pass.
-(def ^:private layout-char->fz
-  {"1" 0.25
-   "2" 0.5
-   "3" 0.75})
-
-;; Layout ASCII -> ceiling height (issue #385). Lowercase a/b/c drop the
-;; ceiling in fz-step multiples; every other cell keeps the 1.0 default.
-(def ^:private layout-char->cz
-  {"a" 0.75
-   "b" 0.5
-   "c" 0.25})
+   "T" cell-switch-off})
 
 (defn- parse-row
-  "Convert one layout string into [row-vec fz-row-vec cz-row-vec
-   maybe-spawn-x]. Returns nil for spawn-x when the row doesn't contain
-   '@'. Unknown chars fall back to flat floor (fz 0.0) + full ceiling
-   (cz 1.0) so a typo doesn't crash."
+  "Convert one layout string into [row-vec maybe-spawn-x]. Returns nil for
+   spawn-x when the row doesn't contain '@'. Unknown chars fall back to
+   floor so a typo doesn't crash."
   [s y]
   (let [w (php/strlen s)]
     (loop [x       0
            row     []
-           fz-row  []
-           cz-row  []
            spawn-x nil]
       (if (php/>= x w)
-        [row fz-row cz-row spawn-x]
+        [row spawn-x]
         (let [ch    (php/substr s x 1)
               cell  (or (get layout-char->cell ch) cell-floor)
-              fz    (or (get layout-char->fz ch) 0.0)
-              cz    (or (get layout-char->cz ch) 1.0)
               spawn (if (= ch "@") x spawn-x)]
-          (recur (php/+ x 1) (conj row cell) (conj fz-row fz) (conj cz-row cz) spawn))))))
+          (recur (php/+ x 1) (conj row cell) spawn))))))
 
 (defn parse-layout
-  "Parse a hand-authored ASCII grid into `{:grid :spawn :fz-grid :cz-grid}`.
+  "Parse a hand-authored ASCII grid into `{:grid :spawn}`.
    Returns nil when the layout has no '@' (no player spawn)."
   [rows]
   (let [h (count rows)]
     (loop [y     0
            grid  []
-           fz    []
-           cz    []
            spawn nil]
       (if (php/>= y h)
         (when (some? spawn)
-          {:grid grid :spawn spawn :fz-grid fz :cz-grid cz})
-        (let [[row fz-row cz-row sx] (parse-row (get rows y) y)
-              spawn'                 (if (and (nil? spawn) (some? sx))
-                                       [(+ 0.5 sx) (+ 0.5 y)]
-                                       spawn)]
-          (recur (php/+ y 1) (conj grid row) (conj fz fz-row) (conj cz cz-row) spawn'))))))
+          {:grid grid :spawn spawn})
+        (let [[row sx] (parse-row (get rows y) y)
+              spawn'   (if (and (nil? spawn) (some? sx))
+                         [(+ 0.5 sx) (+ 0.5 y)]
+                         spawn)]
+          (recur (php/+ y 1) (conj grid row) spawn'))))))

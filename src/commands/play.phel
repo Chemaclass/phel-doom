@@ -82,8 +82,13 @@
    `stty size` (~1ms + jitter), so polling every frame on a 5ms budget
    is most of the per-frame IO cost yet a resize is a human-timescale
    event. Sampling every Nth frame keeps resize handling responsive
-   (re-drawn within ~Nth of a second) while dropping ~5/6 of the forks."
-  6)
+   (re-drawn within ~Nth of a second) while dropping most of the forks.
+   12 at the ~120fps game-loop cap matches the same ~100ms wall-clock
+   cadence the old value of 6 held at ~60fps. The menu / end-screen
+   loops share this constant but still run at menu-frame-us (~60fps),
+   so THEIR resize latency doubled to ~200ms - acceptable, a resize is
+   a human-timescale event and menus are static."
+  12)
 
 (defn poll-size?
   "True when frame `frame` should re-sample `term-size`: the very first
@@ -98,10 +103,11 @@
 (def rearm-mouse-frames
   "How often the play loop re-asserts the xterm mouse-reporting escapes
    (#288). A focus loss / regain can silently drop mouse tracking; this
-   re-arm catches that without the player noticing. ~1s at 60fps is far
-   below a human-noticeable gap yet emits only one short idempotent escape
-   burst, so the frame budget is untouched."
-  60)
+   re-arm catches that without the player noticing. ~1s at the ~120fps cap
+   (120, matching the same wall-clock cadence the old value of 60 held at
+   ~60fps) is far below a human-noticeable gap yet emits only one short
+   idempotent escape burst, so the frame budget is untouched."
+  120)
 
 (defn rearm-mouse?
   "True when frame `frame` should re-assert the mouse-reporting escapes:
@@ -674,8 +680,8 @@
 (defn- adaptive-sleep!
   "Yield the CPU for whatever's left of the per-iteration budget,
    never less than min-yield-us. Budget comes from target-frame-us,
-   a uniform ~60fps target at every terminal size: when render fits
-   the budget the loop sleeps the remainder (steady 60fps); when a
+   a uniform ~120fps target at every terminal size: when render fits
+   the budget the loop sleeps the remainder (steady 120fps); when a
    heavy big-screen frame overruns, `remaining` goes negative and the
    sleep floors at min-yield-us, so framerate degrades smoothly toward
    render-native instead of snapping to a 30fps ceiling.
@@ -833,11 +839,14 @@
                 ;; re-baselines (zero delta) instead of jolting the view from
                 ;; a stale or coordinate-shifted position. The live `[rows
                 ;; cols]` gives mouse-aim the axis lengths the delta scaling +
-                ;; edge band need.
+                ;; edge band need; `(ms / 1000.0)` is this frame's dt in
+                ;; seconds, so the edge-pan rate (per-second) stays frame-
+                ;; rate independent at any cap.
                 mouse-on? (boolean (:mouse (:settings world)))
                 mpos      (if (not= [rows cols] dims) nil prev-mpos)
                 look      (mouse-aim keys mpos
                                      (mouse-sensitivity (:settings world))
+                                     (php// ms 1000.0)
                                      [rows cols])
                 edges     (assoc edges0
                                  :fire      (or (:fire edges0) (:fire? look))

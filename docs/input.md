@@ -39,7 +39,7 @@ Each byte refreshes its slot's counter on `world[:moves]`. Physics only reads th
 
 ## Look up/down (pitch)
 
-Hold **↑** to look up, **↓** to look down. The arrow keys form a camera cluster (←/→ turn, ↑/↓ look) while WASD handles movement. They refresh the `:pitch-up` / `:pitch-down` move slots; physics shears the player's `:pitch` fraction (clamped to [-1, 1], no wrap) via the same counter path as turning. `pitch-hold-frames` = 3 (~50ms), so the camera halts quickly on release like turning rather than gliding. The up/down arrows reach pitch on every encoding: legacy CSI/SS3 (`\e[A`/`\eOA`, normalised to `^`/`_`) and kitty-enhanced (`\e[1;..A`/`B`). The shear is a pure render offset (see [raycaster.md](raycaster.md)); a level gaze (`:pitch` 0) renders identically to no pitch at all. Pitch also drives aim: hitscan is vertical-aware (issue #243), so a shot has to land on the enemy's drawn sprite and aiming at the floor / sky misses (see the vertical aim gate in [combat.md](combat.md)).
+Hold **↑** to look up, **↓** to look down. The arrow keys form a camera cluster (←/→ turn, ↑/↓ look) while WASD handles movement. They refresh the `:pitch-up` / `:pitch-down` move slots; physics shears the player's `:pitch` fraction (clamped to [-1, 1], no wrap) via the same counter path as turning. `pitch-hold-secs` = 0.05 (~50ms, frame-rate independent), so the camera halts quickly on release like turning rather than gliding. The up/down arrows reach pitch on every encoding: legacy CSI/SS3 (`\e[A`/`\eOA`, normalised to `^`/`_`) and kitty-enhanced (`\e[1;..A`/`B`). The shear is a pure render offset (see [raycaster.md](raycaster.md)); a level gaze (`:pitch` 0) renders identically to no pitch at all. Pitch also drives aim: hitscan is vertical-aware (issue #243), so a shot has to land on the enemy's drawn sprite and aiming at the floor / sky misses (see the vertical aim gate in [combat.md](combat.md)).
 
 ## Mouse look (issue #246)
 
@@ -75,13 +75,13 @@ A terminal **cannot lock, warp, or hide the pointer** on most terminals (iTerm2 
 ```
 delta-col = pointer_col - prev-pointer_col    ; columns moved since last frame
 delta-row = pointer_row - prev-pointer_row    ; rows moved since last frame
-yaw   = ( mouse-look-gain * delta-col / fov-proj-dist(cols)      + edge-pan-rate(pointer_col, cols, mouse-yaw-rate-max) )   * sensitivity
-pitch = ( -mouse-look-gain * delta-row / (pitch-cap * rows)      - edge-pan-rate(pointer_row, rows, mouse-pitch-rate-max) ) * sensitivity
+yaw   = ( mouse-look-gain * delta-col / fov-proj-dist(cols)      + edge-pan-rate(pointer_col, cols, mouse-yaw-rate-max) * dt )   * sensitivity
+pitch = ( -mouse-look-gain * delta-row / (pitch-cap * rows)      - edge-pan-rate(pointer_row, rows, mouse-pitch-rate-max) * dt ) * sensitivity
 ```
 
-- **Delta-driven turn (interior region).** When the pointer moves N columns in the interior (not at the window edge), the yaw turn is `mouse-look-gain * delta-col / fov-proj-dist(cols)`. The `delta-col / fov-proj-dist(cols)` part is the raw ray-per-column scale (one rendered column of turn per pointer column); a bare 1:1 reads SLOW for an FPS (a terminal maps the pointer to a coarse cell grid, so one full-width swipe is only ~80-180 pointer columns before the border stops reporting), so `mouse-look-gain` (5.0) speeds the whole interior turn up so one swipe covers most of a turn. Same for pitch rows: `mouse-look-gain * delta-row / (pitch-cap * rows)`. Sensitivity scales both further (0.33x..3x), so the live rate is `mouse-look-gain * sensitivity` times 1:1.
+- **Delta-driven turn (interior region).** When the pointer moves N columns in the interior (not at the window edge), the yaw turn is `mouse-look-gain * delta-col / fov-proj-dist(cols)`. The `delta-col / fov-proj-dist(cols)` part is the raw ray-per-column scale (one rendered column of turn per pointer column); a bare 1:1 reads SLOW for an FPS (a terminal maps the pointer to a coarse cell grid, so one full-width swipe is only ~80-180 pointer columns before the border stops reporting), so `mouse-look-gain` (5.0) speeds the whole interior turn up so one swipe covers most of a turn. Same for pitch rows: `mouse-look-gain * delta-row / (pitch-cap * rows)`. Sensitivity scales both further (0.33x..3x), so the live rate is `mouse-look-gain * sensitivity` times 1:1. This path is NOT scaled by `dt` - one pointer report already IS one frame's worth of motion, however long that frame took.
 - **`edge-pan-rate(p, len, max-rate)`** for a pointer cell `p` in the edge band (`mouse-edge-band-frac` = 30% of each half-axis): the outer band produces an **ease-in** ramp (the fraction into the band, squared - gentle at the band lip) reaching `max-rate` at the far edge cell, signed by which side of centre `p` is on. Returns 0 in the interior region. This ramp fires **every frame** the pointer sits in the outer band, read from the **cached** position, so it sustains the turn even when no new report arrives (the pointer pinned at, or gone past, the window border).
-- **Rate constants** (per frame at sensitivity 1.0): `mouse-yaw-rate-max` 0.16 rad/frame at the far left/right edge (a full 360 in ~0.65s held there), `mouse-pitch-rate-max` 0.06 pitch-fraction/frame at the top/bottom edge. Pitch is the clamped [-1, 1] fraction via `state/clamp-pitch`, so holding the pointer at the top ramps the view fully up (then saturates).
+- **Rate constants** (per SECOND, frame-rate independent, at sensitivity 1.0): `mouse-yaw-rate-max` 9.6 rad/s at the far left/right edge (a full 360 in ~0.65s held there), `mouse-pitch-rate-max` 3.6 pitch-fraction/s at the top/bottom edge. `mouse-aim` takes the frame's `dt` (seconds) and multiplies the edge-pan contribution by it, so held-at-edge turn speed is the same wall-clock rate at any frame cap (these values are the old 0.16 rad/frame and 0.06/frame at 60fps, times 60). Pitch is the clamped [-1, 1] fraction via `state/clamp-pitch`, so holding the pointer at the top ramps the view fully up (then saturates).
 - **Pointer right of centre -> +yaw** (pan right), **left -> -yaw**. **Pointer above centre -> +pitch** (look up): rows grow DOWNWARD, so moving the pointer up (fewer rows) increases pitch.
 - **Hold at an edge to keep turning (ungated, #324).** The edge-pan fires **every frame the pointer is in the outer band**, whether it is actively pushed or just parked there - so a pointer pinned at (or gone past) a border keeps swinging the view with no new reports. This is load-bearing: a terminal cannot lock, confine, or reliably hide the OS pointer (#313), so the pointer *will* drift to the border and can leave the window (the terminal then stops reporting). A pure-delta turn would freeze there; the held edge-pan keeps the aim working, so the turn stays "embedded" even though the visible arrow can't be. Rest the pointer in the **centre region** to hold still.
 - **No mid-screen self-drift.** The centre region (~70% of each axis) never edge-pans, so an OS pointer that can't be hidden (Ghostty / iTerm2 et al.) resting mid-screen leaves the camera still. Only a pointer sitting in the outer band self-pans - which is the intended "keep turning past the edge" behavior.
@@ -127,7 +127,7 @@ So on Ghostty, iTerm2, and most popular terminals the arrow stays visible while 
 
 ### Sensitivity
 
-A `Sensitivity` percent setting (0..100, step 10, default 50) maps through `core/settings.mouse-sensitivity` to a multiplier, **geometric** around the slider midpoint (issue #275): `3 ^ ((pct - 50) / 50)`. So 50% is the neutral 1.0x (kept exact for saved-settings back-compat), 0% slows to ~0.33x (1/3) for a gentle turn, and 100% speeds up to 3.0x for a fast spin. Each end sits the same ratio away from neutral (1/3x vs 3x). `mouse-aim` applies this multiplier to both the delta turn and the edge-pan rate. At the default (50% / 1.0x) the delta turn is 1:1 with pointer motion and the far-edge yaw is `mouse-yaw-rate-max` 0.16 rad/frame (a full 360 in ~0.65s held at the edge); at 100% the delta is 3.0x faster and edge yaw is 0.48 rad/frame for a quick spin, and at 0% the delta is ~0.33x and edge yaw is ~0.053 rad/frame for slow, deliberate turning. Sensitivity also scales how quickly the edge-pan rate ramps in from the interior deadzone. The edge-pan is **ungated** (#324): it fires every frame the pointer sits in the outer band, read from the cached position, so a pointer pinned at (or gone past) a border keeps turning with no new reports - the fix for a terminal that can't lock the pointer inside the window.
+A `Sensitivity` percent setting (0..100, step 10, default 50) maps through `core/settings.mouse-sensitivity` to a multiplier, **geometric** around the slider midpoint (issue #275): `3 ^ ((pct - 50) / 50)`. So 50% is the neutral 1.0x (kept exact for saved-settings back-compat), 0% slows to ~0.33x (1/3) for a gentle turn, and 100% speeds up to 3.0x for a fast spin. Each end sits the same ratio away from neutral (1/3x vs 3x). `mouse-aim` applies this multiplier to both the delta turn and the edge-pan rate. At the default (50% / 1.0x) the delta turn is 1:1 with pointer motion and the far-edge yaw held for one second is `mouse-yaw-rate-max` 9.6 rad/s (a full 360 in ~0.65s held at the edge, frame-rate independent); at 100% the delta is 3.0x faster and edge yaw is 28.8 rad/s for a quick spin, and at 0% the delta is ~0.33x and edge yaw is ~3.2 rad/s for slow, deliberate turning. Sensitivity also scales how quickly the edge-pan rate ramps in from the interior deadzone. The edge-pan is **ungated** (#324): it fires every frame the pointer sits in the outer band, read from the cached position, so a pointer pinned at (or gone past) a border keeps turning with no new reports - the fix for a terminal that can't lock the pointer inside the window.
 
 No acceleration curve: the position -> rate mapping (deadzone + ease-in to the edge max) is the only shaping. The ease-in already gives fine control near centre and a fast turn at the edge, so a second curve would add nothing testable.
 
@@ -144,15 +144,15 @@ Three input paths merge:
 2. Capital-WASD: `W`/`A`/`S`/`D` (no kitty support) refresh direction + `:sprint` simultaneously
 3. `x` key: dedicated fallback, maps to `:sprint` slot
 
-Sprint slot decays with movement counters, so releasing clears it the same frame (or next frame on legacy terminals via hold-frames bridge).
+Sprint slot decays with movement counters, so releasing clears it the same frame (or next frame on legacy terminals via hold-secs bridge).
 
-## Hold-frames trade-off
+## Hold-secs trade-off
 
-Per byte, counter is set to its hold value; each frame physics decrements by 1. At 0 direction stops.
+Per byte, counter is set to its hold value (seconds); each frame physics subtracts `dt` (elapsed seconds), not a fixed count - so the hold survives the same wall-clock duration at any frame rate/cap. At 0 direction stops.
 
-- `move-hold-frames` = 18 (~300ms at 60 fps): bridges OS initial-key-repeat delay (250-500ms). Avoids stutter on press. Trade-off: ~300ms post-release glide on non-kitty terminals. Kitty release events (event type 3) override with instant clear.
-- `turn-hold-frames` = 3 (~50ms at 60 fps): quick halt for aiming.
-- `pitch-hold-frames` = 3 (~50ms at 60 fps): same quick halt for look up/down (↑/↓ arrows), so the camera stops on release instead of drifting.
+- `move-hold-secs` = 0.30 (~300ms, frame-rate independent): bridges OS initial-key-repeat delay (250-500ms). Avoids stutter on press. Trade-off: ~300ms post-release glide on non-kitty terminals. Kitty release events (event type 3) override with instant clear.
+- `turn-hold-secs` = 0.05 (~50ms): quick halt for aiming.
+- `pitch-hold-secs` = 0.05 (~50ms): same quick halt for look up/down (↑/↓ arrows), so the camera stops on release instead of drifting.
 
 ## Kitty keyboard protocol
 
@@ -163,7 +163,7 @@ When supported, `\e[>3u` opt-in makes the terminal emit structured events:
 Event codes: 1 = press, 2 = repeat, 3 = release. `refresh-from-keys` parses kitty events first, then falls back to legacy normalise + byte-walk on leftover. Mods encoded as `bits + 1`; bit 0 = SHIFT.
 
 Best-tier terminals: kitty, WezTerm, Ghostty, Alacritty >= 0.13, iTerm2 >= 3.5 (instant release).
-Legacy fallback: Terminal.app, GNOME Terminal, xterm (hold-frames bridge only).
+Legacy fallback: Terminal.app, GNOME Terminal, xterm (hold-secs bridge only).
 
 In tmux: `set -g extended-keys on` + `setw -g xterm-keys on`.
 

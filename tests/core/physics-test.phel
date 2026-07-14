@@ -97,17 +97,17 @@
 (deftest test-apply-physics-walks-forward-while-fwd-counter-on
   ;; Stamp the :fwd counter and tick one frame. Player should have
   ;; moved east (angle 0 = +x).
-  (let [w0 (assoc-in empty-world [:moves :fwd] 5)
+  (let [w0 (assoc-in empty-world [:moves :fwd] 0.5)
         w1 (apply-physics w0 0.1)]
     (is (> (:x (:player w1)) 1.5))
-    ;; Counter decayed by one frame.
-    (is (= 4 (:fwd (:moves w1))))))
+    ;; Counter decayed by dt seconds, not a fixed per-frame amount.
+    (is (< (php/abs (- 0.4 (:fwd (:moves w1)))) 0.0001))))
 
 (deftest test-chainsaw-firing-halves-movement
   ;; While the chainsaw's :fire-cooldown is positive the player walks
   ;; at the weapon's :movement-mul (0.5) - locks the player to a
   ;; commited melee approach instead of kiting at base speed.
-  (let [w0           (assoc-in empty-world [:moves :fwd] 5)
+  (let [w0           (assoc-in empty-world [:moves :fwd] 0.5)
         ;; Active chainsaw + mid-fire-cooldown: movement-mul kicks in.
         w-saw        (assoc w0 :weapon :chainsaw :fire-cooldown 0.05)
         ;; Same setup but pistol so the multiplier branch is skipped.
@@ -123,7 +123,7 @@
 (deftest test-chainsaw-idle-does-not-slow-movement
   ;; :fire-cooldown <= 0 means the saw isn't ticking; walk at full
   ;; speed. The slow only kicks in MID-swing.
-  (let [w0       (assoc-in empty-world [:moves :fwd] 5)
+  (let [w0       (assoc-in empty-world [:moves :fwd] 0.5)
         w-saw    (assoc w0 :weapon :chainsaw :fire-cooldown 0.0)
         w-pistol (assoc w0 :weapon :pistol :fire-cooldown 0.0)
         saw      (apply-physics w-saw 0.1)
@@ -131,18 +131,50 @@
     (is (< (php/abs (- (:x (:player saw)) (:x (:player pistol)))) 0.0001))))
 
 (deftest test-apply-physics-idle-counters-decay-to-zero
-  ;; Single-frame counter goes to 0 after one tick.
-  (let [w0 (assoc-in empty-world [:moves :fwd] 1)
+  ;; A counter smaller than dt (turn/pitch-hold-secs, ~50ms) clamps to
+  ;; exactly 0 on the very next tick instead of drifting negative.
+  (let [w0 (assoc-in empty-world [:moves :fwd] 0.05)
         w1 (apply-physics w0 0.1)
         w2 (apply-physics w1 0.1)]
-    (is (= 0 (:fwd (:moves w1))))
-    (is (= 0 (:fwd (:moves w2))))))
+    (is (= 0.0 (:fwd (:moves w1))))
+    (is (= 0.0 (:fwd (:moves w2))))))
 
 (deftest test-apply-physics-turns-via-counter
-  (let [w0 (assoc-in empty-world [:moves :turn-right] 3)
+  (let [w0 (assoc-in empty-world [:moves :turn-right] 0.2)
         w1 (apply-physics w0 0.1)]
     (is (> (:angle (:player w1)) 0.0))
-    (is (= 2 (:turn-right (:moves w1))))))
+    ;; Counter decayed by dt seconds (0.2 - 0.1 = 0.1).
+    (is (< (php/abs (- 0.1 (:turn-right (:moves w1)))) 0.0001))))
+
+;; ---------------------------------------------------------------------
+;; decay-move-counters (via apply-physics): counters now hold SECONDS,
+;; not a fixed per-frame count, so decay scales by `dt` instead of
+;; decrementing by 1 every call regardless of frame length (#324 cap
+;; raise / frame-rate-independent input timing).
+;; ---------------------------------------------------------------------
+
+(deftest test-apply-physics-move-hold-secs-counter-lasts-three-tenth-second-ticks
+  ;; A move-hold-secs-sized counter (0.30s) survives two dt=0.1 ticks and
+  ;; clamps to exactly 0 on the third (0.30 - 0.1 - 0.1 - 0.1 = 0.0), proving
+  ;; decay now subtracts dt instead of a fixed 1-per-call amount.
+  (let [w0 (assoc-in empty-world [:moves :fwd] 0.30)
+        w1 (apply-physics w0 0.1)
+        w2 (apply-physics w1 0.1)
+        w3 (apply-physics w2 0.1)]
+    (is (php/> (:fwd (:moves w1)) 0.0) "still on after one tick")
+    (is (php/> (:fwd (:moves w2)) 0.0) "still on after two ticks")
+    (is (< (php/abs (:fwd (:moves w3))) 0.0001) "off after three ticks")))
+
+(deftest test-apply-physics-move-hold-secs-lasts-far-more-frames-at-120fps
+  ;; The same 0.30s hold at a ~120fps dt (1/120s) must still be ON after 30
+  ;; frames (30/120 = 0.25s < 0.30s) - it takes ~36 frames to expire, not the
+  ;; 18 frames the old fixed-frame-count counter used at 60fps.
+  (let [dt (php// 1.0 120.0)
+        wn (loop [w (assoc-in empty-world [:moves :fwd] 0.30) i 0]
+             (if (php/< i 30)
+               (recur (apply-physics w dt) (php/+ i 1))
+               w))]
+    (is (php/> (:fwd (:moves wn)) 0.0) "still on after 30 frames (~0.25s < 0.30s hold)")))
 
 (deftest test-apply-physics-no-counters-is-noop
   (let [p0 (:player empty-world)
@@ -158,17 +190,17 @@
 ;; ---------------------------------------------------------------------
 
 (deftest test-apply-physics-look-up-raises-pitch
-  ;; Look-up adds to :pitch (positive); the counter decays one frame.
-  (let [w0 (assoc-in empty-world [:moves :pitch-up] 3)
+  ;; Look-up adds to :pitch (positive); the counter decays by dt seconds.
+  (let [w0 (assoc-in empty-world [:moves :pitch-up] 0.2)
         w1 (apply-physics w0 0.1)]
     (is (php/> (:pitch (:player w1)) 0.0))
-    (is (= 2 (:pitch-up (:moves w1))))))
+    (is (< (php/abs (- 0.1 (:pitch-up (:moves w1)))) 0.0001))))
 
 (deftest test-apply-physics-look-down-lowers-pitch
-  (let [w0 (assoc-in empty-world [:moves :pitch-down] 3)
+  (let [w0 (assoc-in empty-world [:moves :pitch-down] 0.2)
         w1 (apply-physics w0 0.1)]
     (is (php/< (:pitch (:player w1)) 0.0))
-    (is (= 2 (:pitch-down (:moves w1))))))
+    (is (< (php/abs (- 0.1 (:pitch-down (:moves w1)))) 0.0001))))
 
 (deftest test-apply-physics-pitch-clamps-and-does-not-wrap
   ;; Hold look-up across many frames: pitch saturates at +1.0, never
@@ -200,10 +232,10 @@
   ;; (1,1) into the wall at (2,1). Player stays put, counter still
   ;; decays so a player pushed against a wall doesn't build up
   ;; potential energy.
-  (let [w0 (assoc-in open-world [:moves :fwd] 3)
+  (let [w0 (assoc-in open-world [:moves :fwd] 3.0)
         w1 (apply-physics w0 1.0)]
     (is (= 1.5 (:x (:player w1))))
-    (is (= 2 (:fwd (:moves w1))))))
+    (is (= 2.0 (:fwd (:moves w1))))))
 
 ;; ---------------------------------------------------------------------
 ;; tick-heartbeat: phase loops only when low on lives; the wrap flag

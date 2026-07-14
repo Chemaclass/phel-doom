@@ -14,41 +14,40 @@
 ;; § Directional input
 ;; =====================================================================
 
-(def move-hold-frames
-  "Frames a movement direction (W/S/A/D) stays active
-   after each input byte. Sized to bridge the OS initial-key-repeat
-   delay (~250-500ms on macOS/Linux): without this, the first byte
-   arrives, motion runs for a few frames, then stops dead until the
-   OS finally starts auto-repeating. 18 frames (~300ms at 60fps)
-   covers the typical initial-delay so a press reads as one smooth
-   walk, at the cost of ~300ms of post-release glide. Kitty-protocol
-   release events (when supported) override this with an instant
-   clear."
-  18)
+(def move-hold-secs
+  "Seconds a movement direction (W/S/A/D) stays active after each input
+   byte, independent of frame rate. Sized to bridge the OS
+   initial-key-repeat delay (~250-500ms on macOS/Linux): without this,
+   the first byte arrives, motion runs briefly, then stops dead until
+   the OS finally starts auto-repeating. 0.30s covers the typical
+   initial-delay so a press reads as one smooth walk, at the cost of
+   ~300ms of post-release glide. Kitty-protocol release events (when
+   supported) override this with an instant clear."
+  0.30)
 
-(def turn-hold-frames
-  "Frames a turn direction (←/→) stays active after each input byte.
+(def turn-hold-secs
+  "Seconds a turn direction (←/→) stays active after each input byte.
    Short, so rotation halts within ~50ms of releasing the arrow. The
    OS terminal sends no key-release event; this counter is the only
    way the game can tell the player let go."
-  3)
+  0.05)
 
-(def sprint-hold-frames
-  "Frames the :sprint slot stays warm after a SHIFT-mod or 'x' byte.
+(def sprint-hold-secs
+  "Seconds the :sprint slot stays warm after a SHIFT-mod or 'x' byte.
    Short (~50ms) because there is no explicit SHIFT-release signal
    on the kitty path — sprint MUST decay fast enough that releasing
    SHIFT while still walking forward stops the speed boost (and the
-   stamina drain) within a frame or two. Without this the 18-frame
-   move-hold-frames bridge would leave sprint hot for ~300ms after
+   stamina drain) within a frame or two. Without this the 0.30s
+   move-hold-secs bridge would leave sprint hot for ~300ms after
    release, which the HUD bar exposes as a phantom drain."
-  3)
+  0.05)
 
-(def pitch-hold-frames
-  "Frames a look up/down direction (↑/↓ arrows) stays active after each
-   input byte. Short, like turn-hold-frames, so the camera pitch halts
+(def pitch-hold-secs
+  "Seconds a look up/down direction (↑/↓ arrows) stays active after each
+   input byte. Short, like turn-hold-secs, so the camera pitch halts
    within ~50ms of releasing the key (no terminal key-release on the
    legacy path) instead of drifting on for the full move-hold bridge."
-  3)
+  0.05)
 
 (def key->slot
   "Map a single-byte input to the direction-counter slot it activates.
@@ -80,20 +79,20 @@
    "D" :strafe-right})
 
 (def turn-slots
-  "Slots that use turn-hold-frames instead of move-hold-frames."
+  "Slots that use turn-hold-secs instead of move-hold-secs."
   #{:turn-left :turn-right})
 
 (def pitch-slots
-  "Slots that use pitch-hold-frames (look up/down) instead of
-   move-hold-frames."
+  "Slots that use pitch-hold-secs (look up/down) instead of
+   move-hold-secs."
   #{:pitch-up :pitch-down})
 
-(defn- hold-frames-for [slot]
+(defn- hold-secs-for [slot]
   (cond
-    (turn-slots slot)  turn-hold-frames
-    (pitch-slots slot) pitch-hold-frames
-    (= slot :sprint)   sprint-hold-frames
-    :else              move-hold-frames))
+    (turn-slots slot)  turn-hold-secs
+    (pitch-slots slot) pitch-hold-secs
+    (= slot :sprint)   sprint-hold-secs
+    :else              move-hold-secs))
 
 (defn refresh-move
   "If `byte` maps to a direction slot, refresh that slot's counter on
@@ -106,11 +105,11 @@
     (cond
       (some? shift-slot)
       (-> world
-          (assoc-in [:moves shift-slot] (hold-frames-for shift-slot))
-          (assoc-in [:moves :sprint]    (hold-frames-for :sprint)))
+          (assoc-in [:moves shift-slot] (hold-secs-for shift-slot))
+          (assoc-in [:moves :sprint]    (hold-secs-for :sprint)))
 
       (some? slot)
-      (assoc-in world [:moves slot] (hold-frames-for slot))
+      (assoc-in world [:moves slot] (hold-secs-for slot))
 
       :else              world)))
 
@@ -169,12 +168,12 @@
 (defn- clear-slot
   "Force a counter to 0 (immediate stop)."
   [world slot]
-  (assoc-in world [:moves slot] 0))
+  (assoc-in world [:moves slot] 0.0))
 
 (defn- press-slot
   "Press / repeat event: set the counter to the slot's normal hold."
   [world slot]
-  (assoc-in world [:moves slot] (hold-frames-for slot)))
+  (assoc-in world [:moves slot] (hold-secs-for slot)))
 
 (def movement-slots
   "Slots whose press counts as 'the player is trying to walk' for
@@ -352,16 +351,22 @@
 ;; pointer is actively pushed DEEPER into the outer band (delta same sign as
 ;; the band side) the edge-pan rate adds (and ramps) the turn, so the player
 ;; keeps turning past the screen edge. A RESTING or RETREATING pointer adds
-;; none, so an unhideable OS pointer parked near a border can't self-spin:
-;;     yaw   += (dx*rate>0) ? edge-pan-rate(x-1, cols, mouse-yaw-rate-max)   * sens : 0
-;;     pitch += (dy*rate>0) ? -edge-pan-rate(y-1, rows, mouse-pitch-rate-max) * sens : 0
-;; First frame / post-resize the previous pointer is nil, so there is no
-;; delta and the view holds steady until real motion arrives (no seed jolt).
+;; none, so an unhideable OS pointer parked near a border can't self-spin.
+;; The edge-pan rates are per-SECOND (frame-rate independent), so the
+;; contribution is scaled by `dt` (seconds since last frame):
+;;     yaw   += (dx*rate>0) ? edge-pan-rate(x-1, cols, mouse-yaw-rate-max)   * sens * dt : 0
+;;     pitch += (dy*rate>0) ? -edge-pan-rate(y-1, rows, mouse-pitch-rate-max) * sens * dt : 0
+;; The pointer-DELTA path above is NOT scaled by dt — it is already
+;; frame-rate independent (one report = one delta, however long the frame
+;; that drained it took). First frame / post-resize the previous pointer is
+;; nil, so there is no delta and the view holds steady until real motion
+;; arrives (no seed jolt).
 ;;
 ;; This stays PURE: it consumes the drained byte string, the previous
-;; pointer position and the live [rows cols], and returns a centred reticle
-;; (aim-col/aim-row nil) + the per-frame yaw/pitch + fire intent; io/input
-;; owns the escape emission + STDIN read + the periodic mouse re-arm.
+;; pointer position, the frame's `dt` (seconds) and the live [rows cols],
+;; and returns a centred reticle (aim-col/aim-row nil) + this frame's
+;; yaw/pitch + fire intent; io/input owns the escape emission + STDIN read +
+;; the periodic mouse re-arm.
 ;; =====================================================================
 
 (def mouse-edge-band-frac
@@ -375,20 +380,22 @@
   0.30)
 
 (def mouse-yaw-rate-max
-  "Radians of yaw per frame when the reticle is pinned to the far LEFT /
-   RIGHT edge, before the player's sensitivity multiplier (#324). At 60fps
-   0.16 rad/frame sweeps a full 360 in ~0.65s held at the edge, so a player
-   can swing the view fast by pushing the reticle to a border yet still aim
+  "Radians of yaw per SECOND when the reticle is pinned to the far LEFT /
+   RIGHT edge, before the player's sensitivity multiplier (#324). Frame-
+   rate independent: 9.6 rad/s sweeps a full 360 in ~0.65s held at the
+   edge (same feel as the old 0.16 rad/frame at 60fps), so a player can
+   swing the view fast by pushing the reticle to a border yet still aim
    finely in the centre region (the rate eases in from the band lip)."
-  0.16)
+  9.6)
 
 (def mouse-pitch-rate-max
-  "Look up/down `:pitch` FRACTION per frame when the reticle is pinned to
-   the top / bottom edge, before sensitivity (#324). The pitch axis is a
-   clamped fraction in [-1, 1] (state/clamp-pitch), so 0.06/frame ramps
-   from level to fully-up (or down) in ~17 edge-held frames (~0.3s) and
+  "Look up/down `:pitch` FRACTION per SECOND when the reticle is pinned to
+   the top / bottom edge, before sensitivity (#324). Frame-rate
+   independent: the pitch axis is a clamped fraction in [-1, 1]
+   (state/clamp-pitch), so 3.6/s ramps from level to fully-up (or down) in
+   ~0.3s held at the edge (same feel as the old 0.06/frame at 60fps) and
    then saturates."
-  0.06)
+  3.6)
 
 (def mouse-look-gain
   "Base mouselook speed multiplier (#324) on top of the raw 1:1 pointer ->
@@ -567,13 +574,18 @@
 
    `sensitivity` is a positive scalar (1.0 = neutral) scaling the whole look
    - both the delta turn and the edge-pan rate (0 disables the look but
-   still lets a click fire). `dims` is the live `[rows cols]`; it supplies
-   the axis lengths the delta scaling + edge band need. Omitting it (or nil)
-   yields zero yaw/pitch - the look is inert without knowing the viewport -
-   while fire intent still parses, so non-loop callers are unaffected. A
-   non-mouse sequence (kitty CSI-u key, arrow, F-key) matches nothing, so the
-   keyboard path is never disturbed."
-  [keys prev-pos ^float sensitivity & [dims]]
+   still lets a click fire). `dt` is the frame's elapsed seconds; the
+   edge-pan rates (`mouse-yaw-rate-max` / `mouse-pitch-rate-max`) are
+   per-SECOND, so their contribution is scaled by `dt` to stay frame-rate
+   independent - the pointer-DELTA path is NOT scaled by `dt` (one report
+   already IS one frame's worth of motion, however long that frame took).
+   `dims` is the live `[rows cols]`; it supplies the axis lengths the delta
+   scaling + edge band need. Omitting it (or nil) yields zero yaw/pitch -
+   the look is inert without knowing the viewport - while fire intent still
+   parses, so non-loop callers are unaffected. A non-mouse sequence (kitty
+   CSI-u key, arrow, F-key) matches nothing, so the keyboard path is never
+   disturbed."
+  [keys prev-pos ^float sensitivity ^float dt & [dims]]
   (let [matches (php/array)
         rows    (when (some? dims) (get dims 0))
         cols    (when (some? dims) (get dims 1))
@@ -619,10 +631,14 @@
                 ;; adds nothing (edge-pan-rate is 0 there), so an unhideable
                 ;; arrow parked mid-screen never self-drifts. `x`/`y` are
                 ;; 1-based; shift to the 0-based cell edge-pan-rate measures.
+                ;; Rates are per-SECOND (frame-rate independent); scale by
+                ;; `dt` so a 120fps frame contributes half what a 60fps
+                ;; frame would, keeping the held-at-edge sweep speed
+                ;; constant in wall-clock time regardless of cap.
                 yaw-rate   (if (some? x) (edge-pan-rate (php/- x 1) cols mouse-yaw-rate-max) 0.0)
                 pitch-rate (if (some? y) (edge-pan-rate (php/- y 1) rows mouse-pitch-rate-max) 0.0)
-                yaw-e      (php/* yaw-rate sensitivity)
-                pitch-e    (php/- 0 (php/* pitch-rate sensitivity))]
+                yaw-e      (php/* (php/* yaw-rate sensitivity) dt)
+                pitch-e    (php/* (php/- 0 (php/* pitch-rate sensitivity)) dt)]
             {:aim-col    nil
              :aim-row    nil
              :yaw        (php/+ yaw-d yaw-e)

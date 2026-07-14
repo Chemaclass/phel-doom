@@ -60,7 +60,7 @@ Pure data shapes that every other module operates on. `src/core/state.phel`.
  :stamina              <float 0..max-stamina>  ; sprint pool, default 100.0
  :sprint-cooldown-secs <float seconds>         ; regen lockout post-sprint
  :sprint-blocked?      <bool>                  ; latches at 0, clears at threshold
- :moves      {:fwd :back :strafe-left :strafe-right :turn-left :turn-right :sprint}}
+ :moves      {:fwd :back :strafe-left :strafe-right :turn-left :turn-right :sprint :pitch-up :pitch-down}}
 ```
 
 After `build-world` from `core/level.phel` stamps level metadata, the world also carries:
@@ -102,23 +102,25 @@ On grid mutation (door turning into floor, etc.) **both** must update. See `pick
 
 ## Movement counters (`:moves`)
 
-Seven time-limited counters drive directional motion + sprint intent:
+Nine time-limited counters drive directional motion, look up/down, and sprint intent. Each holds **seconds remaining**, not a frame count:
 
 ```phel
-{:fwd          <int frames remaining>
- :back         <int>
- :strafe-left  <int>
- :strafe-right <int>
- :turn-left    <int>
- :turn-right   <int>
- :sprint       <int>}    ; SHIFT+WASD or `x` press refresh
+{:fwd          <float seconds remaining>
+ :back         <float>
+ :strafe-left  <float>
+ :strafe-right <float>
+ :turn-left    <float>
+ :turn-right   <float>
+ :sprint       <float>}    ; SHIFT+WASD or `x` press refresh
+ :pitch-up     <float>     ; ↑ arrow
+ :pitch-down   <float>     ; ↓ arrow
 ```
 
-Each input byte from `glue/controls.phel` refreshes the matching counter. Each frame `core/physics.phel` consumes whatever is non-zero (scaled by `dt`) and decays every counter by 1. Counter hits 0 = direction stops.
+Each input byte from `glue/controls.phel` refreshes the matching counter to its hold-secs value. Each frame `core/physics.phel` consumes whatever is non-zero (scaled by `dt`) and decays every counter by `dt` seconds (clamped at 0.0), so a hold survives the same wall-clock duration at any frame rate. Counter hits 0 = direction stops.
 
 `:sprint` is intent only - the actual speed boost is gated by `:stamina > 0` AND `not :sprint-blocked?`. See `physics.phel`'s `tick-stamina` + `sprinting?`.
 
-Hold-frame size is the only "feel" knob: shorter = snappier stop, longer = smoother sustained-hold (bridges OS auto-repeat gaps). Current: `move-hold-frames=18` (~300ms at 60fps), `turn-hold-frames=3` (~50ms).
+Hold-secs size is the only "feel" knob: shorter = snappier stop, longer = smoother sustained-hold (bridges OS auto-repeat gaps). Current: `move-hold-secs=0.30` (~300ms), `turn-hold-secs=0.05` / `pitch-hold-secs=0.05` / `sprint-hold-secs=0.05` (~50ms) - all frame-rate independent, defined in `glue/controls.phel`.
 
 ## Lives (half-heart HP pool)
 

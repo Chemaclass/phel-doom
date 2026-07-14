@@ -13,10 +13,11 @@
 ;; ---------------------------------------------------------------------
 ;; Player physics: rotation + translation + counter decay.
 ;;
-;; The world holds six direction counters (:moves). Physics consumes
-;; whatever is non-zero (scaled by dt) and decays each counter by one
-;; frame. Controls refresh the counters when keys arrive; this module
-;; just reads them.
+;; The world holds nine direction counters (:moves), each a seconds-
+;; remaining hold time (not a frame count). Physics consumes whatever is
+;; non-zero (scaled by dt) and decays each counter by dt seconds, so the
+;; hold survives the same wall-clock duration at any frame rate. Controls
+;; refresh the counters when keys arrive; this module just reads them.
 ;; ---------------------------------------------------------------------
 
 (def move-speed
@@ -43,7 +44,7 @@
 
 (def bob-phase-per-unit
   "Radians of head-bob walk-cycle phase advanced per world-unit of ground
-   covered (#411). Feel knob, sibling of `move-hold-frames`: distance-
+   covered (#411). Feel knob, sibling of `move-hold-secs`: distance-
    driven so a faster stride nods faster. `M_PI`/unit is one full up-down
    nod every two cells. Amplitude is a separate, render-side setting
    (`projection/bob-rows`); physics only tracks the phase."
@@ -200,21 +201,21 @@
                 (- (* long-d (php/cos a)) (* lat-d (php/sin a)))
                 (+ (* long-d (php/sin a)) (* lat-d (php/cos a)))))))
 
-(defn- decay-counter [n]
-  (php/max 0 (php/- n 1)))
+(defn- decay-counter [n ^float dt]
+  (php/max 0.0 (php/- n dt)))
 
-(defn- ^:pure decay-move-counters [world]
+(defn- ^:pure decay-move-counters [world ^float dt]
   (let [m (:moves world)]
     (assoc world :moves
-           {:fwd          (decay-counter (:fwd m))
-            :back         (decay-counter (:back m))
-            :strafe-left  (decay-counter (:strafe-left m))
-            :strafe-right (decay-counter (:strafe-right m))
-            :turn-left    (decay-counter (:turn-left m))
-            :turn-right   (decay-counter (:turn-right m))
-            :sprint       (decay-counter (or (:sprint m) 0))
-            :pitch-up     (decay-counter (or (:pitch-up m) 0))
-            :pitch-down   (decay-counter (or (:pitch-down m) 0))})))
+           {:fwd          (decay-counter (:fwd m) dt)
+            :back         (decay-counter (:back m) dt)
+            :strafe-left  (decay-counter (:strafe-left m) dt)
+            :strafe-right (decay-counter (:strafe-right m) dt)
+            :turn-left    (decay-counter (:turn-left m) dt)
+            :turn-right   (decay-counter (:turn-right m) dt)
+            :sprint       (decay-counter (or (:sprint m) 0.0) dt)
+            :pitch-up     (decay-counter (or (:pitch-up m) 0.0) dt)
+            :pitch-down   (decay-counter (or (:pitch-down m) 0.0) dt)})))
 
 (defn- ^:pure any-movement-on? [world]
   (let [m (:moves world)]
@@ -253,7 +254,7 @@
 (defn apply-physics
   "Per-frame: rotate, shear the look up/down pitch, then translate using
    the new heading, advance the head-bob phase by the ground covered, then
-   decay every counter by one frame. Translation deltas read both `:moves`
+   decay every counter by dt seconds. Translation deltas read both `:moves`
    AND the sprint state (via sprint-factor) so sprint intent x stamina > 0
    x not-blocked yields a 1.6x boost. Pitch is a pure camera shear (no
    effect on translation), clamped by `clamp-pitch`."
@@ -264,7 +265,7 @@
         walked  (apply-translation pitched
                                    (longitudinal-delta pitched dt)
                                    (lateral-delta pitched dt))]
-    (advance-bob-phase (decay-move-counters walked)
+    (advance-bob-phase (decay-move-counters walked dt)
                        (moved-dist pitched walked))))
 
 (defn tick-stamina

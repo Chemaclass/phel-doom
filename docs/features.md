@@ -5,7 +5,7 @@
 - Textured floor: floor-casting samples the stone flat on the ground plane, distance-fogged + shadowed (`PHEL_DOOM_FLAT_FLOOR=1` for the flat gradient)
 - Half-block sub-pixel floor/walls/sky: `▀` cells with independent top/bottom colours give 2x vertical resolution (smaller pixels, no colour loss), memoized so CPU cost is ~+2% (`PHEL_DOOM_NO_SUBPIXEL=1` for the one-colour-per-cell path)
 - Sub-5ms `frame->string` at 180x40 (2ms at 80x24, 3ms at 120x30)
-- Uniform ~60fps target + crisp 1:1 walls at every terminal size (no big-screen 30fps / chunky-scale degradation)
+- Uniform ~120fps target + crisp 1:1 walls at every terminal size (no big-screen 30fps / chunky-scale degradation)
 - Auto-calibrated pixel detail, always full screen: measures the machine at startup and pixel-doubles the scene (2x2 blocks, ~4x cheaper, same FOV/framing) when full detail can't hold a smooth framerate - but only on big screens (cell area beyond 200x45); smaller terminals always keep full detail. Recalibrates on resize. `--max-cols=0` forces full detail, `--max-cols=N` insets to N columns
 - `proj-dist` decoupled from viewport width - resize widens FOV, not zoom - FOV clamps at 100° on wide terminals so they gain horizontal resolution, not edge fisheye
 - Half-block sub-cell shading on wall edges; brick glyphs (4% of cells)

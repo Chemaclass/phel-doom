@@ -1,5 +1,5 @@
 (ns phel-doom.io.savegame
-  (:require phel-doom.core.state :refer [rebuild-pgrid]))
+  (:require phel-doom.core.state :refer [empty-moves rebuild-pgrid]))
 
 ;; ---------------------------------------------------------------------
 ;; Mid-level save / load (issue #63). The immutable `:world` map is pure
@@ -70,11 +70,13 @@
 
 (defn world->savestring
   "Pure: serialize `world` to a versioned JSON string. Drops `:pgrid` +
-   `:visited` (rebuilt / reset on load) and `:settings` +
+   `:visited` (rebuilt / reset on load), `:settings` +
    `:settings-cursor` (#279 - session-global preference, not run state,
-   so a save never carries stale preferences into a later load)."
+   so a save never carries stale preferences into a later load), and
+   `:moves` (transient input hold counters - a mid-walk save must load
+   standing still, see savestring->world)."
   [world]
-  (let [clean (dissoc world :pgrid :visited :settings :settings-cursor)
+  (let [clean (dissoc world :pgrid :visited :settings :settings-cursor :moves)
         o     (php/array)]
     (php/aset o "version" save-version)
     (php/aset o "world"   (encode clean))
@@ -82,14 +84,19 @@
 
 (defn savestring->world
   "Pure: parse a save string back into a world (pgrid rebuilt, fog
-   reset). Returns nil on malformed JSON or a version mismatch so the
-   caller can surface a friendly miss."
+   reset, input hold counters zeroed). Returns nil on malformed JSON or
+   a version mismatch so the caller can surface a friendly miss.
+   `:moves` is always reset to `empty-moves`: new saves don't carry it,
+   and saves written before the seconds-based counters stored int FRAME
+   counts (e.g. :fwd 15) that the dt-decay would reinterpret as ~15
+   SECONDS of uncontrolled forward drift."
   [s]
   (let [data (php/json_decode s true)]
     (if (and (php/is_array data)
              (php/=== save-version (php/aget data "version")))
       (-> (decode (php/aget data "world"))
           (assoc :visited (php/array))
+          (assoc :moves empty-moves)
           (rebuild-pgrid))
       nil)))
 

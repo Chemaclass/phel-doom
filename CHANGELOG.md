@@ -21,6 +21,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Performance
 
+- Render memo/dedup pass: `frame-gradients` now also caches the sub-row sky codes + the four floor-cast tables (rebuild only on resize/pitch/pixel-doubling toggle, not every frame); `emit-scene-px1` hoists the frame-constant `vw-1` bound and reads a precomputed per-column wall-height instead of recomputing `max(1, bot-top)` every row of a wall; `paint-face-overlay` and `paint-enemy-hp-flashes` reuse the zone pass's already-projected `enemy-projs` instead of re-running `collect-enemy-projs`/`project-enemy`. Byte-identical (full suite + an md5-per-frame sweep across pitch/view-bob/pixel-doubling/resize and a glyph-mode hit-flash sweep); within-noise (<1.1%) on the fixed-viewport bench since that bench doesn't vary the inputs these memos key on. `main.php` closure count unchanged vs main.
 - Cast loop hoists per-column constants + inlines the cell probe (#347): -55%/-63%/-66% on `cast-frame` at 80/120/180 columns; byte-identical.
 - `cast-ray` + `los-clear?` DDA inline the cell probe + bind loop constants once (#354, #357): -49% on a 360-ray sweep, -42% on `mark-visible-cells`; byte-identical.
 - Dropped the per-column closure tax in the cast loop (#345): -39% on `cast-frame`, `engine.php` 5 closures to 2; byte-identical.

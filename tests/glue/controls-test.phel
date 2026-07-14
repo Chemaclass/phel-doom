@@ -262,7 +262,7 @@
   ;; \e[119;2:3u — release event with shift held. Sprint slot stays 0.
   (let [w' (refresh-from-keys blank-world "\e[119;2:3u")]
     (is (= 0 (:sprint (:moves w'))))
-    (is (= 0 (:fwd    (:moves w'))))))
+    (is (= 0.0 (:fwd  (:moves w'))))))
 
 (deftest test-x-byte-refreshes-sprint-slot
   ;; Legacy / non-kitty fallback: plain 'x' byte arms sprint.
@@ -274,14 +274,14 @@
   (let [w' (refresh-from-keys blank-world "\e[120u")]
     (is (php/> (:sprint (:moves w')) 0))))
 
-(deftest test-sprint-slot-uses-short-hold-frames
-  ;; Regression: the :sprint slot must NOT inherit the 18-frame
-  ;; move-hold-frames bridge. Otherwise releasing SHIFT while still
+(deftest test-sprint-slot-uses-short-hold-secs
+  ;; Regression: the :sprint slot must NOT inherit the 0.30s
+  ;; move-hold-secs bridge. Otherwise releasing SHIFT while still
   ;; walking forward would leave sprint hot for ~300ms — phantom
-  ;; drain. sprint-hold-frames (3) matches turn-hold-frames so
+  ;; drain. sprint-hold-secs (0.05) matches turn-hold-secs so
   ;; release feels instant.
   (let [w' (refresh-from-keys blank-world "x")]
-    (is (php/<= (:sprint (:moves w')) 5))))
+    (is (php/<= (:sprint (:moves w')) 0.1))))
 
 ;; ---------------------------------------------------------------------
 ;; Look up/down (pitch): ↑/↓ arrows arm :pitch-up / :pitch-down on every
@@ -323,11 +323,11 @@
   (is (= blank-moves (:moves (refresh-from-keys blank-world "t"))))
   (is (= blank-moves (:moves (refresh-from-keys blank-world "g")))))
 
-(deftest test-pitch-slot-uses-short-hold-frames
+(deftest test-pitch-slot-uses-short-hold-secs
   ;; Pitch halts fast (like turn), not the long move-hold bridge, so the
   ;; camera doesn't keep drifting after the key is released.
   (let [w' (refresh-from-keys blank-world "\e[A")]
-    (is (php/<= (:pitch-up (:moves w')) 5))))
+    (is (php/<= (:pitch-up (:moves w')) 0.1))))
 
 ;; ---------------------------------------------------------------------
 ;; Capital WASD: legacy fallback so SHIFT+WASD sprints on terminals
@@ -476,6 +476,12 @@
    59.5 col / 14.5 row, 0-based)."
   [30 120])
 
+(def test-dt
+  "One 60fps frame in seconds, threaded into every mouse-aim call so the
+   edge-pan contribution (now per-second, scaled by dt) reproduces the
+   same per-frame magnitude these tests were written against."
+  (php// 1.0 60.0))
+
 ;; Pointer cells (1-based SGR Cx/Cy) used across the suite:
 (def center-pos
   "Pointer at (or one off) the terminal centre."
@@ -524,15 +530,15 @@
 (deftest test-mouse-aim-crosshair-is-always-centred
   ;; The gun fires dead-ahead, so aim-col/aim-row are nil whatever the
   ;; pointer does (resting, mid-screen, at an edge).
-  (is (nil? (:aim-col (mouse-aim "" center-pos 1.0 look-dims))) "resting -> nil reticle")
-  (is (nil? (:aim-col (mouse-aim "\e[<35;80;15M" center-pos 1.0 look-dims))) "moved -> still nil")
-  (is (nil? (:aim-col (mouse-aim "\e[<35;120;15M" center-pos 1.0 look-dims))) "at edge -> still nil")
-  (is (nil? (:aim-row (mouse-aim "\e[<35;60;1M" center-pos 1.0 look-dims))) "nil reticle row too"))
+  (is (nil? (:aim-col (mouse-aim "" center-pos 1.0 test-dt look-dims))) "resting -> nil reticle")
+  (is (nil? (:aim-col (mouse-aim "\e[<35;80;15M" center-pos 1.0 test-dt look-dims))) "moved -> still nil")
+  (is (nil? (:aim-col (mouse-aim "\e[<35;120;15M" center-pos 1.0 test-dt look-dims))) "at edge -> still nil")
+  (is (nil? (:aim-row (mouse-aim "\e[<35;60;1M" center-pos 1.0 test-dt look-dims))) "nil reticle row too"))
 
 (deftest test-mouse-aim-no-motion-no-turn
   ;; No report this frame (pointer unchanged, interior): zero delta and no
   ;; edge fallback in the centre region, so the camera holds still.
-  (let [r (mouse-aim "" center-pos 1.0 look-dims)]
+  (let [r (mouse-aim "" center-pos 1.0 test-dt look-dims)]
     (is (= 0.0 (:yaw r)) "no motion -> no yaw")
     (is (= 0.0 (:pitch r)) "no motion -> no pitch")
     (is (= false (:fire? r)))
@@ -543,8 +549,8 @@
   ;; Moving the pointer RIGHT yaws right (+), LEFT yaws left (-), by the
   ;; columns moved scaled by mouse-look-gain: 20 columns from centre ->
   ;; gain*20/70 rad (the raw 1:1 is 20/70; fov-proj-dist 120 = proj-dist 70).
-  (let [right (mouse-aim "\e[<35;80;15M" center-pos 1.0 look-dims)
-        left  (mouse-aim "\e[<35;40;15M" center-pos 1.0 look-dims)]
+  (let [right (mouse-aim "\e[<35;80;15M" center-pos 1.0 test-dt look-dims)
+        left  (mouse-aim "\e[<35;40;15M" center-pos 1.0 test-dt look-dims)]
     (is (php/> (:yaw right) 0.0) "pointer right -> yaw right")
     (is (approx? (php/* mouse-look-gain (php// 20.0 70.0)) (:yaw right)) "20 columns -> gain*20/70 rad")
     (is (php/< (:yaw left) 0.0) "pointer left -> yaw left")
@@ -556,8 +562,8 @@
   ;; the rows moved scaled by mouse-look-gain: 5 rows -> gain*5/12 fraction
   ;; (rows grow downward, so down is negative). y 20 / y 10 stay inside the
   ;; row band, so no edge contamination.
-  (let [down (mouse-aim "\e[<35;60;20M" center-pos 1.0 look-dims)
-        up   (mouse-aim "\e[<35;60;10M" center-pos 1.0 look-dims)]
+  (let [down (mouse-aim "\e[<35;60;20M" center-pos 1.0 test-dt look-dims)
+        up   (mouse-aim "\e[<35;60;10M" center-pos 1.0 test-dt look-dims)]
     (is (php/< (:pitch down) 0.0) "pointer down -> look down (-pitch)")
     (is (approx? (php/* mouse-look-gain (php// -5.0 12.0)) (:pitch down)) "5 rows down -> -gain*5/12")
     (is (php/> (:pitch up) 0.0) "pointer up -> look up (+pitch)")
@@ -567,19 +573,19 @@
 (deftest test-mouse-aim-delta-is-linear
   ;; The turn is proportional to the distance moved: 20 columns yaws twice
   ;; as far as 10 columns.
-  (let [d10 (:yaw (mouse-aim "\e[<35;70;15M" center-pos 1.0 look-dims))
-        d20 (:yaw (mouse-aim "\e[<35;80;15M" center-pos 1.0 look-dims))]
+  (let [d10 (:yaw (mouse-aim "\e[<35;70;15M" center-pos 1.0 test-dt look-dims))
+        d20 (:yaw (mouse-aim "\e[<35;80;15M" center-pos 1.0 test-dt look-dims))]
     (is (approx? (php/* 2.0 d10) d20) "2x the pointer move -> 2x the yaw")))
 
 (deftest test-mouse-aim-sensitivity-scales-the-look
   ;; Sensitivity scales the WHOLE look: 2x sens doubles the delta turn, 0
   ;; disables it; a click still fires at 0.
-  (let [s1 (:yaw (mouse-aim "\e[<35;80;15M" center-pos 1.0 look-dims))
-        s2 (:yaw (mouse-aim "\e[<35;80;15M" center-pos 2.0 look-dims))
-        s0 (:yaw (mouse-aim "\e[<35;80;15M" center-pos 0.0 look-dims))]
+  (let [s1 (:yaw (mouse-aim "\e[<35;80;15M" center-pos 1.0 test-dt look-dims))
+        s2 (:yaw (mouse-aim "\e[<35;80;15M" center-pos 2.0 test-dt look-dims))
+        s0 (:yaw (mouse-aim "\e[<35;80;15M" center-pos 0.0 test-dt look-dims))]
     (is (approx? (php/* 2.0 s1) s2) "2x sensitivity -> 2x yaw")
     (is (= 0.0 s0) "0 sensitivity -> no turn"))
-  (let [r (mouse-aim "\e[<0;60;15M" center-pos 0.0 look-dims)]
+  (let [r (mouse-aim "\e[<0;60;15M" center-pos 0.0 test-dt look-dims)]
     (is (= true (:fire? r)) "click fires even at 0 sensitivity")))
 
 (deftest test-mouse-aim-edge-pan-holds-at-edge
@@ -588,31 +594,31 @@
   ;; cannot lock / confine / hide the pointer, so it drifts to the border and
   ;; can leave the window; the held edge-pan is what keeps the aim from
   ;; freezing there - the turn stays "embedded" even though the arrow can't.
-  (is (php/> (:yaw (mouse-aim "" right-edge-pos 1.0 look-dims)) 0.0) "held at right edge keeps panning right")
-  (is (php/< (:yaw (mouse-aim "" left-edge-pos 1.0 look-dims)) 0.0) "held at left edge keeps panning left")
-  (is (php/> (:pitch (mouse-aim "" top-edge-pos 1.0 look-dims)) 0.0) "held at top keeps looking up")
-  (is (php/< (:pitch (mouse-aim "" bottom-edge-pos 1.0 look-dims)) 0.0) "held at bottom keeps looking down"))
+  (is (php/> (:yaw (mouse-aim "" right-edge-pos 1.0 test-dt look-dims)) 0.0) "held at right edge keeps panning right")
+  (is (php/< (:yaw (mouse-aim "" left-edge-pos 1.0 test-dt look-dims)) 0.0) "held at left edge keeps panning left")
+  (is (php/> (:pitch (mouse-aim "" top-edge-pos 1.0 test-dt look-dims)) 0.0) "held at top keeps looking up")
+  (is (php/< (:pitch (mouse-aim "" bottom-edge-pos 1.0 test-dt look-dims)) 0.0) "held at bottom keeps looking down"))
 
 (deftest test-mouse-aim-edge-pan-fires-on-push-into-band
   ;; Pushing DEEPER into the band adds the edge spin ON TOP of the delta (so
   ;; you can turn past the view); retreating toward centre still nets a turn
   ;; BACK (the negative delta dominates the small residual edge-pan until the
   ;; pointer clears the band). 110 / 118 are both in the right band (~101+).
-  (let [push-r     (:yaw (mouse-aim "\e[<35;118;15M" [110 15] 1.0 look-dims))
+  (let [push-r     (:yaw (mouse-aim "\e[<35;118;15M" [110 15] 1.0 test-dt look-dims))
         delta-only (php/* mouse-look-gain (php// 8.0 70.0))]
     (is (php/> push-r delta-only) "pushing right into the band adds edge spin beyond the delta"))
-  (let [retreat (:yaw (mouse-aim "\e[<35;110;15M" [118 15] 1.0 look-dims))]
+  (let [retreat (:yaw (mouse-aim "\e[<35;110;15M" [118 15] 1.0 test-dt look-dims))]
     (is (php/< retreat 0.0) "retreating from the right edge nets a turn back (delta dominates)"))
   ;; Vertical twin: pushing down into the bottom band looks further down than
   ;; the bare delta (24 is interior, 28 is in the band).
-  (let [push-d     (:pitch (mouse-aim "\e[<35;60;28M" [60 24] 1.0 look-dims))
+  (let [push-d     (:pitch (mouse-aim "\e[<35;60;28M" [60 24] 1.0 test-dt look-dims))
         delta-only (php/* mouse-look-gain (php// -4.0 12.0))]
     (is (php/< push-d delta-only) "pushing down into the band looks further down than the delta")))
 
 (deftest test-mouse-aim-interior-has-no-edge-creep
   ;; A pointer resting in the centre region (no motion) adds NO turn: the
   ;; fallback only fires at the border, so ordinary aiming never creeps.
-  (let [r (mouse-aim "" [75 15] 1.0 look-dims)]
+  (let [r (mouse-aim "" [75 15] 1.0 test-dt look-dims)]
     (is (= 0.0 (:yaw r)) "resting mid-screen -> no creep")
     (is (= 0.0 (:pitch r)) "resting mid-screen -> no pitch creep")))
 
@@ -620,11 +626,11 @@
   ;; First frame / post-resize: prev-pos is nil, so even a report far from
   ;; centre yields NO delta turn (the view holds steady, no seed jolt); the
   ;; report just establishes the baseline pointer for next frame.
-  (let [r (mouse-aim "\e[<35;80;15M" nil 1.0 look-dims)]
+  (let [r (mouse-aim "\e[<35;80;15M" nil 1.0 test-dt look-dims)]
     (is (= 0.0 (:yaw r)) "nil prev -> no delta yaw")
     (is (= 0.0 (:pitch r)) "nil prev -> no delta pitch")
     (is (= [80 15] (:pos r)) "but the pointer baseline is established"))
-  (let [r (mouse-aim "" nil 1.0 look-dims)]
+  (let [r (mouse-aim "" nil 1.0 test-dt look-dims)]
     (is (= 0.0 (:yaw r)) "nil prev, no report -> no turn")
     (is (= nil (:pos r)) "pos stays nil")))
 
@@ -632,7 +638,7 @@
   ;; Multiple reports in a frame collapse to the LAST pointer; the delta is
   ;; measured from prev-pos to that final cell (100 is still interior, so no
   ;; edge component muddies the value).
-  (let [r (mouse-aim "\e[<35;90;15M\e[<35;100;15M" center-pos 1.0 look-dims)]
+  (let [r (mouse-aim "\e[<35;90;15M\e[<35;100;15M" center-pos 1.0 test-dt look-dims)]
     (is (= [100 15] (:pos r)) "the last report in the frame wins")
     (is (approx? (php/* mouse-look-gain (php// 40.0 70.0)) (:yaw r)) "delta is centre(60)->100 = 40 columns")))
 
@@ -640,71 +646,71 @@
   ;; Without [rows cols] there is no viewport to scale the delta or band, so
   ;; the look is inert - but fire intent still parses, so a non-loop caller
   ;; is unaffected.
-  (let [r (mouse-aim "\e[<35;120;15M" center-pos 1.0)]
+  (let [r (mouse-aim "\e[<35;120;15M" center-pos 1.0 test-dt)]
     (is (nil? (:aim-col r)) "no dims -> nil reticle")
     (is (= 0.0 (:yaw r)) "no dims -> no yaw")
     (is (= 0.0 (:pitch r)) "no dims -> no pitch"))
-  (let [r (mouse-aim "\e[<0;60;15M" center-pos 1.0)]
+  (let [r (mouse-aim "\e[<0;60;15M" center-pos 1.0 test-dt)]
     (is (= true (:fire? r)) "fire still parses with no dims")))
 
 ;; --- fire intent + report parsing (independent of the look model) ---
 
 (deftest test-mouse-aim-left-press-fires
   ;; A left-button press (b=0, final M) is a fresh fire rising-edge.
-  (let [r (mouse-aim "\e[<0;60;15M" center-pos 1.0 look-dims)]
+  (let [r (mouse-aim "\e[<0;60;15M" center-pos 1.0 test-dt look-dims)]
     (is (= true (:fire? r)) "left press fires")
     (is (= true (:fire-held? r)) "and counts as held")))
 
 (deftest test-mouse-aim-left-release-does-not-fire
   ;; A left release (final m) is not a press, so it doesn't fire.
-  (let [r (mouse-aim "\e[<0;60;15m" center-pos 1.0 look-dims)]
+  (let [r (mouse-aim "\e[<0;60;15m" center-pos 1.0 test-dt look-dims)]
     (is (= false (:fire? r)) "release does not fire")
     (is (= false (:fire-held? r)) "release is not held")))
 
 (deftest test-mouse-aim-left-drag-is-held-fire-and-turns
   ;; A left DRAG (b=32: motion bit + button 0) feeds auto-fire weapons and,
   ;; being a motion report, also moves the pointer so the camera turns.
-  (let [r (mouse-aim "\e[<32;120;15M" center-pos 1.0 look-dims)]
+  (let [r (mouse-aim "\e[<32;120;15M" center-pos 1.0 test-dt look-dims)]
     (is (= false (:fire? r)) "a drag is not a fresh press edge")
     (is (= true (:fire-held? r)) "but it holds the trigger for auto-fire")
     (is (php/> (:yaw r) 0.0) "and the drag turns the camera toward the pointer")))
 
 (deftest test-mouse-aim-press-then-move-fires-and-turns
-  (let [r (mouse-aim "\e[<0;60;15M\e[<35;120;15M" center-pos 1.0 look-dims)]
+  (let [r (mouse-aim "\e[<0;60;15M\e[<35;120;15M" center-pos 1.0 test-dt look-dims)]
     (is (= true (:fire? r)) "the press in the frame still fires")
     (is (php/> (:yaw r) 0.0) "and the move turns the camera")))
 
 (deftest test-mouse-aim-wheel-tick-adds-no-fire
   ;; A scroll-wheel tick (b=64) carries no aim intent: no fire.
-  (let [r (mouse-aim "\e[<64;120;15M" center-pos 1.0 look-dims)]
+  (let [r (mouse-aim "\e[<64;120;15M" center-pos 1.0 test-dt look-dims)]
     (is (= false (:fire? r)) "wheel up does not fire")
     (is (= false (:fire-held? r)) "wheel is not held-fire")))
 
 (deftest test-mouse-aim-right-button-does-not-fire
-  (let [r (mouse-aim "\e[<2;60;15M" center-pos 1.0 look-dims)]
+  (let [r (mouse-aim "\e[<2;60;15M" center-pos 1.0 test-dt look-dims)]
     (is (= false (:fire? r)) "right button is not the fire button")))
 
 (deftest test-mouse-aim-middle-button-does-not-fire
-  (let [r (mouse-aim "\e[<1;60;15M" center-pos 1.0 look-dims)]
+  (let [r (mouse-aim "\e[<1;60;15M" center-pos 1.0 test-dt look-dims)]
     (is (= false (:fire? r)) "middle button is not the fire button")))
 
 (deftest test-mouse-aim-malformed-sequence-ignored
   ;; A truncated report (missing the y field) matches nothing, so the
   ;; pointer stays put (no turn) and nothing fires.
-  (let [r (mouse-aim "\e[<35;15M" center-pos 1.0 look-dims)]
+  (let [r (mouse-aim "\e[<35;15M" center-pos 1.0 test-dt look-dims)]
     (is (= 0.0 (:yaw r)) "malformed -> pointer unchanged -> no turn")
     (is (= false (:fire? r)))))
 
 (deftest test-mouse-aim-ignores-kitty-key-event
   ;; A kitty CSI-u KEY event must not be mistaken for a mouse report.
-  (let [r (mouse-aim "\e[97;1:1u" center-pos 1.0 look-dims)]
+  (let [r (mouse-aim "\e[97;1:1u" center-pos 1.0 test-dt look-dims)]
     (is (= 0.0 (:yaw r)) "kitty key leaves the pointer alone")
     (is (= false (:fire? r)) "kitty key 'a' does not fire")))
 
 (deftest test-mouse-aim-ignores-arrow-and-fkey
   ;; Arrow + F-key escapes are not SGR mouse reports.
-  (let [arrow (mouse-aim "\e[C" center-pos 1.0 look-dims)
-        fkey  (mouse-aim "\eOR" center-pos 1.0 look-dims)]
+  (let [arrow (mouse-aim "\e[C" center-pos 1.0 test-dt look-dims)
+        fkey  (mouse-aim "\eOR" center-pos 1.0 test-dt look-dims)]
     (is (= 0.0 (:yaw arrow)) "arrow leaves the pointer alone")
     (is (= false (:fire? arrow)))
     (is (= false (:fire? fkey)))))
@@ -712,7 +718,7 @@
 (deftest test-mouse-aim-mixed-keyboard-and-mouse-bytes
   ;; A drain holding both WASD bytes and an SGR report: mouse-aim only
   ;; reads the SGR part; the 'w'/'d' are the keyboard path's job.
-  (let [r (mouse-aim "w\e[<35;120;15Md" center-pos 1.0 look-dims)]
+  (let [r (mouse-aim "w\e[<35;120;15Md" center-pos 1.0 test-dt look-dims)]
     (is (php/> (:yaw r) 0.0) "the embedded report still turns the camera")
     (is (= [120 15] (:pos r)) "pos comes from the SGR part only")))
 

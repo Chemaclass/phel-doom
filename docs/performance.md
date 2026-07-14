@@ -26,7 +26,7 @@ Result on the 3-enemy corridor bench (ms/frame, same machine):
 
 Frame output is byte-identical before/after (verified by md5 over a 24-config matrix: angles, sizes, blood, minimap, px2, flat/no-subpixel/no-sprite toggles).
 
-To check for regressions: build and grep the artifact - `grep -c 'function() use(' out/phel_doom/io/render/main.php` should stay at ~26, all of them once-per-frame or once-per-column sites (pickup-painter chain arguments, centre-cell capture, debug snapshot), none inside the per-cell `while` loops. The raycaster artifact `out/phel_doom/core/engine.php` should stay at 2 (the once-per-width FOV-table build + the once-per-frame pause-cache probe); the per-column cast loop has been closure-free since issue #345 (the DDA march + `wallx` were lifted out of binding position into the reused `hit-reg` register).
+To check for regressions: build and grep the artifact - `grep -c 'function() use(' out/phel_doom/io/render/main.php` should stay unchanged vs a same-environment main build (the absolute count varies by build environment; ~26-35 observed), all of them once-per-frame or once-per-column sites (pickup-painter chain arguments, centre-cell capture, debug snapshot), none inside the per-cell `while` loops. The raycaster artifact `out/phel_doom/core/engine.php` should stay at 2 (the once-per-width FOV-table build + the once-per-frame pause-cache probe); the per-column cast loop has been closure-free since issue #345 (the DDA march + `wallx` were lifted out of binding position into the reused `hit-reg` register).
 
 ## Big screens: uniform cadence + crisp walls
 
@@ -80,7 +80,7 @@ Measured (`/perf-bench`-style harness, level-1 world, 4 enemies, seed 42, 200-it
 | 180x40 | 6.27 ms | 6.21 ms | -1.1% (noise) |
 | 240x60 | 9.10 ms | 9.18 ms | +0.9% (noise) |
 
-All four are within the &lt;3% noise band. Kept anyway per the same reasoning as the view-bob memo above: the wins are real on the frames that actually change `(vh, pr, sub-vh, pr-sub)` or repaint a tall wall column or a hit-flashing enemy - resize, pitch/view-bob, pixel-doubling toggles, tall corridors, combat - none of which this fixed-viewport bench varies. `grep -c 'function() use(' out/phel_doom/io/render/main.php` stays at 26 and `out/phel_doom/core/engine.php` at 2 (unchanged).
+All four are within the &lt;3% noise band. Kept anyway per the same reasoning as the view-bob memo above: the wins are real on the frames that actually change `(vh, pr, sub-vh, pr-sub)` or repaint a tall wall column or a hit-flashing enemy - resize, pitch/view-bob, pixel-doubling toggles, tall corridors, combat - none of which this fixed-viewport bench varies. `grep -c 'function() use(' out/phel_doom/io/render/main.php` and `out/phel_doom/core/engine.php` are unchanged vs main (the absolute count varies by build environment; compare against a same-environment main build, not a fixed number).
 
 ## PHP runtime: OPcache + JIT
 

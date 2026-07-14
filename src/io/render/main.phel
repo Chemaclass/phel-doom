@@ -376,6 +376,12 @@
         tex-u                                                          (buf-mk)
         tex-level                                                      (buf-mk)
         tex-px                                                         (buf-mk)
+        ;; Per-column wall height, floored at 1 (same safety clamp the
+        ;; per-cell texture samplers used to apply themselves). `bot -
+        ;; top` is column-constant, so precomputing it here turns the
+        ;; non-mix wall-texture branch's per-ROW `(max 1 (- bot top))`
+        ;; in emit-scene-px1 into one `aget`.
+        wall-h-buf                                                     (buf-mk)
         pr                                                             (or pr-arg 0)
         ;; Column-loop invariant: vh-1 is used in sky-edge-row and
         ;; flr-edge-row (both per-column). Hoisting saves 2*vw
@@ -406,6 +412,7 @@
               h            (buf-get hits col)]
           (buf-set tops col top)
           (buf-set bots col (php/+ top wall-h))
+          (buf-set wall-h-buf col (php/max 1 wall-h))
           (buf-set tex-level col -1)            ; default: not textured
           (cond
             ;; Boss door stays blood-red ONLY while the boss lives; once
@@ -475,7 +482,8 @@
     {:tops tops :bots bots :normal normal
      :top-edge top-edge :bot-edge bot-edge
      :top-shadow top-shadow :bot-shadow bot-shadow
-     :tex-u tex-u :tex-level tex-level :tex-px tex-px}))
+     :tex-u tex-u :tex-level tex-level :tex-px tex-px
+     :wall-h wall-h-buf}))
 
 ;; =====================================================================
 ;; § Pulse cadences + near-death haze
@@ -525,7 +533,7 @@
 ;; Input-determined cache — same vh always yields the same arrays — so
 ;; it preserves frame->string's referential transparency, same as the
 ;; engine's offset-cache.
-(def- gradient-cache (atom {:vh -1 :pr 0}))
+(def- gradient-cache (atom {:vh -1 :pr 0 :sub-vh -1 :pr-sub 0}))
 
 ;; Single-slot memo for the full-resolution weapon-sprite floor gradient
 ;; (pixel-doubled mode only). Keyed on terminal height `vh` alone - it
@@ -622,27 +630,48 @@
 
 (defn- frame-gradients
   "Memoized sky/floor gradient bundle for viewport height `vh` and look
-   up/down shear `pr` (scene rows, default 0). Returns a map of the 6
-   gradient arrays (normal + blood, shade + code twins), rebuilding only
-   when `vh` OR `pr` changes (resize / pitch). Blood variants are always
-   built here; the caller still gates their USE on the live `bloody?`
-   flag. Keying on `pr` keeps the bundle input-determined (same vh + pr
-   => same arrays), preserving frame->string's referential transparency;
-   pr=0 reproduces the pre-pitch bundle byte-for-byte."
-  [^int vh & [pr-arg]]
-  (let [pr (or pr-arg 0)
-        c  @gradient-cache]
-    (if (and (php/=== vh (:vh c)) (php/=== pr (:pr c)))
+   up/down shear `pr` (scene rows, default 0). `sub-vh-arg`/`pr-sub-arg`
+   (default to `vh`/`pr`) additionally key the SUB-row tables:
+   `sub-vh` differs from `vh` only in pixel-doubled mode (2×svh
+   instead of svh) and `pr-sub` only when px2? doubles the shear too, so
+   a full-detail frame's cache key collapses back to plain (vh, pr).
+   Returns a map of the 6 cell-res gradient arrays (normal + blood,
+   shade + code twins) PLUS the sub-row sky codes and the four floor-cast
+   tables (`floor-dperp` / `floor-level` / `floor-dperp-sub` /
+   `floor-level-sub`) — all of them pure functions of these same four
+   keys (palettes + `floor-cast-k(-sub)` are compile-time constants), so
+   folding them into the one memo slot costs nothing extra and saves a
+   full rebuild of all ten arrays on every frame that doesn't resize,
+   pitch, or toggle pixel-doubling. Blood variants are always built
+   here; the caller still gates their USE on the live `bloody?` flag.
+   pr=0 / sub-vh=vh / pr-sub=pr reproduces the pre-memo bundle
+   byte-for-byte."
+  [^int vh & [pr-arg sub-vh-arg pr-sub-arg]]
+  (let [pr     (or pr-arg 0)
+        sub-vh (or sub-vh-arg vh)
+        pr-sub (or pr-sub-arg pr)
+        c      @gradient-cache]
+    (if (and (php/=== vh (:vh c)) (php/=== pr (:pr c))
+             (php/=== sub-vh (:sub-vh c)) (php/=== pr-sub (:pr-sub c)))
       c
-      (let [bundle {:vh             vh
-                    :pr             pr
-                    :sky            (build-horizon-gradient vh shade-table pr)
-                    :sky-hb         (build-sky-halfblock vh shade-code-table pr)
-                    :floor          (build-themed-gradient vh 239 true pr)
-                    :sky-code       (build-horizon-gradient-codes vh shade-code-table pr)
-                    :floor-code     (build-themed-gradient-codes vh 239 true pr)
-                    :blood-sky      (build-horizon-gradient vh shade-table-blood pr)
-                    :blood-sky-code (build-horizon-gradient-codes vh shade-code-table-blood pr)}]
+      (let [fd     (build-floor-dperp vh floor-cast-k pr)
+            fds    (build-floor-dperp-sub sub-vh floor-cast-k-sub pr-sub)
+            bundle {:vh              vh
+                    :pr              pr
+                    :sub-vh          sub-vh
+                    :pr-sub          pr-sub
+                    :sky             (build-horizon-gradient vh shade-table pr)
+                    :sky-hb          (build-sky-halfblock vh shade-code-table pr)
+                    :floor           (build-themed-gradient vh 239 true pr)
+                    :sky-code        (build-horizon-gradient-codes vh shade-code-table pr)
+                    :floor-code      (build-themed-gradient-codes vh 239 true pr)
+                    :blood-sky       (build-horizon-gradient vh shade-table-blood pr)
+                    :blood-sky-code  (build-horizon-gradient-codes vh shade-code-table-blood pr)
+                    :sky-sub-codes   (build-sky-codes-sub sub-vh shade-code-table pr-sub)
+                    :floor-dperp     fd
+                    :floor-level     (build-floor-level fd vh)
+                    :floor-dperp-sub fds
+                    :floor-level-sub (build-floor-level-sub fds sub-vh)}]
         (reset! gradient-cache bundle)
         bundle))))
 
@@ -1067,7 +1096,7 @@
    sky-gradient sky-sub-codes floor-gradient blood-sky-gradient blood-cols  ; gradients
    floordxs floordys pfx pfy floor-dperp-sub floor-level-sub                ; floor-cast
    tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow  ; wall spans + shades
-   shades-tex-u shades-tex-level shades-tex-px                              ; wall texture
+   shades-tex-u shades-tex-level shades-tex-px shades-wall-h                ; wall texture
    mids lowers emask eheads ebodys elegss                                  ; enemy glyph rows
    e-stop e-sbot e-sx e-sxr e-spx e-sw e-sh e-fade                         ; sprite window
    sprites-on bp-trc                                                       ; sprite/blood flags
@@ -1081,7 +1110,12 @@
    ;; (frame_math.phel) which captures these by name - not "unused".
    floor-code-at seam-darken-16 seam-darken-8 seam-darken-5 ftab hb]       ; seam shading (via seam-shade!) + fade tables
   (let [cell-reg (php/array)
-        pack-reg (php/array)]
+        pack-reg (php/array)
+        ;; Frame-constant: the quad floor/edge branches read the
+        ;; right-neighbour bound (col < vw-1) once per row visited, so
+        ;; without this hoist the subtraction repeats up to vh times per
+        ;; column. Same treatment as the vh-1 hoist above.
+        vw-1     (php/- vw 1)]
     (dotimes [row vh]
       (let [;; Row-constant hoists: gradient rows, floor-cast row
                 ;; terms and the minimap column limit don't vary by
@@ -1171,9 +1205,9 @@
                                          (php/+ (php/* 0.75 fdx) (php/* 0.25 (buf-get floordxs (php/- col 1)))) fdx)
                                   fdyl (if (php/> col 0)
                                          (php/+ (php/* 0.75 fdy) (php/* 0.25 (buf-get floordys (php/- col 1)))) fdy)
-                                  fdxr (if (php/< col (php/- vw 1))
+                                  fdxr (if (php/< col vw-1)
                                          (php/+ (php/* 0.75 fdx) (php/* 0.25 (buf-get floordxs (php/+ col 1)))) fdx)
-                                  fdyr (if (php/< col (php/- vw 1))
+                                  fdyr (if (php/< col vw-1)
                                          (php/+ (php/* 0.75 fdy) (php/* 0.25 (buf-get floordys (php/+ col 1)))) fdy)
                                   fxtl (php/+ pfx (php/* dpt fdxl)) fytl (php/+ pfy (php/* dpt fdyl))
                                   fxtr (php/+ pfx (php/* dpt fdxr)) fytr (php/+ pfy (php/* dpt fdyr))
@@ -1284,9 +1318,9 @@
                                   ;; AA, not texture sub-detail); collapses to ▀
                                   ;; when the edge doesn't split the cell.
                               (let [tlb  (if (php/> col 0) (php/aget wsub-top (php/- col 1)) ts-sub)
-                                    trb  (if (php/< col (php/- vw 1)) (php/aget wsub-top (php/+ col 1)) ts-sub)
+                                    trb  (if (php/< col vw-1) (php/aget wsub-top (php/+ col 1)) ts-sub)
                                     blb  (if (php/> col 0) (php/aget wsub-bot (php/- col 1)) bs-sub)
-                                    brb  (if (php/< col (php/- vw 1)) (php/aget wsub-bot (php/+ col 1)) bs-sub)
+                                    brb  (if (php/< col vw-1) (php/aget wsub-bot (php/+ col 1)) bs-sub)
                                         ;; Fractional on purpose: the half-cell
                                         ;; edge offset is sub-integer, so rounding
                                         ;; to whole sub-rows would snap back to
@@ -1334,7 +1368,7 @@
                                   ;; Half-block wall: two V samples down
                                   ;; the column (same U, same fog level)
                                   ;; stacked into one ▀ cell.
-                              (let [wh   (php/max 1 (php/- bot top))
+                              (let [wh   (buf-get shades-wall-h col)
                                     u    (buf-get shades-tex-u col)
                                     tpx  (buf-get shades-tex-px col)
                                     rel2 (php/* 2 (php/- row top))
@@ -1344,7 +1378,7 @@
                                 (php/aset cell-reg 0
                                           (halfblock (php/aget fade (php/aget tpx (php/+ (php/* tvt 64) u)))
                                                      (php/aget fade (php/aget tpx (php/+ (php/* tvb 64) u))))))
-                              (let [wh   (php/max 1 (php/- bot top))
+                              (let [wh   (buf-get shades-wall-h col)
                                     tv   (php/min 63 (php/intdiv (php/* (php/- row top) 64) wh))
                                     tc   (php/aget (buf-get shades-tex-px col)
                                                    (php/+ (php/* tv 64) (buf-get shades-tex-u col)))
@@ -1442,11 +1476,16 @@
         ;; horizon. No per-level wall tinting; level distinction comes
         ;; from enemy sprites + intro splash + audio.
         stbl                               shade-table
-        ;; Sky/floor gradients (+ blood + code twins) are memoized by the
-        ;; SCENE height (see frame-gradients); the per-frame rebuild is
-        ;; gone. In pixel-doubled mode every scene-side consumer keys off
-        ;; svh, so the memo stays single-keyed and stable across frames.
-        grads                              (frame-gradients svh pr)
+        ;; Sky/floor gradients (+ blood + code twins) PLUS the sub-row
+        ;; sky codes and the four floor-cast tables are all memoized in
+        ;; one bundle (see frame-gradients): every one of
+        ;; them is a pure function of (svh, pr, sub-vh, pr-sub), so the
+        ;; per-frame rebuild is gone for all ten arrays, not just the 6
+        ;; gradients. `sub-vh` only differs from svh in pixel-doubled
+        ;; mode (2×svh instead of svh); at full detail it collapses back
+        ;; to svh so the memo key degenerates to the pre-existing (svh, pr).
+        sub-vh                             (if px2? (php/* 2 svh) svh)
+        grads                              (frame-gradients svh pr sub-vh pr-sub)
         sky-gradient                       (:sky grads)
         ;; Half-block sky: per-row ▀ cell stacking two sub-rows of the
         ;; horizon gradient (2× vertical smoothness). Row-constant, so it
@@ -1459,7 +1498,7 @@
         ;; the full-detail seam mixer blends the code at a wall-top
         ;; boundary sub-row into its ▀ cell. Sized to the path's
         ;; sub-row space (4 per scene cell in px2, 2 per cell in px1).
-        sky-sub-codes                      (build-sky-codes-sub (if px2? (php/* 2 svh) svh) shade-code-table pr-sub)
+        sky-sub-codes                      (:sky-sub-codes grads)
         ;; Floor: same grey gradient with subtle tile banding (odd
         ;; rows one fade step darker).
         floor-gradient                     (:floor grads)
@@ -1555,12 +1594,13 @@
         ;; Floor-cast inputs: player position + per-row perpendicular
         ;; distance / fog level for the textured ground plane. The cell-
         ;; res arrays drive the legacy single-texel floor; the sub arrays
-        ;; (2× vertical) drive the half-block floor.
+        ;; (2× vertical) drive the half-block floor. All four tables live
+        ;; in the `grads` memo bundle now (see frame-gradients).
         {:x pfx :y pfy}                    (:player world)
-        floor-dperp                        (build-floor-dperp svh floor-cast-k pr)
-        floor-level                        (build-floor-level floor-dperp svh)
-        floor-dperp-sub                    (build-floor-dperp-sub (if px2? (php/* 2 svh) svh) floor-cast-k-sub pr-sub)
-        floor-level-sub                    (build-floor-level-sub floor-dperp-sub (if px2? (php/* 2 svh) svh))
+        floor-dperp                        (:floor-dperp grads)
+        floor-level                        (:floor-level grads)
+        floor-dperp-sub                    (:floor-dperp-sub grads)
+        floor-level-sub                    (:floor-level-sub grads)
         _                                  (when debug?
                                              (record-cast-ms!
                                               (php/* (php/- (php/microtime true) t-cast-start) 1000.0)))
@@ -1677,7 +1717,8 @@
          :bot-shadow        shades-bot-shadow
          :tex-u             shades-tex-u
          :tex-level         shades-tex-level
-         :tex-px            shades-tex-px}
+         :tex-px            shades-tex-px
+         :wall-h            shades-wall-h}
         (compute-wall-shades svw svh haze-shift
                              {:dists dists :hits hits :sides sides :wallxs wallxs}
                              {:stbl stbl :ctbl ctbl
@@ -2150,7 +2191,7 @@
                             sky-gradient sky-sub-codes floor-gradient blood-sky-gradient blood-cols
                             floordxs floordys pfx pfy floor-dperp-sub floor-level-sub
                             tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow
-                            shades-tex-u shades-tex-level shades-tex-px
+                            shades-tex-u shades-tex-level shades-tex-px shades-wall-h
                             mids lowers emask eheads ebodys elegss
                             e-stop e-sbot e-sx e-sxr e-spx e-sw e-sh e-fade
                             sprites-on bp-trc
@@ -2212,8 +2253,21 @@
             ;; be cleaner but trips arity-mismatch lint.
             ;; Face glyph (blinking eyes) is a glyph-era tell; the
             ;; Freedoom sprites already show a face, so skip it in sprite mode.
+            ;; Reuse the zone pass's shared enemy-projs
+            ;; instead of re-running collect-enemy-projs here. At full
+            ;; detail svw = vw, so enemy-projs (built at the full `vw`
+            ;; above) is byte-identical to what this call used to build
+            ;; itself. In pixel-doubled mode the old internal call
+            ;; projected at svw directly (not the full-vw-then-halved
+            ;; column the zone pass uses) - a different rounding path -
+            ;; so px2 keeps its own svw-scoped projection to stay
+            ;; byte-identical rather than risk a rounding drift.
             p1          (if sprites-on parts
-                            (paint-face-overlay parts world stats svw svh dists edists face-phase px-sc pr))
+                            (paint-face-overlay parts
+                                                (if px2?
+                                                  (collect-enemy-projs (:enemies world) (:player world) svw)
+                                                  enemy-projs)
+                                                stats svw svh dists edists face-phase px-sc pr))
             p4          (paint-crosshair          p1 stats vw vh center-bg)
             p5          (paint-intro-splash       p4 stats vw vh)
             p6          (paint-blood-drops        p5 stats vw vh)
@@ -2236,7 +2290,10 @@
             p18         (paint-empty-click        p17 stats vw vh)
             p19         (paint-reload-reminder    p18 stats vw vh)
             p19b        (paint-locked-bump        p19 stats vw vh)
-            p19c        (paint-enemy-hp-flashes   p19b world vw vh pr-full)
+            ;; Shared enemy-projs: both are projected at the
+            ;; same full `vw` this fn used to re-project with internally,
+            ;; so this is a pure filter over already-computed data.
+            p19c        (paint-enemy-hp-flashes   p19b enemy-projs vw vh pr-full)
             p20         (paint-save-flash         p19c stats vw vh)
             p20b        (paint-reload-ready       p20 stats vw vh)]
         ;; Pause (P) IS the settings page: freezing the game and the

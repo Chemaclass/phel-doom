@@ -54,6 +54,34 @@ The sky/floor gradient bundle (`frame-gradients`) is a single-slot memo keyed on
 
 Measured worst case (a synthetic bench flipping `pr` every single frame, i.e. rebuild every frame): **+0.04ms at 120x30, +0.28ms at 180x40**, against a 5-7ms frame and the 16ms ceiling. The real cost is a fraction of that: `bob-rows` is quantized to whole rows, so `pr` only changes a few times per bob cycle, not every frame. View bob defaults OFF, so the shipped look pays nothing. Given the sub-0.3ms worst case, the bob term is baked straight into `pr` (one add at the two `pitch-rows` sites) rather than decoupled from the memo key; a decouple would add hot-path complexity for no measurable win.
 
+## Frame-gradients memo extension + wall-height/enemy-projection dedup
+
+Three follow-ups to the memo/dedup patterns above, audited together:
+
+**1. Extend `frame-gradients` to the sub-row sky codes + floor-cast tables.** `build-sky-codes-sub` and the four floor-cast tables (`build-floor-dperp` / `build-floor-level` / `build-floor-dperp-sub` / `build-floor-level-sub`) were rebuilt from scratch every frame even though every one of them is a pure function of the same inputs the `(vh, pr)`-keyed gradient bundle already caches, plus two more frame-constant-per-resize values: `sub-vh` (2x`svh` in pixel-doubled mode, else `svh`) and `pr-sub` (2x`pr` in pixel-doubled mode, else `pr`). `frame-gradients` now takes both as optional args (defaulting to `vh`/`pr`, so the key collapses back to the pre-existing `(vh, pr)` pair at full detail) and folds all ten arrays into the one memo slot. Rebuilds only on resize, pitch change, or a pixel-doubling toggle - the same triggers the existing bundle already rebuilt on.
+
+**2. Per-column hoists in `emit-scene-px1`.** `(vw - 1)` (the quad-floor/quad-edge right-neighbour bound) is frame-constant, not per-cell; hoisted to the same outer `let` as the existing `vh-1` hoist. The non-mix wall-texture branch's `(max 1 (- bot top))` is column-constant but was recomputed on every ROW of a wall's height (the loop is row-outer/col-inner, so a tall wall repeats the same subtraction up to `vh` times per column); `compute-wall-shades` already computes the exact pre-clamp value as a local (`wall-h`, used to derive `bots`), so it now also stashes `(max 1 wall-h)` into a new per-column buffer (`:wall-h`) that the row loop reads with one `aget` instead of recomputing.
+
+Evaluated and skipped: hoisting the `floordxs`/`floordys`/`shades-tex-u`/`shades-tex-px` per-column `buf-get` fetches themselves. They already compile to a single `php/aget` on an existing flat array - there is no computation to save, only a fetch, and the loop being row-outer/col-inner means there is no per-column scope to cache them in without transposing the loop (which would break row-major RLE coalescing). A per-frame array rebuild to "cache" a value that is already a raw array read would cost more than it saves.
+
+**3. Enemy projection dedup.** `collect-enemy-projs` runs once in `frame->string`'s zone pass (`enemy-projs`) but `paint-face-overlay` and `paint-enemy-hp-flashes` each re-projected independently: `paint-face-overlay` called `collect-enemy-projs` a second time, and `paint-enemy-hp-flashes` called `project-enemy` a third time per hit-flashing enemy. Both now take the shared `enemy-projs` as a parameter instead:
+
+- `paint-enemy-hp-flashes` is byte-identical unconditionally: it was already projecting at the FULL `vw` (matching the zone pass), so `project-enemy-pd` now rides `:lives` / `:max-lives` / `:hit-flash-secs` along on every projection (reusing locals already computed there for `:damage-ratio`, plus one more cheap default) and the fn filters the shared bundle instead of re-projecting.
+- `paint-face-overlay` was called with `svw` as its width, so at full detail (`svw == vw`) it is the same call with the same pure function, and reuses `enemy-projs` directly. In pixel-doubled mode the old internal call projected directly at `svw` rather than projecting at the full `vw` and halving the column (the zone pass's approach) - a different integer-rounding path - so px2 keeps its own `svw`-scoped `collect-enemy-projs` call rather than risk a rounding drift; no dedup win there, but zero risk.
+
+Verified byte-identical beyond the pinned golden hash (whose fixture has no on-screen enemy): an md5-per-frame sweep across pitch / view-bob / pixel-doubling / resize combinations, and a glyph-mode (`PHEL_DOOM_NO_SPRITES=1`) sweep with every enemy mid-hit-flash across both render scales, hash identically before/after.
+
+Measured (`/perf-bench`-style harness, level-1 world, 4 enemies, seed 42, 200-iter mean after 20-frame warmup, no-JIT `phel run`; this bench holds cols/rows/pitch/px2 fixed across all 200 iterations per config, so it does not exercise the memo extension's actual trigger - resize/pitch/px2 changing between frames - only the fixed-viewport cost; see the smoke checks above for that case):
+
+| Viewport | before | after | delta |
+|---|---|---|---|
+| 80x24  | 3.72 ms | 3.73 ms | +0.4% (noise) |
+| 120x30 | 4.57 ms | 4.55 ms | -0.5% (noise) |
+| 180x40 | 6.27 ms | 6.21 ms | -1.1% (noise) |
+| 240x60 | 9.10 ms | 9.18 ms | +0.9% (noise) |
+
+All four are within the &lt;3% noise band. Kept anyway per the same reasoning as the view-bob memo above: the wins are real on the frames that actually change `(vh, pr, sub-vh, pr-sub)` or repaint a tall wall column or a hit-flashing enemy - resize, pitch/view-bob, pixel-doubling toggles, tall corridors, combat - none of which this fixed-viewport bench varies. `grep -c 'function() use(' out/phel_doom/io/render/main.php` stays at 26 and `out/phel_doom/core/engine.php` at 2 (unchanged).
+
 ## PHP runtime: OPcache + JIT
 
 Two settings matter most:

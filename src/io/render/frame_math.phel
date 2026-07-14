@@ -744,8 +744,15 @@
   "Project one billboard-style entity into screen space for an explicit
    projection numerator `pd` (`proj-dist` at full detail, half of it in
    the pixel-doubled scene so columns/widths land in scene cells).
-   Returns {:col :half-width :dist :scale :damage-ratio :type} or nil
-   when behind / off-screen — see `project-enemy` for the field contract."
+   Returns {:col :half-width :dist :scale :damage-ratio :type :lives
+   :max-lives :hit-flash-secs} or nil when behind / off-screen — see
+   `project-enemy` for the field contract. `:lives` / `:max-lives` /
+   `:hit-flash-secs` ride along at zero extra cost (`lives`/`max-lives`
+   are already computed locals for `:damage-ratio`; `:hit-flash-secs`
+   defaults to 0.0 on entities that don't carry one, e.g. pickups/fx)
+   so `paint-enemy-hp-flashes` can read the HP-flash state straight off
+   the shared `collect-enemy-projs` bundle instead of re-projecting
+   every enemy a second time."
   [^float pd enemy player ^int vw]
   (let [dx (php/- (:x enemy) (:x player))
         dy (php/- (:y enemy) (:y player))]
@@ -780,14 +787,18 @@
            ;; fz-grid; the zone pass does the height lookup.
            :cell-x       (php/intval (:x enemy))
            :cell-y       (php/intval (:y enemy))
-           :type         (:type enemy)})))))
+           :type         (:type enemy)
+           :lives        lives
+           :max-lives    max-lives
+           :hit-flash-secs (or (:hit-flash-secs enemy) 0.0)})))))
 
 (defn project-enemy
   "Project one enemy into screen space relative to the player. Returns
-   {:col :half-width :dist :scale :damage-ratio :type} or nil if the enemy
-   is behind the player or off-screen. `:damage-ratio` is 0.0 at full health
-   and approaches 1.0 as the enemy nears death; render uses it to tint the
-   body shade darker for wounded enemies. Distance is fish-eye corrected
+   {:col :half-width :dist :scale :damage-ratio :type :lives :max-lives
+   :hit-flash-secs} or nil if the enemy is behind the player or
+   off-screen. `:damage-ratio` is 0.0 at full health and approaches 1.0
+   as the enemy nears death; render uses it to tint the body shade
+   darker for wounded enemies. Distance is fish-eye corrected
    so it can be compared directly to entries in the wall `dists` array."
   [enemy player ^int vw]
   (project-enemy-pd proj-dist enemy player vw))

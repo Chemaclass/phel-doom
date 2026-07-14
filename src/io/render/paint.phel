@@ -3,7 +3,7 @@
 (ns phel-doom.io.render.paint
   (:require phel-doom.io.render.buffer :refer [buf-get buf-push])
   (:require phel-doom.io.render.sprites :refer [sprites-enabled?])
-  (:require phel-doom.io.render.frame-math :refer [sprite-h aggro-distance project-enemy collect-enemy-projs pulse visuals-for-type enemy-front-visible-at?])
+  (:require phel-doom.io.render.frame-math :refer [sprite-h aggro-distance pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.weapon-sprites-data :refer [baked-weapons weapon-flashes])
   (:require phel-doom.core.engine :refer [proj-dist])
   (:require phel-doom.core.projection :refer [wall-px weapon-bob-rows weapon-bob-cols])
@@ -51,13 +51,22 @@
    the same `pr` to stay pinned to the head. pr=0 keeps the overlay
    exactly where it was.
 
+   `enemy-projs` is the caller's already-projected/sorted enemy list
+  : frame->string projects every enemy once for the zone
+   pass, so this fn reuses that same vector instead of re-running
+   `collect-enemy-projs` a second time. The caller MUST pass a bundle
+   built with the same `vw` this fn receives (full-width at full
+   detail; a fresh svw-width bundle in pixel-doubled mode, since the
+   zone pass's bundle is projected at the FULL terminal width) so the
+   :col values line up with the `vw`-scoped bounds check below.
+
    The face tracks the sprite's feet anchor on flat ground: the feet row
    is `round(vh/2 + 0.5 * wall-px(proj-dist, d)) + pr`, and the face glyph
    paints at the sprite's upper third (`feet-row - h + h/6`) so it sits on
    the standing body."
-  [parts world stats vw vh dists edists face-phase ^int sc & [pr-arg]]
+  [parts enemy-projs stats vw vh dists edists face-phase ^int sc & [pr-arg]]
   (let [pr (or pr-arg 0)]
-    (doseq [proj (collect-enemy-projs (:enemies world) (:player world) vw)]
+    (doseq [proj enemy-projs]
       (let [col         (:col proj)
             d           (:dist proj)
             visuals     (visuals-for-type (:type proj) stats)
@@ -838,29 +847,33 @@
    it. `pr` (rows, default 0) is the look up/down horizon shear at full
    resolution, added so the digit tracks the pitched sprite head.
 
+   `enemy-projs` is the caller's already-projected/sorted enemy list
+   (same bundle `paint-face-overlay` takes): this fn used to
+   call `project-enemy` a SECOND time per hit-flashing enemy even though
+   frame->string's zone pass already projected every alive enemy at the
+   same full `vw`. `project-enemy-pd` now carries `:lives` / `:max-lives`
+   / `:hit-flash-secs` on every projection (computed there at zero extra
+   cost), so this fn filters the shared bundle instead of re-projecting.
+   Byte-identical: same `vw`, same pure fn, same filter predicate.
+
    The digit tracks the sprite's feet anchor on flat ground: the feet row
    is `round(vh/2 + 0.5 * wall-px(proj-dist, d)) + pr`, and the digit
    floats one row above the head (`feet-row - h - 1`)."
-  [parts world vw vh & [pr-arg]]
-  (let [pr     (or pr-arg 0)
-        player (:player world)]
-    (doseq [e (:enemies world)]
-      (when (and e
-                 (:alive e)
-                 (php/> (or (:lives e) 0) 0)
-                 (php/> (or (:max-lives e) 1) 1)
-                 (php/> (or (:hit-flash-secs e) 0.0) 0.0))
-        (let [proj (project-enemy e player vw)]
-          (when proj
-            (let [col      (:col proj)
-                  d        (:dist proj)
-                  h        (sprite-h vh d 1.0)
-                  feet-row (php/+ (php/intval (php/round (php/+ (php// vh 2.0) (php/* 0.5 (wall-px proj-dist d))))) pr)
-                  row      (php/max 1 (php/- (php/- feet-row h) 1))]
-              (when (and (php/>= col 1) (php/<= col vw))
-                (buf-push parts
-                          (str "\e[" row ";" col "H\e[40;38;5;226;1m"
-                               (:lives e) "\e[0m")))))))))
+  [parts enemy-projs vw vh & [pr-arg]]
+  (let [pr (or pr-arg 0)]
+    (doseq [proj enemy-projs]
+      (when (and (php/> (or (:lives proj) 0) 0)
+                 (php/> (or (:max-lives proj) 1) 1)
+                 (php/> (or (:hit-flash-secs proj) 0.0) 0.0))
+        (let [col      (:col proj)
+              d        (:dist proj)
+              h        (sprite-h vh d 1.0)
+              feet-row (php/+ (php/intval (php/round (php/+ (php// vh 2.0) (php/* 0.5 (wall-px proj-dist d))))) pr)
+              row      (php/max 1 (php/- (php/- feet-row h) 1))]
+          (when (and (php/>= col 1) (php/<= col vw))
+            (buf-push parts
+                      (str "\e[" row ";" col "H\e[40;38;5;226;1m"
+                           (:lives proj) "\e[0m")))))))
   parts)
 
 (defn paint-hearts-hud

@@ -68,6 +68,46 @@
     (is (= nil (:settings back)) "settings not baked into the save")
     (is (= nil (:settings-cursor back)) "settings cursor not baked into the save")))
 
+;; ---------------------------------------------------------------------
+;; Input hold counters are transient input state, not run state: a load
+;; must never resume a walk/turn that was live at save time. Critically,
+;; saves written before the seconds-based counters (which stored int
+;; FRAME counts, e.g. :fwd 15) must not be reinterpreted as 15 SECONDS
+;; of uncontrolled forward drift.
+;; ---------------------------------------------------------------------
+
+(deftest test-savestring-resets-moves
+  (let [w    (-> (new-world grid (new-player 1.5 2.5 0.0))
+                 (assoc-in [:moves :fwd] 0.30)
+                 (assoc-in [:moves :turn-left] 0.05))
+        back (savestring->world (world->savestring w))]
+    (is (= 0.0 (get-in back [:moves :fwd])) "mid-walk save loads standing still")
+    (is (= 0.0 (get-in back [:moves :turn-left])) "mid-turn save loads without spin")))
+
+(deftest test-load-zeroes-legacy-frame-count-moves
+  ;; Simulate a pre-seconds save: raw int frame counts inside :moves.
+  (let [w     (-> (new-world grid (new-player 1.5 2.5 0.0))
+                  (assoc :moves {:fwd 15 :back 0 :strafe-left 0 :strafe-right 0
+                                 :turn-left 18 :turn-right 0 :sprint 3
+                                 :pitch-up 0 :pitch-down 0}))
+        o     (php/json_decode (world->savestring w) true)
+        ;; world->savestring already strips :moves; re-inject the legacy
+        ;; ints the way an old binary persisted them so the LOAD path is
+        ;; what's under test. PHP arrays copy on read, so pull each level
+        ;; out, mutate the copy, and reassemble.
+        wenc  (php/aget o "world")
+        inner (php/aget wenc 1)
+        _     (php/aset inner "moves"
+                        (encode {:fwd 15 :back 0 :strafe-left 0 :strafe-right 0
+                                 :turn-left 18 :turn-right 0 :sprint 3
+                                 :pitch-up 0 :pitch-down 0}))
+        _     (php/aset wenc 1 inner)
+        _     (php/aset o "world" wenc)
+        back  (savestring->world (php/json_encode o))]
+    (is (= 0.0 (get-in back [:moves :fwd])) "legacy int frame count zeroed, not read as seconds")
+    (is (= 0.0 (get-in back [:moves :turn-left])) "legacy turn count zeroed")
+    (is (= 0.0 (get-in back [:moves :sprint])) "legacy sprint count zeroed")))
+
 (deftest test-load-rejects-version-mismatch
   (let [o (php/array)]
     (php/aset o "version" 999)

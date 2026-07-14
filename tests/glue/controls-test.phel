@@ -599,6 +599,21 @@
   (is (php/> (:pitch (mouse-aim "" top-edge-pos 1.0 test-dt look-dims)) 0.0) "held at top keeps looking up")
   (is (php/< (:pitch (mouse-aim "" bottom-edge-pos 1.0 test-dt look-dims)) 0.0) "held at bottom keeps looking down"))
 
+(deftest test-mouse-aim-edge-pan-magnitude-scales-with-dt
+  ;; The per-second rates must actually be dt-scaled inside mouse-aim: at
+  ;; the saturated edge, yaw = mouse-yaw-rate-max * sens * dt. A regression
+  ;; that dropped the dt multiply (emitting the raw 9.6 rad/s per FRAME, a
+  ;; 60x-too-fast spin) passes every sign/ratio test, so pin the absolute
+  ;; magnitude at one dt and the 2x ratio across two different dts.
+  (let [yaw-60  (:yaw (mouse-aim "" right-edge-pos 1.0 (php// 1.0 60.0) look-dims))
+        yaw-120 (:yaw (mouse-aim "" right-edge-pos 1.0 (php// 1.0 120.0) look-dims))
+        pit-60  (:pitch (mouse-aim "" top-edge-pos 1.0 (php// 1.0 60.0) look-dims))
+        pit-120 (:pitch (mouse-aim "" top-edge-pos 1.0 (php// 1.0 120.0) look-dims))]
+    (is (approx? 0.16 yaw-60) "9.6 rad/s x 1/60s = 0.16 rad (the old per-frame constant)")
+    (is (approx? yaw-60 (php/* 2.0 yaw-120)) "halving dt halves the edge-pan yaw")
+    (is (approx? 0.06 pit-60) "3.6/s x 1/60s = 0.06 (the old per-frame constant)")
+    (is (approx? pit-60 (php/* 2.0 pit-120)) "halving dt halves the edge-pan pitch")))
+
 (deftest test-mouse-aim-edge-pan-fires-on-push-into-band
   ;; Pushing DEEPER into the band adds the edge spin ON TOP of the delta (so
   ;; you can turn past the view); retreating toward centre still nets a turn

@@ -45,6 +45,7 @@ Pure data shapes that every other module operates on. `src/core/state.phel`.
  :kills      <int>
  :lives      <int, 0..max-lives>
  :iframes    <float seconds>  ; post-hit invulnerability
+ :shake-secs <float seconds>  ; screen-shake kick (damage + heavy-weapon fire/blast)
  :fire-anim  <float seconds>  ; muzzle flash visibility
  :intro-secs <float seconds>  ; level intro splash countdown
  :flash-secs <float seconds>  ; 1-frame white impact flash
@@ -135,6 +136,7 @@ Float-seconds countdowns on the world, decayed by `decay-timers` in `core/combat
 | Timer | Set by | Drives |
 |---|---|---|
 | `:iframes` | `take-damage` (1.0s) | Red palette flush + immunity window |
+| `:shake-secs` | `take-damage` (0.25s), heavy-weapon fire/blast (splash-radius-scaled) | Cursor-home offset screen-shake |
 | `:flash-secs` | `take-damage` (0.05s) | 1-frame all-white impact |
 | `:fire-anim` | `fire-shot` (0.09s) | Muzzle flash visibility |
 | `:intro-secs` | `build-world` (1.5s) | "LEVEL N · NAME" splash overlay |

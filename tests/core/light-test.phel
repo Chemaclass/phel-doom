@@ -1,0 +1,46 @@
+(ns phel-doom-tests.core.light-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.light :refer [build-light-grid light-ambient]))
+
+(defn- open-room
+  ;; w x h grid: wall border, open interior. Big enough (>= 9) that the
+  ;; lattice anchor at (3,3) lands on an open cell and casts a lamp.
+  [w h]
+  (into [] (map (fn [y]
+                  (into [] (map (fn [x]
+                                  (if (or (= x 0) (= y 0) (= x (php/- w 1)) (= y (php/- h 1))) 1 0))
+                                (range w))))
+                (range h))))
+
+(defn- at [lg ^int w ^int x ^int y]
+  (php/aget lg (php/+ (php/* y w) x)))
+
+(deftest test-light-grid-is-dense
+  ;; One bias per cell (walls included) so the per-column render lookup
+  ;; never hits an undefined key.
+  (let [lg (build-light-grid (open-room 9 9))]
+    (is (= 81 (php/count lg)) "9x9 -> 81 biases")))
+
+(deftest test-lamp-cell-brighter-than-far-corner
+  ;; A 9x9 open room puts a lamp at (3,3). The lamp cell is lifted to the
+  ;; peak; a far interior cell out of every pool sits at the dark ambient.
+  (let [lg (build-light-grid (open-room 9 9))]
+    (is (php/> (at lg 9 3 3) (at lg 9 7 7)) "near the lamp is brighter than a far corner")
+    (is (php/=== (php/- 0 light-ambient) (at lg 9 7 7)) "a cell out of every pool sits at the dark ambient")))
+
+(deftest test-light-grid-deterministic
+  ;; Same grid -> identical bias, every time. build-light-grid MUST NOT
+  ;; consume the RNG stream (that would shift every seeded fixture).
+  (let [g (open-room 9 9)
+        a (build-light-grid g)
+        b (build-light-grid g)]
+    (is (php/=== (at a 9 3 3) (at b 9 3 3)))
+    (is (php/=== (at a 9 5 5) (at b 9 5 5)))
+    (is (php/=== (at a 9 7 7) (at b 9 7 7)))))
+
+(deftest test-tiny-grid-is-safe-and-uniform
+  ;; A grid smaller than the lattice pitch has no lamps: every cell sits at
+  ;; the dark ambient and the build must not crash.
+  (let [lg (build-light-grid [[1 1 1] [1 0 1] [1 1 1]])]
+    (is (= 9 (php/count lg)) "3x3 -> 9 biases")
+    (is (php/=== (php/- 0 light-ambient) (at lg 3 1 1)) "center cell at ambient")))

@@ -140,6 +140,8 @@ Phel vectors are slow for indexed reads in tight loops. `new-world` builds a PHP
 
 Raycaster and minimap use `:pgrid` via direct subscript. Both `:grid` and `:pgrid` update together on cell changes.
 
+`:light-grid` (#418) is a sibling PHP-array twin, derived the same way and updated by the same `rebuild-pgrid` hook. Room lighting adds ONE `php/aget` per COLUMN in `compute-wall-shades` (at the ray's hit cell), never per texel, and folds into `idx-raw` so the wall TEXTURE fog rides it for free. Measured cost: +0.5% render at 120x30, +2.5% at 180x40, ~0 in px2 - all noise-level and only paid when the opt-in `:light` setting is on. Off (default) the lookup is skipped (nil grid -> +0), byte-identical. The `if light-grid` guard is a plain ternary, so it stays inlined (no per-column closure; run the `function() use(` artifact guard after build).
+
 ## Flat distance arrays from cast-frame
 
 `cast-frame` returns PHP arrays (`:dists`, `:hits`, `:hxs`, `:hys`, `:sides`). Renderer walks by column index; no lazy seqs, no Phel dispatch.

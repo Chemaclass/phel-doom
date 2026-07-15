@@ -74,6 +74,15 @@
   ;; killing the blue band while keeping the lighter-with-distance depth cue.
   (php/array 112 112 120))
 
+(def- fog-rgb-tc
+  ;; Truecolor far-distance fog target (#419). The 256 path is forced to a
+  ;; near-neutral grey because the cube can't hold a "barely cool" mid-grey
+  ;; (see fog-rgb). Truecolor has no such quantization, so it holds a
+  ;; genuinely cool haze here instead of wasting its extra depth on the same
+  ;; grey. Same luminance as fog-rgb (avg ~115) but a real cool bias
+  ;; (blue 130 vs red 104) - subtle enough to read as haze, not a blue band.
+  (php/array 104 110 130))
+
 (def- filmic-norm
   ;; The ACES-ish curve evaluated at b=1, used to normalise `filmic` so a
   ;; full-brightness input maps to 1.0: num/den = 2.54/3.16.
@@ -158,16 +167,17 @@
                        (php/max 0 (php/min 255 b))))))
 
 (defn- fade-rgb-fog
-  ;; Truecolor twin of `fade-256-fog`: identical filmic lerp toward
-  ;; `fog-rgb`, but pack the exact RGB instead of snapping to nearest-256.
+  ;; Truecolor twin of `fade-256-fog`: identical filmic lerp, but toward the
+  ;; cooler `fog-rgb-tc` haze (#419 - truecolor is unbound by the 256-neutral
+  ;; constraint) and pack the exact RGB instead of snapping to nearest-256.
   ;; System codes (<16) pass through as their plain code (UI/markers).
   [^int code ^float t]
   (if (php/< code 16)
     code
     (let [b  (filmic (php/- 1.0 t))
-          fr (php/aget fog-rgb 0)
-          fg (php/aget fog-rgb 1)
-          fb (php/aget fog-rgb 2)]
+          fr (php/aget fog-rgb-tc 0)
+          fg (php/aget fog-rgb-tc 1)
+          fb (php/aget fog-rgb-tc 2)]
       (pack-tc (php/intval (php/round (php/+ fr (php/* b (php/- (php/aget code-r code) fr)))))
                (php/intval (php/round (php/+ fg (php/* b (php/- (php/aget code-g code) fg)))))
                (php/intval (php/round (php/+ fb (php/* b (php/- (php/aget code-b code) fb)))))))))
@@ -192,8 +202,10 @@
 (def tex-fade-tc
   "Truecolor twin of `tex-fade-table`: `tex-fade-tc[level][code]` is the
    TAGGED 24-bit colour (>=256) of `code` faded by `1 - level/23` toward
-   the haze tint — no nearest-256 snap, so the renderer paints it as a
-   `\\e[38;2;r;g;b` / `\\e[48;2;r;g;b` cell. Built once at load (24×256)."
+   the cooler truecolor haze tint (`fog-rgb-tc`, #419) — no nearest-256
+   snap, so the renderer paints it as a `\\e[38;2;r;g;b` / `\\e[48;2;r;g;b`
+   cell and keeps a cool bias the 256 path can't hold. Built once at load
+   (24×256)."
   (let [outer (php/array)]
     (loop [lvl 0]
       (when (php/< lvl 24)

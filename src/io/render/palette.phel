@@ -1,5 +1,5 @@
-;; Render palette: ANSI colour/glyph string constants and shade
-;; lookup tables. Pure data, no logic.
+;; Render palette: ANSI colour/glyph string constants, shade lookup
+;; tables, and trivial data lookups. No rendering logic.
 (ns phel-doom.io.render.palette
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set]))
 
@@ -104,6 +104,27 @@
 (def floor-code       "239")
 (def door-code        "172")
 (def boss-door-code   "196")
+
+(def floor-theme-codes
+  "Per-theme floor gradient base code: the bright screen-edge shade that
+   `build-themed-gradient` fades to black at the horizon. `:base` is the
+   original neutral grey (matches `floor-code`); each other key tints one
+   episode's ground so a level reads as a distinct place. The gradient
+   LUT is rebaked only when the base changes (on level load), so per-level
+   themes cost nothing on the hot path (#417)."
+  {:base  239   ; neutral grey (unchanged default)
+   :steel 66    ; desaturated blue-grey - early tech/base levels
+   :moss  65    ; muted green - overgrown caverns
+   :clay  95    ; warm brown-mauve - earthen halls
+   :rust  131   ; muted red-brown - corroded late levels
+   :hell  124}) ; deep red - the final descent
+
+(defn theme-floor-code
+  "Resolve a level's `:theme` keyword to its floor gradient base code,
+   falling back to the neutral `:base` grey for nil / unknown themes so an
+   un-themed level renders exactly as before."
+  [theme]
+  (or (get floor-theme-codes theme) (get floor-theme-codes :base)))
 (def kill-flash    "\e[48;5;231;38;5;226;1m✦")
 (def death-slump   "\e[48;5;124;38;5;232;1m▼")
 (def death-collapse "\e[48;5;88;38;5;52m▒")

@@ -18,7 +18,7 @@ See [rendering.md](rendering.md), [raycaster.md](raycaster.md), [performance.md]
 ## Levels + map
 
 - 10 levels: L1 pure imps (tutorial), L2-L9 hand-authored or mixed-type with a headline monster + secondaries, L10 hand-authored boss arena (cyber 50 HP + 2 imps, cap 1 alive)
-- Per-level wall, sky, floor palette
+- Per-level floor theme: each level's `:theme` tints the floor gradient (grey / steel / moss / clay / rust / hell) so episodes read as distinct places. Walls + sky stay shared grayscale.
 - Pickups: hearts (heal one full heart; pool is 5 hearts / 10 HP), armor (cap 5, absorbs one whole hit), armor shards (+1 over-cap to 10), soulsphere (over-cap to 14 HP, decays), ammo boxes, berserk (18s 2x dmg), invuln (10s immune), stacking backpack (L2+, reserve tier per pickup)
 - Keycards: L4 blue, L5 red, L7 yellow. Locked door pulses on bump without key. L10 boss door unlocks via synthetic :boss keycard after cyber kill. Compass tints facing letter in lock color.
 - Secrets: up to 2 per procgen level (L10 has hand-authored pair). Bump with F to reveal ammo + shard + rotating powerup. Skipped on locked levels.

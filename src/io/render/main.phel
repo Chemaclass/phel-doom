@@ -2,7 +2,7 @@
 ;; perf snapshot, and the end / menu screens.
 (ns phel-doom.io.render.main
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
-  (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright shade-table shade-code-table shade-table-blood shade-code-table-blood])
+  (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body door-shade boss-door-shade door-code boss-door-code sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright shade-table shade-code-table shade-table-blood shade-code-table-blood theme-floor-code])
   (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-horizon-gradient-codes build-themed-gradient-codes tex-fade-table tex-fade-tc bg-cell-cache halfblock halfblock-tc paint-bg quadblock build-sky-halfblock build-sky-codes-sub seam-darken-16 seam-darken-8 seam-darken-5 seam-shade! collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.wall-texture-data :refer [wall-tex])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type-lod sprite-fade sprite-fade-index sprite-col-x sprite-subcol-x enemy-sprite-cell enemy-sprite-quad])
@@ -533,13 +533,14 @@
 ;; Input-determined cache — same vh always yields the same arrays — so
 ;; it preserves frame->string's referential transparency, same as the
 ;; engine's offset-cache.
-(def- gradient-cache (atom {:vh -1 :pr 0 :sub-vh -1 :pr-sub 0}))
+(def- gradient-cache (atom {:vh -1 :pr 0 :sub-vh -1 :pr-sub 0 :base -1}))
 
 ;; Single-slot memo for the full-resolution weapon-sprite floor gradient
-;; (pixel-doubled mode only). Keyed on terminal height `vh` alone - it
-;; carries no pitch shear and `vh` only changes on resize, so the lookup
-;; is a per-frame O(1) hit instead of a ~0.2ms rebuild every frame.
-(def- floor-full-cache (atom {:vh -1 :grad nil}))
+;; (pixel-doubled mode only). Keyed on terminal height `vh` and the
+;; per-level theme base code (#417) - it carries no pitch shear, and both
+;; keys change only on resize / level load, so the lookup is a per-frame
+;; O(1) hit instead of a ~0.2ms rebuild every frame.
+(def- floor-full-cache (atom {:vh -1 :base -1 :grad nil}))
 
 (defn- build-wall-sub-bounds
   "Per-column seam data for the sub-row wall mixers, all
@@ -635,6 +636,9 @@
    `sub-vh` differs from `vh` only in pixel-doubled mode (2×svh
    instead of svh) and `pr-sub` only when px2? doubles the shear too, so
    a full-detail frame's cache key collapses back to plain (vh, pr).
+   `base-arg` (default 239) is the per-level theme's floor gradient base
+   code (#417); it only changes on level load, so keying the bundle on it
+   rebakes the floor gradient once per level, never per frame.
    Returns a map of the 6 cell-res gradient arrays (normal + blood,
    shade + code twins) PLUS the sub-row sky codes and the four floor-cast
    tables (`floor-dperp` / `floor-level` / `floor-dperp-sub` /
@@ -646,13 +650,15 @@
    here; the caller still gates their USE on the live `bloody?` flag.
    pr=0 / sub-vh=vh / pr-sub=pr reproduces the pre-memo bundle
    byte-for-byte."
-  [^int vh & [pr-arg sub-vh-arg pr-sub-arg]]
+  [^int vh & [pr-arg sub-vh-arg pr-sub-arg base-arg]]
   (let [pr     (or pr-arg 0)
         sub-vh (or sub-vh-arg vh)
         pr-sub (or pr-sub-arg pr)
+        base   (or base-arg 239)
         c      @gradient-cache]
     (if (and (php/=== vh (:vh c)) (php/=== pr (:pr c))
-             (php/=== sub-vh (:sub-vh c)) (php/=== pr-sub (:pr-sub c)))
+             (php/=== sub-vh (:sub-vh c)) (php/=== pr-sub (:pr-sub c))
+             (php/=== base (:base c)))
       c
       (let [fd     (build-floor-dperp vh floor-cast-k pr)
             fds    (build-floor-dperp-sub sub-vh floor-cast-k-sub pr-sub)
@@ -660,11 +666,12 @@
                     :pr              pr
                     :sub-vh          sub-vh
                     :pr-sub          pr-sub
+                    :base            base
                     :sky             (build-horizon-gradient vh shade-table pr)
                     :sky-hb          (build-sky-halfblock vh shade-code-table pr)
-                    :floor           (build-themed-gradient vh 239 true pr)
+                    :floor           (build-themed-gradient vh base true pr)
                     :sky-code        (build-horizon-gradient-codes vh shade-code-table pr)
-                    :floor-code      (build-themed-gradient-codes vh 239 true pr)
+                    :floor-code      (build-themed-gradient-codes vh base true pr)
                     :blood-sky       (build-horizon-gradient vh shade-table-blood pr)
                     :blood-sky-code  (build-horizon-gradient-codes vh shade-code-table-blood pr)
                     :sky-sub-codes   (build-sky-codes-sub sub-vh shade-code-table pr-sub)
@@ -681,12 +688,13 @@
    gradient is half-res, so the viewmodel needs its own vh-keyed gradient;
    `vh` changes only on resize, so the single-slot cache turns a per-frame
    rebuild into an O(1) hit. Output is byte-identical to the inline build."
-  [^int vh]
-  (let [c @floor-full-cache]
-    (if (php/=== vh (:vh c))
+  [^int vh & [base-arg]]
+  (let [base (or base-arg 239)
+        c    @floor-full-cache]
+    (if (and (php/=== vh (:vh c)) (php/=== base (:base c)))
       (:grad c)
-      (let [g (build-themed-gradient vh 239 true)]
-        (reset! floor-full-cache {:vh vh :grad g})
+      (let [g (build-themed-gradient vh base true)]
+        (reset! floor-full-cache {:vh vh :base base :grad g})
         g))))
 
 (defn- emit-scene-px2
@@ -1470,12 +1478,14 @@
         pr-full                            (php/+ (pitch-rows (or (:pitch (:player world)) 0.0) vh)
                                                   (bob-rows bob-ph bob-int vh))
         bloody?                            (php/> (or (get stats :iframes) 0.0) 0.0)
-        ;; Walls + sky + floor are ALL pure grayscale: enemy colours
-        ;; pop against neutral stonework, and far walls fade toward
-        ;; near-black (shade-table[0] = code 232) like an unseen
-        ;; horizon. No per-level wall tinting; level distinction comes
-        ;; from enemy sprites + intro splash + audio.
+        ;; Walls + sky stay pure grayscale: enemy colours pop against
+        ;; neutral stonework, and far walls fade toward near-black
+        ;; (shade-table[0] = code 232) like an unseen horizon. The FLOOR
+        ;; gradient carries a per-level theme tint (#417): its base code
+        ;; is resolved from the level's :theme and threaded into the
+        ;; memoized gradient bundle (rebaked only on level change).
         stbl                               shade-table
+        floor-base                         (theme-floor-code (:theme world))
         ;; Sky/floor gradients (+ blood + code twins) PLUS the sub-row
         ;; sky codes and the four floor-cast tables are all memoized in
         ;; one bundle (see frame-gradients): every one of
@@ -1485,7 +1495,7 @@
         ;; mode (2×svh instead of svh); at full detail it collapses back
         ;; to svh so the memo key degenerates to the pre-existing (svh, pr).
         sub-vh                             (if px2? (php/* 2 svh) svh)
-        grads                              (frame-gradients svh pr sub-vh pr-sub)
+        grads                              (frame-gradients svh pr sub-vh pr-sub floor-base)
         sky-gradient                       (:sky grads)
         ;; Half-block sky: per-row ▀ cell stacking two sub-rows of the
         ;; horizon gradient (2× vertical smoothness). Row-constant, so it
@@ -2111,7 +2121,7 @@
           ;; (it paints at terminal coordinates; the scene gradient is
           ;; half-res in pixel-doubled mode).
           floor-gradient-full (if px2?
-                                (floor-gradient-full-for vh)
+                                (floor-gradient-full-for vh floor-base)
                                 floor-gradient)
           ;; SUB-row wall bounds for BOTH emitters (half a terminal row
           ;; of precision: 4 sub-rows per 2-terminal-row scene cell in

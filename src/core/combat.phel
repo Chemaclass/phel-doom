@@ -68,6 +68,23 @@
    multiple lives across consecutive frames."
   1.0)
 
+(def shake-damage-secs
+  "Screen-shake duration when the player takes a hit. Matches the old
+   iframe-derived jolt (the first ~0.25s of the i-frame window) so the
+   damage feel is unchanged now that shake is its own timer (#414)."
+  0.25)
+
+(def shake-fire-secs
+  "Base screen-shake for launching a splash weapon (rocket/BFG) that
+   whiffs. Scaled by the weapon's :splash-radius so the BFG kicks harder
+   than the rocket."
+  0.08)
+
+(def shake-blast-secs
+  "Base screen-shake when a splash weapon's blast connects - the felt
+   kick of an explosion. Scaled by :splash-radius like the launch kick."
+  0.16)
+
 (def fire-anim-seconds
   "Visibility duration of the recoil kick + muzzle flash + tracer after a
    shot. Long enough that the gun's bounce reads even if the frame rate
@@ -341,6 +358,12 @@
   [world k ^float dt]
   (php/max 0.0 (php/- (or (get world k) 0.0) dt)))
 
+(defn- ^:pure add-shake
+  ;; Kick the screen-shake timer, keeping whichever is longer so a fresh
+  ;; jolt never cuts an in-progress rumble short.
+  [world ^float secs]
+  (assoc world :shake-secs (php/max (or (:shake-secs world) 0.0) secs)))
+
 (defn- stamp-hit-fx
   ;; Stamp the crosshair hit-marker for a connecting shot: a kill marker
   ;; when `killed?`, else a wound marker, both lit for hit-marker-seconds.
@@ -373,6 +396,7 @@
   (let [streak-secs' (decay-timer world :streak-secs dt)]
     (assoc world
            :iframes               (decay-timer world :iframes dt)
+           :shake-secs            (decay-timer world :shake-secs dt)
            :fire-anim             (decay-timer world :fire-anim dt)
            :intro-secs            (decay-timer world :intro-secs dt)
            :flash-secs            (decay-timer world :flash-secs dt)
@@ -533,7 +557,7 @@
                       (update :lives (fn [l] (php/max 0 (php/- l dmg))))
                       (update :damage-taken (fn [d] (php/+ (or d 0) lost)))))]
     (push-sfx
-     (assoc (knockback damaged att)
+     (assoc (add-shake (knockback damaged att) shake-damage-secs)
             :iframes    iframe-seconds
             :flash-secs flash-seconds
             :hurt-side  (attacker-side att (:x p) (:y p) (:angle p))
@@ -912,12 +936,18 @@
         ;; Cosmetic flying projectile: a green BFG ball or a rocket.
         tracered     (spawn-shot-tracer juiced
                                         (if (php/=== (:weapon world) :bfg) :bfg-ball :rocket)
-                                        ix iy)]
+                                        ix iy)
+        ;; Felt kick (#414): the launch alone rumbles; a connecting blast
+        ;; rumbles harder. Both scale by splash-radius so the BFG (3.0)
+        ;; out-shakes the rocket (2.0).
+        kicked       (add-shake tracered
+                                (php/* (if killed? shake-blast-secs shake-fire-secs)
+                                       (php// radius 2.0)))]
     ;; bfg has no wound-only signal (splash returns just a kill count), so
     ;; a kill is the hit proxy: a killing blast attenuates by the impact
     ;; distance, a wall hit / whiff plays at full volume.
     (enqueue-shot-sfx
-     (apply-heat (let [bw (push-blood-fx (assoc tracered :fire-anim fire-anim-seconds) hit-pos
+     (apply-heat (let [bw (push-blood-fx (assoc kicked :fire-anim fire-anim-seconds) hit-pos
                                          (when killed? (corpse-type-at woken hit-pos)))]
                    ;; bfg has no wound-only signal, so a kill is the hit
                    ;; proxy for the marker too (no marker on a whiff).

@@ -11,6 +11,9 @@ Hitscan + damage timing + i-frames. `src/core/combat.phel`. Pure: no side effect
 | `shot-knockback-dist` | 1.0 | Push distance per wounding hit |
 | `touch-damage-dist` | 0.7 | Contact damage range |
 | `iframe-seconds` | 1.0 | Post-hit invulnerability window |
+| `shake-damage-secs` | 0.25 | Screen-shake on taking a hit |
+| `shake-fire-secs` | 0.08 | Screen-shake base for a splash-weapon launch (x splash-radius/2) |
+| `shake-blast-secs` | 0.16 | Screen-shake base for a connecting splash blast (x splash-radius/2) |
 | `fire-anim-seconds` | 0.13 | Muzzle flash visibility |
 | `fx-ttl-seconds` | 0.7 | Blood splatter lifetime |
 | `flash-seconds` | 0.05 | White impact jolt |

@@ -14,6 +14,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - View / head bob while walking (#411): opt-in **View bob** setting (0-100%, off by default) nods the whole scene on a distance-driven walk cycle so moving reads as walking. Cosmetic, never moves where a shot lands; byte-identical at rest.
 - Weapon idle bob + sway while walking (#412): the first-person gun dips on each footfall and sways on the **View bob** walk cycle. Off by default, byte-identical at rest.
 - Weapon-fire extralight (#413): firing briefly brightens surrounding walls, a muzzle-light stand-in. Rides the near-death haze scalar, can't overlap the red damage flash; not firing is byte-identical.
+- Screen-shake on heavy weapons (#414): the shake that fired only on damage taken now also kicks when you launch or detonate a splash weapon. The kick scales with splash-radius, so the BFG (3.0) shakes harder than the rocket (2.0), and a connecting blast rumbles harder than a whiff. Hitscan weapons never shake.
 
 ### Changed
 

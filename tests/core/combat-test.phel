@@ -1293,3 +1293,51 @@
   ;; haze-shift is an int index into the shade table; the extralight
   ;; subtrahend must be too, not a float.
   (is (php/is_int (fire-extralight fire-anim-seconds fire-anim-seconds))))
+
+;; ---------------------------------------------------------------------
+;; Screen-shake (#414): a dedicated :shake-secs timer kicked by taking a
+;; hit AND by firing / detonating a heavy (splash) weapon.
+
+(deftest test-shake-kicked-on-damage-taken
+  (let [w  {:lives 10 :armor 0 :player (new-player 5.0 5.0 0.0)}
+        w1 (hit-player-at w 6.0 5.0 3)]
+    (is (php/> (or (:shake-secs w1) 0.0) 0.0) "taking a hit kicks the screen-shake timer")))
+
+(deftest test-shake-kicked-on-bfg-fire
+  (let [w1 (fire-shot (assoc (boss-world) :weapon :bfg :owned-weapons #{:pistol :bfg}))]
+    (is (php/> (or (:shake-secs w1) 0.0) 0.0) "firing the BFG kicks the screen")))
+
+(deftest test-shake-kicked-on-rocket-fire
+  (let [w1 (fire-shot (assoc (boss-world) :weapon :rocket :owned-weapons #{:pistol :rocket}))]
+    (is (php/> (or (:shake-secs w1) 0.0) 0.0) "firing a rocket kicks the screen")))
+
+(deftest test-bfg-shakes-harder-than-rocket
+  ;; Kick scales with :splash-radius, so the BFG (3.0) out-shakes the
+  ;; rocket (2.0): the heavier weapon reads as heavier.
+  (let [bfg    (fire-shot (assoc (boss-world) :weapon :bfg :owned-weapons #{:pistol :bfg}))
+        rocket (fire-shot (assoc (boss-world) :weapon :rocket :owned-weapons #{:pistol :rocket}))]
+    (is (php/> (:shake-secs bfg) (:shake-secs rocket)) "BFG kick outlasts the rocket kick")))
+
+(deftest test-no-shake-on-plain-hitscan-fire
+  ;; A non-splash weapon (boss-world's default shotgun) has no launch or
+  ;; blast kick.
+  (let [w1 (fire-shot (boss-world))]
+    (is (= 0.0 (or (:shake-secs w1) 0.0)) "shotgun fire does not shake the screen")))
+
+(deftest test-shake-decays-through-damage-step
+  ;; damage-step routes through decay-timers, the sole consumer of the
+  ;; timer. A non-round dt so the test exercises the subtraction, not a
+  ;; coincidental multiple.
+  (let [base (assoc (new-world [[1 1 1] [1 0 1] [1 1 1]] (new-player 1.5 1.5 0.0))
+                    :lives 5 :iframes 0.0 :enemies [] :shake-secs 0.25)
+        w1   (damage-step base 0.1)]
+    (is (php/< (:shake-secs w1) 0.25) "shake timer ticks down each frame")
+    (is (php/>= (:shake-secs w1) 0.0) "and clamps at zero")))
+
+(deftest test-shake-refresh-keeps-the-longer-value
+  ;; A fresh, smaller kick must not cut an in-progress rumble short:
+  ;; add-shake takes the max. Pre-load a big shake, fire a smaller blast
+  ;; kick, and confirm the big one survives (overwrite would drop it).
+  (let [w0 (assoc (boss-world) :weapon :bfg :owned-weapons #{:pistol :bfg} :shake-secs 0.5)
+        w1 (fire-shot w0)]
+    (is (= 0.5 (:shake-secs w1)) "the larger in-progress shake is kept")))

@@ -23,11 +23,18 @@ L1: single-type procgen tutorial (imps only). L2-L8: hand-authored flat chambers
 
 Non-locked procgen levels seed up to 2 secret passages (see [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4) and hand-authored layouts (L2, L3, L4, L5, L6, L7, L8, L10) skip seeding to prevent keycard bypass and keep the authored geometry explicit.
 
+Each level also carries a `:theme` keyword (#417) that tints its floor
+gradient at load time (grey / steel / moss / clay / rust / hell), so
+episodes read as distinct places at zero hot-path cost. Unknown or
+missing themes fall back to the neutral `:base` grey. The theme keyword
+lives in `core/level.phel` (pure data); `io/render/palette.phel`
+resolves it to a floor gradient base code via `theme-floor-code`.
+
 ```phel
 (def levels
-  [{:size [22 16] :walls 12 :enemy :imp   :enemies 4 :chase 0.8 :name "imps"}
+  [{:size [22 16] :walls 12 :enemy :imp   :enemies 4 :chase 0.8 :name "imps" :theme :base}
    ;; L2: hand-authored flat chamber.
-   {:enemy :demon :chase 1.0 :name "demons"
+   {:enemy :demon :chase 1.0 :name "demons" :theme :steel
     :enemies [{:type :demon :count 5} {:type :imp :count 2}]
     :layout l2-layout}
    ;; L3: hand-authored flat chamber.

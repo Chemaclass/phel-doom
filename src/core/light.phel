@@ -1,0 +1,133 @@
+;; Per-cell room lighting (#418): a shade-index bias grid derived from the
+;; map so rooms read as dark-vs-lit instead of uniformly distance-shaded.
+;; Pure + deterministic; the render layer folds one lookup per COLUMN into
+;; the wall shade index (never per texel). See docs/rendering.md.
+(ns phel-doom.core.light
+  (:require phel-doom.core.map :refer [cell-floor]))
+
+(def light-lattice
+  "Spacing (cells) between light-pool anchors. A coarse grid of lamps, each
+   snapped to the nearest open cell, so rooms get lit pools with darker
+   gaps between them."
+  7)
+
+(def light-radius
+  "Light-pool radius (cells). Larger than half the lattice so adjacent
+   pools overlap into bands rather than leaving hard dark rings."
+  4.0)
+
+(def light-peak
+  "Brightest shade-index lift at a lamp cell, before the ambient subtract."
+  6)
+
+(def light-ambient
+  "Flat darkening (shade-index steps) applied to every cell; lamps lift
+   cells back above it, so anywhere far from a lamp reads darker."
+  2)
+
+(def light-min "Darkest bias a cell can carry." -3)
+(def light-max "Brightest bias a cell can carry." 4)
+
+(def- lamp-snap
+  ;; How far a lattice anchor may search for an open cell before it is
+  ;; dropped (an anchor landing deep in solid wall casts no lamp).
+  3)
+
+(defn- open?
+  ;; True when (x, y) is a walkable floor cell. Out-of-range reads return
+  ;; nil from `get`, so they are never open.
+  [grid ^int x ^int y]
+  (php/=== cell-floor (get (get grid y) x)))
+
+(defn- nearest-open
+  ;; Nearest open cell to anchor (ax, ay) within `lamp-snap`, as [x y], or
+  ;; nil if none. Deterministic Chebyshev-ring scan (distance ascending,
+  ;; then dy then dx ascending) so the lamp set is a pure function of the
+  ;; grid - it must never depend on the RNG stream.
+  [grid ^int ax ^int ay]
+  (loop [d 0]
+    (if (php/> d lamp-snap)
+      nil
+      (let [hit (loop [dy (php/- 0 d)]
+                  (if (php/> dy d)
+                    nil
+                    (let [row-hit
+                          (loop [dx (php/- 0 d)]
+                            (cond
+                              (php/> dx d) nil
+                              ;; only the current ring's boundary cells
+                              (and (php/=== (php/max (php/abs dx) (php/abs dy)) d)
+                                   (open? grid (php/+ ax dx) (php/+ ay dy)))
+                              [(php/+ ax dx) (php/+ ay dy)]
+                              :else (recur (php/+ dx 1))))]
+                      (if row-hit row-hit (recur (php/+ dy 1))))))]
+        (if hit hit (recur (php/+ d 1)))))))
+
+(defn- find-lamps
+  ;; Lamp cells: every lattice anchor snapped to its nearest open cell.
+  ;; Duplicates (two anchors snapping to one cell) are harmless - pools
+  ;; max-combine.
+  [grid ^int width ^int height]
+  (let [half (php/intdiv light-lattice 2)]
+    (loop [ay half acc []]
+      (if (php/>= ay height)
+        acc
+        (recur (php/+ ay light-lattice)
+               (loop [ax half acc2 acc]
+                 (if (php/>= ax width)
+                   acc2
+                   (let [lamp (nearest-open grid ax ay)]
+                     (recur (php/+ ax light-lattice)
+                            (if lamp (conj acc2 lamp) acc2))))))))))
+
+(defn build-light-grid
+  {:doc "Per-cell shade-index bias for `grid` as a PHP array keyed
+         (y*width + x): positive = lit, negative = darker. Lamps sit on a
+         coarse lattice snapped to open cells; each casts a linear-falloff
+         pool (max-combined); a flat ambient darkens everything else.
+
+         DETERMINISTIC BY DESIGN - it must NOT consume the global RNG
+         stream. `build-world` draws from that stream with no per-level
+         reseed, so any rng use here would shift every seeded fixture and
+         change procgen layouts. Dense: every cell (walls included) carries
+         a bias, so the per-column render lookup never hits an undefined
+         key. Derived like :pgrid - rebuilt by `state/rebuild-pgrid` and
+         never serialized (see io/savegame)."
+   :see-also ["phel-doom.core.state/rebuild-pgrid"]}
+  [grid]
+  (let [width        (count (first grid))
+        height       (count grid)
+        lamps        (find-lamps grid width height)
+        out          (php/array)
+        ambient-bias (php/- 0 light-ambient)
+        r            (php/intval (php/ceil light-radius))]
+    ;; Dark ambient everywhere first.
+    (loop [i 0]
+      (when (php/< i (php/* width height))
+        (php/aset out i ambient-bias)
+        (recur (php/+ i 1))))
+    ;; Stamp each lamp's pool INLINE: PHP arrays are pass-by-value in fn
+    ;; args, so delegating the aset to a helper would mutate a throwaway
+    ;; copy (see io/render/main compute-wall-shades). Same reason
+    ;; build-seam-darken bakes in one scope.
+    (loop [ls lamps]
+      (when (seq ls)
+        (let [lamp (first ls)
+              lx   (get lamp 0)
+              ly   (get lamp 1)]
+          (loop [dy (php/- 0 r)]
+            (when (php/<= dy r)
+              (loop [dx (php/- 0 r)]
+                (when (php/<= dx r)
+                  (let [x (php/+ lx dx)
+                        y (php/+ ly dy)]
+                    (when (and (php/>= x 0) (php/< x width) (php/>= y 0) (php/< y height))
+                      (let [dist    (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))
+                            contrib (php/intval (php/round (php/* light-peak (php/max 0.0 (php/- 1.0 (php// dist light-radius))))))
+                            bias    (php/max light-min (php/min light-max (php/- contrib light-ambient)))
+                            idx     (php/+ (php/* y width) x)]
+                        (php/aset out idx (php/max (php/aget out idx) bias)))))
+                  (recur (php/+ dx 1))))
+              (recur (php/+ dy 1)))))
+        (recur (rest ls))))
+    out))

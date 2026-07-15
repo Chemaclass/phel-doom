@@ -16,6 +16,7 @@ Phel types map to JSON arrays:
 ## Dropped fields
 
 - `:pgrid`: PHP-array mirror of `:grid` (rebuilt on load)
+- `:light-grid`: per-cell room-light bias derived from `:grid` (#418; rebuilt on load by `rebuild-pgrid`). Serializing it would round-trip a PHP array back as a Phel vector and break the per-column `php/aget` in render.
 - `:visited`: fog-of-war map (reset empty, re-revealed as player moves)
 
 ## Versioning

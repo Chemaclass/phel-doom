@@ -9,6 +9,7 @@ Pure data shapes that every other module operates on. `src/core/state.phel`.
 ```phel
 {:grid       <vector of vectors of cell ints>
  :pgrid      <PHP nested array, fast-path twin of :grid>
+ :light-grid <PHP array (y*width+x) of per-cell shade bias, derived from :grid (#418)>
  :width      <int>
  :height     <int>
  :player     <player map>
@@ -89,6 +90,8 @@ After `build-world` from `core/level.phel` stamps level metadata, the world also
 ```
 
 On grid mutation (door turning into floor, etc.) **both** must update. See `pickup-hearts` in `core/pickups.phel` and door logic in `commands/play.phel`. `rebuild-pgrid` is called after any grid edit to keep the PHP mirror in sync.
+
+`:light-grid` (#418) is a third grid-derived array in the same family: a PHP array keyed `(y*width + x)` of per-cell shade biases from `core/light/build-light-grid`, read one-per-column by the wall shader when the `:light` setting is on. It is derived by BOTH `new-world` and `rebuild-pgrid` (so a revealed secret / toggled switch re-lights correctly) and, like `:pgrid`, is dropped by `world->savestring` and re-derived on load - never serialized.
 
 ## The player
 

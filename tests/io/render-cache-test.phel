@@ -67,6 +67,33 @@
     (is (= base (frame->string (assoc world :theme :base) stats 120 30))
         ":base theme is byte-identical to the neutral default")))
 
+(deftest test-room-light-off-is-byte-identical-to-default
+  ;; #418: the golden stats carry no :light, so lighting is off. An
+  ;; explicit :light false must reproduce the neutral golden frame - the
+  ;; opt-in contract (like view-bob / subpixel).
+  (is (= (frame->string world stats 120 30)
+         (frame->string world (assoc stats :light false) 120 30))
+      "room light off == default (byte-identical)"))
+
+(deftest test-room-light-on-changes-the-frame
+  ;; Turning room light on folds the world's :light-grid into the wall
+  ;; shade index, so the bytes differ from the unlit frame.
+  (is (not= (frame->string world stats 120 30)
+            (frame->string world (assoc stats :light true) 120 30))
+      "room light on reshades the walls")
+  (is (= (frame->string world (assoc stats :light true) 120 30)
+         (frame->string world (assoc stats :light true) 120 30))
+      "lit render stays deterministic"))
+
+(deftest test-room-light-on-px2-renders-without-error
+  ;; Regression guard: px2 must thread hxs/hys through compact-cast-2, else
+  ;; light-on throws on (php/aget nil ...) per column. The frame renders and
+  ;; differs from the px2 unlit frame.
+  (let [lit (frame->string world (assoc stats :light true :px2? true) 120 30)]
+    (is (php/> (php/strlen lit) 0) "px2 + light on renders")
+    (is (not= lit (frame->string world (assoc stats :px2? true) 120 30))
+        "px2 light on differs from px2 unlit")))
+
 (deftest test-view-bob-shears-scene-only-when-mid-stride
   ;; End-to-end wiring (#411): with View bob ON, a resting frame
   ;; (bob-phase 0) is byte-identical to the bob-off golden, but a

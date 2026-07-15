@@ -52,7 +52,19 @@
     (is (= #{:pistol :bfg} (:owned-weapons back)))
     (is (= (:grid w) (:grid back)) "grid preserved")
     (is (= 1.5 (:x (:player back))))
-    (is (some? (:pgrid back)) "pgrid rebuilt on load")))
+    (is (some? (:pgrid back)) "pgrid rebuilt on load")
+    (is (php/is_array (:light-grid back)) "light-grid rebuilt as a php array on load")))
+
+(deftest test-savestring-drops-and-rederives-light-grid
+  ;; #418: :light-grid is derived from :grid (like :pgrid) - it must NOT be
+  ;; serialized (else decode reconstructs it as a Phel vector, breaking the
+  ;; per-column php/aget in render) and must come back as a dense php array.
+  (let [w    (new-world grid (new-player 1.5 2.5 0.0))
+        json (world->savestring w)
+        back (savestring->world json)]
+    (is (not (php/str_contains json "light-grid")) "light-grid not written to the save")
+    (is (php/is_array (:light-grid back)) "light-grid re-derived as a php array")
+    (is (= 16 (php/count (:light-grid back))) "re-derived dense (4x4 = 16)")))
 
 ;; ---------------------------------------------------------------------
 ;; Settings are session-global preference, not run state (#279): the save

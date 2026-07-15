@@ -62,10 +62,13 @@ overlays (cursor-positioned):
 ```
 shade-idx = clamp(0, 23,
   gamma(distance-to-shade(dist))  ; base by distance, gamma 0.6 curve
-  + (side == 0 ? 3 : 0))          ; vertical faces brighter
+  + (side == 0 ? 3 : 0)           ; vertical faces brighter
+  + light-bias)                   ; per-cell room light (#418, opt-in)
 ```
 
-The gamma 0.6 curve brightens mid-range; the `+3` bonus for vertical faces reads as directional lighting. Walls, sky, and floor all index the same 24-step grayscale `shade-table` (no colour, no per-room tinting) so the place reads dark and neutral. One lookup per column; consecutive same-shade cells RLE-coalesce.
+The gamma 0.6 curve brightens mid-range; the `+3` bonus for vertical faces reads as directional lighting. Walls, sky, and floor all index the same 24-step grayscale `shade-table` (no colour) so the place reads neutral.
+
+Room lighting (#418, the `:light` setting, off by default) folds one more term: `light-bias` is the hit cell's value in the world's derived `:light-grid` (see `core/light`), a per-cell shade offset (+ = lit pool, - = darker). The lookup is one `php/aget` per COLUMN at the ray's hit cell (`:hxs`/`:hys`), never per texel, so it rides the same single-lookup-per-column budget; `tex-level` is `idx` so the wall TEXTURE fog tracks it for free. When the setting is off the term is `+0` and the frame is byte-identical. Doors are excluded (they stay bright as a nav cue). One lookup per column; consecutive same-shade cells RLE-coalesce.
 
 Doors render as a baked procedural amber door texture (see "Textured doors" below); the boss door stays at its bright shade. Locked messages ("NEED BLUE KEY", "KILL THE BOSS") painted separately.
 

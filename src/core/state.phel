@@ -1,5 +1,6 @@
 (ns phel-doom.core.state
-  (:require phel-doom.core.weapons :refer [initial-weapon-state]))
+  (:require phel-doom.core.weapons :refer [initial-weapon-state])
+  (:require phel-doom.core.light :refer [build-light-grid]))
 
 (defn new-player
   "Create a player record with floating-point position and angle in
@@ -112,7 +113,12 @@
    through a wall that still visually looks solid)."
   [world]
   (assoc world
-         :pgrid (to-php-array (map to-php-array (:grid world)))))
+         :pgrid (to-php-array (map to-php-array (:grid world)))
+         ;; #418: room-light bias grid is derived from :grid just like
+         ;; :pgrid, so it must be re-derived here whenever the grid mutates
+         ;; (secret reveal / switch toggle) AND on load (savestring->world
+         ;; calls this) - never serialized.
+         :light-grid (build-light-grid (:grid world))))
 
 (defn new-world
   {:doc "Bundle map grid and player into the world state. Stores a PHP-native
@@ -123,6 +129,9 @@
   ([grid player]
    {:grid      grid
     :pgrid     (to-php-array (map to-php-array grid))
+    ;; #418: per-cell room-light shade bias, derived from the grid (dense,
+    ;; keyed y*width+x). Rebuilt by rebuild-pgrid on grid mutation / load.
+    :light-grid (build-light-grid grid)
     :width     (count (first grid))
     :height    (count grid)
     :player    player

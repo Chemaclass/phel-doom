@@ -351,8 +351,8 @@
                 added to every wall top so the whole wall band slides
                 down (look up) / up (look down) with the sky/floor
                 split. pr=0 keeps the shading byte-identical."
-  [vw vh haze-shift cast palette blood-cols ^float pd & [pr-arg]]
-  (let [{:keys [dists hits sides wallxs]}                              cast
+  [vw vh haze-shift cast palette blood-cols ^float pd & [pr-arg light-grid gw]]
+  (let [{:keys [dists hits sides wallxs hxs hys]}                      cast
         {:keys [stbl ctbl door-shade-now door-code-now
                 door-tex-boost
                 boss-door-shade-now boss-door-code-now boss-unlocked?
@@ -447,16 +447,24 @@
                     (buf-set tex-level col (php/min 23 (php/+ (php/max 8 (php/min 21 didx)) door-tex-boost)))
                     (buf-set tex-px    col door-tex-px))))
             :else
-            (let [idx-raw (php/max 0
-                                   (php/min 23
-                                            (php/+ (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 0.6) 23))
-                                                   (if (php/=== (buf-get sides col) 0) 3 0))))
+            (let [;; Room-light bias (#418): shade offset for the cell this
+                  ;; column's ray hit. Plain ternary (not and/or) so it stays
+                  ;; inlined - no per-column closure. nil grid (light off) ->
+                  ;; +0, byte-identical.
+                  light-bias (if light-grid
+                               (php/aget light-grid (php/+ (php/* (buf-get hys col) gw) (buf-get hxs col)))
+                               0)
+                  idx-raw    (php/max 0
+                                      (php/min 23
+                                               (php/+ (php/intval (php/* (php/pow (php/- 1.0 (php/min 1.0 (php// dist max-depth))) 0.6) 23))
+                                                      (if (php/=== (buf-get sides col) 0) 3 0)
+                                                      light-bias)))
                   ;; Haze pulls every wall cell toward index 0 (black) by
                   ;; `haze-shift` steps. 0 = full visibility; values come
                   ;; from frame->string based on player lives. A negative
                   ;; shift (muzzle extralight #413) brightens, so clamp the
                   ;; top at 23 too or idx runs past the shade table.
-                  idx     (php/max 0 (php/min 23 (php/- idx-raw haze-shift)))]
+                  idx        (php/max 0 (php/min 23 (php/- idx-raw haze-shift)))]
               (let [plain     (buf-get stbl-l idx)
                     shd-idx   (php/max 0 (php/- idx 3))
                     shd-bg    (buf-get stbl-l shd-idx)
@@ -610,13 +618,17 @@
    tables were built for the FULL width — so the half-res scene keeps
    the full-size FOV instead of zooming like a half-size terminal."
   [cast ^int svw]
-  (let [{:keys [dists hits sides wallxs floordxs floordys]} cast
-        d                                                   (php/array)
-        h                                                   (php/array)
-        s                                                   (php/array)
-        w                                                   (php/array)
-        fx                                                  (php/array)
-        fy                                                  (php/array)]
+  (let [{:keys [dists hits sides wallxs floordxs floordys hxs hys]} cast
+        d                                                           (php/array)
+        h                                                           (php/array)
+        s                                                           (php/array)
+        w                                                           (php/array)
+        fx                                                          (php/array)
+        fy                                                          (php/array)
+        ;; #418: carry the hit-cell coords through the px2 compaction too,
+        ;; else room lighting throws on `php/aget nil` in pixel-doubled mode.
+        hx                                                          (php/array)
+        hy                                                          (php/array)]
     (loop [i 0]
       (when (php/< i svw)
         (let [j (php/* 2 i)]
@@ -625,9 +637,11 @@
           (php/aset s i (php/aget sides j))
           (php/aset w i (php/aget wallxs j))
           (php/aset fx i (php/aget floordxs j))
-          (php/aset fy i (php/aget floordys j)))
+          (php/aset fy i (php/aget floordys j))
+          (php/aset hx i (php/aget hxs j))
+          (php/aset hy i (php/aget hys j)))
         (recur (php/+ i 1))))
-    {:dists d :hits h :sides s :wallxs w :floordxs fx :floordys fy}))
+    {:dists d :hits h :sides s :wallxs w :floordxs fx :floordys fy :hxs hx :hys hy}))
 
 (defn- frame-gradients
   "Memoized sky/floor gradient bundle for viewport height `vh` and look
@@ -1569,7 +1583,7 @@
         (if px2?
           (compact-cast-2 (cast-frame world vw 2) svw)
           (cast-frame world svw scale))
-        {:keys [dists hits sides wallxs floordxs floordys]} cast-result
+        {:keys [dists hits sides wallxs floordxs floordys hxs hys]} cast-result
         scene-pd                           (if px2? (php/* 0.5 proj-dist) proj-dist)
         tex-on?                            (wall-textures-enabled?)
         floor-tex-on?                      (and tex-on? (floor-textures-enabled?))
@@ -1601,6 +1615,13 @@
                                                   true
                                                   (boolean (get stats :quad))))
         flat-walltex?                      (or (flat-walltex-on?) (boolean (get stats :fast-walls)))
+        ;; Room lighting (#418): per-cell shade bias folded into the wall
+        ;; shade index. OFF by default (opt-in :light setting, like view-bob):
+        ;; when off, light-grid is nil so compute-wall-shades adds +0 and the
+        ;; frame is byte-identical. `gw` is the grid width for the y*w+x key.
+        light?                             (boolean (get stats :light))
+        light-grid                         (if light? (:light-grid world) nil)
+        gw                                 (:width world)
         ;; Floor-cast inputs: player position + per-row perpendicular
         ;; distance / fog level for the textured ground plane. The cell-
         ;; res arrays drive the legacy single-texel floor; the sub arrays
@@ -1730,7 +1751,8 @@
          :tex-px            shades-tex-px
          :wall-h            shades-wall-h}
         (compute-wall-shades svw svh haze-shift
-                             {:dists dists :hits hits :sides sides :wallxs wallxs}
+                             {:dists dists :hits hits :sides sides :wallxs wallxs
+                              :hxs hxs :hys hys}
                              {:stbl stbl :ctbl ctbl
                               :door-shade-now door-shade-now
                               :door-code-now  door-code-now
@@ -1747,7 +1769,9 @@
                               :blood-floor-code-grad blood-floor-code-gradient}
                              blood-cols
                              scene-pd
-                             pr)
+                             pr
+                             light-grid
+                             gw)
         ;; Enemy sprite zone boundaries (head/body/legs). For each
         ;; column carrying an enemy:
         ;;   row in [tops, mids)   -> head

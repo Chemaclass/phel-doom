@@ -155,16 +155,30 @@
   ;; the code's exact cube RGB. 196 = (255,0,0).
   (is (= [255 0 0] (tc-rgb (php/aget (php/aget tex-fade-tc 23) 196))) "near red = exact (255,0,0)"))
 
-(deftest tex-fade-tc-resnaps-to-256-lut
-  ;; The truecolor value is the SAME colour as the 256 path, just unsnapped:
-  ;; quantizing it back must land on the matching tex-fade-table code. Pins
-  ;; the two paths together so they can't drift apart.
-  (let [check (fn [lvl code]
-                (let [[r g b] (tc-rgb (php/aget (php/aget tex-fade-tc lvl) code))]
-                  (is (= (php/aget (php/aget tex-fade-table lvl) code)
-                         (nearest-256 r g b))
-                      (str "lvl " lvl " code " code " re-snaps to 256 LUT"))))]
-    (check 23 196) (check 0 196) (check 12 46) (check 6 240) (check 18 21)))
+(deftest tex-fade-tc-far-haze-is-cooler-than-256-neutral
+  ;; #419: the truecolor fog tint is decoupled from the 256-neutral
+  ;; constraint. At the far end the tc haze carries a genuine cool bias
+  ;; (blue clearly above red) that the 256 cube can't hold near mid-grey,
+  ;; where it collapses to a near-neutral grey. So the tc far tint must
+  ;; lean cooler than the matching 256 far tint - the whole point of the
+  ;; decoupling.
+  (let [[tr tg tb] (tc-rgb (php/aget (php/aget tex-fade-tc 0) 196))
+        code256    (php/aget (php/aget tex-fade-table 0) 196)
+        nr         (php/aget code-r code256)
+        nb         (php/aget code-b code256)]
+    (is (php/> (php/- tb tr) (php/- nb nr))
+        "truecolor far haze leans cooler than the 256 neutral far haze")
+    (is (php/>= (php/- tb tr) 12)
+        "truecolor far haze holds a real cool bias (blue >= red + 12)")))
+
+(deftest tex-fade-tc-near-level-still-matches-256-untinted
+  ;; The decoupling only shows once fog is mixed in: at level 23 (nearest,
+  ;; no fade) BOTH paths reproduce the code's exact RGB, so the tc value
+  ;; still re-snaps to the 256 code. Pins that only the tint diverged, not
+  ;; the untinted colour space.
+  (let [[r g b] (tc-rgb (php/aget (php/aget tex-fade-tc 23) 196))]
+    (is (= (php/aget (php/aget tex-fade-table 23) 196) (nearest-256 r g b))
+        "near (unfogged) tc red re-snaps to the 256 near red")))
 
 (deftest halfblock-tc-emits-truecolor-cell
   (let [red   (php/aget (php/aget tex-fade-tc 23) 196)   ; tagged (255,0,0)

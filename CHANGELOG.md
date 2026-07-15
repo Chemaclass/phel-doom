@@ -16,6 +16,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Weapon-fire extralight (#413): firing briefly brightens surrounding walls, a muzzle-light stand-in. Rides the near-death haze scalar, can't overlap the red damage flash; not firing is byte-identical.
 - Screen-shake on heavy weapons (#414): the shake that fired only on damage taken now also kicks when you launch or detonate a splash weapon. The kick scales with splash-radius, so the BFG (3.0) shakes harder than the rocket (2.0), and a connecting blast rumbles harder than a whiff. Hitscan weapons never shake.
 - Per-level floor theme (#417): each level now carries a `:theme` that tints its floor gradient (grey / steel / moss / clay / rust / hell) so episodes read as distinct places. The theme resolves to a floor gradient base code baked into the load-time LUT and keyed into the gradient memo, so it rebakes only on level change - zero per-frame cost. Walls + sky stay shared grayscale; the neutral `:base` theme is byte-identical to the old look.
+- Truecolor fog tint decoupled from the 256-neutral constraint (#419): in truecolor mode the distance fog now fades toward a genuinely cool haze (rgb 104/110/130) instead of the near-neutral grey the 256 palette is forced into. Same luminance, real cool bias, no blue band. The 256 path is unchanged; only `:truecolor` / `PHEL_DOOM_TRUECOLOR` renders show it.
 
 ### Changed
 

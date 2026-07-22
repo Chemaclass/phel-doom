@@ -98,9 +98,17 @@
   (let [d (php/json_decode s true)]
     (if (and (php/is_array d)
              (php/=== demo-version (php/aget d "version")))
-      {:seed   (php/aget d "seed")
-       :frames (mapv (fn [p] [(php/aget p 0) (php/aget p 1)])
-                     (php/aget d "frames"))}
+      (let [fr (php/aget d "frames")]
+        ;; A present-but-non-array "frames" is malformed: mapv over a
+        ;; scalar throws. Reject it as nil per the docstring instead of
+        ;; crashing the --demo launch. A missing "frames" (nil) stays an
+        ;; empty replay, unchanged.
+        (if (and (some? fr) (not (php/is_array fr)))
+          nil
+          {:seed   (php/aget d "seed")
+           :frames (if (php/is_array fr)
+                     (mapv (fn [p] [(php/aget p 0) (php/aget p 1)]) fr)
+                     [])}))
       nil)))
 
 ;; --- file IO --------------------------------------------------------

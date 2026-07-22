@@ -130,5 +130,21 @@
   (is (= nil (savestring->world "not json at all")))
   (is (= nil (savestring->world ""))))
 
+(deftest test-load-rejects-corrupt-world
+  ;; JSON parses AND the version matches, but the "world" payload is the
+  ;; wrong shape (hand-corrupted / truncated save - the file is explicitly
+  ;; user-editable). Each must surface as a friendly miss (nil), never a
+  ;; crash or a grid-less junk world, matching savestring->world's contract.
+  (is (= nil (savestring->world "{\"version\":1}")) "missing world -> nil")
+  (is (= nil (savestring->world "{\"version\":1,\"world\":5}")) "scalar world -> nil")
+  (is (= nil (savestring->world "{\"version\":1,\"world\":[1,2]}")) "vector world -> nil")
+  (is (= nil (savestring->world "{\"version\":1,\"world\":[\"$m\",{\"kills\":[\"$k\",\"imp\"]}]}"))
+      "map world without :grid -> nil"))
+
+(deftest test-decode-tolerates-truncated-map-tag
+  ;; A "$m" tag whose payload array was dropped must decode to {} rather
+  ;; than throwing (array_keys on nil), so a corrupt save loads as a miss.
+  (is (= {} (decode (php/array "$m")))))
+
 (deftest test-save-version-is-pinned
   (is (= 1 save-version)))

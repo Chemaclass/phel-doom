@@ -40,6 +40,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Fixed
 
+- Corrupt save / demo files fail as a friendly miss instead of crashing: a hand-edited or truncated save that is valid JSON but the wrong shape (missing `world`, a scalar, a truncated map) used to throw mid-game on load (F9) or hand back a grid-less junk world. `savestring->world` now returns `nil` (the documented "NO SAVE" path) unless the decoded value is a map carrying `:grid`, and `decode` stays total on a malformed payload; a `--demo` file with a non-array `frames` is likewise rejected as `nil`. Valid saves round-trip byte-for-byte as before.
 - Enemy counts rebalanced by room size + threat weight (HP x per-hit damage): L5 no longer stacks five boss-tier cyberdemons (now 2 + imp fodder) that out-gunned the L10 boss; sparse large halls (L4, L6, L9) populated so difficulty ramps smoothly. L1 + L10 untouched.
 - L2 demon room no longer a bare box: scatters random interior wall pillars (`:walls`) for cover + per-run variety, pocket-sealed into one connected region with a single exit on a random reachable wall (no dead-ends).
 - Sub-pixel auto-off on macOS Terminal.app (#332): Apple Terminal draws `▀` with row seams, so startup defaults Sub-pixel off on `Apple_Terminal` until the player saves a choice; the in-game toggle and `PHEL_DOOM_SUBPIXEL=1` still force it on.

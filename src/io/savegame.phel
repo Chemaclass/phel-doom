@@ -62,9 +62,17 @@
         (php/=== tag "$k") (keyword (php/aget x 1))
         (php/=== tag "$s") (set (map decode (php/aget x 1)))
         (php/=== tag "$m") (let [o (php/aget x 1)]
-                             (reduce (fn [m k] (assoc m (keyword k) (decode (php/aget o k))))
-                                     {}
-                                     (php/array_keys o)))
+                             ;; A well-formed "$m" carries a PHP-array payload.
+                             ;; A hand-corrupted / truncated save can drop it
+                             ;; (["$m"] with no index 1 -> nil); guard so decode
+                             ;; stays total (array_keys nil would throw) and a
+                             ;; malformed map degrades to {} for the caller to
+                             ;; reject, rather than crashing the load.
+                             (if (php/is_array o)
+                               (reduce (fn [m k] (assoc m (keyword k) (decode (php/aget o k))))
+                                       {}
+                                       (php/array_keys o))
+                               {}))
         :else              (mapv decode x)))
     x))
 
@@ -84,8 +92,9 @@
 
 (defn savestring->world
   "Pure: parse a save string back into a world (pgrid rebuilt, fog
-   reset, input hold counters zeroed). Returns nil on malformed JSON or
-   a version mismatch so the caller can surface a friendly miss.
+   reset, input hold counters zeroed). Returns nil on malformed JSON, a
+   version mismatch, or a corrupt `world` payload (missing / wrong-shaped
+   - the file is user-editable) so the caller can surface a friendly miss.
    `:moves` is always reset to `empty-moves`: new saves don't carry it,
    and saves written before the seconds-based counters stored int FRAME
    counts (e.g. :fwd 15) that the dt-decay would reinterpret as ~15
@@ -94,10 +103,19 @@
   (let [data (php/json_decode s true)]
     (if (and (php/is_array data)
              (php/=== save-version (php/aget data "version")))
-      (-> (decode (php/aget data "world"))
-          (assoc :visited (php/array))
-          (assoc :moves empty-moves)
-          (rebuild-pgrid))
+      (let [w (decode (php/aget data "world"))]
+        ;; A real world decodes to a map carrying a :grid. A missing /
+        ;; scalar / vector "world" (corrupt or truncated save) decodes to
+        ;; nil / a scalar / a vector - threading that through assoc +
+        ;; rebuild-pgrid would either crash or fabricate a grid-less junk
+        ;; world that detonates later. Reject it as a friendly miss (nil),
+        ;; matching this fn's documented contract.
+        (if (and (map? w) (some? (:grid w)))
+          (-> w
+              (assoc :visited (php/array))
+              (assoc :moves empty-moves)
+              (rebuild-pgrid))
+          nil))
       nil)))
 
 (defn- save-dir []

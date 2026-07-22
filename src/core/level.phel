@@ -472,31 +472,34 @@
     []
     (spawn-unique-pickups grid n)))
 
+(defn- maybe-spawn-one
+  "One-in-`odds` chance of a single pickup at a random open cell, else
+   []. Rolls the RNG exactly once either way so the per-level draw
+   sequence stays stable however the odds are tuned. Shared by the
+   armor / berserk / invuln / soulsphere spawners, which differ only
+   in their odds."
+  [grid ^int odds]
+  (if (php/=== 0 (rng/int! odds))
+    (let [[x y] (random-spawn grid)]
+      [{:x x :y y}])
+    []))
+
 (defn- maybe-spawn-armor
   "Roughly one in two levels carries an armor pickup. Picked up via
    `pickup-armors` in play.phel; absorbs the next contact-damage hit."
   [grid]
-  (if (zero? (rng/int! 2))
-    (let [[ax ay] (random-spawn grid)]
-      [{:x ax :y ay}])
-    []))
+  (maybe-spawn-one grid 2))
 
 (defn- maybe-spawn-berserk
   "Rare berserk sphere — ~1 in 8 levels (was 1 in 4, tuned down
    after v0.3 playtesting found powerups stacking too often)."
   [grid]
-  (if (php/=== 0 (rng/int! 8))
-    (let [[bx by] (random-spawn grid)]
-      [{:x bx :y by}])
-    []))
+  (maybe-spawn-one grid 8))
 
 (defn- maybe-spawn-invuln
   "Very rare — ~1 in 12 levels."
   [grid]
-  (if (php/=== 0 (rng/int! 12))
-    (let [[ix iy] (random-spawn grid)]
-      [{:x ix :y iy}])
-    []))
+  (maybe-spawn-one grid 12))
 
 (defn- maybe-spawn-soulsphere
   "Rare soulsphere (issue #68): ~1 in 10 levels. Bumps `:lives` over
@@ -504,10 +507,7 @@
    back to `max-lives` over time, so the player gets a real defensive
    buffer for a stretch of fight."
   [grid]
-  (if (php/=== 0 (rng/int! 10))
-    (let [[sx sy] (random-spawn grid)]
-      [{:x sx :y sy}])
-    []))
+  (maybe-spawn-one grid 10))
 
 (defn- spawn-armor-shards
   "Common armor shards (issue #68): seed `n` of them at random open
@@ -571,12 +571,13 @@
    level for back-compat with old callers."
   [grid level-num pack]
   (let [lvl (pack->level pack)]
+    ;; Guards gate the roll: at cap or on L1 no RNG is drawn (the `or`
+    ;; short-circuited before the old inline roll too), so the per-level
+    ;; draw sequence is unchanged.
     (if (or (php/>= lvl max-backpacks)
-            (php/< level-num 2)
-            (php/!== 0 (rng/int! 5)))
+            (php/< level-num 2))
       []
-      (let [[bx by] (random-spawn grid)]
-        [{:x bx :y by}]))))
+      (maybe-spawn-one grid 5))))
 
 (defn- specs-total-hp
   "Sum `count * lives` across a mixed-spec vector. Used to size the

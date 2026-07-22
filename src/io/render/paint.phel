@@ -22,6 +22,16 @@
 ;; mutations stay local to the helper and the overlay never shows.
 ;; (Painfully learned: missing pistol, missing hearts HUD.)
 
+(defn- centre-col
+  "Left column that horizontally centres a `(strlen text)`-wide label in
+   a `vw`-cell viewport, floored at column 1 so a label wider than the
+   viewport still starts on-screen. Shared by the centred single-line
+   HUD cues (reload nag, save flash, powerup badges, empty-click).
+   `strlen` (byte width) is correct here because every caller's label is
+   ASCII; multi-byte boxes centre via their own mb_strlen math."
+  [vw text]
+  (php/max 1 (php/- (php/intdiv vw 2) (php/intdiv (php/strlen text) 2))))
+
 ;; =====================================================================
 ;; § Enemy overlays (face, lights)
 ;; =====================================================================
@@ -368,8 +378,7 @@
     (when (reload-reminder-visible? mag mag-size reserve cd click gt vh)
       (let [text  " press R to RELOAD "
             label (str "\e[40;38;5;226;1m" text "\e[0m")
-            col   (php/max 1 (php/- (php/intdiv vw 2)
-                                    (php/intdiv (php/strlen text) 2)))
+            col   (centre-col vw text)
             row   (php/max 3 (php/- vh 8))]
         (buf-push parts (str "\e[" row ";" col "H" label)))))
   parts)
@@ -384,8 +393,7 @@
     (when (and (php/> secs 0.0) msg (php/>= vh 5))
       (let [text  (str " " msg " ")
             label (str "\e[48;5;22;38;5;231;1m" text "\e[0m")
-            col   (php/max 1 (php/- (php/intdiv vw 2)
-                                    (php/intdiv (php/strlen text) 2)))]
+            col   (centre-col vw text)]
         (buf-push parts (str "\e[3;" col "H" label)))))
   parts)
 
@@ -399,8 +407,7 @@
     (when (and (php/> secs 0.0) (php/>= vh 9))
       (let [text  " READY! "
             label (str "\e[40;92;1m" text "\e[0m")
-            col   (php/max 1 (php/- (php/intdiv vw 2)
-                                    (php/intdiv (php/strlen text) 2)))
+            col   (centre-col vw text)
             row   (php/max 3 (php/- vh 8))]
         (buf-push parts (str "\e[" row ";" col "H" label)))))
   parts)
@@ -540,8 +547,7 @@
   (let [secs (or (get stats secs-key) 0.0)]
     (when (php/> secs 0.0)
       (let [text (str " " label " " (php/intval (php/ceil secs)) "s ")
-            col  (php/max 1 (php/- (php/intdiv vw 2)
-                                   (php/intdiv (php/strlen text) 2)))]
+            col  (centre-col vw text)]
         (buf-push parts (str "\e[" row ";" col "H" sgr text "\e[0m")))))
   parts)
 
@@ -580,8 +586,7 @@
                       " -- CLICK --   OUT OF AMMO   ")
             sgr     (if (php/> reserve 0) "\e[40;38;5;226;1m" "\e[40;38;5;196;1m")
             label   (str sgr text "\e[0m")
-            col     (php/max 1 (php/- (php/intdiv vw 2)
-                                      (php/intdiv (php/strlen text) 2)))
+            col     (centre-col vw text)
             row     (php/max 3 (php/- vh 7))]
         (buf-push parts (str "\e[" row ";" col "H" label))))
     parts))

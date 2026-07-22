@@ -888,6 +888,40 @@
                :ammo-reserve    (php/- reserve drawn)
                :reload-cooldown (:reload-duration sp))))))
 
+(defn- boss-cyber-down?
+  "True when a cyberdemon lies dead among `enemies` while the level's
+   exit is still `:boss`-locked — the condition that hands the player
+   the `:boss` key."
+  [world enemies]
+  (and (= (:door-lock world) :boss)
+       (some (fn [e] (and (= (:type e) :cyber)
+                          (false? (:alive e))))
+             enemies)))
+
+(defn- score-multikill
+  "Fold a multi-target shot's outcome into the world: swap in the woken
+   enemies, add `killed` to `:kills`, extend the streak when one is
+   already running (else restart it), credit the active weapon, and
+   hand over the `:boss` key when `boss-down?`. Shared by `bfg-fire`
+   and `finish-multikill` so the splash and hitscan multi-kill paths
+   can't drift apart. Hit-stop is left to the caller: each path sizes
+   it from a different signal."
+  [world woken ^int killed boss-down?]
+  (let [killed? (php/> killed 0)
+        chain?  (pos? (or (:streak-secs world) 0.0))
+        scored  (let [s (assoc world
+                               :enemies     woken
+                               :kills       (php/+ (or (:kills world) 0) killed)
+                               :streak      (if killed?
+                                              (php/+ (if chain? (or (:streak world) 0) 0) killed)
+                                              (or (:streak world) 0))
+                               :streak-secs (if killed? streak-window-seconds
+                                                (or (:streak-secs world) 0.0)))]
+                  (if killed? (bump-weapon-kills s killed) s))]
+    (if boss-down?
+      (assoc scored :held-keys (conj (or (:held-keys scored) #{}) :boss))
+      scored)))
+
 (defn- bfg-fire
   "Resolve a BFG shot (any weapon with a `:splash-radius`). The beam
    lands at `beam-impact` (nearest enemy along the ray, else the wall);
@@ -911,23 +945,8 @@
         woken        (noise-wake es' (:grid world) (:x p) (:y p))
         hit-pos      {:x ix :y iy}
         killed?      (php/> killed 0)
-        chain?       (pos? (or (:streak-secs world) 0.0))
-        boss-killed? (and (= (:door-lock world) :boss)
-                          (some (fn [e] (and (= (:type e) :cyber)
-                                             (false? (:alive e))))
-                                woken))
-        scored       (let [s (assoc world
-                                    :enemies     woken
-                                    :kills       (php/+ (or (:kills world) 0) killed)
-                                    :streak      (if killed?
-                                                   (php/+ (if chain? (or (:streak world) 0) 0) killed)
-                                                   (or (:streak world) 0))
-                                    :streak-secs (if killed? streak-window-seconds
-                                                     (or (:streak-secs world) 0.0)))]
-                       (if killed? (bump-weapon-kills s killed) s))
-        unlocked     (if boss-killed?
-                       (assoc scored :held-keys (conj (or (:held-keys scored) #{}) :boss))
-                       scored)
+        boss-killed? (boss-cyber-down? world woken)
+        unlocked     (score-multikill world woken killed boss-killed?)
         juiced       (if killed?
                        (assoc unlocked :hit-stop-secs
                               (if boss-killed? hit-stop-boss-seconds hit-stop-tough-seconds))
@@ -957,39 +976,23 @@
   "Shared tail for the multi-target hitscans (`pierce-fire`,
    `spread-fire`): given the enemies after damage was applied, the kill
    count, the nearest hit-pos (or nil), and the toughest kill's HP,
-   aggregate kills + streak like `bfg-fire`, unlock the boss door if a
-   cyber died, size hit-stop per the meatiest kill, splat blood on the
-   primary, drain the mag, and queue sfx. No per-enemy loot (mirrors the
-   splash path)."
+   aggregate kills + streak + boss key via `score-multikill`, size
+   hit-stop per the meatiest kill, splat blood on the primary, drain
+   the mag, and queue sfx. No per-enemy loot (mirrors the splash path)."
   [world enemies-after killed hit-pos tough]
-  (let [p            (:player world)
-        woken        (noise-wake enemies-after (:grid world) (:x p) (:y p))
-        hit?         (some? hit-pos)
-        killed?      (php/> killed 0)
-        chain?       (pos? (or (:streak-secs world) 0.0))
-        boss-killed? (and (= (:door-lock world) :boss)
-                          (some (fn [e] (and (= (:type e) :cyber)
-                                             (false? (:alive e))))
-                                woken))
-        scored       (let [s (assoc world
-                                    :enemies     woken
-                                    :kills       (php/+ (or (:kills world) 0) killed)
-                                    :streak      (if killed?
-                                                   (php/+ (if chain? (or (:streak world) 0) 0) killed)
-                                                   (or (:streak world) 0))
-                                    :streak-secs (if killed? streak-window-seconds
-                                                     (or (:streak-secs world) 0.0)))]
-                       (if killed? (bump-weapon-kills s killed) s))
-        unlocked     (if boss-killed?
-                       (assoc scored :held-keys (conj (or (:held-keys scored) #{}) :boss))
-                       scored)
-        juiced       (if killed?
-                       (let [hs (hit-stop-for tough)]
-                         (if (php/> hs 0.0)
-                           (assoc unlocked :hit-stop-secs hs)
-                           unlocked))
-                       unlocked)
-        based        (assoc juiced :fire-anim fire-anim-seconds)]
+  (let [p        (:player world)
+        woken    (noise-wake enemies-after (:grid world) (:x p) (:y p))
+        hit?     (some? hit-pos)
+        killed?  (php/> killed 0)
+        unlocked (score-multikill world woken killed
+                                  (boss-cyber-down? world woken))
+        juiced   (if killed?
+                   (let [hs (hit-stop-for tough)]
+                     (if (php/> hs 0.0)
+                       (assoc unlocked :hit-stop-secs hs)
+                       unlocked))
+                   unlocked)
+        based    (assoc juiced :fire-anim fire-anim-seconds)]
     (enqueue-shot-sfx
      (apply-heat (if hit?
                    (stamp-hit-fx

@@ -687,24 +687,15 @@
    half-block edge cell can blend the exact sky shade of that row
    into the top-half FG, eliminating the flat-236 seam artifact.
    Optional `horizon-offset` (scene rows, default 0) shears the horizon
-   for look up/down; pr=0 leaves output unchanged."
+   for look up/down; pr=0 leaves output unchanged.
+
+   The horizon-distance -> table-index mapping is identical to
+   build-horizon-gradient (only the table it indexes differs: bare
+   codes here, SGR paint cells there), so this delegates to keep the
+   one idx formula in a single place. Built once per resize / pitch
+   (memoized in the gradient cache), so the extra call is free."
   [^int vh ctbl & [horizon-offset]]
-  (let [pr      (or horizon-offset 0)
-        arr     (buf-mk)
-        base    (php/intdiv vh 2)
-        horizon (php/+ base pr)
-        max-d   (php/max 1 base)]
-    (loop [r 0]
-      (when (php/< r vh)
-        (let [idx (php/max 0
-                           (php/min 23
-                                    (php/intval (php/* (php/- 1.0
-                                                              (php// (php/abs (php/- r horizon))
-                                                                     max-d))
-                                                       23))))]
-          (buf-set arr r (buf-get ctbl idx)))
-        (recur (php/+ r 1))))
-    arr))
+  (build-horizon-gradient vh ctbl horizon-offset))
 
 (defn build-themed-gradient-codes
   "Code-only twin of build-themed-gradient. Stores bare 256-color

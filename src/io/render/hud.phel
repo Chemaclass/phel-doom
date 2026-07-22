@@ -454,16 +454,15 @@
         cap-of        (fn [kw]
                         (let [base (or (:reserve-cap (get weapons kw)) 0)]
                           (if pack? (php/* 2 base) base)))
-        weapon-rows   (apply vector
-                             (map (fn [kw]
-                                    (help-weapon-row kw (get weapons kw)
-                                                     (php/=== kw active)
-                                                     (contains? owned kw)
-                                                     (mag-of kw)
-                                                     (reserve-of kw)
-                                                     (cap-of kw)
-                                                     w))
-                                  weapon-order))
+        weapon-rows   (mapv (fn [kw]
+                              (help-weapon-row kw (get weapons kw)
+                                               (php/=== kw active)
+                                               (contains? owned kw)
+                                               (mag-of kw)
+                                               (reserve-of kw)
+                                               (cap-of kw)
+                                               w))
+                            weapon-order)
         ;; SGR resets in keys-str / buffs-str include `22` (normal
         ;; intensity). Without it the dim attribute from `\e[2;90m` —
         ;; or bold from `\e[1;…m` — stays sticky and the closing `│`
@@ -474,22 +473,20 @@
         ;; red-only, and blue+red keep their exact prior byte output;
         ;; yellow slots in last. Falls back to dim `(none)` when the
         ;; player holds no keys.
-        held-key-tags (apply vector
-                             (filter (fn [s] (not (php/=== s nil)))
-                                     [(when (contains? held :blue) "\e[94;1mblue\e[22;40;97m")
-                                      (when (contains? held :red) "\e[91;1mred\e[22;40;97m")
-                                      (when (contains? held :yellow) "\e[93;1myellow\e[22;40;97m")]))
+        held-key-tags (filterv (fn [s] (not (php/=== s nil)))
+                               [(when (contains? held :blue) "\e[94;1mblue\e[22;40;97m")
+                                (when (contains? held :red) "\e[91;1mred\e[22;40;97m")
+                                (when (contains? held :yellow) "\e[93;1myellow\e[22;40;97m")])
         keys-str      (if (php/=== (count held-key-tags) 0)
                         "\e[2;90m(none)\e[22;40;97m"
                         (php/implode "  " (to-php-array held-key-tags)))
-        buffs-str     (let [chunks (apply vector
-                                          (filter (fn [s] (not (php/=== s nil)))
-                                                  [(when (php/> bsec 0.0)
-                                                     (str "\e[1;33mBERSERK " (php/intval bsec) "s\e[22;40;97m"))
-                                                   (when (php/> isec 0.0)
-                                                     (str "\e[1;94mINVULN " (php/intval isec) "s\e[22;40;97m"))
-                                                   (when pack?
-                                                     "\e[1;32m+PACK\e[22;40;97m")]))]
+        buffs-str     (let [chunks (filterv (fn [s] (not (php/=== s nil)))
+                                            [(when (php/> bsec 0.0)
+                                               (str "\e[1;33mBERSERK " (php/intval bsec) "s\e[22;40;97m"))
+                                             (when (php/> isec 0.0)
+                                               (str "\e[1;94mINVULN " (php/intval isec) "s\e[22;40;97m"))
+                                             (when pack?
+                                               "\e[1;32m+PACK\e[22;40;97m")])]
                         (if (php/=== (count chunks) 0)
                           "\e[2;90m(none)\e[22;40;97m"
                           (php/implode "  " (to-php-array chunks))))
@@ -569,7 +566,7 @@
                                   budget)
                         (php/array_merge with-compass controls-rows)
                         with-compass)
-        rows          (apply vector (php/array_merge with-ctrls closer-rows))]
+        rows          (vec (php/array_merge with-ctrls closer-rows))]
     rows))
 
 (defn help-menu-string
@@ -670,18 +667,17 @@
                    blnk
                    (str "│\e[1;93m" (pause-pad "                 PAUSED" w) "\e[40;97m│")
                    blnk]
-        rows-opts (apply vector
-                         (map-indexed
-                          (fn [i kw]
-                            (pause-menu-row (php/ucfirst (name kw)) (php/=== i cursor) w))
-                          pause-menu-options))
+        rows-opts (vec (map-indexed
+                        (fn [i kw]
+                          (pause-menu-row (php/ucfirst (name kw)) (php/=== i cursor) w))
+                        pause-menu-options))
         rows-foot [blnk
                    (str "├" bar "┤")
                    blnk
                    (str "│\e[2;97m" (pause-pad "  ↑↓ move   enter/space select" w) "\e[22;40;97m│")
                    blnk
                    (str "└" bar "┘")]
-        rows      (apply vector (concat rows-head rows-opts rows-foot))
+        rows      (vec (concat rows-head rows-opts rows-foot))
         cnt       (count rows)
         col0      (php/max 1 (php/- (php/+ (php/intdiv vw 2) 1)
                                     (php/intdiv (php/+ w 2) 2)))
@@ -708,18 +704,17 @@
                      blnk
                      (str "│\e[1;93m" (pause-pad "                SETTINGS" w) "\e[40;97m│")
                      blnk]
-        rows-fields (apply vector
-                           (map-indexed
-                            (fn [i field]
-                              (settings-row field settings (php/=== i cursor) w))
-                            page-fields))
+        rows-fields (vec (map-indexed
+                          (fn [i field]
+                            (settings-row field settings (php/=== i cursor) w))
+                          page-fields))
         rows-foot   [blnk
                      (str "├" bar "┤")
                      blnk
                      (str "│\e[2;97m" (pause-pad (str "  " footer) w) "\e[22;40;97m│")
                      blnk
                      (str "└" bar "┘")]
-        rows        (apply vector (concat rows-head rows-fields rows-foot))
+        rows        (vec (concat rows-head rows-fields rows-foot))
         cnt         (count rows)
         col0        (php/max 1 (php/- (php/+ (php/intdiv vw 2) 1)
                                       (php/intdiv (php/+ w 2) 2)))

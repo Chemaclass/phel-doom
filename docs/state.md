@@ -54,7 +54,7 @@ Pure data shapes that every other module operates on. `src/core/state.phel`.
  :game-time  <float seconds>  ; pause-aware clock for render pulses
  :bob-phase  <float radians>  ; head-bob walk cycle (#411); 0.0 at rest, advanced by distance in apply-physics
  :mag           <int 0..mag-size>     ; rounds in the loaded magazine
- :ammo-reserve  <int 0..max-reserve>  ; spare ammo pool; drained on reload
+ :ammo-reserve  <int 0..reserve-cap>  ; spare ammo pool (per-weapon cap); drained on reload
  :reload-cooldown  <float seconds>    ; drives the reload drop animation
  :empty-click-secs <float seconds>    ; dry-fire CLICK prompt timer
  :heat          <float 0..1>          ; pistol heat; ≥ 1 triggers jam

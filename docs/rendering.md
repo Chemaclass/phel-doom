@@ -81,7 +81,7 @@ Top:    \e[48;5;<wall>;38;5;<sky-at-row>m▀      (wall BG, sky FG)
 Bottom: \e[48;5;<floor-at-row>;38;5;<wall>m▀    (floor BG, wall FG)
 ```
 
-Sky and floor codes are sampled from gradients at the seam row, not flat constants. Flat codes produced dark dots. `build-horizon-gradient-codes` and `build-themed-gradient-codes` pre-bake code-only twins of the string gradients per frame.
+Sky and floor codes are sampled from gradients at the seam row, not flat constants. Flat codes produced dark dots. `build-horizon-gradient` (fed a code table) and `build-themed-gradient-codes` pre-bake code-only twins of the string gradients per frame.
 
 These whole-cell edge bands apply to non-textured columns (boss door, blood-band, glyph-mode enemy columns, or with textures/subpixel off). Textured columns - stone walls and doors alike - trace their wall top/bottom at sub-row precision instead - see the next section.
 
@@ -172,7 +172,7 @@ Door texels are xterm-256 colour-CUBE codes (not grayscale ramp), which two piec
 - `tex-fade-table` fog already fades cube codes hue-true (toward the neutral grey haze tint via `fade-256-fog`, or toward black under `PHEL_DOOM_FLAT_FOG=1`).
 - The sub-row seam accents darken through `seam-darken-16/-8/-5` LUTs (in `frame_math`) instead of plain `code - n` arithmetic: subtracting from a cube code jumps hue (amber 166 - 16 = green 150). For grayscale-ramp codes the LUTs reproduce the old subtraction exactly.
 
-Door fog is the wall formula with two nav-cue exceptions: the level floors at 8 (a door never fades to black) and ignores the near-death haze. The door rides the fog level steady-brighter (`door-tex-boost`, a constant +3 levels) instead of swapping paint strings. The old 4 rad/s sin-wave throb was dropped for a calmer 3D view (see [Calm 3D view](#calm-3d-view-no-decorative-blinks)); the door stays at its bright frame, which keeps it findable down the arena without the flashing. Blood-band door columns keep the flat striped `door-shade` (the seam mixer's sky/floor codes are grayscale-only), as do glyph-enemy columns and all-flat fallback modes.
+Door fog is the wall formula with two nav-cue exceptions: the level floors at 8 (a door never fades to black) and ignores the near-death haze. The door rides the fog level steady-brighter (`door-tex-boost`, a constant +3 levels) instead of swapping paint strings. The old 4 rad/s sin-wave throb was dropped for a calmer 3D view (see [Calm 3D view](#calm-3d-view-no-decorative-blinks)); the door stays at its bright frame, which keeps it findable down the arena without the flashing. Blood-band door columns keep the flat striped `door-shade-now` (the seam mixer's sky/floor codes are grayscale-only), as do glyph-enemy columns and all-flat fallback modes.
 
 ## Textured floor (floor-casting)
 

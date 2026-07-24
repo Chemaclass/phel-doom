@@ -17,15 +17,23 @@
                        (= (php/intval (:y e)) py))))
            (or coll [])))
 
+(defn- consume-at
+  "Shared step-on skeleton: when the player's integer cell holds an
+   entity in `(slot world)`, drop that entity, apply `transform` to the
+   consumed world, and enqueue `sfx`. Returns `world` unchanged when the
+   player is not standing on one."
+  [world slot transform sfx]
+  (let [kept (entities-not-at (slot world)
+                              (php/intval (:x (:player world)))
+                              (php/intval (:y (:player world))))]
+    (if (= (count kept) (count (or (slot world) [])))
+      world
+      (push-sfx (transform (assoc world slot kept)) sfx 1.0))))
+
 (defn pickup-hearts
   "If the player stands on a heart cell, consume it and gain a life."
   [world]
-  (let [kept (entities-not-at (:hearts world)
-                              (php/intval (:x (:player world)))
-                              (php/intval (:y (:player world))))]
-    (if (= (count kept) (count (or (:hearts world) [])))
-      world
-      (push-sfx (gain-life (assoc world :hearts kept)) :berserk 1.0))))
+  (consume-at world :hearts gain-life :berserk))
 
 (defn pickup-armors
   "Step-on triggers an armor pickup: bumps :armor by 1, capped at
@@ -34,15 +42,9 @@
    instead of a life (see combat/take-damage). Pickup is always
    consumed even at cap to match the heart / gain-life pattern."
   [world]
-  (let [kept (entities-not-at (:armors world)
-                              (php/intval (:x (:player world)))
-                              (php/intval (:y (:player world))))]
-    (if (= (count kept) (count (or (:armors world) [])))
-      world
-      (let [shielded (assoc world :armors kept)]
-        (push-sfx
-         (update shielded :armor (fn [a] (php/min max-armor (php/+ (or a 0) 1))))
-         :door 1.0)))))
+  (consume-at world :armors
+              (fn [w] (update w :armor (fn [a] (php/min max-armor (php/+ (or a 0) 1)))))
+              :door))
 
 (defn- entity-at
   "Pick the first entity in `coll` at cell (px, py) so the caller can
@@ -104,38 +106,22 @@
    rather than adding to it. Distinct `:berserk` sfx so the pickup is
    audibly different from a generic door/key tink."
   [world]
-  (let [kept (entities-not-at (:berserks world)
-                              (php/intval (:x (:player world)))
-                              (php/intval (:y (:player world))))]
-    (if (= (count kept) (count (or (:berserks world) [])))
-      world
-      (push-sfx (arm-berserk (assoc world :berserks kept)) :berserk 1.0))))
+  (consume-at world :berserks arm-berserk :berserk))
 
 (defn pickup-invulns
   "Step-on consumes the invulnerability sphere + arms
    `:invuln-secs` of damage immunity. Refresh-not-add on stack."
   [world]
-  (let [kept (entities-not-at (:invulns world)
-                              (php/intval (:x (:player world)))
-                              (php/intval (:y (:player world))))]
-    (if (= (count kept) (count (or (:invulns world) [])))
-      world
-      (push-sfx (assoc world
-                       :invulns     kept
-                       :invuln-secs invuln-seconds)
-                :door 1.0))))
+  (consume-at world :invulns
+              (fn [w] (assoc w :invuln-secs invuln-seconds))
+              :door))
 
 (defn pickup-soulspheres
   "Step-on consumes a soulsphere + bumps `:lives` toward
    `soulsphere-cap` via `gain-soulsphere`. Over-cap lives decay back
    to `max-lives` over time (see `decay-soul-overcap`)."
   [world]
-  (let [kept (entities-not-at (:soulspheres world)
-                              (php/intval (:x (:player world)))
-                              (php/intval (:y (:player world))))]
-    (if (= (count kept) (count (or (:soulspheres world) [])))
-      world
-      (push-sfx (gain-soulsphere (assoc world :soulspheres kept)) :berserk 1.0))))
+  (consume-at world :soulspheres gain-soulsphere :berserk))
 
 (defn pickup-armor-shards
   "Step-on consumes an armor shard + adds +1 armor via
@@ -144,12 +130,7 @@
    pattern). Common pickup so the door tink reads as routine
    loot rather than a special-event sfx."
   [world]
-  (let [kept (entities-not-at (:armor-shards world)
-                              (php/intval (:x (:player world)))
-                              (php/intval (:y (:player world))))]
-    (if (= (count kept) (count (or (:armor-shards world) [])))
-      world
-      (push-sfx (gain-armor-shard (assoc world :armor-shards kept)) :door 1.0))))
+  (consume-at world :armor-shards gain-armor-shard :door))
 
 (defn pickup-backpacks
   "Stacking pickup (#68 part 3): each step-on bumps `:backpack-level`
@@ -160,17 +141,9 @@
    At cap the pickup is silently consumed (cell freed) but the
    level is unchanged."
   [world]
-  (let [kept (entities-not-at (:backpacks world)
-                              (php/intval (:x (:player world)))
-                              (php/intval (:y (:player world))))]
-    (if (= (count kept) (count (or (:backpacks world) [])))
-      world
-      (let [picked (assoc world :backpacks kept)]
-        (push-sfx
-         (if (at-backpack-cap? picked)
-           picked
-           (gain-backpack picked))
-         :door 1.0)))))
+  (consume-at world :backpacks
+              (fn [w] (if (at-backpack-cap? w) w (gain-backpack w)))
+              :door))
 
 (defn pickup-weapon-pickups
   "Step-on consumes a weapon pickup, adds it to :owned-weapons, and

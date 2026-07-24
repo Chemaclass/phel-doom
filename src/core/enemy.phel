@@ -22,12 +22,6 @@
 ;; lives in `enemies`. Keep this split when adding behaviour.
 ;; ---------------------------------------------------------------------
 
-(def default-chase-speed
-  "Fallback chase speed (units/sec) used by the single-arity advance
-   call so existing tests / callers that don't pass a per-level speed
-   still work. The level table in play.phel overrides this per room."
-  0.75)
-
 (def type-speed-mul
   "Per-enemy-type multiplier applied on top of the level's `:chase`
    speed. Bosses are heavy and should feel ponderous — the cyberdemon
@@ -297,6 +291,19 @@
                           (recur (php/+ i 1) best)))))))]
     [(php/+ px (php/* pd cos-a)) (php/+ py (php/* pd sin-a))]))
 
+(defn- damage-enemy
+  "Apply `dmg` (0 if `e` resists `dmg-type`) to one enemy. Survivors wake
+   (:aware) + take a hit-flash; a lethal hit flips :alive false + arms a
+   respawn timer. Returns [enemy' killed?] - no pain roll, shared by the
+   multi-target hitscans splash / pierce / spread-shoot."
+  [e ^int dmg dmg-type]
+  (let [eff   (if (resists? (:type e) dmg-type) 0 dmg)
+        lives (php/max 0 (php/- (or (:lives e) 1) eff))
+        woke  (assoc e :state :aware :lives lives)]
+    (if (php/<= lives 0)
+      [(assoc woke :alive false :respawn-after (respawn-delay-for e)) true]
+      [(assoc woke :hit-flash-secs hit-flash-seconds) false])))
+
 (defn splash
   "Area blast: damage every alive enemy within `radius` world units of
    `(cx, cy)` by `damage` (0 if it resists `dmg-type`). Returns
@@ -316,18 +323,8 @@
                        (php/<= (php/+ (php/* dx dx) (php/* dy dy)) r2))]
           (if (not in?)
             (recur (php/+ i 1) (conj acc e) killed)
-            (let [eff   (if (resists? (:type e) dmg-type) 0 damage)
-                  lives (php/max 0 (php/- (or (:lives e) 1) eff))
-                  woke  (assoc e :state :aware :lives lives)]
-              (if (php/<= lives 0)
-                (recur (php/+ i 1)
-                       (conj acc (assoc woke
-                                        :alive false
-                                        :respawn-after (respawn-delay-for e)))
-                       (php/+ killed 1))
-                (recur (php/+ i 1)
-                       (conj acc (assoc woke :hit-flash-secs hit-flash-seconds))
-                       killed)))))))))
+            (let [[e' killed-one?] (damage-enemy e damage dmg-type)]
+              (recur (php/+ i 1) (conj acc e') (if killed-one? (php/+ killed 1) killed)))))))))
 
 (defn pierce
   "Piercing hitscan: damage EVERY alive enemy along the ray, not just the
@@ -368,22 +365,14 @@
                           (php/<= (php/+ (php/* perpx perpx) (php/* perpy perpy)) hr2))]
            (if (not in?)
              (recur (php/+ i 1) (conj acc e) killed best-d hit-pos tough)
-             (let [eff     (if (resists? (:type e) damage-type) 0 damage)
-                   lives   (php/max 0 (php/- (or (:lives e) 1) eff))
-                   woke    (assoc e :state :aware :lives lives)
-                   closer? (php/< proj best-d)
-                   hp'     (if closer? {:x (:x e) :y (:y e)} hit-pos)
-                   bd'     (if closer? proj best-d)]
-               (if (php/<= lives 0)
-                 (recur (php/+ i 1)
-                        (conj acc (assoc woke
-                                         :alive false
-                                         :respawn-after (respawn-delay-for e)))
-                        (php/+ killed 1) bd' hp'
+             (let [[e' killed-one?] (damage-enemy e damage damage-type)
+                   closer?          (php/< proj best-d)
+                   hp'              (if closer? {:x (:x e) :y (:y e)} hit-pos)
+                   bd'              (if closer? proj best-d)]
+               (if killed-one?
+                 (recur (php/+ i 1) (conj acc e') (php/+ killed 1) bd' hp'
                         (php/max tough (or (:max-lives e) 1)))
-                 (recur (php/+ i 1)
-                        (conj acc (assoc woke :hit-flash-secs hit-flash-seconds))
-                        killed bd' hp' tough))))))))))
+                 (recur (php/+ i 1) (conj acc e') killed bd' hp' tough))))))))))
 
 (defn- ^:pure in-cone?
   "True when the enemy offset `(dx, dy)` lies in front of the player
@@ -455,20 +444,13 @@
                      dmg      (cond primary? primary-dmg graze? graze-dmg :else 0)]
                  (if (php/<= dmg 0)
                    (recur (php/+ i 1) (conj acc e) killed tough grazed hit-pos)
-                   (let [eff     (if (resists? (:type e) damage-type) 0 dmg)
-                         lives   (php/max 0 (php/- (or (:lives e) 1) eff))
-                         woke    (assoc e :state :aware :lives lives)
-                         hp'     (if primary? {:x (:x e) :y (:y e)} hit-pos)
-                         grazed' (if graze? (php/+ grazed 1) grazed)]
-                     (if (php/<= lives 0)
-                       (recur (php/+ i 1)
-                              (conj acc (assoc woke
-                                               :alive false
-                                               :respawn-after (respawn-delay-for e)))
-                              (php/+ killed 1) (php/max tough (or (:max-lives e) 1)) grazed' hp')
-                       (recur (php/+ i 1)
-                              (conj acc (assoc woke :hit-flash-secs hit-flash-seconds))
-                              killed tough grazed' hp')))))))))))))
+                   (let [[e' killed-one?] (damage-enemy e dmg damage-type)
+                         hp'              (if primary? {:x (:x e) :y (:y e)} hit-pos)
+                         grazed'          (if graze? (php/+ grazed 1) grazed)]
+                     (if killed-one?
+                       (recur (php/+ i 1) (conj acc e') (php/+ killed 1)
+                              (php/max tough (or (:max-lives e) 1)) grazed' hp')
+                       (recur (php/+ i 1) (conj acc e') killed tough grazed' hp')))))))))))))
 
 (defn push-back-enemy
   "Shove the enemy at `idx` along `(cos-a, sin-a)` by `dist` world

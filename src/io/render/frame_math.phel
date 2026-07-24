@@ -124,6 +124,24 @@
   ;; black). Both share the `(code, t)` signature so callers are agnostic.
   (if (fog-tinted?) fade-256-fog fade-256))
 
+(defn- build-fade-lut
+  ;; Shared 24-level × 256-code fade bake for both fog LUTs. `f` is a
+  ;; `(code, t)` fade fn; level L holds every code faded by `1 - L/23`.
+  ;; Load-time only.
+  [f]
+  (let [outer (php/array)]
+    (loop [lvl 0]
+      (when (php/< lvl 24)
+        (let [inner (php/array)
+              t     (php/- 1.0 (php// lvl 23.0))]
+          (loop [c 0]
+            (when (php/< c 256)
+              (php/aset inner c (f c t))
+              (recur (php/+ c 1))))
+          (php/aset outer lvl inner))
+        (recur (php/+ lvl 1))))
+    outer))
+
 (def tex-fade-table
   "24-level × 256-code distance-fog lookup for textured walls:
    `tex-fade-table[level][code]` is `code` faded by `1 - level/23` toward
@@ -132,18 +150,7 @@
    (far). Lets the wall-texture path apply per-cell fog with a single
    nested `aget` instead of a `fog-fade` call per cell. Built once at
    load (24×256 calls); pure + immutable thereafter."
-  (let [outer (php/array)]
-    (loop [lvl 0]
-      (when (php/< lvl 24)
-        (let [inner (php/array)
-              t     (php/- 1.0 (php// lvl 23.0))]
-          (loop [c 0]
-            (when (php/< c 256)
-              (php/aset inner c (fog-fade c t))
-              (recur (php/+ c 1))))
-          (php/aset outer lvl inner))
-        (recur (php/+ lvl 1))))
-    outer))
+  (build-fade-lut fog-fade))
 
 ;; ---------------------------------------------------------------------
 ;; Truecolor (24-bit) tagged paint values. A "paint value" handed to the
@@ -206,25 +213,14 @@
    snap, so the renderer paints it as a `\\e[38;2;r;g;b` / `\\e[48;2;r;g;b`
    cell and keeps a cool bias the 256 path can't hold. Built once at load
    (24×256)."
-  (let [outer (php/array)]
-    (loop [lvl 0]
-      (when (php/< lvl 24)
-        (let [inner (php/array)
-              t     (php/- 1.0 (php// lvl 23.0))]
-          (loop [c 0]
-            (when (php/< c 256)
-              (php/aset inner c (fog-fade-rgb c t))
-              (recur (php/+ c 1))))
-          (php/aset outer lvl inner))
-        (recur (php/+ lvl 1))))
-    outer))
+  (build-fade-lut fog-fade-rgb))
 
 (defn- build-seam-darken
   ;; 256-entry LUT darkening a colour code by `steps` grayscale-equivalent
-  ;; shade steps: grayscale-ramp codes subtract `steps` clamped at 232
-  ;; (exactly the old seam arithmetic), colour-cube codes fade toward
-  ;; black by steps/24 (hue-preserving — plain subtraction on a cube code
-  ;; jumps to a different hue, e.g. amber 166 - 16 = green 150).
+  ;; shade steps: grayscale-ramp codes subtract `steps` clamped at 232,
+  ;; colour-cube codes fade toward black by steps/24 (hue-preserving —
+  ;; plain subtraction on a cube code jumps to a different hue, e.g.
+  ;; amber 166 - 16 = green 150).
   [^int steps]
   (let [a (php/array)]
     (loop [c 0]
@@ -846,7 +842,7 @@
    gets a face overlay, no silent skips on unknown types)."
   [type-kw stats]
   (or (get enemy-types type-kw)
-      (get enemy-types (or (get stats :enemy) :imp))
+      (get enemy-types (get stats :enemy))
       (get enemy-types :imp)))
 
 (defn ^:pure enemy-front-visible-at?

@@ -319,10 +319,12 @@
 ;; =====================================================================
 
 (defn- compute-wall-shades
-  "Per-column wall shading. Builds and returns seven PHP-array buffers
-   filled with: wall top + bottom screen rows, plus precomputed cell
-   strings for the wall body, the top/bot half-block edges, and the
-   top/bot ambient-shadow band.
+  "Per-column wall shading. Builds and returns eleven PHP-array buffers:
+   wall top + bottom screen rows (:tops :bots), precomputed cell strings
+   for the wall body (:normal), the top/bot half-block edges and the
+   top/bot ambient-shadow band, the per-column wall-texture sampling
+   state (:tex-u :tex-level :tex-px), and the projected wall height in
+   scene rows (:wall-h, floored at 1).
 
    PHP arrays are pass-by-value in fn args, so the buffers are CREATED
    inside this fn and returned in a map; the caller destructures to
@@ -330,7 +332,9 @@
 
    `cast`       ray-cast outputs {:dists :hits :sides}
    `palette`    {:stbl :ctbl :door-shade-now :door-code-now
-                 :door-tex-boost :sky-code-grad :floor-code-grad
+                 :door-tex-boost
+                 :boss-door-shade-now :boss-door-code-now :boss-unlocked?
+                 :sky-code-grad :floor-code-grad
                  :blood-sky-code-grad :blood-floor-code-grad}
    `blood-cols` per-col directional blood mask (from build-blood-cols)
    `haze-shift` shade-table steps to pull walls toward black (int, top
@@ -495,9 +499,7 @@
 ;; Pickup pulse cadences (rad/s). Each interactive pickup throbs on a
 ;; distinct frequency so co-spawned items read as separate beats instead
 ;; of syncing into one flash. Tuned by feel; frame->string's pulse
-;; bindings below pair each cadence with the glyph it drives. (Doors and
-;; the aggro head no longer pulse - held steady-bright for a calmer 3D
-;; view - so their cadences were dropped.)
+;; bindings below pair each cadence with the glyph it drives.
 (def pulse-freq-heart         6.0)
 (def pulse-freq-armor         5.0)
 (def pulse-freq-ammo          7.0)
@@ -529,10 +531,10 @@
 
 ;; Sky / floor gradients (shade arrays + their code twins, normal +
 ;; blood variants) depend ONLY on `vh`: the palettes are compile-time
-;; constants and the floor base-code / banding are literals. They were
-;; rebuilt from scratch every frame (6 × O(vh) allocations); now a
-;; single-slot atom memoizes the whole bundle keyed by vh, so they
-;; rebuild only when the viewport height changes (resize / F3 toggle).
+;; constants and the floor base-code / banding are literals.
+;; A single-slot atom memoizes the whole bundle keyed by vh, so the
+;; 6 × O(vh) allocations happen only when the viewport height changes
+;; (resize / F3 toggle) rather than every frame.
 ;; Input-determined cache — same vh always yields the same arrays — so
 ;; it preserves frame->string's referential transparency, same as the
 ;; engine's offset-cache.
@@ -1619,9 +1621,9 @@
         gw                                 (:width world)
         ;; Floor-cast inputs: player position + per-row perpendicular
         ;; distance / fog level for the textured ground plane. The cell-
-        ;; res arrays drive the legacy single-texel floor; the sub arrays
-        ;; (2× vertical) drive the half-block floor. All four tables live
-        ;; in the `grads` memo bundle now (see frame-gradients).
+        ;; res arrays drive the single-texel floor; the sub arrays (2×
+        ;; vertical) drive the half-block floor. All four live in the
+        ;; `grads` memo bundle (see frame-gradients).
         {:x pfx :y pfy}                    (:player world)
         floor-dperp                        (:floor-dperp grads)
         floor-level                        (:floor-level grads)
@@ -1638,8 +1640,7 @@
         ;; their bright frame instead of pulsing between two shades. The
         ;; door already reads as a door from its glyph + full-brightness
         ;; shade (and stays findable down the arena); the aggro head reads
-        ;; as 'in striking range' from its bright head colour. The old
-        ;; sin-wave throb was visual noise, not information.
+        ;; as 'in striking range' from its bright head colour.
         door-shade-now                     "\e[48;5;130;38;5;226m▌"
         door-code-now                      "130"
         boss-door-shade-now                "\e[48;5;124;38;5;226;1m▌"
@@ -1873,7 +1874,7 @@
                    ;; a terminal cell is ~2:1 tall and a half-block packs
                    ;; two sprite rows per cell. Keeps the monster
                    ;; undistorted (the glyph hitbox is far too narrow and
-                   ;; squished the sprite). Glyph mode keeps the old hw.
+                   ;; squished the sprite). Glyph mode keeps hw unscaled.
               ehw       (if spr
                           (php/max 1 (php/intval (php/round (php// (php/* h sw) sh))))
                           hw)
@@ -2243,22 +2244,15 @@
       ;; PHP arrays pass by value across fn boundaries. Rebind every
       ;; step so the pushed escapes actually accumulate.
       ;;
-      ;; The crosshair needs the SGR-only prefix of whatever cell sits
-      ;; under the centre so `+` paints on the real cell colour (wall
-      ;; texture, floor, sky, enemy sprite, blood) instead of the terminal
-      ;; default. That cell was already resolved by the row loop and
-      ;; captured into center-cap, so we reuse it verbatim - no second,
-      ;; drift-prone priority chain (the old replay used the flat wall
-      ;; shade, which mismatched the textured wall and read as a fake light
-      ;; box). Fallback to the column's flat wall shade only if the centre
-      ;; was never captured (degenerate viewport).
-      ;; Reticle scene column (#324): the cell whose BG the `+` paints on.
-      ;; The reticle's terminal-coord 0-based column (:aim-col) maps to its
+      ;; Reticle scene column (#324): the cell whose BG the `+` paints on, so
+      ;; the crosshair sits on the real cell colour (wall texture, floor, sky,
+      ;; sprite, blood) rather than the terminal default. `:aim-col` maps to a
       ;; scene column by the pixel-double scale; absent (mouse off) it is the
-      ;; scene centre, and the row loop's live `center-cap` capture is reused
-      ;; there verbatim so the mouse-off frame stays byte-identical. Off the
-      ;; centre we fall back to that column's wall shade (the live textured
-      ;; cell was only captured at the centre).
+      ;; scene centre, where the row loop's live `center-cap` capture is reused
+      ;; verbatim. Off-centre falls back to that column's flat wall shade -
+      ;; center-cap is only captured at the centre. Reusing the capture beats
+      ;; re-deriving the colour: a second priority chain drifts, and the flat
+      ;; wall shade mismatches the textured wall as a fake light box.
       (let [aim-col     (get stats :aim-col)
             c-col       (if (php/=== nil aim-col)
                           (php/intdiv svw 2)
@@ -2267,22 +2261,15 @@
                             (buf-get shades-normal c-col))
             center-bg   (php/mb_substr center-cell 0
                                        (php/max 0 (php/- (php/mb_strlen center-cell) 1)))
-            ;; Overlay chain: each helper takes the parts buffer plus
-            ;; its own deps and returns the (possibly larger) buffer.
             ;; Numbered rebinds so phel lint's shadowed-binding stays
-            ;; quiet without changing semantics. Threading (->) would
-            ;; be cleaner but trips arity-mismatch lint.
+            ;; quiet. Threading (->) would be cleaner but trips
+            ;; arity-mismatch lint.
             ;; Face glyph (blinking eyes) is a glyph-era tell; the
             ;; Freedoom sprites already show a face, so skip it in sprite mode.
-            ;; Reuse the zone pass's shared enemy-projs
-            ;; instead of re-running collect-enemy-projs here. At full
-            ;; detail svw = vw, so enemy-projs (built at the full `vw`
-            ;; above) is byte-identical to what this call used to build
-            ;; itself. In pixel-doubled mode the old internal call
-            ;; projected at svw directly (not the full-vw-then-halved
-            ;; column the zone pass uses) - a different rounding path -
-            ;; so px2 keeps its own svw-scoped projection to stay
-            ;; byte-identical rather than risk a rounding drift.
+            ;; At full detail svw = vw, so the zone pass's shared enemy-projs
+            ;; is exactly what this overlay needs. Pixel-doubled mode projects
+            ;; at svw directly - a different rounding path from
+            ;; full-vw-then-halved - so px2 keeps its own svw-scoped projection.
             p1          (if sprites-on parts
                             (paint-face-overlay parts
                                                 (if px2?
@@ -2311,9 +2298,8 @@
             p18         (paint-empty-click        p17 stats vw vh)
             p19         (paint-reload-reminder    p18 stats vw vh)
             p19b        (paint-locked-bump        p19 stats vw vh)
-            ;; Shared enemy-projs: both are projected at the
-            ;; same full `vw` this fn used to re-project with internally,
-            ;; so this is a pure filter over already-computed data.
+            ;; Shared enemy-projs: both are projected at the full `vw`, so
+            ;; this is a pure filter over already-computed data.
             p19c        (paint-enemy-hp-flashes   p19b enemy-projs vw vh pr-full)
             p20         (paint-save-flash         p19c stats vw vh)
             p20b        (paint-reload-ready       p20 stats vw vh)]
@@ -2729,40 +2715,13 @@
 
 (defn render-start-menu
   "Full-screen wash + centred bordered box listing controls and a
-   how-to-play blurb. Same geometry helpers as render-end-screen so
-   borders align pixel-perfect with the rest of the UI. `mouse-note` is an
-   optional terminal caveat line (nil to omit) from `pointer-limit-notice`."
+   how-to-play blurb. Painted by render-end-screen, so borders align
+   pixel-perfect with the rest of the UI. `mouse-note` is an optional
+   terminal caveat line (nil to omit) from `pointer-limit-notice`."
   [cols rows mouse-note]
-  (let [items (start-menu-rows rows mouse-note)
-        parts (buf-mk)
-        bar   (php/str_repeat "─" start-menu-width)
-        wash  "\e[48;5;233m"]
-    (buf-push parts "\e[H")
-    (loop [r 1]
-      (when (php/<= r rows)
-        (buf-push parts (str "\e[" r ";1H" wash
-                             (php/str_repeat " " cols)))
-        (recur (php/+ r 1))))
-    (let [n       (count items)
-          row-top (php/max 1 (php/- (php/intdiv rows 2) (php/intdiv n 2)))
-          col0    (php/max 1 (php/- (php/+ (php/intdiv cols 2) 1)
-                                    (php/intdiv (php/+ start-menu-width 2) 2)))]
-      (buf-push parts (str "\e[" row-top ";" col0
-                           "H\e[40;97m┌" bar "┐\e[0m"))
-      (buf-push parts (str "\e[" (php/+ row-top n 1) ";" col0
-                           "H\e[40;97m└" bar "┘\e[0m"))
-      (loop [i 0]
-        (when (php/< i n)
-          (let [item (get items i)
-                row  (php/+ row-top 1 i)]
-            (if (= item :sep)
-              (buf-push parts (str "\e[" row ";" col0
-                                   "H\e[40;97m├" bar "┤\e[0m"))
-              (buf-push parts (str "\e[" row ";" col0
-                                   "H\e[40;97m│" item "\e[40;97m│\e[0m"))))
-          (recur (php/+ i 1)))))
-    (print (php/implode "" parts))
-    (php/flush)))
+  (render-end-screen cols rows "\e[48;5;233m"
+                     (start-menu-rows rows mouse-note)
+                     start-menu-width))
 
 (defn render-settings!
   "Full-screen wash + centred settings box, for the start-menu options

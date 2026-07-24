@@ -4,6 +4,7 @@
   (:require phel-doom.io.render.palette :refer [enemy-marker heart-marker ammo-marker berserk-marker invuln-marker soulsphere-marker armor-shard-marker backpack-marker keycard-blue-marker keycard-red-marker keycard-yellow-marker door-blue-marker door-red-marker door-yellow-marker shotgun-pickup-marker chaingun-pickup-marker boss-door-marker colorblind-markers])
   (:require phel-doom.io.render.frame-math :refer [direction-char])
   (:require phel-doom.core.weapons :refer [weapon-order weapons])
+  (:require phel-doom.core.state :refer [max-lives])
   (:require phel-doom.core.settings :refer [page-fields pause-menu-options])
   (:require phel-doom.core.format :refer [format-duration]))
 
@@ -425,17 +426,20 @@
         sec           (fn [text]
                         (str "│\e[1;93m" (help-pad (str " " text) w) "\e[40;97m│"))
         lives         (or (:lives stats) 0)
-        cap-l         (or (:max-lives stats) 10)
+        ;; Defaults here cover the empty-stats call in the border tests;
+        ;; a live frame-stats map supplies every key. cap-l falls back to
+        ;; the state constant, not a literal, so it cannot drift from it.
+        cap-l         (or (:max-lives stats) max-lives)
         armor         (or (:armor stats) 0)
         kills         (or (:kills stats) 0)
         streak        (or (:streak stats) 0)
         level-n       (or (:level stats) 1)
         level-name    (or (:level-name stats) "?")
         difficulty    (or (:difficulty stats) :normal)
-        time-s        (or (:game-time-s stats) 0.0)
+        time-s        (or (:game-time stats) 0.0)
         bsec          (or (:berserk-secs stats) 0.0)
         isec          (or (:invuln-secs stats) 0.0)
-        pack?         (boolean (:backpack? stats))
+        pack?         (php/> (or (:backpack-level stats) 0) 0)
         held          (or (:held-keys stats) #{})
         owned         (or (:owned-weapons stats) #{:pistol})
         active        (or (:weapon stats) :pistol)
@@ -569,15 +573,12 @@
         rows          (vec (php/array_merge with-ctrls closer-rows))]
     rows))
 
-(defn help-menu-string
-  "Position the help/info menu rows (built by `help-menu-rows`) with
-   absolute cursor moves, centred in the `vw` x `vh` viewport. Pure:
-   caller pushes the resulting ANSI string into the parts array."
-  [vw vh stats]
-  (let [w    (php/max help-min-inner-width
-                      (php/min help-inner-width (php/- vw 2)))
-        rows (help-menu-rows vw vh stats)
-        n    (count rows)
+(defn- centred-box-string
+  "Position `rows` (each already `w` interior columns plus its borders)
+   with absolute cursor moves, centred in the `vw` x `vh` viewport.
+   Shared tail of every full-screen menu overlay."
+  [vw vh w rows]
+  (let [n    (count rows)
         col0 (php/max 1 (php/- (php/+ (php/intdiv vw 2) 1)
                                (php/intdiv (php/+ w 2) 2)))
         row0 (php/max 1 (php/intdiv (php/max 1 (php/- vh n)) 2))]
@@ -587,6 +588,15 @@
         (recur (php/+ i 1)
                (str acc "\e[" (php/+ row0 i) ";" col0 "H\e[40;97m"
                     (get rows i) "\e[0m"))))))
+
+(defn help-menu-string
+  "Position the help/info menu rows (built by `help-menu-rows`) with
+   absolute cursor moves, centred in the `vw` x `vh` viewport. Pure:
+   caller pushes the resulting ANSI string into the parts array."
+  [vw vh stats]
+  (let [w (php/max help-min-inner-width
+                   (php/min help-inner-width (php/- vw 2)))]
+    (centred-box-string vw vh w (help-menu-rows vw vh stats))))
 
 (def settings-inner-width
   "Interior character width of each settings-overlay row. Sized to the
@@ -677,17 +687,8 @@
                    (str "│\e[2;97m" (pause-pad "  ↑↓ move   enter/space select" w) "\e[22;40;97m│")
                    blnk
                    (str "└" bar "┘")]
-        rows      (vec (concat rows-head rows-opts rows-foot))
-        cnt       (count rows)
-        col0      (php/max 1 (php/- (php/+ (php/intdiv vw 2) 1)
-                                    (php/intdiv (php/+ w 2) 2)))
-        row0      (php/max 1 (php/intdiv (php/max 1 (php/- vh cnt)) 2))]
-    (loop [i 0 acc ""]
-      (if (php/>= i cnt)
-        acc
-        (recur (php/+ i 1)
-               (str acc "\e[" (php/+ row0 i) ";" col0 "H\e[40;97m"
-                    (get rows i) "\e[0m"))))))
+        rows      (vec (concat rows-head rows-opts rows-foot))]
+    (centred-box-string vw vh w rows)))
 
 (defn settings-menu-string
   "Build the settings page as one ANSI string with absolute cursor
@@ -714,14 +715,5 @@
                      (str "│\e[2;97m" (pause-pad (str "  " footer) w) "\e[22;40;97m│")
                      blnk
                      (str "└" bar "┘")]
-        rows        (vec (concat rows-head rows-fields rows-foot))
-        cnt         (count rows)
-        col0        (php/max 1 (php/- (php/+ (php/intdiv vw 2) 1)
-                                      (php/intdiv (php/+ w 2) 2)))
-        row0        (php/max 1 (php/intdiv (php/max 1 (php/- vh cnt)) 2))]
-    (loop [i 0 acc ""]
-      (if (php/>= i cnt)
-        acc
-        (recur (php/+ i 1)
-               (str acc "\e[" (php/+ row0 i) ";" col0 "H\e[40;97m"
-                    (get rows i) "\e[0m"))))))
+        rows        (vec (concat rows-head rows-fields rows-foot))]
+    (centred-box-string vw vh w rows)))

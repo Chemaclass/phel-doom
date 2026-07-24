@@ -68,6 +68,17 @@
         :else              (mapv decode x)))
     x))
 
+(defn- encoded-map?
+  "True when `x` is the [\"$m\" {...}] form `encode` writes for a map.
+   Without this, a version-valid save whose \"world\" is absent, null or
+   some other shape either decodes to a truthy gridless stub - the caller
+   flashes LOADED and then casts against no grid - or throws out of the
+   play loop with the terminal in raw mode."
+  [x]
+  (and (php/is_array x)
+       (php/=== "$m" (php/aget x 0))
+       (php/is_array (php/aget x 1))))
+
 (defn world->savestring
   "Pure: serialize `world` to a versioned JSON string. Drops `:pgrid` +
    `:light-grid` (both derived from `:grid`, rebuilt on load), `:visited`
@@ -91,10 +102,12 @@
    counts (e.g. :fwd 15) that the dt-decay would reinterpret as ~15
    SECONDS of uncontrolled forward drift."
   [s]
-  (let [data (php/json_decode s true)]
+  (let [data  (php/json_decode s true)
+        world (when (php/is_array data) (php/aget data "world"))]
     (if (and (php/is_array data)
-             (php/=== save-version (php/aget data "version")))
-      (-> (decode (php/aget data "world"))
+             (php/=== save-version (php/aget data "version"))
+             (encoded-map? world))
+      (-> (decode world)
           (assoc :visited (php/array))
           (assoc :moves empty-moves)
           (rebuild-pgrid))

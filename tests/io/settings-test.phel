@@ -30,38 +30,20 @@
 (deftest test-round-trips-all-settings
   (with-temp-home
    (fn []
-      ;; A non-default value for every field, so a dropped key fails loud.
-     (let [custom (-> core/default-settings
-                      (core/adjust :music 2)          ; 60 -> 80
-                      (core/adjust :sfx -3)           ; 90 -> 60
-                      (core/adjust :minimap 1)        ; -> true
-                      (core/adjust :difficulty 2)     ; normal -> nightmare
-                      (core/adjust :crosshair 2)      ; cross -> open
-                      (core/adjust :timer 1)          ; -> true
-                      (core/adjust :mouse 1)          ; on -> off (#246)
-                      (core/adjust :sensitivity 3)    ; 50 -> 80 (#246)
-                      (core/adjust :high-contrast 1)  ; -> true
-                      (core/adjust :colorblind 1)     ; none -> deuteran
-                      (core/adjust :fast-walls 1)      ; false -> true
-                      (core/adjust :subpixel 1)        ; true -> false
-                      (core/adjust :truecolor 1)       ; false -> true
-                      (core/adjust :quad 1))]    ; false -> true
+      ;; Derived from page-fields rather than a hand-written key list: the
+      ;; old list-per-field version silently stopped covering :view-bob and
+      ;; :light, which is exactly how they stopped persisting. One nudge per
+      ;; field moves it off its default, so a dropped key fails loud.
+     (let [custom (reduce (fn [s f] (core/adjust s (:key f) 1))
+                          core/default-settings
+                          core/page-fields)]
        (save-settings! custom)
        (let [loaded (load-settings)]
-         (is (= (:music custom)          (:music loaded))          "music")
-         (is (= (:sfx custom)            (:sfx loaded))            "sfx")
-         (is (= (:minimap custom)        (:minimap loaded))        "minimap")
-         (is (= (:difficulty custom)     (:difficulty loaded))     "difficulty")
-         (is (= (:crosshair custom)      (:crosshair loaded))      "crosshair")
-         (is (= (:timer custom)          (:timer loaded))          "timer")
-         (is (= (:mouse custom)          (:mouse loaded))          "mouse")
-         (is (= (:sensitivity custom)    (:sensitivity loaded))    "sensitivity")
-         (is (= (:high-contrast custom)  (:high-contrast loaded))  "high-contrast")
-         (is (= (:colorblind custom)     (:colorblind loaded))     "colorblind")
-         (is (= (:fast-walls custom)     (:fast-walls loaded))     "fast-walls")
-         (is (= (:subpixel custom)       (:subpixel loaded))       "subpixel")
-         (is (= (:truecolor custom)      (:truecolor loaded))      "truecolor")
-         (is (= (:quad custom)     (:quad loaded))     "quad"))))))
+         (foreach [f core/page-fields]
+           (let [k (:key f)]
+             (is (not (= (get core/default-settings k) (get custom k)))
+                 (str (name k) " test value differs from the default"))
+             (is (= (get custom k) (get loaded k)) (name k)))))))))
 
 (deftest test-enum-fields-stored-as-keywords-after-load
   (with-temp-home

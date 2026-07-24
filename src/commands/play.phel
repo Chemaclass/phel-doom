@@ -11,7 +11,7 @@
   (:require phel-doom.core.combat :refer [damage-step fire-anim-seconds push-sfx reload reloading? reload-cooldown-seconds tick-armory tick-shooting])
   (:require phel-doom.core.enemy    :refer [advance tick-scare rear-attacker?])
   (:require phel-doom.core.projectile :refer [tick-projectiles tick-tracers])
-  (:require phel-doom.core.weapons :refer [switch-weapon weapon-spec weapon-order weapons])
+  (:require phel-doom.core.weapons :refer [switch-weapon weapon-spec weapon-order])
   (:require phel-doom.io.sound    :refer [play-sfx! mute-for! set-sfx-scalar!])
   (:require phel-doom.io.music    :as music)
   (:require phel-doom.core.settings :refer [navigate music-volume sfx-scalar mouse-sensitivity view-bob-intensity valid-difficulty? pause-menu-move pause-menu-action])
@@ -462,7 +462,6 @@
    :flash-secs  (:flash-secs world)
    :fx          (:fx world)
    :paused      (:paused world)
-   :sound-on    (:sound-on world)
    :level       (:level world)
    :level-name  (:level-name world)
    :hurt-side   (:hurt-side world)
@@ -485,12 +484,10 @@
    :empty-click-secs (or (:empty-click-secs world) 0.0)
    :berserk-secs (or (:berserk-secs world) 0.0)
    :invuln-secs  (or (:invuln-secs world) 0.0)
-   :backpack?       (php/> (backpack-level world) 0)
    :backpack-level  (backpack-level world)
    :difficulty   (or (:difficulty world) :normal)
    :god?         (boolean (:god? world))
    :help?        (boolean (:help? world))
-   :game-time-s  (or (:game-time world) 0.0)
    :held-keys      (or (:held-keys world) #{})
    :door-lock      (:door-lock world)
    :secrets-total  (or (:secrets-total world) 0)
@@ -1312,8 +1309,8 @@
         record-path (cli/opt ctx "record")
         demo-path   (cli/opt ctx "demo")
         record?     (and record-path (not (= record-path "")))
-        replay      (when (and demo-path (not (= demo-path "")))
-                      (demo/read-demo demo-path))
+        replay?     (and demo-path (not (= demo-path "")))
+        replay      (when replay? (demo/read-demo demo-path))
         ;; Replay reproduces the recorded seed; record / normal start
         ;; from a fresh seed (recorded so the run can be replayed).
         init-seed   (if replay (:seed replay) (rng/fresh-seed))
@@ -1321,39 +1318,53 @@
         ;; Apply the volumes up front so the start menu + OST loop
         ;; honour them before the first frame.
         settings0   (load-settings)]
-    ;; init-input! after loading settings so the Mouse setting (#246)
-    ;; gates the xterm mouse-reporting escapes: off = the terminal never
-    ;; captures the pointer. load-settings is plain file IO, so it is
-    ;; safe to run before raw mode is set.
-    (init-input! (:mouse settings0))
-    (apply-audio-settings! settings0)
-    (cond
-      replay  (demo/start-replay! (:seed replay) (:frames replay))
-      record? (demo/start-record! init-seed)
-      :else   (demo/reset-off!))
-    ;; Replay skips the menu (and its settings edits); a normal run goes
-    ;; through the start menu, which may edit + persist the settings.
-    (let [menu (if replay settings0 (show-start-menu! settings0))]
-      (if (= menu :quit)
-        (do (restore!)
-            (clear-screen)
-            0)
-        (let [settings menu
-              diff     (resolve-difficulty diff-raw settings)]
+    (if (and replay? (nil? replay))
+      ;; --demo names a file we cannot replay. Starting a normal
+      ;; interactive run instead would silently give the player something
+      ;; they did not ask for, and there is no useful degraded behaviour.
+      (do (cli/error ctx (str "Cannot replay demo: " demo-path
+                              " (missing, unreadable, or not a demo file)"))
+          1)
+      (do
+        ;; init-input! after loading settings so the Mouse setting (#246)
+        ;; gates the xterm mouse-reporting escapes: off = the terminal never
+        ;; captures the pointer. load-settings is plain file IO, so it is
+        ;; safe to run before raw mode is set.
+        (init-input! (:mouse settings0))
+        (apply-audio-settings! settings0)
+        (cond
+          replay  (demo/start-replay! (:seed replay) (:frames replay))
+          record? (demo/start-record! init-seed)
+          :else   (demo/reset-off!))
+        (let [played?
+              ;; Raw mode, the alternate screen, the hidden cursor and mouse
+              ;; capture are process-global: without the finally, a throw
+              ;; anywhere in the loop leaves the player's shell unusable.
+              ;; The exception still propagates - only teardown is guaranteed.
+              (try
+                ;; Replay skips the menu (and its settings edits); a normal run
+                ;; goes through the start menu, which may edit + persist them.
+                (let [menu (if replay settings0 (show-start-menu! settings0))]
+                  (if (= menu :quit)
+                    false
+                    (let [settings menu
+                          diff     (resolve-difficulty diff-raw settings)]
+                      (clear-screen)
+                      ;; OST loop runs for the whole gameplay session (across
+                      ;; levels + end screens). N-toggle starts/stops it mid-run.
+                      (music/start-music!)
+                      (run-levels diff god? armory? full-map? nil lv init-seed settings
+                                  max-rows max-cols)
+                      (when record? (demo/save-recording! record-path))
+                      true)))
+                (finally
+                  (music/stop-music!)
+                  (demo/reset-off!)
+                  (restore!)))]
           (clear-screen)
-          ;; OST loop runs for the whole gameplay session (across levels
-          ;; + end screens). N-toggle starts/stops it mid-run; teardown
-          ;; always stops it so no loop process is orphaned.
-          (music/start-music!)
-          (run-levels diff god? armory? full-map? nil lv init-seed settings
-                      max-rows max-cols)
-          (music/stop-music!)
-          (when record? (demo/save-recording! record-path))
-          (demo/reset-off!)
-          (restore!)
-          (clear-screen)
-          (cli/success ctx "Thanks for playing.")
-          (print-credits)
+          (when played?
+            (cli/success ctx "Thanks for playing.")
+            (print-credits))
           0)))))
 
 (defn run-demo-session

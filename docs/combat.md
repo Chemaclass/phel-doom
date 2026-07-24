@@ -20,7 +20,6 @@ Hitscan + damage timing + i-frames. `src/core/combat.phel`. Pure: no side effect
 | `heat-per-shot` | 0.30 | Overheat per shot (dormant - no weapon overheats) |
 | `jam-seconds` | 0.7 | Jam lockout duration (dormant) |
 | `mag-size` | 10 | Pistol default magazine capacity |
-| `max-reserve` | 50 | Pistol default reserve cap |
 | `reload-cooldown-seconds` | 1.2 | Pistol reload duration |
 | `armory-reserve` | 9999 | --armory cheat reserve cap |
 

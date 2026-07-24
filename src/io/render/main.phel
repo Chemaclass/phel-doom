@@ -10,6 +10,7 @@
   (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-reload-ready paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-weapon-hud])
   (:require phel-doom.io.render.sprites :refer [paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
+  (:require phel-doom.core.map :refer [cell-door cell-door-blue cell-door-red cell-door-boss cell-door-yellow])
   (:require phel-doom.core.combat :refer [fire-extralight fire-anim-seconds])
   (:require phel-doom.core.projection :refer [char-aspect wall-px pitch-rows bob-rows])
   (:require phel-doom.core.perf :refer [render-scale])
@@ -385,7 +386,16 @@
         ;; Column-loop invariant: vh-1 is used in sky-edge-row and
         ;; flr-edge-row (both per-column). Hoisting saves 2*vw
         ;; subtractions per compute-wall-shades call.
-        vh-1                                                           (php/- vh 1)]
+        vh-1                                                           (php/- vh 1)
+        ;; Cell codes aliased into locals: a bare def reference inside the
+        ;; column loop compiles to a getDefinition probe per column (the
+        ;; reason max-depth / dda-inf are aliased in engine.phel).
+        ;; cell-door-yellow is 9, deliberately out of sequence.
+        c-door                                                         cell-door
+        c-door-blue                                                    cell-door-blue
+        c-door-red                                                     cell-door-red
+        c-door-boss                                                    cell-door-boss
+        c-door-yellow                                                  cell-door-yellow]
     (loop [col 0]
       (when (php/< col vw)
         (let [dist         (buf-get dists col)
@@ -417,13 +427,14 @@
             ;; Boss door stays blood-red ONLY while the boss lives; once
             ;; killed (held-keys gains :boss) it falls through to the
             ;; regular orange textured door so it reads as walk-through.
-            (and (php/=== 5 h) (not boss-unlocked?))
+            (and (php/=== c-door-boss h) (not boss-unlocked?))
             (do (buf-set normal      col boss-door-shade-now)
                 (buf-set top-edge    col (str "\e[48;5;" boss-door-code-now ";38;5;" sky-edge-c "m▀"))
                 (buf-set bot-edge    col (str "\e[48;5;" flr-edge-c ";38;5;" boss-door-code-now "m▀"))
                 (buf-set top-shadow  col boss-door-shade-now)
                 (buf-set bot-shadow  col boss-door-shade-now))
-            (or (php/=== 2 h) (php/=== 3 h) (php/=== 4 h) (php/=== 9 h) (php/=== 5 h))
+            (or (php/=== c-door h) (php/=== c-door-blue h) (php/=== c-door-red h)
+                (php/=== c-door-yellow h) (php/=== c-door-boss h))
             (do (buf-set normal      col door-shade-now)
                 (buf-set top-edge    col (str "\e[48;5;" door-code-now ";38;5;" sky-edge-c "m▀"))
                 (buf-set bot-edge    col (str "\e[48;5;" flr-edge-c ";38;5;" door-code-now "m▀"))

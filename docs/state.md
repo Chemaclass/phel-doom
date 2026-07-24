@@ -14,9 +14,15 @@ Pure data shapes that every other module operates on. `src/core/state.phel`.
  :height     <int>
  :player     <player map>
  :show-map   <bool>     ; minimap toggle (default OFF, M toggles)
+ :full-map?  <bool>     ; --full-map: minimap starts fully revealed
+ :visited    <PHP array keyed (y*width+x)>  ; fog-of-war automap; 1 = seen, nil = unseen
+ :switches   <vector of {:at [x y] :targets [[x y] ...]}>  ; wall switches (#62), F-key toggles
  :paused     <bool>     ; P toggle
+ :help?      <bool>     ; H overlay
+ :debug?     <bool>     ; F3 perf overlay
  :sound-on   <bool>     ; N toggle
  :enemies    <vector of {:x :y :alive :lives :max-lives :type :hit-flash-secs [:respawn-after] [:max-concurrent] [:fire-now]}>
+             ; a spawned enemy also carries the AI slots (:state :lkp :wander-angle :aggression ...) - see docs/monsters.md
  :projectiles <vector of {:x :y :vx :vy :ttl :type}>  ; enemy fireballs (core/projectile)
  :hit-stop-secs <float>  ; >0 freezes the gameplay step (kill weight); decays each frame
  :hearts     <vector of {:x :y}>
@@ -32,7 +38,6 @@ Pure data shapes that every other module operates on. `src/core/state.phel`.
  :keycards   <vector of {:x :y :colour}>   ; :blue / :red / :boss keycards for locked exits (boss = synthetic, no pickup)
  :held-keys  <set of colour kws>           ; #{:blue :red :boss} collected so far
  :armor      <int 0..max-armor, hits absorbed before lives drop>
- :backpack?  <bool, persists across level cuts>
  :armory?    <bool, --armory flag; infinite ammo per-frame refill>
  :berserk-secs <float seconds>             ; while > 0: 2x weapon damage
  :invuln-secs  <float seconds>             ; while > 0: contact hits skipped
@@ -44,6 +49,8 @@ Pure data shapes that every other module operates on. `src/core/state.phel`.
  :weapon-pickups <vector of {:x :y :weapon}>
  :weapon-state {<kw> {:mag :reserve}}      ; per-weapon ammo bookkeeping
  :kills      <int>
+ :streak     <int>            ; consecutive kills inside the streak window
+ :streak-secs <float seconds> ; time left to extend the streak
  :lives      <int, 0..max-lives>
  :iframes    <float seconds>  ; post-hit invulnerability
  :shake-secs <float seconds>  ; screen-shake kick (damage + heavy-weapon fire/blast)
@@ -51,8 +58,18 @@ Pure data shapes that every other module operates on. `src/core/state.phel`.
  :intro-secs <float seconds>  ; level intro splash countdown
  :flash-secs <float seconds>  ; 1-frame white impact flash
  :fx         <vector of blood splatters>
+ :blood-drops <vector>        ; screen-edge drips during i-frames
  :game-time  <float seconds>  ; pause-aware clock for render pulses
  :bob-phase  <float radians>  ; head-bob walk cycle (#411); 0.0 at rest, advanced by distance in apply-physics
+ :heartbeat-phase <float>     ; low-health heartbeat cycle
+ :heartbeat-tick? <bool>      ; true on the frame the heartbeat beats (sfx cue)
+ :prev-min-enemy-dist <float> ; last frame's nearest-enemy distance; drives the scare cue
+ :scare-secs <float seconds>  ; jump-scare sting timer
+ :aim-col    <int|nil>        ; movable reticle cell (#324); nil = centred (mouse off)
+ :aim-row    <int|nil>
+ :locked-door-bump-secs   <float seconds>  ; 'NEED <COLOUR> KEY' prompt timer
+ :locked-door-bump-colour <kw|nil>         ; which key the bumped door wants
+ :fire-cooldown <float seconds>  ; per-shot rate limit
  :mag           <int 0..mag-size>     ; rounds in the loaded magazine
  :ammo-reserve  <int 0..reserve-cap>  ; spare ammo pool (per-weapon cap); drained on reload
  :reload-cooldown  <float seconds>    ; drives the reload drop animation

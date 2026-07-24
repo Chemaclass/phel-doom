@@ -1,4 +1,4 @@
-.PHONY: help install d dev t test f format fc fix b build r repl doctor clean p play \
+.PHONY: help install d dev t test f format fc b build r repl doctor clean p play \
         docker-build docker-play docker-test docker-shell docker-clean
 
 help:

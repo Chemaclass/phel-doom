@@ -24,9 +24,11 @@ Modules: `engine`, `combat`, `enemy`, `level`, `map`, `physics`, `state`.
 
 - Accepts core/ outputs, returns data to be consumed by `io/`.
 - Same purity rules as `core/`. The split is structural, not behavioral.
-- Example: `controls` translates raw key codes into intent commands; `wad` parses bytes (input is data, output is data — pure).
+- Example: `controls` translates raw key codes into intent commands.
 
-Modules: `controls`, `input`, `scores`, `sound` (the data-prep parts), `wad`.
+Modules: `controls`, plus `demo/phases` (pure phase transforms over `core/`, guarded by the same rule).
+
+`input`, `scores`, `sound`, `savegame` and `wad` live in `io/`, not here: each is a file/terminal/device module with its pure kernel (`merge-run`, `encode`/`decode`, the WAD byte parser) colocated and unit-tested next to it. `tools/check-layers.sh` enforces the dependency DIRECTION, which is the invariant that matters; it does not police which module sits in which directory.
 
 ## `src/io/`
 

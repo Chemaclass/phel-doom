@@ -3,10 +3,8 @@
 ;; ---------------------------------------------------------------------
 ;; Seeded pseudo-random generator (issue #64).
 ;;
-;; The game previously drew randomness straight from `php/random_int`
-;; (rand-int) and `php/mt_rand`. `random_int` is a CSPRNG and can't be
-;; seeded, so runs were unreproducible — which broke both the "R =
-;; replay the same map" restart and any hope of deterministic demo
+;; `php/random_int` is a CSPRNG and cannot be seeded, so it can back
+;; neither the "R = replay the same map" restart nor deterministic demo
 ;; playback.
 ;;
 ;; This module is the single RNG every gameplay draw flows through. Seed
@@ -16,8 +14,8 @@
 ;;
 ;; Algorithm: Park-Miller minimal-standard LCG (x' = 16807*x mod
 ;; 2147483647). All intermediate math stays inside PHP's 64-bit int
-;; range, so no overflow-to-float. A module atom holds the state — the
-;; same pragmatic "global RNG" shape the code already had, just seedable.
+;; range, so no overflow-to-float. A module atom holds the state: a
+;; pragmatic global generator, seedable at the orchestration layer.
 ;; ---------------------------------------------------------------------
 
 (def modulus 2147483647)        ; 2^31 - 1 (Mersenne prime)
@@ -51,16 +49,15 @@
 
 (defn int!
   "Random integer in 0..n-1 (exclusive upper bound, like `rand-int`).
-   Returns 0 for n <= 0. Was off-by-one (0..n inclusive), which skewed
-   every `(mod (int! N) N)` probability roll toward 0 and let map
-   placements land one cell closer to the edge than intended."
+   Returns 0 for n <= 0. The bound is exclusive on purpose: an
+   inclusive one skews every `(mod (int! N) N)` roll toward 0 and lets
+   map placements land one cell closer to the edge than intended."
   [n]
   (if (php/<= n 0)
     0
     (php/% (next-raw!) n)))
 
 (defn float!
-  "Random float in [0, 1) (replacement for the old
-   `(/ (mt_rand) (mt_getrandmax))` ratio)."
+  "Random float in [0, 1)."
   []
   (php// (php/- (next-raw!) 1) (php/- modulus 1.0)))

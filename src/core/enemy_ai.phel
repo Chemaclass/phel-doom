@@ -15,6 +15,9 @@
 ;;
 ;; States:
 ;;   :dormant   passive. No move, no damage. Waits for LOS or noise.
+;;   :wander    pacing an idle patrol. Moves, no contact damage. Wakes
+;;              like :dormant (LOS → :aware, noise → :hunting). Opt-in
+;;              per enemy via `start-wander`; spawns default :dormant.
 ;;   :aware     full chase + contact damage. LOS to the player right
 ;;              now; lkp is being refreshed every frame.
 ;;   :hunting   lost LOS while aware. Walks toward the last refreshed
@@ -23,10 +26,14 @@
 ;;              Arriving at lkp without LOS → :dormant (give up,
 ;;              "lost the scent"). Lets the player break contact by
 ;;              ducking around a corner / behind a door.
-;;
-;; Reserved slots for future state additions:
-;;   :pain      hit-staggered, frozen briefly, won't attack
-;;   :attacking inside attack window (projectile / hitscan windup)
+;;   :pain      hit-staggered. Frozen, deals no damage, breaking the
+;;              chase / damage rhythm. `tick-pain` decays `:pain-secs`
+;;              and reverts to :aware on expiry.
+;;   :attacking telegraphed strike window (`maybe-start-attack` arms it
+;;              from :aware only). Frozen but still deals damage — the
+;;              melee hit lands via the contact test during the windup.
+;;              `tick-attack` reverts to :aware on expiry and casters
+;;              release a bolt there.
 ;;
 ;; LKP discipline: `observe` refreshes `:lkp` to the player's CURRENT
 ;; position only while LOS is clear. Once LOS drops, lkp freezes at
@@ -46,10 +53,9 @@
    :attacking {:moves? false :attacks? true}})
 
 (def default-state
-  "Fallback when an enemy carries no `:state` key (legacy test
-   fixtures, ad-hoc constructions). Picking `:aware` keeps the old
-   'enemy always chases' behaviour for unit tests that haven't been
-   migrated to the new state machine."
+  "Fallback when an enemy carries no `:state` key (ad-hoc
+   constructions, unit fixtures). `:aware` means such an enemy always
+   chases. Real spawns are stamped `:dormant` by `spawn-enemies`."
   :aware)
 
 (def lkp-arrival-dist

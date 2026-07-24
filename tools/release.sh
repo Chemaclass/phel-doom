@@ -398,7 +398,7 @@ git_push() {
 }
 
 # Build the distributable single-file PHAR. The version was already bumped into
-# src/main.phel, so phar.sh just compiles + packages.
+# src/core/version.phel, so phar.sh just compiles + packages.
 build_phar() {
     if [[ $SKIP_PHAR -eq 1 ]]; then
         log_warn "Skipping PHAR build (--skip-phar)"

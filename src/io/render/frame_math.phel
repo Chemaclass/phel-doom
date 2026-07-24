@@ -5,7 +5,7 @@
   (:require phel-doom.io.render.palette :refer [base-hud-rows code-r code-g code-b nearest-256])
   (:require phel-doom.core.enemies :refer [enemy-types])
   (:require phel-doom.core.engine :refer [proj-dist])
-  (:require phel-doom.core.projection :refer [char-aspect wall-px]))
+  (:require phel-doom.core.projection :refer [char-aspect]))
 
 (defn- hud-rows-for
   "Number of HUD rows to reserve at the bottom of the viewport. The
@@ -653,6 +653,28 @@
         (recur (php/+ r 1))))
     arr))
 
+(defn- themed-gradient*
+  "Shared per-row themed-gradient loop for `build-themed-gradient` and
+   its code twin. `fmt` maps each faded 256 code to the stored cell
+   (full SGR paint cell vs bare code string)."
+  [^int vh ^int base-code stripe? horizon-offset fmt]
+  (let [pr      (or horizon-offset 0)
+        arr     (buf-mk)
+        base    (php/intdiv vh 2)
+        horizon (php/+ base pr)
+        max-d   (php/max 1 base)]
+    (loop [r 0]
+      (when (php/< r vh)
+        (let [t     (php// (php/abs (php/- r horizon)) max-d)
+              fade  (php/- 1.0 t)
+              fade' (if (and stripe? (php/=== (mod r 2) 1))
+                      (php/max 0.0 (php/- fade 0.12))
+                      fade)
+              code  (fog-fade base-code fade')]
+          (buf-set arr r (fmt code)))
+        (recur (php/+ r 1))))
+    arr))
+
 (defn build-themed-gradient
   "Per-row PHP array of pre-baked BG paint cells for a level-themed
    sky or floor. Brightest = base-code at the screen edge, fades
@@ -663,48 +685,8 @@
    `horizon-offset` (scene rows, default 0) shears the horizon for look
    up/down; pr=0 leaves output unchanged."
   [^int vh ^int base-code stripe? & [horizon-offset]]
-  (let [pr      (or horizon-offset 0)
-        arr     (buf-mk)
-        base    (php/intdiv vh 2)
-        horizon (php/+ base pr)
-        max-d   (php/max 1 base)]
-    (loop [r 0]
-      (when (php/< r vh)
-        (let [t     (php// (php/abs (php/- r horizon)) max-d)
-              fade  (php/- 1.0 t)
-              fade' (if (and stripe? (php/=== (mod r 2) 1))
-                      (php/max 0.0 (php/- fade 0.12))
-                      fade)
-              code  (fog-fade base-code fade')]
-          (buf-set arr r (str "\e[48;5;" code "m ")))
-        (recur (php/+ r 1))))
-    arr))
-
-(defn build-horizon-gradient-codes
-  "Code-only twin of build-horizon-gradient. Stores bare 256-color
-   code strings (e.g. \"240\") instead of full SGR paint cells.
-   Used to sample the sky gradient code at a specific row so the ▀
-   half-block edge cell can blend the exact sky shade of that row
-   into the top-half FG, eliminating the flat-236 seam artifact.
-   Optional `horizon-offset` (scene rows, default 0) shears the horizon
-   for look up/down; pr=0 leaves output unchanged."
-  [^int vh ctbl & [horizon-offset]]
-  (let [pr      (or horizon-offset 0)
-        arr     (buf-mk)
-        base    (php/intdiv vh 2)
-        horizon (php/+ base pr)
-        max-d   (php/max 1 base)]
-    (loop [r 0]
-      (when (php/< r vh)
-        (let [idx (php/max 0
-                           (php/min 23
-                                    (php/intval (php/* (php/- 1.0
-                                                              (php// (php/abs (php/- r horizon))
-                                                                     max-d))
-                                                       23))))]
-          (buf-set arr r (buf-get ctbl idx)))
-        (recur (php/+ r 1))))
-    arr))
+  (themed-gradient* vh base-code stripe? horizon-offset
+                    (fn [code] (str "\e[48;5;" code "m "))))
 
 (defn build-themed-gradient-codes
   "Code-only twin of build-themed-gradient. Stores bare 256-color
@@ -715,22 +697,8 @@
    Optional `horizon-offset` (scene rows, default 0) shears the horizon
    for look up/down; pr=0 leaves output unchanged."
   [^int vh ^int base-code stripe? & [horizon-offset]]
-  (let [pr      (or horizon-offset 0)
-        arr     (buf-mk)
-        base    (php/intdiv vh 2)
-        horizon (php/+ base pr)
-        max-d   (php/max 1 base)]
-    (loop [r 0]
-      (when (php/< r vh)
-        (let [t     (php// (php/abs (php/- r horizon)) max-d)
-              fade  (php/- 1.0 t)
-              fade' (if (and stripe? (php/=== (mod r 2) 1))
-                      (php/max 0.0 (php/- fade 0.12))
-                      fade)
-              code  (fog-fade base-code fade')]
-          (buf-set arr r (php/strval code)))
-        (recur (php/+ r 1))))
-    arr))
+  (themed-gradient* vh base-code stripe? horizon-offset
+                    (fn [code] (php/strval code))))
 
 (defn direction-char
   "Map an angle in radians to one of 8 unicode arrow chars, snapping to
@@ -793,12 +761,6 @@
            :dist         dist
            :scale        scale
            :damage-ratio dmg
-           ;; Integer cell the enemy stands in, so the render's feet
-           ;; anchor can lift the billboard to that cell's floor height
-           ;; (`fz`, issue #375). The projection stays pure - it has no
-           ;; fz-grid; the zone pass does the height lookup.
-           :cell-x       (php/intval (:x enemy))
-           :cell-y       (php/intval (:y enemy))
            :type         (:type enemy)
            :lives        lives
            :max-lives    max-lives

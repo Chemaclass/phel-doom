@@ -192,25 +192,15 @@
     (php/>= max-lives hit-stop-min-lives)  hit-stop-tough-seconds
     :else                                  0.0))
 
-;; Per-weapon cadence / capacity now lives in weapons/spec. These
-;; constants stay as the pistol defaults — every test fixture that
-;; didn't carry a :weapon used the pistol numbers, so falling back to
-;; them via `w-spec` keeps old tests green.
-
-(def fire-cooldown-seconds
-  "Default minimum interval between shots (pistol cadence). Per-weapon
-   override in weapons/weapons :fire-cooldown."
-  0.12)
+;; Per-weapon cadence / capacity lives in weapons/spec. These pistol
+;; defaults remain as the explicit fallback at the few call sites that
+;; may see a spec-less world (play reload-duration, pickups ammo-per-box)
+;; and as the pistol reference in combat tests.
 
 (def mag-size
   "Default magazine capacity (pistol). Per-weapon override in
    weapons/weapons :mag-size."
   10)
-
-(def max-reserve
-  "Default cap on the spare ammo pool (pistol). Per-weapon override
-   in weapons/weapons :reserve-cap."
-  50)
 
 (def ammo-per-box
   "Default rounds added to the active weapon's reserve per pickup
@@ -223,19 +213,11 @@
   1.2)
 
 (defn- w-spec
-  "Active-weapon spec with hard-coded pistol fallbacks so a bare test
-   fixture (no :weapon set) still gets sensible numbers. Fallback
-   inherits the pistol's `:overheats? true` so legacy fixtures
-   keep exercising the heat / jam path."
+  "Static catalogue entry for the world's active weapon. current-weapon
+   defaults an unset :weapon to :pistol, so this is non-nil for every
+   valid weapon in the catalog."
   [world]
-  (or (weapon-spec world)
-      {:mag-size        mag-size
-       :fire-cooldown   fire-cooldown-seconds
-       :reload-duration reload-cooldown-seconds
-       :damage          1
-       :reserve-cap     max-reserve
-       :ammo-per-box    ammo-per-box
-       :overheats?      true}))
+  (weapon-spec world))
 
 (def empty-click-seconds
   "How long the 'dry-fire click' visual + audio cue lingers after the
@@ -888,29 +870,13 @@
                :ammo-reserve    (php/- reserve drawn)
                :reload-cooldown (:reload-duration sp))))))
 
-(defn- bfg-fire
-  "Resolve a BFG shot (any weapon with a `:splash-radius`). The beam
-   lands at `beam-impact` (nearest enemy along the ray, else the wall);
-   `splash` then damages every enemy within `:splash-radius` of that
-   point — a multi-kill room-clearer. Bumps `:kills` by the body count,
-   chains the streak, unlocks the boss door if a cyber died in the
-   blast, arms hit-stop, and (like every shot) wakes the room by noise.
-   No per-enemy loot drops: the blast is its own reward (issue #58)."
-  [world]
-  (let [p            (:player world)
-        spec         (w-spec world)
-        radius       (:splash-radius spec)
-        base         (or (:splash-damage spec) 1)
-        dtype        (:damage-type spec)
-        dmg          (if (berserk? world) (php/* base (berserk-mul-for dtype)) base)
-        max-r        (or (:max-range spec) shot-max-range)
-        wall-d       (cast-wall-dist world)
-        [ix iy]      (beam-impact (:enemies world) (:x p) (:y p) (aim-angle world)
-                                  wall-d shot-hit-radius max-r)
-        [es' killed] (splash (:enemies world) ix iy radius dmg dtype)
-        woken        (noise-wake es' (:grid world) (:x p) (:y p))
-        hit-pos      {:x ix :y iy}
-        killed?      (php/> killed 0)
+(defn- score-multikill
+  "Shared multi-kill aggregation for `bfg-fire` / `finish-multikill`:
+   given the woken enemies + kill count, bump :kills / :streak /
+   :streak-secs, award weapon kills, and unlock the boss door if a cyber
+   died. Returns [world' boss-killed?] so the caller can size hit-stop."
+  [world woken killed]
+  (let [killed?      (php/> killed 0)
         chain?       (pos? (or (:streak-secs world) 0.0))
         boss-killed? (and (= (:door-lock world) :boss)
                           (some (fn [e] (and (= (:type e) :cyber)
@@ -927,21 +893,47 @@
                        (if killed? (bump-weapon-kills s killed) s))
         unlocked     (if boss-killed?
                        (assoc scored :held-keys (conj (or (:held-keys scored) #{}) :boss))
-                       scored)
-        juiced       (if killed?
-                       (assoc unlocked :hit-stop-secs
-                              (if boss-killed? hit-stop-boss-seconds hit-stop-tough-seconds))
-                       unlocked)
+                       scored)]
+    [unlocked boss-killed?]))
+
+(defn- bfg-fire
+  "Resolve a BFG shot (any weapon with a `:splash-radius`). The beam
+   lands at `beam-impact` (nearest enemy along the ray, else the wall);
+   `splash` then damages every enemy within `:splash-radius` of that
+   point — a multi-kill room-clearer. Bumps `:kills` by the body count,
+   chains the streak, unlocks the boss door if a cyber died in the
+   blast, arms hit-stop, and (like every shot) wakes the room by noise.
+   No per-enemy loot drops: the blast is its own reward (issue #58)."
+  [world]
+  (let [p                       (:player world)
+        spec                    (w-spec world)
+        radius                  (:splash-radius spec)
+        base                    (or (:splash-damage spec) 1)
+        dtype                   (:damage-type spec)
+        dmg                     (if (berserk? world) (php/* base (berserk-mul-for dtype)) base)
+        max-r                   (or (:max-range spec) shot-max-range)
+        wall-d                  (cast-wall-dist world)
+        [ix iy]                 (beam-impact (:enemies world) (:x p) (:y p) (aim-angle world)
+                                             wall-d shot-hit-radius max-r)
+        [es' killed]            (splash (:enemies world) ix iy radius dmg dtype)
+        woken                   (noise-wake es' (:grid world) (:x p) (:y p))
+        hit-pos                 {:x ix :y iy}
+        killed?                 (php/> killed 0)
+        [unlocked boss-killed?] (score-multikill world woken killed)
+        juiced                  (if killed?
+                                  (assoc unlocked :hit-stop-secs
+                                         (if boss-killed? hit-stop-boss-seconds hit-stop-tough-seconds))
+                                  unlocked)
         ;; Cosmetic flying projectile: a green BFG ball or a rocket.
-        tracered     (spawn-shot-tracer juiced
-                                        (if (php/=== (:weapon world) :bfg) :bfg-ball :rocket)
-                                        ix iy)
+        tracered                (spawn-shot-tracer juiced
+                                                   (if (php/=== (:weapon world) :bfg) :bfg-ball :rocket)
+                                                   ix iy)
         ;; Felt kick (#414): the launch alone rumbles; a connecting blast
         ;; rumbles harder. Both scale by splash-radius so the BFG (3.0)
         ;; out-shakes the rocket (2.0).
-        kicked       (add-shake tracered
-                                (php/* (if killed? shake-blast-secs shake-fire-secs)
-                                       (php// radius 2.0)))]
+        kicked                  (add-shake tracered
+                                           (php/* (if killed? shake-blast-secs shake-fire-secs)
+                                                  (php// radius 2.0)))]
     ;; bfg has no wound-only signal (splash returns just a kill count), so
     ;; a kill is the hit proxy: a killing blast attenuates by the impact
     ;; distance, a wall hit / whiff plays at full volume.
@@ -962,34 +954,18 @@
    primary, drain the mag, and queue sfx. No per-enemy loot (mirrors the
    splash path)."
   [world enemies-after killed hit-pos tough]
-  (let [p            (:player world)
-        woken        (noise-wake enemies-after (:grid world) (:x p) (:y p))
-        hit?         (some? hit-pos)
-        killed?      (php/> killed 0)
-        chain?       (pos? (or (:streak-secs world) 0.0))
-        boss-killed? (and (= (:door-lock world) :boss)
-                          (some (fn [e] (and (= (:type e) :cyber)
-                                             (false? (:alive e))))
-                                woken))
-        scored       (let [s (assoc world
-                                    :enemies     woken
-                                    :kills       (php/+ (or (:kills world) 0) killed)
-                                    :streak      (if killed?
-                                                   (php/+ (if chain? (or (:streak world) 0) 0) killed)
-                                                   (or (:streak world) 0))
-                                    :streak-secs (if killed? streak-window-seconds
-                                                     (or (:streak-secs world) 0.0)))]
-                       (if killed? (bump-weapon-kills s killed) s))
-        unlocked     (if boss-killed?
-                       (assoc scored :held-keys (conj (or (:held-keys scored) #{}) :boss))
-                       scored)
-        juiced       (if killed?
-                       (let [hs (hit-stop-for tough)]
-                         (if (php/> hs 0.0)
-                           (assoc unlocked :hit-stop-secs hs)
-                           unlocked))
-                       unlocked)
-        based        (assoc juiced :fire-anim fire-anim-seconds)]
+  (let [p        (:player world)
+        woken    (noise-wake enemies-after (:grid world) (:x p) (:y p))
+        hit?     (some? hit-pos)
+        killed?  (php/> killed 0)
+        unlocked (first (score-multikill world woken killed))
+        juiced   (if killed?
+                   (let [hs (hit-stop-for tough)]
+                     (if (php/> hs 0.0)
+                       (assoc unlocked :hit-stop-secs hs)
+                       unlocked))
+                   unlocked)
+        based    (assoc juiced :fire-anim fire-anim-seconds)]
     (enqueue-shot-sfx
      (apply-heat (if hit?
                    (stamp-hit-fx

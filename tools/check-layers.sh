@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
 # Enforce the io/ -> glue/ -> core/ dependency direction (docs/architecture.md,
-# .claude/rules/io-boundaries.md): core/ must not require io/ or glue/, and
-# glue/ must not require io/. Realizes the "enforceable via (:require ...)
-# inspection" invariant that was previously reviewer-only.
+# .claude/rules/io-boundaries.md): the pure layers never reference a layer above
+# them - core/ references only core/, glue/ only glue//core/, and neither the
+# io/ nor the orchestration (commands/, demo/) layers. Greps whole .phel bodies
+# (not just :require) so qualified refs + :as aliases are caught too; fail-closed.
 set -uo pipefail
+
+# A missing/renamed dir would make grep exit non-zero, which the `if`s below read
+# as "no violation" - silently disarming the guard. Fail loud on a restructure.
+for d in src/core src/glue; do
+  [ -d "$d" ] || { echo "check-layers: expected directory $d not found (restructure?)"; exit 2; }
+done
 
 fail=0
 
-if grep -rnE 'phel-doom\.(io|glue)' src/core/; then
-  echo "LAYERING VIOLATION: src/core/ must not require io/ or glue/ (see above)."
+if grep -rnE --include='*.phel' 'phel-doom\.(io|glue|commands|demo)' src/core/; then
+  echo "LAYERING VIOLATION: src/core/ must reference only core/ (see above)."
   fail=1
 fi
 
-if grep -rnE 'phel-doom\.io' src/glue/; then
-  echo "LAYERING VIOLATION: src/glue/ must not require io/ (see above)."
+if grep -rnE --include='*.phel' 'phel-doom\.(io|commands|demo)' src/glue/; then
+  echo "LAYERING VIOLATION: src/glue/ must not reference io/ or the orchestration layer (see above)."
   fail=1
 fi
 

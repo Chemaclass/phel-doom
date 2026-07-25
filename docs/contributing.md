@@ -11,7 +11,7 @@ composer install     # installs deps + wires .githooks/pre-commit
 make play            # or: composer play
 ```
 
-`composer install` sets `core.hooksPath` to `.githooks/`. Every commit then runs `composer ci` (format-check + lint + test + build) before landing. Bypass with `git commit --no-verify` only in emergencies.
+`composer install` sets `core.hooksPath` to `.githooks/`. Every commit then runs `composer ci` (format-check, lint, layering, cycles, tests, build) before landing. Bypass with `git commit --no-verify` only in emergencies.
 
 ## Composer scripts
 
@@ -22,6 +22,8 @@ composer test         # run tests (PHEL_DOOM_SILENT=1)
 composer format       # auto-format .phel files
 composer format-check # dry-run, fails CI on drift
 composer lint         # static analysis
+composer check-layers # io/ -> glue/ -> core/ direction holds
+composer check-cycles # no require cycles (+ the guard's own fixtures)
 composer build        # compile to out/main.php
 composer ci           # full pre-push gate
 composer repl         # REPL

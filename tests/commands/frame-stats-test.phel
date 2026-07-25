@@ -1,0 +1,71 @@
+(ns phel-doom-tests.commands.frame-stats-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.rng :as rng)
+  (:require phel-doom.core.level :refer [build-world])
+  (:require phel-doom.core.settings :as settings)
+  (:require phel-doom.commands.play :refer [frame-stats]))
+
+;; ---------------------------------------------------------------------
+;; frame-stats is the render DTO: render reads settings off `stats`, never
+;; off `(:settings world)`. So a settings row that render honours but
+;; frame-stats never projects is a toggle that silently does nothing.
+;;
+;; That is not hypothetical - "Truecolor" and "Quad detail" shipped, drew
+;; a row on the options page, persisted to disk, and never reached the
+;; renderer, because only the PHEL_DOOM_* env forces were wired. The
+;; golden flag tests could not catch it: they hand-build a stats map and
+;; inject the key directly, which proves the emit path works and says
+;; nothing about whether the setting reaches it.
+;; ---------------------------------------------------------------------
+
+(def world
+  (let [prev @rng/state]
+    (rng/seed! 4242)
+    (let [w (build-world 1 5 0 :normal #{:pistol})]
+      (reset! rng/state prev)
+      w)))
+
+(defn- stats-with [settings]
+  (frame-stats (assoc world :settings (settings/coerce-settings settings)) 60 16.0))
+
+;; Settings render reads off `stats`, paired with the stats key carrying
+;; them. The rest of page-fields is audio (:music/:sfx) or menu-only
+;; (:minimap/:difficulty/:crosshair/:timer/:mouse/:sensitivity/:colorblind),
+;; which reach their consumers by other routes.
+(def render-facing
+  [[:high-contrast :high-contrast?]
+   [:fast-walls    :fast-walls]
+   [:light         :light]
+   [:truecolor     :truecolor]
+   [:quad          :quad]])
+
+(deftest test-render-facing-settings-are-projected-when-on
+  (let [on (reduce (fn [m [setting _]] (assoc m setting true)) {} render-facing)
+        s  (stats-with on)]
+    (foreach [[setting stat-key] render-facing]
+      (is (= true (get s stat-key))
+          (str (name setting) " on -> stats " (name stat-key) " true")))))
+
+(deftest test-render-facing-settings-are-projected-when-off
+  (let [off (reduce (fn [m [setting _]] (assoc m setting false)) {} render-facing)
+        s   (stats-with off)]
+    (foreach [[setting stat-key] render-facing]
+      (is (= false (get s stat-key))
+          (str (name setting) " off -> stats " (name stat-key) " false")))))
+
+(deftest test-every-render-facing-key-is-present-not-nil
+  ;; Absent is worse than false: render's (boolean (get stats k)) reads nil
+  ;; as off, so a dropped projection looks exactly like the setting being
+  ;; turned off and nothing fails.
+  (let [s (stats-with {})]
+    (foreach [[_ stat-key] render-facing]
+      (is (contains? s stat-key) (str (name stat-key) " present in stats")))))
+
+(deftest test-subpixel-defaults-on-and-only-explicit-false-disables
+  (is (= true (:subpixel (stats-with {}))) "absent -> on")
+  (is (= true (:subpixel (stats-with {:subpixel true}))) "true -> on")
+  (is (= false (:subpixel (stats-with {:subpixel false}))) "explicit false -> off"))
+
+(deftest test-view-bob-projects-as-an-intensity-scalar
+  (is (= 0.0 (:view-bob (stats-with {:view-bob 0}))) "0% -> 0.0")
+  (is (php/> (:view-bob (stats-with {:view-bob 100})) 0.0) "100% -> positive"))

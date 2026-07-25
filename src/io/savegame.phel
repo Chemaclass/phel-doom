@@ -61,10 +61,14 @@
       (cond
         (php/=== tag "$k") (keyword (php/aget x 1))
         (php/=== tag "$s") (set (map decode (php/aget x 1)))
+        ;; The payload check has to happen HERE, not only at the top level:
+        ;; decode recurses, so a nested ["$m", 5] would reach php/array_keys
+        ;; with a non-array and throw a TypeError out of the play loop.
         (php/=== tag "$m") (let [o (php/aget x 1)]
-                             (reduce (fn [m k] (assoc m (keyword k) (decode (php/aget o k))))
-                                     {}
-                                     (php/array_keys o)))
+                             (when (php/is_array o)
+                               (reduce (fn [m k] (assoc m (keyword k) (decode (php/aget o k))))
+                                       {}
+                                       (php/array_keys o))))
         :else              (mapv decode x)))
     x))
 

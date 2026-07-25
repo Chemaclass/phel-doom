@@ -1,0 +1,56 @@
+(ns phel-doom-tests.io.start-menu-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.io.render :refer [render-start-menu]))
+
+;; ---------------------------------------------------------------------
+;; The start menu had NO test coverage at all, which is how a refactor
+;; silently changed what it paints on short terminals: it now shares
+;; render-end-screen, whose item clamp (rows - 2) drops from the TAIL -
+;; exactly where the ENTER / settings / quit hints live. A player on a
+;; 13-row terminal was left with a menu and no way to know which key
+;; starts the game.
+;;
+;; render-start-menu prints, so these capture stdout. They assert the
+;; CONTENT that must survive at each height, not exact bytes, so the box
+;; art and layout stay free to change.
+;; ---------------------------------------------------------------------
+
+(defn- menu-output
+  "Rendered start menu at `cols` x `rows`, captured as a string."
+  [cols rows]
+  (php/ob_start)
+  (render-start-menu cols rows nil)
+  (php/ob_get_clean))
+
+(defn- shows-key-hints? [out]
+  (and (php/!== false (php/strpos out "ENTER"))
+       (php/!== false (php/strpos out "settings"))
+       (php/!== false (php/strpos out "quit"))))
+
+(deftest test-key-hints-survive-every-supported-height
+  ;; The one thing the menu must always say is how to start the game.
+  (foreach [rows [8 11 12 13 14 15 16 22 24 30 40]]
+    (is (shows-key-hints? (menu-output 80 rows))
+        (str "start/settings/quit hints present at rows=" rows))))
+
+(deftest test-tall-terminal-shows-the-full-menu
+  (let [out (menu-output 120 40)]
+    (is (php/!== false (php/strpos out "CONTROLS")) "controls section")
+    (is (php/!== false (php/strpos out "HOW TO PLAY")) "how-to-play section")
+    (is (shows-key-hints? out) "key hints")))
+
+(deftest test-medium-terminal-drops-how-to-play-but-keeps-controls
+  (let [out (menu-output 120 24)]
+    (is (php/!== false (php/strpos out "CONTROLS")) "controls kept")
+    (is (php/=== false (php/strpos out "HOW TO PLAY")) "how-to-play dropped")
+    (is (shows-key-hints? out) "key hints")))
+
+(deftest test-short-terminal-drops-controls
+  (let [out (menu-output 80 16)]
+    (is (php/=== false (php/strpos out "CONTROLS")) "controls dropped")
+    (is (shows-key-hints? out) "key hints")))
+
+(deftest test-title-is-always-shown
+  (foreach [rows [8 13 24 40]]
+    (is (php/!== false (php/strpos (menu-output 80 rows) "P H E L - D O O M"))
+        (str "title present at rows=" rows))))

@@ -111,7 +111,7 @@ php -r 'var_dump(opcache_get_status()["jit"] ?? "no jit");'
 Caveats:
 - First few frames are slower while JIT compiles traces; bench at frame >= 60.
 - `opcache.validate_timestamps=0` disables source-file stat checks. Set to `1` during dev.
-- Dockerfile in repo root already enables OPcache; tune JIT per host.
+- The repo-root Dockerfile does NOT configure OPcache or JIT; enable both per host if you are benchmarking in it.
 
 ## Direct PHP ops in the hot loop
 

@@ -387,10 +387,9 @@
         ;; flr-edge-row (both per-column). Hoisting saves 2*vw
         ;; subtractions per compute-wall-shades call.
         vh-1                                                           (php/- vh 1)
-        ;; Cell codes aliased into locals: a bare def reference inside the
-        ;; column loop compiles to a getDefinition probe per column (the
-        ;; reason max-depth / dda-inf are aliased in engine.phel).
-        ;; cell-door-yellow is 9, deliberately out of sequence.
+        ;; Aliased into locals: a bare def reference inside the column loop
+        ;; compiles to a getDefinition probe per column (the reason
+        ;; max-depth / dda-inf are aliased in engine.phel).
         c-door                                                         cell-door
         c-door-blue                                                    cell-door-blue
         c-door-red                                                     cell-door-red
@@ -1580,8 +1579,8 @@
         debug?                             (get stats :debug?)
         t-cast-start                       (if debug? (php/microtime true) 0.0)
         ;; render-scale is a uniform 1 at every size: exact 1:1 cast,
-        ;; crisp walls. cast-frame still takes the factor so the
-        ;; replication path stays available if ever needed.
+        ;; crisp walls. The px2 branch below passes 2 to cast-frame
+        ;; directly rather than going through render-scale.
         scale                              (render-scale svw svh)
         ;; Pixel-doubled cast: cast at the FULL width with scale 2 (one
         ;; ray per two columns, full-width FOV tables) and compact every
@@ -2717,11 +2716,18 @@
            ;; Medium: drop the how-to-play section.
            (php/>= rows 22) (concat title controls footer)
            ;; Tight: title + footer only, with a hint that resizing
-           ;; reveals the full menu.
-           :else            (concat title
+           ;; reveals the full menu. 13 items, so it needs rows >= 15 -
+           ;; render-end-screen clamps the item count to rows - 2 and
+           ;; drops from the TAIL, which is where the key hints live.
+           (php/>= rows 15) (concat title
                                     [:sep blank
                                      (pad-visible "       \e[2;97mresize terminal for full menu\e[40;97m" w)
                                      blank]
+                                    footer)
+           ;; Ultra-tight (< 15 rows): the key hints matter more than the
+           ;; title cushion, so drop the blanks and the resize hint rather
+           ;; than let the clamp eat the ENTER/settings/quit line.
+           :else            (concat [(pad-visible "      \e[1;93m✦  P H E L - D O O M  ✦\e[40;97m" w)]
                                     footer)))))
 
 (defn render-start-menu

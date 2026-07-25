@@ -1,0 +1,105 @@
+(ns phel-doom-tests.io.render-flags-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.level :refer [build-world])
+  (:require phel-doom.core.engine :refer [mark-visible-cells])
+  (:require phel-doom.core.rng :as rng)
+  (:require phel-doom.io.render.main :refer [frame->string]))
+
+;; ---------------------------------------------------------------------
+;; Golden hashes for the NON-default render paths.
+;;
+;; tests/io/render-cache-test.phel pins one point in the render
+;; configuration space: everything at its default. But the renderer also
+;; carries per-frame env escape hatches (PHEL_DOOM_FLAT_WALLS /
+;; FLAT_FLOOR / NO_SUBPIXEL / FLAT_WALLTEX) and two settings-driven
+;; toggles (:quad, :truecolor), each selecting a genuinely different emit
+;; path. Nothing pinned any of them, so a refactor could silently reshape
+;; the low-detail or compatibility output and every test would still pass
+;; - the exact hole a cleanup audit flagged.
+;;
+;; Only per-frame flags are covered here. PHEL_DOOM_NO_SPRITES is
+;; memoized in a module atom (first read wins) and PHEL_DOOM_FLAT_FOG is
+;; baked into a load-time LUT, so neither can be toggled from inside a
+;; running test process.
+;;
+;; Update a constant DELIBERATELY when that path's output is meant to
+;; change.
+;; ---------------------------------------------------------------------
+
+;; Seed explicitly: build-world draws from the global rng, so without this
+;; the fixture world depends on how much rng earlier test namespaces
+;; consumed - the hashes below would then hold only for one suite order.
+(rng/seed! 1337)
+
+(def world (mark-visible-cells (build-world 1 5 0 :normal #{:pistol})))
+
+(def stats
+  {:game-time 1.0 :debug? false :iframes 0.0 :lives 5 :max-lives 5
+   :armor 0 :kills 0 :level 1 :weapon :pistol :weapon-name "pistol"
+   :mag 10 :mag-size 10 :ammo-reserve 50 :stamina 100 :max-stamina 100
+   :owned-weapons #{:pistol} :difficulty :normal :held-keys #{}
+   :fire-anim-duration 0.1 :reload-duration 1.0
+   :secrets-total 0 :secrets-found 0 :backpack-level 0})
+
+(defn- with-env
+  "Set every env var named in `vars` to \"1\", run `f`, and always clear
+   them again - a leaked env var would silently retune every later test in
+   the process."
+  [vars f]
+  (try
+    (foreach [k vars] (php/putenv (str k "=1")))
+    (f)
+    (finally
+      (foreach [k vars] (php/putenv k)))))
+
+(defn- frame-hash [vars stats-overrides cols rows]
+  (with-env vars
+            (fn [] (php/md5 (frame->string world (merge stats stats-overrides) cols rows)))))
+
+(deftest test-flat-walls-path-pinned
+  (is (= "73b3bfd4fa3dfe923f276c20556d8cbc"
+         (frame-hash ["PHEL_DOOM_FLAT_WALLS"] {} 120 30))))
+
+(deftest test-flat-floor-path-pinned
+  (is (= "1ed45b307bd527c7365d745c364091ae"
+         (frame-hash ["PHEL_DOOM_FLAT_FLOOR"] {} 120 30))))
+
+(deftest test-no-subpixel-path-pinned
+  (is (= "9392b40fc39834bcb9bc5d08d127d4eb"
+         (frame-hash ["PHEL_DOOM_NO_SUBPIXEL"] {} 120 30))))
+
+(deftest test-flat-walltex-path-pinned
+  (is (= "d0501ed878f81cf9be1f774cf15fa6e9"
+         (frame-hash ["PHEL_DOOM_FLAT_WALLTEX"] {} 120 30))))
+
+(deftest test-all-flat-plus-no-subpixel-pinned
+  ;; The full compatibility path: no wall or floor texture, one colour
+  ;; per cell. This is what a seam-prone terminal actually renders.
+  (is (= "36bddbbcd75583f9e1d22952765a2b05"
+         (frame-hash ["PHEL_DOOM_FLAT_WALLS" "PHEL_DOOM_FLAT_FLOOR" "PHEL_DOOM_NO_SUBPIXEL"]
+                     {} 120 30))))
+
+(deftest test-quad-setting-path-pinned
+  (is (= "2e58572a001a3fd66fc8b13deef31205"
+         (frame-hash [] {:quad true} 120 30))))
+
+(deftest test-truecolor-setting-path-pinned
+  (is (= "434a133e7d5c2e93f2f9592b217d1846"
+         (frame-hash [] {:truecolor true} 120 30))))
+
+(deftest test-flags-actually-change-the-output
+  ;; Sanity: the hashes above are pinning DIFFERENT paths, not the same
+  ;; default frame seven times over.
+  (let [default   (frame-hash [] {} 120 30)
+        flat-wall (frame-hash ["PHEL_DOOM_FLAT_WALLS"] {} 120 30)
+        no-sub    (frame-hash ["PHEL_DOOM_NO_SUBPIXEL"] {} 120 30)]
+    (is (not= default flat-wall) "flat walls differs from default")
+    (is (not= default no-sub) "no-subpixel differs from default")
+    (is (not= flat-wall no-sub) "the two compatibility paths differ")))
+
+(deftest test-env-is-restored-after-a-flagged-render
+  ;; with-env must not leak: after a flagged render, a default render of
+  ;; this file's own seeded fixture must still produce the default hash.
+  (frame-hash ["PHEL_DOOM_FLAT_WALLS"] {} 120 30)
+  (is (= "453c4baf9062da97bed130cc89623807"
+         (php/md5 (frame->string world stats 120 30)))))

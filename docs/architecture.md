@@ -30,8 +30,9 @@ src/
 │   └── version.phel                 ; version string
 ├── glue/controls.phel               ; key bytes -> :moves counters + rising edges
 └── io/                              ; effects, touch the OS
-    ├── input.phel                   ; STDIN setup + drain
-    ├── render.phel + submodules      ; ANSI emit + layout
+    ├── input.phel                   ; STDIN setup + drain, terminal restore, signals
+    ├── render.phel + submodules      ; ANSI emit + layout (main = per-frame
+    │                                 ;   scene, screens = full-screen overlays)
     ├── sound.phel                   ; sfx shell-out
     ├── music.phel                   ; OST loop process
     ├── scores.phel                  ; JSON high-score file

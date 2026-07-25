@@ -51,15 +51,16 @@ src/core/                    ; pure logic (no IO)
   level.phel                 level 1-10 + build-world
   weapons.phel               weapon catalog + ammo state
   projectile.phel            enemy fireballs: spawn + march + impacts
-  perf.phel                  big-screen perf checks
+  perf.phel                  frame cadence + render / pixel scale
   difficulty.phel            easy/normal/hard/nightmare
   settings.phel              options model (volume, defaults)
   rng.phel                   deterministic seeding
 src/glue/                    ; pure wiring (core + io)
   controls.phel              bytes to move commands
 src/io/                      ; side effects
-  input.phel                 stty + kitty protocol
-  render.phel                ANSI emit + overlays
+  input.phel                 stty + kitty protocol, restore, signals
+  render.phel                ANSI emit facade; render/ holds main (per-frame
+                             scene), screens (overlays), hud, paint, sprites
   sound.phel                 afplay/paplay shell-out
   scores.phel                JSON persistence
   settings.phel              options load/save (JSON)

@@ -984,10 +984,10 @@
       (php/usleep menu-frame-us)
       (let [keys (drain-keys)]
         (cond
-          (str/contains? keys "q") :quit
-          (str/contains? keys "R") :restart-same
-          (str/contains? keys "r") :restart
-          :else                    (recur [rows cols] (php/+ frame 1) [rows cols]))))))
+          (or (str/contains? keys "q") (interrupted?)) :quit
+          (str/contains? keys "R")                     :restart-same
+          (str/contains? keys "r")                     :restart
+          :else                                        (recur [rows cols] (php/+ frame 1) [rows cols]))))))
 
 (defn- death-loop [kills survived-s level level-name scores summary]
   (end-loop (fn [cols rows]
@@ -1231,8 +1231,10 @@
             ;; info panel in game, but this pre-game screen just needs
             ;; "did ESC go down this frame" to go back.
             esc-edge (and (:esc now) (not (:esc prev)))]
-        (if esc-edge
+        (if (or esc-edge (interrupted?))
           ;; Volumes were applied live on each adjust; close just saves.
+          ;; An interrupt closes the page the same way ESC does - the flag
+          ;; stays set, so the menu loop above quits on its next frame.
           (save-settings! settings)
           ;; Destructure into NON-loop names: binding the result back to
           ;; locals called `settings` / `cursor` (the loop vars) makes the
@@ -1269,12 +1271,16 @@
       (php/usleep menu-frame-us)
       (let [keys (drain-keys)]
         (cond
-          (str/contains? keys "q") :quit
+          ;; Ctrl-C must work here too: install-signal-handlers! replaces
+          ;; the default terminate disposition process-wide, so a menu
+          ;; that never dispatches would swallow the signal entirely and
+          ;; then fire it at the first frame of the run the player starts.
+          (or (str/contains? keys "q") (interrupted?)) :quit
           ;; Returning from the settings sub-loop is a fresh entry; reset
           ;; the poll counter so the menu re-samples size eagerly.
-          (str/contains? keys "s") (recur (settings-screen! settings) [rows cols] 0 [rows cols])
-          (start-pressed? keys)    settings
-          :else                    (recur settings [rows cols] (php/+ frame 1) [rows cols]))))))
+          (str/contains? keys "s")                     (recur (settings-screen! settings) [rows cols] 0 [rows cols])
+          (start-pressed? keys)                        settings
+          :else                                        (recur settings [rows cols] (php/+ frame 1) [rows cols]))))))
 
 (defn- resolve-difficulty
   "Pick the run difficulty: an explicit, valid --difficulty CLI value

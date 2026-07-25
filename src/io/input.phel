@@ -169,14 +169,34 @@
    explicit `pcntl_signal_dispatch` in `interrupted?`, which every loop
    that can be interrupted calls once per frame.
 
+   The SECOND signal is not trapped. Trapping without escalation would
+   make a genuinely wedged process (an infinite loop between checkpoints,
+   a hung exec) killable only by `kill -9`, which is the outcome that
+   wrecks the terminal - the very thing this exists to prevent. So a
+   repeat signal restores the default disposition and re-raises, and the
+   process dies the way it always would have.
+
    Returns true when handlers were installed; false on a PHP build
    without ext-pcntl, where behaviour is exactly as it was before."
   []
   (if (php/function_exists "pcntl_signal")
-    (let [handler (fn [_signal] (reset! interrupt-flag true))]
+    (let [handler (fn [signal]
+                    (if @interrupt-flag
+                      ;; Already asked once and we are still here: the loop is
+                      ;; not reaching a checkpoint. Hand the signal back to the
+                      ;; default handler so this one terminates the process.
+                      (do (php/pcntl_signal signal php/SIG_DFL)
+                          (when (php/function_exists "posix_kill")
+                            (php/posix_kill (php/getmypid) signal)))
+                      (reset! interrupt-flag true)))]
       (php/pcntl_signal php/SIGINT handler)
       (php/pcntl_signal php/SIGTERM handler)
-      (php/pcntl_async_signals false)
+      ;; Separate probe: pcntl_signal and pcntl_async_signals are separable
+      ;; (php -d disable_functions=pcntl_async_signals), and a throw here would
+      ;; land after init-input! put the terminal in raw mode but before the
+      ;; try/finally that guarantees teardown.
+      (when (php/function_exists "pcntl_async_signals")
+        (php/pcntl_async_signals false))
       (reset! signals-armed true)
       true)
     false))

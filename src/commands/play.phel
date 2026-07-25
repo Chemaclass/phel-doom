@@ -1363,8 +1363,12 @@
         ;; gates the xterm mouse-reporting escapes: off = the terminal never
         ;; captures the pointer. load-settings is plain file IO, so it is
         ;; safe to run before raw mode is set.
-        (init-input! (:mouse settings0))
+        ;; Arm the signal handlers BEFORE raw mode: between init-input! and
+        ;; the try/finally below there is no teardown guarantee, so a signal
+        ;; landing in that window would kill the process with the terminal
+        ;; already in raw mode and the alt screen up.
         (install-signal-handlers!)
+        (init-input! (:mouse settings0))
         (apply-audio-settings! settings0)
         (cond
           replay  (demo/start-replay! (:seed replay) (:frames replay))
@@ -1417,8 +1421,9 @@
   [ctx phase]
   ;; Mouse reporting off for the menu-less showcase (#246): a tech-talk
   ;; screencast shouldn't have the terminal capturing the pointer.
-  (init-input! false)
+  ;; Handlers before raw mode - see run-play.
   (install-signal-handlers!)
+  (init-input! false)
   (let [settings0 (load-settings)
         ;; Audio only once enemies are in play (phase 3+); the
         ;; raycaster / weapon reveals stay silent. Mirrors the

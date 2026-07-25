@@ -56,30 +56,94 @@ function stripNonCode(string $code): string
                 $out[$i] = ' ';
                 $i++;
             }
-        } elseif ($ch === '#' && $i + 1 < $len && $code[$i + 1] === '_') {
-            // Discard the next form wholesale, parens and all.
+        } elseif ($ch === '#' && $i + 1 < $len && $code[$i + 1] === '|') {
+            // #| ... |# block comment, nestable. Without this a fake (ns ...)
+            // inside one wins over the real form.
             $out[$i] = ' ';
             $out[$i + 1] = ' ';
+            $nest = 1;
             $j = $i + 2;
-            while ($j < $len && ctype_space($code[$j])) {
-                $j++;
-            }
-            $depth = 0;
             for (; $j < $len; $j++) {
-                if ($code[$j] === '(') {
-                    $depth++;
-                } elseif ($code[$j] === ')') {
-                    $depth--;
+                if ($code[$j] === '#' && $j + 1 < $len && $code[$j + 1] === '|') {
+                    $nest++;
+                    $out[$j] = ' ';
+                    $out[$j + 1] = ' ';
+                    $j++;
+                    continue;
+                }
+                if ($code[$j] === '|' && $j + 1 < $len && $code[$j + 1] === '#') {
+                    $nest--;
+                    $out[$j] = ' ';
+                    $out[$j + 1] = ' ';
+                    $j++;
+                    if ($nest === 0) {
+                        break;
+                    }
+                    continue;
                 }
                 $out[$j] = $code[$j] === "\n" ? "\n" : ' ';
-                if ($depth === 0) {
-                    break;
-                }
             }
             $i = $j;
+        } elseif ($ch === '#' && $i + 1 < $len && $code[$i + 1] === '_') {
+            // #_ discards the next form. Stacked discards (#_#_ a b) drop that
+            // many forms, so count them first, then skip that many.
+            $discards = 0;
+            $j = $i;
+            while ($j + 1 < $len && $code[$j] === '#' && $code[$j + 1] === '_') {
+                $out[$j] = ' ';
+                $out[$j + 1] = ' ';
+                $j += 2;
+                $discards++;
+            }
+            for ($d = 0; $d < $discards; $d++) {
+                $j = skipForm($code, $out, $j, $len);
+            }
+            $i = $j - 1;
+        } elseif ($ch === '#' && $i + 1 < $len && !str_contains('_|{(\"', $code[$i + 1])) {
+            // Bare `#` line comment (deprecated but still lexed by Phel).
+            while ($i < $len && $code[$i] !== "\n") {
+                $out[$i] = ' ';
+                $i++;
+            }
         }
     }
     return $out;
+}
+
+
+/**
+ * Blank one complete form starting at or after $j, returning the offset just
+ * past it. Handles (), [] and {} as balanced, anything else as a bare token.
+ */
+function skipForm(string $code, string &$out, int $j, int $len): int
+{
+    while ($j < $len && ctype_space($code[$j])) {
+        $j++;
+    }
+    if ($j >= $len) {
+        return $j;
+    }
+    $openers = ['(' => ')', '[' => ']', '{' => '}'];
+    if (isset($openers[$code[$j]])) {
+        $depth = 0;
+        for (; $j < $len; $j++) {
+            $c = $code[$j];
+            if (isset($openers[$c])) {
+                $depth++;
+            } elseif (in_array($c, [')', ']', '}'], true)) {
+                $depth--;
+            }
+            $out[$j] = $c === "\n" ? "\n" : ' ';
+            if ($depth === 0) {
+                return $j + 1;
+            }
+        }
+        return $j;
+    }
+    for (; $j < $len && !ctype_space($code[$j]) && !in_array($code[$j], [')', ']', '}'], true); $j++) {
+        $out[$j] = ' ';
+    }
+    return $j;
 }
 
 /** Extract the leading `(ns ...)` form, balanced on parens outside strings. */
@@ -90,9 +154,6 @@ function nsForm(string $code): string
         return '';
     }
     $start = $m[0][1];
-    if ($start === false) {
-        return '';
-    }
     $depth = 0;
     $inString = false;
     $len = strlen($code);
@@ -142,11 +203,19 @@ function buildGraph(string $dir): array
             exit(2);
         }
         $from = $m[1];
-        preg_match_all('/\(:require\s+([^\s()]+)/', $ns, $deps);
-        $graph[$from] = array_values(array_unique(array_filter(
-            $deps[1],
-            static fn (string $to): bool => str_starts_with($to, 'phel-doom.'),
-        )));
+        // Every phel-doom namespace named anywhere inside a (:require ...)
+        // clause. Not just the first token: Phel accepts several entries per
+        // clause and a vector form `[ns :as x]`, and NsSymbol walks them all.
+        // :as / :refer names cannot collide - they are never dotted.
+        preg_match_all('/\(:require\b([^()]*(?:\[[^\]]*\][^()]*)*)/', $ns, $clauses);
+        $deps = [];
+        foreach ($clauses[1] as $clause) {
+            preg_match_all('/phel-doom\.[A-Za-z0-9_.\-]+/', $clause, $names);
+            foreach ($names[0] as $name) {
+                $deps[] = rtrim($name, '.');
+            }
+        }
+        $graph[$from] = array_values(array_unique($deps));
     }
     return $graph;
 }

@@ -31,11 +31,14 @@
 (defn- stats-with [settings]
   (frame-stats (assoc world :settings (settings/coerce-settings settings)) 60 16.0))
 
-;; Settings render reads off `stats`, paired with the stats key carrying
-;; them. Of the rest: :music/:sfx are audio, :colorblind reaches the minimap
-;; via `(:settings world)` (see above), and
-;; :minimap/:difficulty/:crosshair/:timer/:mouse/:sensitivity reach their
-;; consumers by other routes.
+;; Boolean settings render reads off `stats`, paired with the stats key
+;; carrying them. Three more are stats-only but not booleans, so they get
+;; their own test below: :crosshair (enum), :timer (-> :run-timer?) and
+;; :mouse (defaults TRUE, so the off case is the interesting one).
+;;
+;; Of the rest: :music/:sfx are audio, :colorblind and :minimap reach the
+;; minimap via `(:settings world)`, and :difficulty / :sensitivity drive run
+;; config and input rather than render.
 (def render-facing
   [[:high-contrast :high-contrast?]
    [:fast-walls    :fast-walls]
@@ -64,6 +67,20 @@
   (let [s (stats-with {})]
     (foreach [[_ stat-key] render-facing]
       (is (contains? s stat-key) (str (name stat-key) " present in stats")))))
+
+(deftest test-stats-only-settings-are-projected
+  ;; :crosshair, :timer and :mouse have NO route to render other than this
+  ;; DTO, so dropping or renaming one here would silently disable it -
+  ;; the same shape as the :truecolor / :quad bug. tests/io/paint-test.phel
+  ;; hand-builds a stats map with these keys injected, so it cannot catch it.
+  (let [on  (stats-with {:crosshair :dot :timer true :mouse true})
+        off (stats-with {:crosshair :off :timer false :mouse false})]
+    (is (= :dot (:crosshair on)) "crosshair enum projected")
+    (is (= :off (:crosshair off)) "crosshair :off projected, not defaulted away")
+    (is (= true (:run-timer? on)) "timer on -> :run-timer? true")
+    (is (= false (:run-timer? off)) "timer off -> :run-timer? false")
+    (is (= true (:mouse on)) "mouse on")
+    (is (= false (:mouse off)) "mouse off - the non-default case")))
 
 (deftest test-subpixel-defaults-on-and-only-explicit-false-disables
   (is (= true (:subpixel (stats-with {}))) "absent -> on")

@@ -80,3 +80,62 @@
   (let [f (demo/resolve-frame! "wd" 16)]
     (is (= "wd" (:keys f)))
     (is (= 16 (:ms f)))))
+
+;; --- recording to disk ----------------------------------------------
+;;
+;; `--record` promises the player a replayable file. save-recording!'s
+;; return value is the only signal play.phel has: true prints "Thanks
+;; for playing", false reports the path and exits non-zero. A recording
+;; silently discarded is a total loss of what the player asked for, so
+;; both arms are pinned here.
+
+(defn- in-temp-dir [f]
+  (let [dir (str (php/sys_get_temp_dir) "/" (php/uniqid "phel-doom-demo-test-"))]
+    (php/mkdir dir 0777 true)
+    (try
+      (f dir)
+      (finally
+        (doseq [p (php/glob (str dir "/*"))] (php/unlink p))
+        (php/rmdir dir)
+        (demo/reset-off!)))))
+
+(deftest test-a-recorded-session-round-trips-through-a-file
+  ;; Record two frames, save, read it back: the seed and the input
+  ;; stream must survive, or the replay reproduces a different run.
+  (in-temp-dir
+   (fn [dir]
+     (let [path (str dir "/run.json")]
+       (demo/start-record! 4242)
+       (demo/resolve-frame! "w" 16)
+       (demo/resolve-frame! "wa" 17)
+       (is (= true (demo/save-recording! path)) "a writable path reports success")
+       (is (php/file_exists path) "the demo file is on disk")
+       (let [back (demo/read-demo path)]
+         (is (= 4242 (:seed back)) "the run's seed survives")
+         (is (= [["w" 16] ["wa" 17]] (:frames back)) "the input stream survives"))))))
+
+(deftest test-a-failed-recording-write-reports-false
+  ;; Unwritable directory: play.phel turns this false into a message
+  ;; naming the path and a non-zero exit, instead of claiming the run
+  ;; was saved.
+  (in-temp-dir
+   (fn [dir]
+     (demo/start-record! 7)
+     (demo/resolve-frame! "w" 16)
+     (php/chmod dir 0500)                         ; read + execute, no write
+     ;; file_put_contents warns on the failure by design; silence it so
+     ;; CI output stays readable. The return value is the contract.
+     (let [prev (php/error_reporting 0)
+           ok   (demo/save-recording! (str dir "/nope.json"))]
+       (php/error_reporting prev)
+       (php/chmod dir 0700)                       ; restore so cleanup works
+       (is (= false ok) "an unwritable path reports failure")))))
+
+(deftest test-saving-outside-a-recording-session-is-not-a-success
+  ;; Nothing was captured, so there is nothing to promise the player.
+  (in-temp-dir
+   (fn [dir]
+     (demo/reset-off!)
+     (let [path (str dir "/idle.json")]
+       (is (= false (demo/save-recording! path)) "not recording -> false")
+       (is (not (php/file_exists path)) "and no file is written")))))

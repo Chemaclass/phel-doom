@@ -2,7 +2,8 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.level :refer [ammo-box-count armor-shard-count config-for heart-count num-levels build-world place-secret-reward secret-trophies])
   (:require phel-doom.core.map :refer [door? cell-floor cell-wall cell-door-boss find-door-cell passable?])
-  (:require phel-doom.core.rng :as rng))
+  (:require phel-doom.core.rng :as rng)
+  (:require phel-doom.core.combat :as combat))
 
 ;; ---------------------------------------------------------------------
 ;; Seeded determinism (issue #64): same rng seed => identical level.
@@ -427,3 +428,53 @@
   (is (= :base (:theme (build-world 1 5))) "L1 carries the neutral base theme")
   (rng/seed! 10)
   (is (= :hell (:theme (build-world 10 5))) "L10 carries its own themed floor"))
+
+;; ---------------------------------------------------------------------
+;; Difficulty ramp: enemy budget per level.
+;;
+;; The pre-rebalance curve stacked five boss-tier cyberdemons on L5 and
+;; left the large halls (L4, L6, L9) nearly empty. Both guards below are
+;; catalog-wide shapes, not pins on one level's roster - retuning is
+;; expected, crossing these two limits is a design decision.
+;;
+;; Deliberately NOT asserted: that the final level is the heaviest fight
+;; by total HP or by incoming damage. Neither holds, and neither should:
+;; L10 is one 50-HP boss (152 threat, but only 5 damage a volley), while
+;; L9 throws 12 bodies (60 threat, 18 a volley). "Out-gunned the boss"
+;; is about concurrent pressure from a boss SQUAD, which is what the
+;; heaviest-type cap below actually measures.
+
+(defn- boss-tier-count
+  "Enemies on level `n` of the hardest-hitting type in the catalog
+   (`enemy-hit-damage` max - the cyberdemon at 1.5 hearts a swing)."
+  [n]
+  (let [worst (apply php/max (values combat/enemy-hit-damage))]
+    (count (filter (fn [e] (= worst (combat/hit-damage-for (:type e))))
+                   (:enemies (build-world n 5))))))
+
+(deftest test-no-level-fields-a-boss-squad
+  ;; A pack of the heaviest type is a damage wall, not a difficulty
+  ;; step: five cyberdemons on L5 killed faster than the finale did.
+  ;; The boss arena is the one place a player faces the type alone.
+  (rng/seed! 4242)
+  (doseq [n (range 1 (php/+ num-levels 1))]
+    (is (php/<= (boss-tier-count n) 2)
+        (str "level " n " fields at most 2 of the heaviest enemy type"))))
+
+(deftest test-no-level-is-an-empty-hall
+  ;; Enemy count tracks room size: a big map with a handful of monsters
+  ;; is a long walk, not a fight. Ceiling is deliberately loose (the
+  ;; sparsest level today sits near 160) so it flags a hall that went
+  ;; empty, not ordinary retuning.
+  (rng/seed! 99)
+  (doseq [n (range 1 (php/+ num-levels 1))]
+    (let [w     (build-world n 5)
+          floor (reduce (fn [acc row]
+                          (php/+ acc (count (filter (fn [c] (= c cell-floor)) row))))
+                        0
+                        (:grid w))
+          es    (count (:enemies w))]
+      (is (php/> es 0) (str "level " n " has enemies"))
+      (is (php/<= (php/intdiv floor (php/max 1 es)) 220)
+          (str "level " n " is populated for its size ("
+               floor " floor cells, " es " enemies)")))))

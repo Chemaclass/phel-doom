@@ -1,9 +1,25 @@
 (ns phel-doom-tests.io.scores-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.io.scores :refer [merge-run empty-scores]))
+  (:require phel-doom.io.scores :refer [merge-run empty-scores load-scores
+                                        update-scores! scores-write-failed?]))
 
-;; Pure-merge tests only — never load-scores / update-scores! which
-;; touch the user's $HOME .phel-doom-scores.json file.
+;; The merge tests are pure. The persistence tests run against an
+;; isolated temp $HOME so they never touch the user's real
+;; ~/.phel-doom-scores.json — scores-path reads $HOME on every call, so
+;; swapping the env var redirects load + save together.
+
+(defn- with-temp-home [f]
+  (let [prev (php/getenv "HOME")
+        tmp  (str (php/sys_get_temp_dir) "/" (php/uniqid "phel-doom-scores-test-"))
+        file (str tmp "/.phel-doom-scores.json")]
+    (php/mkdir tmp 0777 true)
+    (php/putenv (str "HOME=" tmp))
+    (try
+      (f)
+      (finally
+        (php/putenv (str "HOME=" prev))
+        (when (php/file_exists file) (php/unlink file))
+        (php/rmdir tmp)))))
 
 (deftest test-merge-run-from-empty-keeps-current
   (let [s (merge-run empty-scores 12 3 45 false)]
@@ -46,3 +62,52 @@
     ;; Even though 10s is much faster than 90s, a non-victory run
     ;; cannot post a time.
     (is (= 90 (:fastest-victory-s s)))))
+
+;; --- persistence ----------------------------------------------------
+
+(deftest test-no-scores-file-reads-as-empty
+  ;; First launch: nothing on disk yet, and the end screen still has a
+  ;; bests block to draw.
+  (with-temp-home
+   (fn []
+     (is (= empty-scores (load-scores)) "a missing file reads as empty scores"))))
+
+(deftest test-a-runs-bests-survive-a-relaunch
+  ;; What the player actually cares about: finish a run, quit, come
+  ;; back, and the bests are still there. Goes through the file, not
+  ;; through merge-run, so a broken write path cannot pass.
+  (with-temp-home
+   (fn []
+     (update-scores! 12 3 45 false)
+     (let [reloaded (load-scores)]
+       (is (= 12 (:best-kills reloaded)) "best kills survive a relaunch")
+       (is (= 3  (:best-level reloaded)) "deepest level survives a relaunch"))
+     ;; A later, worse run must not erase the record on disk either.
+     (update-scores! 2 1 10 false)
+     (is (= 12 (:best-kills (load-scores))) "a worse run does not overwrite the record"))))
+
+(deftest test-write-failure-is-recorded-not-swallowed
+  ;; An unwritable HOME throws away every run's bests. The write cannot
+  ;; throw (that would interrupt play), so the failure has to be
+  ;; observable instead; run-play reports it once after teardown. Same
+  ;; contract as the settings file.
+  (with-temp-home
+   (fn []
+     (update-scores! 1 1 1 false)
+     (is (= false (scores-write-failed?)) "a writable HOME records no failure")
+     (let [dir (php/getenv "HOME")]
+       ;; Remove the file FIRST: writing to an existing file needs no
+       ;; directory write permission, so chmod-ing first would prove
+       ;; nothing.
+       (php/unlink (str dir "/.phel-doom-scores.json"))
+       (php/chmod dir 0500)                       ; read + execute, no write
+       ;; The failing write emits a PHP warning by design (src/ carries
+       ;; no `@` suppression). Silence it so CI output stays readable;
+       ;; the recorded flag is what this test is about.
+       (let [prev (php/error_reporting 0)]
+         (update-scores! 5 2 20 false)
+         (php/error_reporting prev))
+       (php/chmod dir 0700)                       ; restore so cleanup works
+       (is (= true (scores-write-failed?)) "an unwritable HOME is recorded"))
+     ;; Leave the flag clean for any later test in this process.
+     (update-scores! 1 1 1 false))))

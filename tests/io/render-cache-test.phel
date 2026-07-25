@@ -16,7 +16,12 @@
 ;; (the rebuild path can't leave a stale/corrupt bundle).
 ;; ---------------------------------------------------------------------
 
-(def world (mark-visible-cells (build-world 1 5 0 :normal #{:pistol})))
+(def world
+  (let [prev @rng/state]
+    (rng/seed! 1337)
+    (let [w (mark-visible-cells (build-world 1 5 0 :normal #{:pistol}))]
+      (reset! rng/state prev)
+      w)))
 
 (def stats
   {:game-time 1.0 :debug? false :iframes 0.0 :lives 5 :max-lives 5
@@ -50,10 +55,10 @@
   ;; pixel change - e.g. a regression in the vertical-projection kernel -
   ;; flips a hash and fails loudly. Update the constants DELIBERATELY when
   ;; output is meant to change.
-  (is (= "abb07892edff384c05b8833cb74748d9" (php/md5 (frame->string world stats 120 30))))
-  (is (= "fa555217b6374ecf3de454c8c8deb4c3" (php/md5 (frame->string world stats 80 24))))
-  (is (= "5d656320324eb4945aad32bb88d41a7c" (php/md5 (frame->string world stats 160 44))))
-  (is (= "abd5ba65d1e79af4e60d600ebec09e7e" (php/md5 (frame->string world (assoc stats :px2? true) 120 30)))))
+  (is (= "453c4baf9062da97bed130cc89623807" (php/md5 (frame->string world stats 120 30))))
+  (is (= "c13279bcc03f79f194d9daa4cfd883fe" (php/md5 (frame->string world stats 80 24))))
+  (is (= "a8944ba06820b1c267695234ffed6ecb" (php/md5 (frame->string world stats 160 44))))
+  (is (= "23df8cf945a88757c0b7e000b1b811ec" (php/md5 (frame->string world (assoc stats :px2? true) 120 30)))))
 
 (deftest test-theme-tints-the-floor-gradient
   ;; #417: a level's :theme resolves to a floor gradient base code that is
@@ -102,7 +107,7 @@
   (let [bob-on  (assoc stats :view-bob 1.0)
         resting (php/md5 (frame->string world bob-on 120 30))
         peak    (php/md5 (frame->string (assoc world :bob-phase (php/* 0.5 php/M_PI)) bob-on 120 30))]
-    (is (= "abb07892edff384c05b8833cb74748d9" resting)
+    (is (= "453c4baf9062da97bed130cc89623807" resting)
         "View bob on but at rest (bob-phase 0) stays the golden frame")
     (is (not= resting peak) "a mid-stride bob shifts the whole scene")))
 
@@ -114,12 +119,12 @@
   ;; the min-23 CLAMP is guarded by the level-10 test below (this lives-5
   ;; scene's net shift is too shallow to push any wall index past 23).
   (let [firing (php/md5 (frame->string world (assoc stats :fire-anim 0.1) 120 30))]
-    (is (= "abb07892edff384c05b8833cb74748d9"
+    (is (= "453c4baf9062da97bed130cc89623807"
            (php/md5 (frame->string world stats 120 30)))
         "not firing (no :fire-anim) stays the golden frame - byte-identical")
-    (is (= "027bb3001db54f892cd314b159623c9c" firing)
+    (is (= "5a50ebb91f4d822cb553f8147ecd7f44" firing)
         "a fresh shot brightens the walls to this exact frame")
-    (is (not= "abb07892edff384c05b8833cb74748d9" firing)
+    (is (not= "453c4baf9062da97bed130cc89623807" firing)
         "firing genuinely changes the scene bytes")))
 
 (deftest test-muzzle-extralight-clamps-the-negative-haze
@@ -193,11 +198,12 @@
 ;; hashes only exercise the empty-source path. These pin the non-empty
 ;; path: the keycard / weapon-pickup paint passes are guarded by a
 ;; `(seq source)` check (perf #348), and a wrong guard would silently
-;; stop painting them with no other test catching it. (17.0, 10.4) sits
-;; in an open cell just ahead of the level-1 spawn (15.5, 10.5 facing
-;; east), so the pickup projects into view and changes the frame.
+;; stop painting them with no other test catching it. (12.77, 12.91) sits
+;; in an open cell ~1.4 units straight ahead of the seeded level-1 spawn
+;; (11.5, 13.5 facing 5.85 rad), so the pickup projects into view and
+;; changes the frame. Re-derive both if the fixture seed ever changes.
 (deftest test-keycard-paints-into-frame
-  (let [w-kc (assoc world :keycards [{:x 17.0 :y 10.4 :colour :blue}])]
+  (let [w-kc (assoc world :keycards [{:x 12.77 :y 12.91 :colour :blue}])]
     (is (not= (frame->string world stats 120 30)
               (frame->string w-kc stats 120 30))
         "a visible keycard paints into the frame")
@@ -206,7 +212,7 @@
         "keycard render stays deterministic")))
 
 (deftest test-weapon-pickup-paints-into-frame
-  (let [w-wp (assoc world :weapon-pickups [{:x 17.0 :y 10.4 :weapon :shotgun}])]
+  (let [w-wp (assoc world :weapon-pickups [{:x 12.77 :y 12.91 :weapon :shotgun}])]
     (is (not= (frame->string world stats 120 30)
               (frame->string w-wp stats 120 30))
         "a visible weapon-pickup paints into the frame")

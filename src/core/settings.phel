@@ -15,16 +15,6 @@
 ;; commands/play applies the resulting volumes to io/sound + io/music.
 ;; ---------------------------------------------------------------------
 
-(def default-settings
-  "Out-of-the-box options. Music sits under the sfx by default (the OST
-   is a bed, not a lead). Minimap starts hidden; difficulty normal.
-   Mouse on by default (FPS-style mouselook, #246), sensitivity 50% (the
-   neutral 1.0x multiplier - see `mouse-sensitivity`)."
-  {:music 60 :sfx 90 :minimap false :difficulty :normal
-   :crosshair :cross :timer false :high-contrast false :colorblind :none
-   :mouse true :sensitivity 50 :fast-walls false :subpixel true :truecolor false
-   :quad false :view-bob 0 :light false})
-
 (def crosshair-choices
   "Crosshair reticle styles the enum field cycles through. `:off` hides
    the idle reticle entirely (the hit-marker still flashes on a hit)."
@@ -53,48 +43,56 @@
    `:kind` selects the adjust + paint behaviour (:pct slider, :bool
    toggle, :enum cycle). An :enum field carries its own `:choices`
    vector so the cycle logic is generic (not difficulty-specific)."
-  [{:key :music          :label "Music"          :kind :pct}
-   {:key :sfx            :label "SFX"            :kind :pct}
-   {:key :minimap        :label "Minimap"        :kind :bool}
-   {:key :difficulty     :label "Difficulty"     :kind :enum :choices difficulty-choices}
-   {:key :crosshair      :label "Crosshair"      :kind :enum :choices crosshair-choices}
-   {:key :timer          :label "Run timer"      :kind :bool}
-   {:key :mouse          :label "Mouse"          :kind :bool}
-   {:key :sensitivity    :label "Sensitivity"    :kind :pct}
-   {:key :high-contrast  :label "High contrast"  :kind :bool}
-   {:key :colorblind     :label "Colorblind"     :kind :enum :choices colorblind-choices}
+  [{:key :music          :label "Music"          :kind :pct :default 60}
+   {:key :sfx            :label "SFX"            :kind :pct :default 90}
+   {:key :minimap        :label "Minimap"        :kind :bool :default false}
+   {:key :difficulty     :label "Difficulty"     :kind :enum :choices difficulty-choices :default :normal}
+   {:key :crosshair      :label "Crosshair"      :kind :enum :choices crosshair-choices :default :cross}
+   {:key :timer          :label "Run timer"      :kind :bool :default false}
+   {:key :mouse          :label "Mouse"          :kind :bool :default true}
+   {:key :sensitivity    :label "Sensitivity"    :kind :pct :default 50}
+   {:key :high-contrast  :label "High contrast"  :kind :bool :default false}
+   {:key :colorblind     :label "Colorblind"     :kind :enum :choices colorblind-choices :default :none}
    ;; :fast-walls is the "Low detail" perf mode: flattens the wall AND
    ;; floor interior to one texel per cell (silhouettes stay sub-pixel).
    ;; The key keeps its original name for save-file back-compat.
-   {:key :fast-walls     :label "Low detail"     :kind :bool}
+   {:key :fast-walls     :label "Low detail"     :kind :bool :default false}
    ;; :subpixel on (default) uses the ▀ half-block 2-colour cells; OFF is the
    ;; one-colour-per-cell compatibility path for terminals that render ▀ with
    ;; row seams / gaps (macOS Terminal.app, #332). render ANDs it with the
    ;; PHEL_DOOM_NO_SUBPIXEL env override.
-   {:key :subpixel       :label "Sub-pixel"      :kind :bool}
+   {:key :subpixel       :label "Sub-pixel"      :kind :bool :default true}
    ;; :truecolor off (default) keeps the xterm-256 palette so saved settings +
    ;; golden fixtures stay byte-identical; ON swaps the distance-fog fade to
    ;; 24-bit \e[38;2;r;g;b cells, removing the 256-cube/grayscale snap banding
    ;; on textured walls + floor. render ANDs it with PHEL_DOOM_TRUECOLOR /
    ;; PHEL_DOOM_NO_TRUECOLOR env overrides. Needs a truecolor-capable terminal.
-   {:key :truecolor      :label "Truecolor"      :kind :bool}
+   {:key :truecolor      :label "Truecolor"      :kind :bool :default false}
    ;; :quad off (default) keeps the ▀ half-block; ON packs a 2×2 quadrant
    ;; glyph where the four sub-pixels differ — smoothing the wall SILHOUETTE
    ;; staircase (high-contrast wall/sky edge, the visible win) and adding
    ;; horizontal floor texel detail — collapsing back to the ▀ cell elsewhere
    ;; so flat / far surfaces stay cheap. Only with Sub-pixel on; ANDed with
    ;; PHEL_DOOM_QUAD / PHEL_DOOM_NO_QUAD env overrides. Composes with Truecolor.
-   {:key :quad           :label "Quad detail"    :kind :bool}
+   {:key :quad           :label "Quad detail"    :kind :bool :default false}
    ;; :view-bob (#411) is the walk-cycle head-bob amplitude. 0 (default) =
    ;; off, so the shipped moving look is unchanged; higher nods the whole
    ;; horizon further. Accessibility: a motion-sensitive player leaves it
    ;; at 0. render scales projection/bob-cap by view-bob-intensity of it.
-   {:key :view-bob       :label "View bob"       :kind :pct}
+   {:key :view-bob       :label "View bob"       :kind :pct :default 0}
    ;; :light off (default) keeps the uniform distance shading + byte-identical
    ;; golden frames; ON folds a per-cell room-light bias (#418) into the wall
    ;; shade index so rooms read as dark-vs-lit pools. Cheap per-column lookup;
    ;; the bias grid is derived from the map at load (core/light).
-   {:key :light          :label "Room light"     :kind :bool}])
+   {:key :light          :label "Room light"     :kind :bool :default false}])
+
+(def default-settings
+  "Out-of-the-box options, derived from `page-fields`' `:default`s so the
+   defaults and the page cannot drift apart. Music sits under the sfx (the
+   OST is a bed, not a lead). Minimap starts hidden; difficulty normal.
+   Mouse on by default (FPS-style mouselook, #246), sensitivity 50% (the
+   neutral 1.0x multiplier - see `mouse-sensitivity`)."
+  (reduce (fn [m f] (assoc m (:key f) (:default f))) {} page-fields))
 
 (defn field-count
   "How many rows the settings page has."
@@ -123,6 +121,19 @@
   [d]
   (php/>= (index-of d difficulty-choices) 0))
 
+(defn- coerce-field
+  "One field's value out of a loaded map, coerced by its `:kind`: percent
+   fields clamp to 0..100, bool fields force to a boolean, and an enum
+   falls back to its default when the saved value is not one of its
+   `:choices`. Absent keys take the descriptor's `:default`."
+  [m f]
+  (let [v (get m (:key f) (:default f))]
+    (case (:kind f)
+      :pct  (clamp-pct v)
+      :bool (boolean v)
+      :enum (if (php/>= (index-of v (:choices f)) 0) v (:default f))
+      v)))
+
 (defn coerce-settings
   "Normalise a loaded (or partial) settings map against the defaults:
    clamp the percent fields (volumes + mouse sensitivity) into 0..100,
@@ -132,26 +143,8 @@
    Always returns a complete, valid map, so callers downstream never
    have to re-validate."
   [raw]
-  (let [m (or raw {})
-        d (get m :difficulty (:difficulty default-settings))
-        x (get m :crosshair (:crosshair default-settings))
-        c (get m :colorblind (:colorblind default-settings))]
-    {:music          (clamp-pct (get m :music (:music default-settings)))
-     :sfx            (clamp-pct (get m :sfx (:sfx default-settings)))
-     :minimap        (boolean (get m :minimap (:minimap default-settings)))
-     :difficulty     (if (valid-difficulty? d) d :normal)
-     :crosshair      (if (php/>= (index-of x crosshair-choices) 0) x :cross)
-     :timer          (boolean (get m :timer (:timer default-settings)))
-     :mouse          (boolean (get m :mouse (:mouse default-settings)))
-     :sensitivity    (clamp-pct (get m :sensitivity (:sensitivity default-settings)))
-     :high-contrast  (boolean (get m :high-contrast (:high-contrast default-settings)))
-     :colorblind     (if (php/>= (index-of c colorblind-choices) 0) c :none)
-     :fast-walls     (boolean (get m :fast-walls (:fast-walls default-settings)))
-     :subpixel       (boolean (get m :subpixel (:subpixel default-settings)))
-     :truecolor      (boolean (get m :truecolor (:truecolor default-settings)))
-     :quad           (boolean (get m :quad (:quad default-settings)))
-     :view-bob       (clamp-pct (get m :view-bob (:view-bob default-settings)))
-     :light          (boolean (get m :light (:light default-settings)))}))
+  (let [m (or raw {})]
+    (reduce (fn [acc f] (assoc acc (:key f) (coerce-field m f))) {} page-fields)))
 
 (defn resolve-subpixel
   "Effective startup `:subpixel` (#332). A terminal that draws the ▀

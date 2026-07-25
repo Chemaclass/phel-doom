@@ -1,0 +1,52 @@
+(ns phel-doom-tests.core.level-catalog-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.core.enemies :refer [enemy-types])
+  (:require phel-doom.core.level :refer [config-for num-levels]))
+
+;; ---------------------------------------------------------------------
+;; Every enemy keyword a level config names must exist in the catalog.
+;;
+;; Nothing enforced this. A typo like :baaron survives silently: the
+;; catalog lookup misses, `default-lives-for` falls back to 1, and the
+;; level spawns 1-HP monsters where a boss was intended. Render masks it
+;; a second time - `visuals-for-type` falls back to the imp sprite - so
+;; the mistake reaches a player as a trivially easy level rather than as
+;; any kind of error.
+;;
+;; The fallbacks themselves are correct and stay: removing them would
+;; feed nil into arithmetic, which is worse. This pins the INPUT instead.
+;; ---------------------------------------------------------------------
+
+(defn- enemy-kws-of
+  "Every enemy keyword a level config names: the primary `:enemy` plus
+   any per-spec `:type` in a mixed `:enemies` vector."
+  [cfg]
+  (let [primary (if (:enemy cfg) [(:enemy cfg)] [])
+        specs   (if (vector? (:enemies cfg)) (:enemies cfg) [])]
+    (concat primary (filter some? (map :type specs)))))
+
+(deftest test-every-level-enemy-kw-is-in-the-catalog
+  (loop [n 1]
+    (when (php/<= n num-levels)
+      (let [cfg (config-for n)]
+        (foreach [kw (enemy-kws-of cfg)]
+          (is (contains? enemy-types kw)
+              (str "level " n " names enemy " kw " - must exist in enemy-types"))))
+      (recur (php/+ n 1)))))
+
+(deftest test-every-level-names-at-least-one-enemy
+  ;; A config with no enemy kw at all would spawn the silent default too.
+  (loop [n 1]
+    (when (php/<= n num-levels)
+      (is (php/> (count (enemy-kws-of (config-for n))) 0)
+          (str "level " n " names at least one enemy type"))
+      (recur (php/+ n 1)))))
+
+(deftest test-catalog-entries-carry-the-stats-spawning-reads
+  ;; default-lives-for reads :default-lives; a catalog entry missing it
+  ;; hits the same `(or ... 1)` fallback from the other direction.
+  (foreach [kw (keys enemy-types)]
+    (is (some? (get-in enemy-types [kw :default-lives]))
+        (str (name kw) " has :default-lives"))
+    (is (some? (get-in enemy-types [kw :name]))
+        (str (name kw) " has :name"))))

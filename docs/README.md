@@ -65,7 +65,7 @@ src/io/                      ; side effects
   settings.phel              options load/save (JSON)
   savegame.phel              game state save/load
   music.phel                 background OST loop
-  demo.phel                  attract mode
+  demo.phel                  --record / --demo run capture + replay
   wad.phel                   WAD parser
 tests/                       ; unit tests (mirrors src/)
 ```

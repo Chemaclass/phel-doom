@@ -42,7 +42,7 @@ clean: ## drop build artifacts and caches
 
 # ---------------------------------------------------------------------
 # Docker — for hosts without PHP / Composer locally. The image
-# bundles PHP 8.4 CLI + Composer + project deps; targets here are
+# bundles PHP 8.5 CLI + Composer + project deps; targets here are
 # 1-line wrappers around `docker run --rm`. Host-PHP targets above
 # stay the inner-loop default — Docker per-command adds ~1s overhead.
 # Pass DOCKER_IMG=... to point at a custom tag (defaults to phel-doom).

@@ -147,5 +147,20 @@
     (is (= nil (savestring->world (with-world (php/array "$m" "nope")))) "world mistagged")
     (is (= nil (savestring->world (with-world (php/array "$k" "imp")))) "world is a keyword")))
 
+(deftest test-load-rejects-nested-malformed-map-payload
+  ;; decode recurses, so the top-level guard is not enough: a nested
+  ;; ["$m", <non-array>] used to reach php/array_keys and throw a TypeError
+  ;; out of the play loop, with the terminal still in raw mode.
+  (let [nested (fn [inner]
+                 (let [o (php/array)
+                       w (php/array)]
+                   (php/aset w "a" inner)
+                   (php/aset o "version" save-version)
+                   (php/aset o "world" (php/array "$m" w))
+                   (php/json_encode o)))]
+    (is (= nil (:a (savestring->world (nested (php/array "$m" 5))))) "nested $m over an int")
+    (is (= nil (:a (savestring->world (nested (php/array "$m" "x"))))) "nested $m over a string")
+    (is (= nil (:a (savestring->world (nested (php/array "$m" nil))))) "nested $m over null")))
+
 (deftest test-save-version-is-pinned
   (is (= 1 save-version)))

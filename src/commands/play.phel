@@ -442,8 +442,12 @@
 ;; § Per-frame IO + stats
 ;; =====================================================================
 
-(defn- frame-stats
-  "Snapshot of `world` + per-frame timing the render layer needs."
+(defn frame-stats
+  "Snapshot of `world` + per-frame timing the render layer needs: the
+   render DTO. Public so tests can pin the contract that every
+   render-facing setting is actually projected here - a settings row that
+   render reads off `stats` but this fn never writes is a toggle that does
+   nothing, which is how :truecolor and :quad shipped inert."
   [world fps frame-ms]
   {:fps         fps
    :frame-ms    frame-ms
@@ -561,7 +565,13 @@
    :bob-phase            (or (:bob-phase world) 0.0)
    ;; Room lighting (#418): OFF by default. When on, render folds the
    ;; world's derived :light-grid into the wall shade index.
-   :light                (boolean (:light (:settings world)))})
+   :light                (boolean (:light (:settings world)))
+   ;; Truecolor + Quad detail: OFF by default. render ANDs each with its
+   ;; PHEL_DOOM_* env override. Both ship as options-page rows, so without
+   ;; these two projections the player can toggle them and nothing happens -
+   ;; only the env forces reached the renderer.
+   :truecolor            (boolean (:truecolor (:settings world)))
+   :quad                 (boolean (:quad (:settings world)))})
 
 (defn- ms-since
   "Whole-millisecond delta between two microtime samples. Args tagged
@@ -1284,6 +1294,20 @@
     -1
     (php/max 0 (php/intval raw))))
 
+(defn- teardown!
+  "Give the terminal and the OS back: stop the music process, drop any
+   demo session, and restore cooked mode / the main screen / the cursor.
+   Both session entry points run this from a `finally`, so it must stay
+   safe to call after a partial startup - each step is a no-op when the
+   thing it undoes was never started.
+
+   Order matters: the music process is killed before `restore!` swallows
+   pending input, so a still-running player cannot outlive the session."
+  []
+  (music/stop-music!)
+  (demo/reset-off!)
+  (restore!))
+
 (defn- run-play [ctx]
   (let [diff-raw    (cli/opt ctx "difficulty")
         god?        (cli/opt ctx "god")
@@ -1335,7 +1359,7 @@
           replay  (demo/start-replay! (:seed replay) (:frames replay))
           record? (demo/start-record! init-seed)
           :else   (demo/reset-off!))
-        (let [played?
+        (let [outcome
               ;; Raw mode, the alternate screen, the hidden cursor and mouse
               ;; capture are process-global: without the finally, a throw
               ;; anywhere in the loop leaves the player's shell unusable.
@@ -1345,7 +1369,7 @@
                 ;; goes through the start menu, which may edit + persist them.
                 (let [menu (if replay settings0 (show-start-menu! settings0))]
                   (if (= menu :quit)
-                    false
+                    {:played? false :recorded? true}
                     (let [settings menu
                           diff     (resolve-difficulty diff-raw settings)]
                       (clear-screen)
@@ -1354,17 +1378,23 @@
                       (music/start-music!)
                       (run-levels diff god? armory? full-map? nil lv init-seed settings
                                   max-rows max-cols)
-                      (when record? (demo/save-recording! record-path))
-                      true)))
+                      ;; Carry the write result out of the try: reporting it in
+                      ;; here would print into the alternate screen, which the
+                      ;; teardown below wipes a moment later.
+                      {:played?   true
+                       :recorded? (or (not record?) (demo/save-recording! record-path))})))
                 (finally
-                  (music/stop-music!)
-                  (demo/reset-off!)
-                  (restore!)))]
+                  (teardown!)))]
           (clear-screen)
-          (when played?
-            (cli/success ctx "Thanks for playing.")
-            (print-credits))
-          0)))))
+          (if (:recorded? outcome)
+            (do (when (:played? outcome)
+                  (cli/success ctx "Thanks for playing.")
+                  (print-credits))
+                0)
+            ;; A lost recording is a total failure of what the player asked
+            ;; for, so it exits non-zero like an unreadable --demo path.
+            (do (cli/error ctx (str "Could not write the demo recording to " record-path))
+                1)))))))
 
 (defn run-demo-session
   "Menu-less tech-talk showcase run for `phase` (1..num-phases). Forces
@@ -1386,13 +1416,15 @@
     (demo/reset-off!)
     (clear-screen)
     (when audio? (music/start-music!))
-    ;; god + armory (own every weapon, ammo refilled to :armory-reserve
-    ;; = 99 each tick by combat/tick-armory) + full-map. The phase stamps
-    ;; :show-map true so the corner minimap is visible by default.
-    (run-levels :normal true true true phase 1 (rng/fresh-seed) settings0 0 0)
-    (music/stop-music!)
-    (demo/reset-off!)
-    (restore!)
+    ;; Same teardown guarantee as run-play: a throw inside run-levels must
+    ;; not leave raw mode / the alt screen / the hidden cursor behind.
+    (try
+      ;; god + armory (own every weapon, ammo refilled to :armory-reserve
+      ;; = 99 each tick by combat/tick-armory) + full-map. The phase stamps
+      ;; :show-map true so the corner minimap is visible by default.
+      (run-levels :normal true true true phase 1 (rng/fresh-seed) settings0 0 0)
+      (finally
+        (teardown!)))
     (clear-screen)
     (cli/success ctx (str "Demo phase " phase " - thanks for watching."))
     0))

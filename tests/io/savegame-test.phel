@@ -130,5 +130,22 @@
   (is (= nil (savestring->world "not json at all")))
   (is (= nil (savestring->world ""))))
 
+(deftest test-load-rejects-version-valid-but-malformed-world
+  ;; The version check alone let these through: a missing / null world
+  ;; decoded to a truthy gridless stub, and a scalar or vector world threw
+  ;; out of the play loop. Contract is nil for all of them.
+  (let [with-world (fn [v]
+                     (let [o (php/array)]
+                       (php/aset o "version" save-version)
+                       (when (not (= v :absent)) (php/aset o "world" v))
+                       (php/json_encode o)))]
+    (is (= nil (savestring->world (with-world :absent))) "world key absent")
+    (is (= nil (savestring->world (with-world nil))) "world null")
+    (is (= nil (savestring->world (with-world 42))) "world scalar")
+    (is (= nil (savestring->world (with-world "nope"))) "world string")
+    (is (= nil (savestring->world (with-world (php/array)))) "world empty array")
+    (is (= nil (savestring->world (with-world (php/array "$m" "nope")))) "world mistagged")
+    (is (= nil (savestring->world (with-world (php/array "$k" "imp")))) "world is a keyword")))
+
 (deftest test-save-version-is-pinned
   (is (= 1 save-version)))

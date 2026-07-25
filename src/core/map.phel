@@ -134,8 +134,9 @@
     (or (= cell-switch-off c) (= cell-switch-on c))))
 
 (defn switch-on?
-  "True when (x, y) holds an activated switch. Render uses this to
-   pick the lit minimap glyph."
+  "True when (x, y) holds an activated switch. Not currently wired to
+   render - the minimap matches the raw cell code inline - so this is
+   the named predicate for callers outside the paint loop."
   [grid x y]
   (= cell-switch-on (cell grid x y)))
 
@@ -305,6 +306,25 @@
       lock
       nil)))
 
+(defn- flood-reachable
+  "Seen-set (php-array keyed \"x:y\") of every `cell-floor` reachable from
+   (sx, sy) by 4-way BFS. The mutable queue + set stay local, so callers
+   stay pure. Consumes no rng."
+  [grid sx sy]
+  (let [seen (php/array)
+        q    (php/array (php/array sx sy))]
+    (php/aset seen (str sx ":" sy) true)
+    (loop [i 0]
+      (when (php/< i (php/count q))
+        (let [c (php/aget q i) cx (php/aget c 0) cy (php/aget c 1)]
+          (foreach [d [[1 0] [-1 0] [0 1] [0 -1]]]
+            (let [nx (php/+ cx (get d 0)) ny (php/+ cy (get d 1)) k (str nx ":" ny)]
+              (when (and (= cell-floor (cell grid nx ny)) (php/=== nil (php/aget seen k)))
+                (php/aset seen k true)
+                (php/array_push q (php/array nx ny))))))
+        (recur (php/+ i 1))))
+    seen))
+
 (defn place-exit
   "Drop exactly ONE exit door (`cell-door`) at a RANDOM wall cell reachable
    from `spawn`, so every level/run gets a different exit the player has to
@@ -318,22 +338,7 @@
   [grid [sx sy]]
   (let [h    (count grid)
         w    (count (first grid))
-        spx  (php/intval sx)
-        spy  (php/intval sy)
-        seen (php/array)
-        q    (php/array (php/array spx spy))]
-    (php/aset seen (str spx ":" spy) true)
-    ;; Flood the floor reachable from spawn (BFS over a mutable php-array
-    ;; queue + seen-set; both stay local so the fn is still pure given rng).
-    (loop [i 0]
-      (when (php/< i (php/count q))
-        (let [c (php/aget q i) cx (php/aget c 0) cy (php/aget c 1)]
-          (foreach [d [[1 0] [-1 0] [0 1] [0 -1]]]
-            (let [nx (php/+ cx (get d 0)) ny (php/+ cy (get d 1)) k (str nx ":" ny)]
-              (when (and (= cell-floor (cell grid nx ny)) (php/=== nil (php/aget seen k)))
-                (php/aset seen k true)
-                (php/array_push q (php/array nx ny))))))
-        (recur (php/+ i 1))))
+        seen (flood-reachable grid (php/intval sx) (php/intval sy))]
     ;; Any wall touching the reachable floor is a candidate - border edge or
     ;; interior pillar alike - so the exit can land anywhere accessible.
     (let [reached? (fn [x y] (php/=== true (php/aget seen (str x ":" y))))
@@ -403,18 +408,7 @@
   [grid sx sy]
   (let [w    (count (first grid))
         h    (count grid)
-        seen (php/array)
-        q    (php/array (php/array sx sy))]
-    (php/aset seen (str sx ":" sy) true)
-    (loop [i 0]
-      (when (php/< i (php/count q))
-        (let [c (php/aget q i) cx (php/aget c 0) cy (php/aget c 1)]
-          (foreach [d [[1 0] [-1 0] [0 1] [0 -1]]]
-            (let [nx (php/+ cx (get d 0)) ny (php/+ cy (get d 1)) k (str nx ":" ny)]
-              (when (and (= cell-floor (cell grid nx ny)) (php/=== nil (php/aget seen k)))
-                (php/aset seen k true)
-                (php/array_push q (php/array nx ny))))))
-        (recur (php/+ i 1))))
+        seen (flood-reachable grid sx sy)]
     (loop [y 0 g grid]
       (if (php/>= y h)
         g

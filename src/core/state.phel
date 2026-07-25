@@ -187,10 +187,9 @@
     :berserks        []
     :invuln-secs     0.0
     :invulns         []
-   ;; Backpack stacking (issue #68 part 3). `:backpack-level` 0..N
-   ;; replaces the old boolean. Effective reserve cap is `base * (1 +
-   ;; level)` so each pickup adds one base's worth. Capped at
-   ;; `max-backpacks` so reserve growth has a known ceiling.
+   ;; Backpack stacking (#68). `:backpack-level` is 0..N; effective
+   ;; reserve cap is `base * (1 + level)`, so each pickup adds one
+   ;; base's worth. Capped at `max-backpacks` for a known ceiling.
     :backpack-level  0
     :backpacks       []
    ;; Keycards. :held-keys is a set of collected colour kws
@@ -213,9 +212,8 @@
    ;; hitscan, render paints the `+` at (:aim-col, :aim-row). nil = centred
    ;; (mouse off / not yet placed): combat then offsets 0 and render draws
    ;; at screen centre, so a fresh / mouse-off world stays byte-identical to
-   ;; the pre-#324 centre-aim. The play loop stamps concrete cells from
-   ;; controls/mouse-aim while the mouse is on and resets them to nil on a
-   ;; resize or when the mouse is off (see reset-reticle).
+   ;; the pre-#324 centre-aim. The play loop re-centres these every frame
+   ;; (see reset-reticle); nothing currently stamps a concrete cell.
     :aim-col        nil
     :aim-row        nil
     :weapon         :pistol
@@ -255,9 +253,10 @@
 
 (defn backpack-level
   "Current backpack stack count on `world`. Reads `:backpack-level`
-   directly when present; falls back to translating the legacy
-   `:backpack?` boolean (true = 1, false = 0) so older fixtures /
-   tests / carried-over fields keep working."
+   when present, else translates a `:backpack?` boolean (true = 1).
+   That second branch guards hand-built test fixtures only:
+   `new-world` always stamps the int and no save format carries the
+   boolean. Presence is `some?`, not truthiness - 0 is a real level."
   [world]
   (let [lvl (:backpack-level world)]
     (cond
@@ -375,24 +374,13 @@
   [world dtheta]
   (assoc-in world [:player :angle] (+ (:angle (:player world)) dtheta)))
 
-(defn set-reticle
-  "Place the movable aim crosshair (#324) at viewport cell `(col, row)`:
-   combat reads `:aim-col` to steer the off-centre hitscan and render
-   paints the `+` there. The play loop calls this each frame the mouse is
-   on with the reticle position controls/mouse-aim returned. A nil col/row
-   centres that axis (see reset-reticle), so passing the mouse-aim result
-   straight through keeps a no-dims / no-pointer frame centred."
-  [world col row]
-  (assoc world :aim-col col :aim-row row))
-
 (defn reset-reticle
   "Centre the movable aim crosshair (#324) by clearing `:aim-col` /
    `:aim-row` to nil. nil is the centred sentinel both consumers honour:
    combat's `aim-angle-offset` returns 0 (fire dead ahead) and render's
-   `paint-crosshair` draws at screen centre. The play loop calls this when
-   the mouse is OFF and on a terminal resize (the old absolute cell coords
-   stop meaning the same screen spot under a new size), so keyboard-only
-   play and every mouse-off frame behave exactly like the pre-#324 centre
-   aim."
+   `paint-crosshair` draws at screen centre. The play loop calls this
+   unconditionally every frame: the crosshair is fixed dead-centre under
+   #324 mouselook, so the mouse contributes the camera turn and never a
+   reticle cell (see play.phel's tick, and `aim-angle-offset`)."
   [world]
   (assoc world :aim-col nil :aim-row nil))

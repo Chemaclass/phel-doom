@@ -150,8 +150,8 @@
                        (= style :off)  (if mouse? "·" nil)
                        :else           "+")
         glyph    (cond kill? "✗" hit? "×" :else idle)
-        ;; Idle: bold bright-white (NOT the old faint `2`, which read as a
-        ;; translucent smudge against the busy half-block floor). Firing:
+        ;; Idle: bold bright-white. A faint (SGR 2) reticle reads as a
+        ;; translucent smudge against the busy half-block floor. Firing:
         ;; bold bright-yellow as a muzzle-kick flash, paired with the
         ;; one-row jump above. center-bg keeps the underlying cell colour
         ;; as the glyph's background so the reticle still sits in the scene.
@@ -353,6 +353,15 @@
        (php/>= vh 9)
        (php/<= (php// mag mag-size) reload-reminder-frac)))
 
+(defn- centred-chip
+  ;; ANSI string placing `text` centred on `vw` at `row`, wrapped in
+  ;; `sgr` and closed with a reset. Returns the string (never takes the
+  ;; parts buffer) so no php-array crosses a fn boundary.
+  [^int vw ^int row sgr text]
+  (str "\e[" row ";"
+       (php/max 1 (php/- (php/intdiv vw 2) (php/intdiv (php/strlen text) 2)))
+       "H" sgr text "\e[0m"))
+
 (defn paint-reload-reminder
   "Steady 'press R to RELOAD' nag above the gun when the player is
    sitting on a near-empty mag with reserve to spare. Visibility is
@@ -366,12 +375,9 @@
         click    (or (get stats :empty-click-secs) 0.0)
         gt       (or (get stats :game-time) 0.0)]
     (when (reload-reminder-visible? mag mag-size reserve cd click gt vh)
-      (let [text  " press R to RELOAD "
-            label (str "\e[40;38;5;226;1m" text "\e[0m")
-            col   (php/max 1 (php/- (php/intdiv vw 2)
-                                    (php/intdiv (php/strlen text) 2)))
-            row   (php/max 3 (php/- vh 8))]
-        (buf-push parts (str "\e[" row ";" col "H" label)))))
+      (let [row (php/max 3 (php/- vh 8))]
+        (buf-push parts (centred-chip vw row "\e[40;38;5;226;1m"
+                                      " press R to RELOAD ")))))
   parts)
 
 (defn paint-save-flash
@@ -382,11 +388,8 @@
   (let [secs (or (get stats :save-flash-secs) 0.0)
         msg  (get stats :save-flash-msg)]
     (when (and (php/> secs 0.0) msg (php/>= vh 5))
-      (let [text  (str " " msg " ")
-            label (str "\e[48;5;22;38;5;231;1m" text "\e[0m")
-            col   (php/max 1 (php/- (php/intdiv vw 2)
-                                    (php/intdiv (php/strlen text) 2)))]
-        (buf-push parts (str "\e[3;" col "H" label)))))
+      (buf-push parts (centred-chip vw 3 "\e[48;5;22;38;5;231;1m"
+                                    (str " " msg " ")))))
   parts)
 
 (defn paint-reload-ready
@@ -397,12 +400,8 @@
   [parts stats vw vh]
   (let [secs (or (get stats :reload-ready-secs) 0.0)]
     (when (and (php/> secs 0.0) (php/>= vh 9))
-      (let [text  " READY! "
-            label (str "\e[40;92;1m" text "\e[0m")
-            col   (php/max 1 (php/- (php/intdiv vw 2)
-                                    (php/intdiv (php/strlen text) 2)))
-            row   (php/max 3 (php/- vh 8))]
-        (buf-push parts (str "\e[" row ";" col "H" label)))))
+      (let [row (php/max 3 (php/- vh 8))]
+        (buf-push parts (centred-chip vw row "\e[40;92;1m" " READY! ")))))
   parts)
 
 (def stamina-bar-cells
@@ -480,11 +479,9 @@
         ;; rendered with white halo spaces around it on iTerm2 /
         ;; Ghostty whose default BG is light).
         ;; +pack chip shows the stack count beyond level 1: e.g. a
-        ;; player with 2 backpacks reads `+pack x2`. Issue #68 part 3
-        ;; switched the boolean to a stacking int; the label keeps
-        ;; backward-compatible appearance for the single-pack case.
-        bp-lvl     (or (get stats :backpack-level)
-                       (if (get stats :backpack?) 1 0))
+        ;; player with 2 backpacks reads `+pack x2`. A single pack keeps
+        ;; the plain `+pack` label.
+        bp-lvl     (or (get stats :backpack-level) 0)
         pack       (cond
                      (php/<= bp-lvl 0)  ""
                      (php/=== bp-lvl 1) "\e[40m \e[40;33;1m+pack\e[40;97m"
@@ -539,10 +536,8 @@
   [parts ^float t stats vw secs-key label sgr ^int row ^float freq]
   (let [secs (or (get stats secs-key) 0.0)]
     (when (php/> secs 0.0)
-      (let [text (str " " label " " (php/intval (php/ceil secs)) "s ")
-            col  (php/max 1 (php/- (php/intdiv vw 2)
-                                   (php/intdiv (php/strlen text) 2)))]
-        (buf-push parts (str "\e[" row ";" col "H" sgr text "\e[0m")))))
+      (buf-push parts (centred-chip vw row sgr
+                                    (str " " label " " (php/intval (php/ceil secs)) "s ")))))
   parts)
 
 (defn paint-berserk-badge
@@ -579,11 +574,8 @@
                       " -- CLICK -- press R to reload "
                       " -- CLICK --   OUT OF AMMO   ")
             sgr     (if (php/> reserve 0) "\e[40;38;5;226;1m" "\e[40;38;5;196;1m")
-            label   (str sgr text "\e[0m")
-            col     (php/max 1 (php/- (php/intdiv vw 2)
-                                      (php/intdiv (php/strlen text) 2)))
             row     (php/max 3 (php/- vh 7))]
-        (buf-push parts (str "\e[" row ";" col "H" label))))
+        (buf-push parts (centred-chip vw row sgr text))))
     parts))
 
 (defn paint-heartbeat-vignette

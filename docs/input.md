@@ -21,6 +21,8 @@ Kitty-enabled terminals (kitty, WezTerm, Ghostty, Alacritty >= 0.13, iTerm2 >= 3
 
 `restore!` reverses: `\e[<u\e[?1003l\e[?1006l` (pop kitty flags + disable mouse reporting; the `restore-prelude` constant) + `\e[?25h\e[?7h\e[?1049l` + `stty sane`. The mouse-disable is always sent (idempotent / harmless even if the mouse was never enabled).
 
+The session runs inside a `try` whose `finally` calls `restore!` (with `stop-music!` + `reset-off!`), so a throw anywhere in the loop still hands the terminal back cooked. The exception itself is not swallowed - it propagates once teardown has run.
+
 `drain-keys` reads up to `drain-bytes` (512) per frame, sized so a fast mouse drag's burst of ~12-byte SGR reports isn't truncated mid-sequence.
 
 ## Reading input

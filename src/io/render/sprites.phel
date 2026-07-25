@@ -232,8 +232,8 @@
            (let [col  (:col proj)
                  d    (:dist proj)
                  ;; LOD: use the Freedoom item sprite whenever it would
-                 ;; render at >= 2 rows (any usable size). The old 7-row
-                 ;; guard caused quads at typical gameplay distances (d>1.8).
+                 ;; render at >= 2 rows. A higher floor falls back to
+                 ;; quads at typical gameplay distances (d>1.8).
                  ;; ph = min(16, 55% of projected height) gives a compact
                  ;; billboard that sits low in the world; both bounds scale
                  ;; by pd/proj-dist so pixel-doubled scenes match on-screen.
@@ -308,9 +308,11 @@
 
 (defn build-blood-cols
   "Directional blood mask: per-column intensity in [0, 1]. Non-zero
-   only when iframes active AND a hurt-side is set. Fades from 1.0
-   at the screen edge that took the hit toward 0 at the centre.
-   Exported so tests can pin the falloff behaviour."
+   only when iframes active AND the hit came from `:left` or `:right`.
+   Fades from 1.0 at the screen edge that took the hit toward 0 at the
+   centre. `attacker-side` also yields `:front` / `:back`, which have no
+   screen edge to drip down (the hit vignette shows those bearings), so
+   they mask to 0. Exported so tests can pin the falloff behaviour."
   [vw bloody? hurt-side]
   (let [m  (buf-mk)
         w  (php/max 1 (php/min 20 (php/intdiv vw 3)))
@@ -319,10 +321,11 @@
       (when (php/< c vw)
         (buf-set m c
                  (cond
-                   (not sd)           0.0
-                   (php/=== sd :left) (php/max 0.0 (php/- 1.0 (php// (php/* 1.0 c) w)))
-                   :else              (php/max 0.0
-                                               (php/- 1.0
-                                                      (php// (php/* 1.0 (php/- (php/- vw 1) c)) w)))))
+                   (not sd)            0.0
+                   (php/=== sd :left)  (php/max 0.0 (php/- 1.0 (php// (php/* 1.0 c) w)))
+                   (php/=== sd :right) (php/max 0.0
+                                                (php/- 1.0
+                                                       (php// (php/* 1.0 (php/- (php/- vw 1) c)) w)))
+                   :else               0.0))
         (recur (php/+ c 1))))
     m))

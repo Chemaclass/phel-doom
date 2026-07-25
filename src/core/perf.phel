@@ -1,32 +1,40 @@
 (ns phel-doom.core.perf)
 
 ;; ---------------------------------------------------------------------
-;; Frame cadence + render scale.
+;; Frame-loop tuning constants: the cadence the loop aims for, how large
+;; the render area may be, and how much detail it draws.
 ;;
-;; Both are now UNIFORM across every terminal size. The old "big-screen
-;; perf mode" (a width/area threshold that dropped wide terminals to
-;; 30fps and a chunky 2× render-scale) is gone:
-;;   - cadence: the 30fps cap was artificial — capable hardware was
-;;     pinned to 30fps for no reason, and slow hardware already floored
-;;     at min-yield-us. See `standard-frame-us`.
-;;   - scale: wide terminals now render crisp 1:1 walls instead of
-;;     replicated 2× pairs.
-;; `cast-frame` still accepts a `scale` argument (replication capability
-;; is intact), it is just always called with 1.
+;; Two independent scale knobs live here; they are easy to confuse:
+;;   - render scale (`standard-scale` / `render-scale`) — rays cast per
+;;     output column. Fixed at 1 (exact 1:1, crisp walls) at every
+;;     terminal size. `cast-frame`'s replication path is still live, but
+;;     the pixel-doubled renderer reaches it by passing 2 directly (see
+;;     io/render/main.phel), not through `render-scale`.
+;;   - pixel scale (`big-screen?` / `auto-pixel-scale`) — how large a
+;;     terminal block one scene cell paints. Picked from a MEASURED
+;;     full-detail frame cost, and only on terminals past the big-screen
+;;     area threshold. This is how wide terminals hold their framerate:
+;;     by drawing fewer, larger cells, never by casting fewer rays.
+;;
+;; Cadence (`standard-frame-us` / `target-frame-us`) is likewise uniform
+;; at every size, and is a ceiling rather than a floor: framerate tracks
+;; render capability below it, and the loop's own sleep floors at
+;; `min-yield-us` (see commands/play.phel).
+;;
+;; `cap-dims` is the unrelated third axis: explicit `--max-cols` /
+;; `--max-rows` user caps on the drawn area.
 ;; ---------------------------------------------------------------------
 
 (def standard-frame-us
   "Cadence target (µs) for one game-loop iteration — ~120fps, at EVERY
-   terminal size. Big screens used to drop to ~30fps, but that was an
-   artificial ceiling: on hardware fast enough to render a wide-terminal
-   frame inside this budget the player was still pinned to 30fps, and on
-   hardware too slow to make it the per-iteration sleep already floors
-   at `min-yield-us`. Framerate now tracks render capability up to this
-   120fps ceiling and degrades naturally below it. Raised from the prior
-   60fps (16667) cap because measured hardware renders 97-222fps
-   uncapped; every per-frame input timing knob (hold counters, mouse
-   edge-pan) was converted to seconds/second-rate units first so this
-   raise doesn't halve stop-latency or double turn speed."
+   terminal size. A ceiling, not a guarantee: framerate tracks render
+   capability up to it and degrades naturally below it, where the
+   per-iteration sleep floors at `min-yield-us` instead. Measured
+   hardware renders 97-222fps uncapped, so on a fast machine this
+   ceiling is the binding constraint. Every per-frame input timing knob
+   (hold counters, mouse edge-pan) is expressed in seconds / per-second
+   rates, so this value can move without changing stop-latency or turn
+   speed."
   8333)
 
 (def standard-scale
@@ -37,17 +45,17 @@
 (defn target-frame-us
   "Microsecond cadence target for one game-loop iteration: a uniform
    ~120fps at every terminal size (see `standard-frame-us`). Takes the
-   live dimensions so the call site stays stable, but the budget no
-   longer varies by size."
+   live dimensions so the call site stays stable; the budget does not
+   vary by size."
   [^int cols ^int rows]
   standard-frame-us)
 
 (defn render-scale
-  "Horizontal render-scale factor consumed by `cast-frame`. A uniform
-   1 (exact 1:1 cast) at every terminal size — wide terminals render
-   crisp walls rather than the chunky 2× pairs the old perf mode used.
-   Takes the live dimensions so the call site stays stable, but the
-   factor no longer varies by size."
+  "Horizontal render-scale factor consumed by `cast-frame`: a uniform 1
+   (exact 1:1 cast, one ray per output column) at every terminal size.
+   Takes the live dimensions so the call site stays stable; the factor
+   does not vary by size. Wide terminals adapt through
+   `auto-pixel-scale`, not by casting fewer rays."
   [^int cols ^int rows]
   standard-scale)
 

@@ -43,6 +43,12 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Enemy counts rebalanced by room size + threat weight (HP x per-hit damage): L5 no longer stacks five boss-tier cyberdemons (now 2 + imp fodder) that out-gunned the L10 boss; sparse large halls (L4, L6, L9) populated so difficulty ramps smoothly. L1 + L10 untouched.
 - L2 demon room no longer a bare box: scatters random interior wall pillars (`:walls`) for cover + per-run variety, pocket-sealed into one connected region with a single exit on a random reachable wall (no dead-ends).
 - Sub-pixel auto-off on macOS Terminal.app (#332): Apple Terminal draws `▀` with row seams, so startup defaults Sub-pixel off on `Apple_Terminal` until the player saves a choice; the in-game toggle and `PHEL_DOOM_SUBPIXEL=1` still force it on.
+- **View bob** and **Room light** now persist across launches. Both settings were on the options page but missing from the two hand-written key lists in the save/load code, so they silently reverted to their defaults on the next start. Load and save (and their round-trip test) are now driven off `page-fields`, so a newly added setting cannot be dropped again.
+- Directional blood no longer lies about where a hit came from: `attacker-side` yields `:front` / `:back` as well as `:left` / `:right`, but the blood mask only discriminated `:left`, so being hit from dead ahead or from behind drew blood on the **right** screen edge. Front/back hits now show no edge drip (the hit vignette still shows the bearing).
+- Quick-load rejects a corrupt save instead of loading a broken world: a save whose `world` payload was missing, null or the wrong shape passed the version check and either grafted a grid-less world onto the live session (flashing "LOADED") or threw out of the play loop with the terminal still in raw mode.
+- A malformed `--demo` file is rejected up front rather than replayed as `[nil nil]` frames, and an unreadable `--demo` path now fails with a message and a non-zero exit instead of silently starting a normal interactive run.
+- The terminal is always restored: raw mode, the alternate screen, the hidden cursor and mouse capture are torn down in a `finally`, so a crash mid-run no longer leaves the player's shell unusable (the error still propagates).
+- The start menu clamps to the terminal height like every other menu box, instead of painting past its bottom border on terminals shorter than ~15 rows.
 
 ## [0.16.0] - 2026-06-27
 

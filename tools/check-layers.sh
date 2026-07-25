@@ -8,7 +8,7 @@ set -uo pipefail
 
 # A missing/renamed dir would make grep exit non-zero, which the `if`s below read
 # as "no violation" - silently disarming the guard. Fail loud on a restructure.
-for d in src/core src/glue; do
+for d in src/core src/glue src/demo; do
   [ -d "$d" ] || { echo "check-layers: expected directory $d not found (restructure?)"; exit 2; }
 done
 
@@ -21,6 +21,13 @@ fi
 
 if grep -rnE --include='*.phel' 'phel-doom\.(io|commands|demo)' src/glue/; then
   echo "LAYERING VIOLATION: src/glue/ must not reference io/ or the orchestration layer (see above)."
+  fail=1
+fi
+
+# demo/ is pure phase transforms over core/ (commands/demo.phel drives it), so it
+# sits with glue/: it may reference core/ + glue/, never io/ or commands/.
+if grep -rnE --include='*.phel' 'phel-doom\.(io|commands)' src/demo/; then
+  echo "LAYERING VIOLATION: src/demo/ must not reference io/ or commands/ (see above)."
   fail=1
 fi
 

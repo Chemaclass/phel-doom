@@ -91,18 +91,31 @@
     (php/aset o "frames" fa)
     (php/json_encode o)))
 
+(defn- decode-frame
+  "One recorded `[keys ms]` pair, or nil when the element is not a
+   scalar-pair. A demo path is user-supplied, so a `\"frames\": [1, 2, 3]`
+   file parses fine and would otherwise yield `[nil nil]` pairs whose nil
+   `ms` reaches the loop's dt arithmetic."
+  [p]
+  (when (and (php/is_array p)
+             (php/=== 2 (php/count p))
+             (php/is_scalar (php/aget p 0))
+             (php/is_numeric (php/aget p 1)))
+    [(php/aget p 0) (php/aget p 1)]))
+
 (defn json->demo
   "Pure: parse a demo JSON string into {:seed :frames}, or nil on a
-   version mismatch / malformed input."
+   version mismatch / malformed input (including a frame that is not a
+   `[keys ms]` pair)."
   [s]
   (let [d (php/json_decode s true)]
-    (if (and (php/is_array d)
-             (php/=== demo-version (php/aget d "version"))
-             (php/is_array (php/aget d "frames")))
-      {:seed   (php/aget d "seed")
-       :frames (mapv (fn [p] [(php/aget p 0) (php/aget p 1)])
-                     (php/aget d "frames"))}
-      nil)))
+    (when (and (php/is_array d)
+               (php/=== demo-version (php/aget d "version"))
+               (php/is_array (php/aget d "frames")))
+      (let [frames (mapv decode-frame (php/aget d "frames"))]
+        (when (not (some nil? frames))
+          {:seed   (php/intval (php/aget d "seed"))
+           :frames frames})))))
 
 ;; --- file IO --------------------------------------------------------
 

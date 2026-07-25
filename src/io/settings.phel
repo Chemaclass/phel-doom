@@ -1,5 +1,5 @@
 (ns phel-doom.io.settings
-  (:require phel-doom.core.settings :refer [coerce-settings default-settings resolve-subpixel])
+  (:require phel-doom.core.settings :refer [coerce-settings default-settings page-fields resolve-subpixel])
   (:require phel-doom.io.input :refer [terminal-program halfblock-seams?]))
 
 ;; ---------------------------------------------------------------------
@@ -12,6 +12,12 @@
 ;; The pure shape + validation lives in core/settings (coerce-settings);
 ;; this layer only reads / writes the file and converts the enum fields
 ;; (difficulty / crosshair / colorblind) to / from their JSON string form.
+;;
+;; Both directions iterate core/settings/page-fields rather than listing
+;; the keys again: a hand-written list here silently stopped persisting
+;; :view-bob (#411) and :light (#418) when they were added to the page.
+;; The JSON key is the field keyword's name; :enum fields store the bare
+;; keyword name ("normal", not ":normal").
 ;; ---------------------------------------------------------------------
 
 (defn- settings-path []
@@ -28,6 +34,17 @@
   (if (php/array_key_exists key arr)
     (php/aget arr key)
     fallback))
+
+(defn- decode-field
+  "One page field's value out of the decoded JSON array, keyword-ising
+   the :enum kinds and falling back to its default when absent."
+  [data field]
+  (let [k    (:key field)
+        json (name k)
+        dflt (get default-settings k)]
+    (if (= :enum (:kind field))
+      (keyword (read-from data json (name dflt)))
+      (read-from data json dflt))))
 
 (defn- subpixel-force-on?
   "PHEL_DOOM_SUBPIXEL=1 forces sub-pixel ON, overriding the macOS
@@ -65,20 +82,9 @@
               (let [data (php/json_decode content true)]
                 (if (php/is_array data)
                   [(coerce-settings
-                    {:music          (read-from data "music"   (:music default-settings))
-                     :sfx            (read-from data "sfx"      (:sfx default-settings))
-                     :minimap        (read-from data "minimap"  (:minimap default-settings))
-                     :difficulty     (keyword (read-from data "difficulty"     "normal"))
-                     :crosshair      (keyword (read-from data "crosshair"      "cross"))
-                     :timer          (read-from data "timer"          (:timer default-settings))
-                     :mouse          (read-from data "mouse"          (:mouse default-settings))
-                     :sensitivity    (read-from data "sensitivity"    (:sensitivity default-settings))
-                     :high-contrast  (read-from data "high-contrast"  (:high-contrast default-settings))
-                     :colorblind     (keyword (read-from data "colorblind"     "none"))
-                     :fast-walls     (read-from data "fast-walls" (:fast-walls default-settings))
-                     :subpixel       (read-from data "subpixel" (:subpixel default-settings))
-                     :truecolor      (read-from data "truecolor" (:truecolor default-settings))
-                     :quad           (read-from data "quad" (:quad default-settings))})
+                    (reduce (fn [acc f] (assoc acc (:key f) (decode-field data f)))
+                            {}
+                            page-fields))
                    (php/array_key_exists "subpixel" data)]
                   [(coerce-settings default-settings) false]))))
           [(coerce-settings default-settings) false])]
@@ -94,19 +100,8 @@
   ;; on disk always valid, matching what load-settings will accept back.
   (let [s   (coerce-settings settings)
         arr (php/array)]
-    (php/aset arr "music"          (:music s))
-    (php/aset arr "sfx"            (:sfx s))
-    (php/aset arr "minimap"        (:minimap s))
-    (php/aset arr "difficulty"     (name (:difficulty s)))
-    (php/aset arr "crosshair"      (name (:crosshair s)))
-    (php/aset arr "timer"          (:timer s))
-    (php/aset arr "mouse"          (:mouse s))
-    (php/aset arr "sensitivity"    (:sensitivity s))
-    (php/aset arr "high-contrast"  (:high-contrast s))
-    (php/aset arr "colorblind"     (name (:colorblind s)))
-    (php/aset arr "fast-walls"     (:fast-walls s))
-    (php/aset arr "subpixel"       (:subpixel s))
-    (php/aset arr "truecolor"      (:truecolor s))
-    (php/aset arr "quad"           (:quad s))
+    (foreach [f page-fields]
+      (let [v (get s (:key f))]
+        (php/aset arr (name (:key f)) (if (= :enum (:kind f)) (name v) v))))
     (php/file_put_contents (settings-path) (php/json_encode arr))
     s))

@@ -6,7 +6,7 @@ IO shell + pure per-frame transition. `src/commands/play.phel`.
 
 Four lifecycle layers:
 
-1. **`run-play`**: setup / start-menu / run-levels / cleanup. Only function with terminal restore responsibility.
+1. **`run-play`**: setup / start-menu / run-levels / cleanup. Only function with terminal restore responsibility, and it discharges it in a `finally` so a throw mid-run cannot leave the terminal in raw mode.
 2. **`show-start-menu!`**: polling loop until player starts or quits. Redraws each frame so terminal resize works.
 3. **`run-levels`**: level loop carrying lives + kills + time. On death/victory, writes score + shows end screen. `r` restarts with fresh seed; `R` replays same seed.
 4. **`game-loop world0`**: one level. Per-frame: render / drain input / tick-world / decide (continue / death / door / quit).

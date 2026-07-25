@@ -29,7 +29,7 @@
                                           read-perf-snapshot scene-rows
                                           render-start-menu render-settings!
                                           render-death-screen render-victory-screen])
-  (:require phel-doom.io.input    :refer [init-input! restore! drain-keys rearm-mouse! terminal-program pointer-limit-notice]))
+  (:require phel-doom.io.input    :refer [init-input! restore! drain-keys rearm-mouse! terminal-program pointer-limit-notice install-signal-handlers! interrupted?]))
 
 ;; ---------------------------------------------------------------------
 ;; The play subcommand wires together:
@@ -863,7 +863,11 @@
             (cond
             ;; Quitting straight from the pause/settings page still
             ;; persists edits (q never hits the resume transition).
-              (or (:end? frame) (str/contains? keys "q"))
+              ;; interrupted? also runs the pending-signal dispatch, so this
+              ;; is the one frame checkpoint where SIGINT / SIGTERM lands.
+              ;; Quitting here unwinds through run-play's finally, so a
+              ;; Ctrl-C restores the terminal exactly like pressing q.
+              (or (:end? frame) (str/contains? keys "q") (interrupted?))
               (do (when (:paused world) (persist-settings! world))
                   :quit)
 
@@ -1354,6 +1358,7 @@
         ;; captures the pointer. load-settings is plain file IO, so it is
         ;; safe to run before raw mode is set.
         (init-input! (:mouse settings0))
+        (install-signal-handlers!)
         (apply-audio-settings! settings0)
         (cond
           replay  (demo/start-replay! (:seed replay) (:frames replay))
@@ -1407,6 +1412,7 @@
   ;; Mouse reporting off for the menu-less showcase (#246): a tech-talk
   ;; screencast shouldn't have the terminal capturing the pointer.
   (init-input! false)
+  (install-signal-handlers!)
   (let [settings0 (load-settings)
         ;; Audio only once enemies are in play (phase 3+); the
         ;; raycaster / weapon reveals stay silent. Mirrors the

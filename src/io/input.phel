@@ -141,6 +141,57 @@
    enabled). Split out so the teardown contract is unit-testable."
   (str "\e[<u" mouse-disable))
 
+(def- signals-armed
+  ;; Set by install-signal-handlers! so the per-frame check does not
+  ;; repeat a function_exists lookup on the hot path.
+  (atom false))
+
+(def- interrupt-flag
+  ;; Set by the SIGINT / SIGTERM handler, read at a frame checkpoint. An
+  ;; atom rather than a direct teardown from the handler: doing terminal
+  ;; IO inside a signal handler would race the render write it interrupts.
+  (atom false))
+
+(defn install-signal-handlers!
+  "Ask for SIGINT / SIGTERM to set a quit flag instead of killing the
+   process outright. Ctrl-C is the normal way out of a stuck game, and
+   PHP's `finally` does NOT run on signal death - so without this the one
+   teardown guarantee the session has is bypassed and the player is left
+   with a raw-mode terminal, no cursor and the alternate screen still up.
+
+   Deliberately does NOT enable `pcntl_async_signals`: that makes every
+   write(2) in the render loop EINTR-able, and render does not retry
+   partial writes (see .claude/rules/io-boundaries.md). Delivery happens
+   at the explicit `pcntl_signal_dispatch` in `interrupted?` instead.
+
+   Returns true when handlers were installed; false on a PHP build
+   without ext-pcntl, where behaviour is exactly as it was before."
+  []
+  (if (php/function_exists "pcntl_signal")
+    (let [handler (fn [_signal] (reset! interrupt-flag true))]
+      (php/pcntl_signal php/SIGINT handler)
+      (php/pcntl_signal php/SIGTERM handler)
+      (reset! signals-armed true)
+      true)
+    false))
+
+(defn interrupted?
+  "True once SIGINT / SIGTERM has been received. Runs the pending-signal
+   dispatch itself, so the game loop only has to call this once per frame
+   at a point where returning `:quit` is safe. One cheap userspace call;
+   it does not touch the frame budget."
+  []
+  (when @signals-armed
+    (php/pcntl_signal_dispatch))
+  @interrupt-flag)
+
+(defn reset-interrupt!
+  "Clear the quit flag. For tests, and for a caller that deliberately
+   wants to survive one interrupt."
+  []
+  (reset! interrupt-flag false)
+  nil)
+
 (defn restore!
   "Pop any kitty keyboard flags this session pushed, disable mouse
    reporting, restore cooked terminal mode and leave the alternate

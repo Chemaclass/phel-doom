@@ -1,0 +1,68 @@
+(ns phel-doom-tests.io.signals-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom.io.input :refer [install-signal-handlers! interrupted? reset-interrupt!]))
+
+;; ---------------------------------------------------------------------
+;; Ctrl-C is the normal way out of a stuck game, and PHP's `finally` does
+;; NOT run on signal death - so before this, the session's one teardown
+;; guarantee was bypassed by the most likely exit path and the player got
+;; back a raw-mode terminal with no cursor and the alt screen still up.
+;;
+;; These raise a real SIGINT at the test process, so they exercise
+;; delivery rather than a mock. Handlers must be installed first, or the
+;; default disposition would terminate the run.
+;; ---------------------------------------------------------------------
+
+(defn- pcntl? []
+  (and (php/function_exists "pcntl_signal")
+       (php/function_exists "pcntl_signal_dispatch")
+       (php/function_exists "posix_kill")))
+
+(deftest test-install-reports-whether-pcntl-is-available
+  ;; Never throws on a build without ext-pcntl - it degrades to the old
+  ;; behaviour and says so.
+  (is (= (pcntl?) (boolean (install-signal-handlers!)))))
+
+(deftest test-not-interrupted-before-any-signal
+  (install-signal-handlers!)
+  (reset-interrupt!)
+  (is (= false (interrupted?)) "no signal -> keep playing"))
+
+(deftest test-sigint-sets-the-quit-flag
+  (when (pcntl?)
+    (install-signal-handlers!)
+    (reset-interrupt!)
+    (php/posix_kill (php/getmypid) php/SIGINT)
+    ;; interrupted? runs the dispatch itself, which is the whole point:
+    ;; the loop does not need its own pcntl call at the checkpoint.
+    (is (= true (interrupted?)) "SIGINT -> quit flag set")
+    (reset-interrupt!)))
+
+(deftest test-sigterm-sets-the-quit-flag
+  (when (pcntl?)
+    (install-signal-handlers!)
+    (reset-interrupt!)
+    (php/posix_kill (php/getmypid) php/SIGTERM)
+    (is (= true (interrupted?)) "SIGTERM -> quit flag set")
+    (reset-interrupt!)))
+
+(deftest test-the-process-survives-the-signal
+  ;; The real regression this guards: default SIGINT disposition kills the
+  ;; process. If the handler were not installed, the assertions above
+  ;; would never run and the suite would die mid-file.
+  (when (pcntl?)
+    (install-signal-handlers!)
+    (php/posix_kill (php/getmypid) php/SIGINT)
+    (interrupted?)
+    (reset-interrupt!)
+    (is (= true true) "still running after SIGINT")))
+
+(deftest test-flag-latches-until-reset
+  (when (pcntl?)
+    (install-signal-handlers!)
+    (reset-interrupt!)
+    (php/posix_kill (php/getmypid) php/SIGINT)
+    (is (= true (interrupted?)) "set")
+    (is (= true (interrupted?)) "stays set - the loop may poll more than once")
+    (reset-interrupt!)
+    (is (= false (interrupted?)) "cleared")))

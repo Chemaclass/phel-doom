@@ -24,6 +24,15 @@ if grep -rnE --include='*.phel' 'phel-doom\.(io|commands|demo)' src/glue/; then
   fail=1
 fi
 
+# io/ may use glue/ + core/ but must not reach UP into the orchestration layer.
+# Require-scoped rather than whole-body like the checks above: src/io/sound.phel
+# legitimately names `phel run phel-doom.main play` inside a docstring, and a
+# body-wide grep would read that as an edge.
+if grep -rnE --include='*.phel' '\(:require[[:space:]]+phel-doom\.(commands|main)' src/io/; then
+  echo "LAYERING VIOLATION: src/io/ must not require commands/ or main (see above)."
+  fail=1
+fi
+
 # demo/ is pure phase transforms over core/ (commands/demo.phel drives it), so it
 # sits with glue/: it may reference core/ + glue/, never io/ or commands/.
 if grep -rnE --include='*.phel' 'phel-doom\.(io|commands)' src/demo/; then

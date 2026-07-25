@@ -3,14 +3,9 @@
   (:require phel-doom.io.input :refer [install-signal-handlers! interrupted? reset-interrupt!]))
 
 ;; ---------------------------------------------------------------------
-;; Ctrl-C is the normal way out of a stuck game, and PHP's `finally` does
-;; NOT run on signal death - so before this, the session's one teardown
-;; guarantee was bypassed by the most likely exit path and the player got
-;; back a raw-mode terminal with no cursor and the alt screen still up.
-;;
-;; These raise a real SIGINT at the test process, so they exercise
-;; delivery rather than a mock. Handlers must be installed first, or the
-;; default disposition would terminate the run.
+;; These raise a real SIGINT / SIGTERM at the test process rather than
+;; mocking, so handlers must be installed first - the default disposition
+;; would kill the run.
 ;; ---------------------------------------------------------------------
 
 (defn- pcntl? []
@@ -55,7 +50,24 @@
     (php/posix_kill (php/getmypid) php/SIGINT)
     (interrupted?)
     (reset-interrupt!)
-    (is (= true true) "still running after SIGINT")))
+    (is (= false (interrupted?))
+        "reached this line at all, and the flag cleared")))
+
+(deftest test-delivery-is-synchronous-not-async
+  ;; The invariant .claude/rules/io-boundaries.md actually cares about: a
+  ;; signal must not land at an arbitrary opcode boundary, because that can
+  ;; be mid-render and render does not retry partial writes.
+  ;;
+  ;; This is not the PHP default state - symfony/console turns async ON in
+  ;; the Application constructor (SignalRegistry), and src/main.phel builds
+  ;; the Application at load. So install-signal-handlers! has to turn it
+  ;; back off, and this pins that it does.
+  (when (pcntl?)
+    (php/pcntl_async_signals true)
+    (install-signal-handlers!)
+    (is (= false (php/pcntl_async_signals))
+        "async delivery is off after installing handlers")
+    (reset-interrupt!)))
 
 (deftest test-flag-latches-until-reset
   (when (pcntl?)

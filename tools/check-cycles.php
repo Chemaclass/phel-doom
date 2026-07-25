@@ -15,15 +15,81 @@ declare(strict_types=1);
 // only reachable through an :as alias. Catching it here keeps the failure
 // legible.
 //
-// Reads only the (ns ...) form of each file, so a namespace named inside a
-// docstring or a comment cannot fake an edge.
+// Reads only the (ns ...) form of each file. Both the form scan and the
+// require scan strip `;` comments, `#_` discards and string literals first, so
+// a namespace named in a docstring - or a require commented out to break an
+// import - cannot fake an edge. A file whose ns form cannot be parsed is a hard
+// error rather than a silently dropped node: dropping one would hide every
+// cycle through it.
 
 const SRC_DIR = 'src';
+
+/**
+ * Blank out `;` line comments, `#_` form discards and string bodies, keeping
+ * offsets and newlines intact so paren balancing still works on the result.
+ */
+function stripNonCode(string $code): string
+{
+    $out = $code;
+    $len = strlen($code);
+    $inString = false;
+    for ($i = 0; $i < $len; $i++) {
+        $ch = $code[$i];
+        if ($inString) {
+            if ($ch === '\\' && $i + 1 < $len) {
+                $out[$i] = ' ';
+                $out[$i + 1] = ' ';
+                $i++;
+                continue;
+            }
+            if ($ch === '"') {
+                $inString = false;
+            } else {
+                $out[$i] = ' ';
+            }
+            continue;
+        }
+        if ($ch === '"') {
+            $inString = true;
+        } elseif ($ch === ';') {
+            while ($i < $len && $code[$i] !== "\n") {
+                $out[$i] = ' ';
+                $i++;
+            }
+        } elseif ($ch === '#' && $i + 1 < $len && $code[$i + 1] === '_') {
+            // Discard the next form wholesale, parens and all.
+            $out[$i] = ' ';
+            $out[$i + 1] = ' ';
+            $j = $i + 2;
+            while ($j < $len && ctype_space($code[$j])) {
+                $j++;
+            }
+            $depth = 0;
+            for (; $j < $len; $j++) {
+                if ($code[$j] === '(') {
+                    $depth++;
+                } elseif ($code[$j] === ')') {
+                    $depth--;
+                }
+                $out[$j] = $code[$j] === "\n" ? "\n" : ' ';
+                if ($depth === 0) {
+                    break;
+                }
+            }
+            $i = $j;
+        }
+    }
+    return $out;
+}
 
 /** Extract the leading `(ns ...)` form, balanced on parens outside strings. */
 function nsForm(string $code): string
 {
-    $start = strpos($code, '(ns ');
+    // `(ns` may be followed by any whitespace, including a newline.
+    if (!preg_match('/\(ns\s/', $code, $m, PREG_OFFSET_CAPTURE)) {
+        return '';
+    }
+    $start = $m[0][1];
     if ($start === false) {
         return '';
     }
@@ -68,12 +134,12 @@ function buildGraph(string $dir): array
             fwrite(STDERR, "check-cycles: cannot read {$file->getPathname()}\n");
             exit(2);
         }
-        $ns = nsForm($code);
-        if ($ns === '') {
-            continue;
-        }
-        if (!preg_match('/\(ns\s+([^\s()]+)/', $ns, $m)) {
-            continue;
+        $ns = nsForm(stripNonCode($code));
+        if ($ns === '' || !preg_match('/\(ns\s+([^\s()]+)/', $ns, $m)) {
+            // Dropping a node here would hide every cycle routed through it,
+            // so an unreadable ns form fails the build instead.
+            fwrite(STDERR, "check-cycles: cannot parse an (ns ...) form in {$file->getPathname()}\n");
+            exit(2);
         }
         $from = $m[1];
         preg_match_all('/\(:require\s+([^\s()]+)/', $ns, $deps);

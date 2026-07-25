@@ -142,8 +142,8 @@
   (str "\e[<u" mouse-disable))
 
 (def- signals-armed
-  ;; Set by install-signal-handlers! so the per-frame check does not
-  ;; repeat a function_exists lookup on the hot path.
+  ;; Whether install-signal-handlers! armed anything; interrupted? skips
+  ;; the dispatch when it did not.
   (atom false))
 
 (def- interrupt-flag
@@ -159,10 +159,15 @@
    teardown guarantee the session has is bypassed and the player is left
    with a raw-mode terminal, no cursor and the alternate screen still up.
 
-   Deliberately does NOT enable `pcntl_async_signals`: that makes every
-   write(2) in the render loop EINTR-able, and render does not retry
-   partial writes (see .claude/rules/io-boundaries.md). Delivery happens
-   at the explicit `pcntl_signal_dispatch` in `interrupted?` instead.
+   Also turns `pcntl_async_signals` back OFF. symfony/console switches it
+   ON in the Application constructor (SignalRegistry), which src/main.phel
+   runs at load, so async delivery is already active by the time we get
+   here - it is not the PHP default. Async means a signal lands at an
+   arbitrary opcode boundary including mid-render, which
+   .claude/rules/io-boundaries.md refuses to depend on because render does
+   not retry partial writes. With it off, delivery happens only at the
+   explicit `pcntl_signal_dispatch` in `interrupted?`, which every loop
+   that can be interrupted calls once per frame.
 
    Returns true when handlers were installed; false on a PHP build
    without ext-pcntl, where behaviour is exactly as it was before."
@@ -171,6 +176,7 @@
     (let [handler (fn [_signal] (reset! interrupt-flag true))]
       (php/pcntl_signal php/SIGINT handler)
       (php/pcntl_signal php/SIGTERM handler)
+      (php/pcntl_async_signals false)
       (reset! signals-armed true)
       true)
     false))
@@ -178,8 +184,7 @@
 (defn interrupted?
   "True once SIGINT / SIGTERM has been received. Runs the pending-signal
    dispatch itself, so the game loop only has to call this once per frame
-   at a point where returning `:quit` is safe. One cheap userspace call;
-   it does not touch the frame budget."
+   at a point where returning `:quit` is safe."
   []
   (when @signals-armed
     (php/pcntl_signal_dispatch))

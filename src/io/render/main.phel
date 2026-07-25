@@ -2,13 +2,13 @@
 ;; perf snapshot, and the end / menu screens.
 (ns phel-doom.io.render.main
   (:require phel-doom.io.render.buffer :refer [buf-mk buf-set buf-get buf-push])
-  (:require phel-doom.io.render.palette :refer [sky floor enemy-head enemy-body sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright shade-table shade-code-table shade-table-blood shade-code-table-blood theme-floor-code])
+  (:require phel-doom.io.render.palette :refer [enemy-head enemy-body sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright shade-table shade-code-table shade-table-blood shade-code-table-blood theme-floor-code])
   (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-themed-gradient-codes tex-fade-table tex-fade-tc bg-cell-cache halfblock halfblock-tc paint-bg quadblock build-sky-halfblock build-sky-codes-sub seam-darken-16 seam-darken-8 seam-darken-5 seam-shade! collect-enemy-projs layout pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.wall-texture-data :refer [wall-tex])
   (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type-lod sprite-fade sprite-fade-index sprite-col-x sprite-subcol-x enemy-sprite-cell enemy-sprite-quad])
   (:require phel-doom.io.render.hud :refer [minimap-door-pulse minimap-rows minimap-frame hud-debug-line hud-line-str help-menu-string settings-menu-string pause-menu-string])
   (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-save-flash paint-reload-ready paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-weapon-hud])
-  (:require phel-doom.io.render.sprites :refer [paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols])
+  (:require phel-doom.io.render.sprites :refer [paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols sprites-enabled?])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
   (:require phel-doom.core.map :refer [cell-door cell-door-blue cell-door-red cell-door-boss cell-door-yellow])
   (:require phel-doom.core.combat :refer [fire-extralight fire-anim-seconds])
@@ -45,26 +45,6 @@
 
 ;; =====================================================================
 ;; § Enemy sprite toggle
-;; =====================================================================
-
-(def enemy-sprites-on?
-  "Memoised PHEL_DOOM_NO_SPRITES probe for enemy billboard sprites.
-   Reads the same env var as the weapon sprite toggle so one flag
-   disables all Freedoom bitmaps. nil = not yet probed."
-  (atom nil))
-
-(defn- enemy-sprites-enabled?
-  "Enemy billboard sprites are ON by default. PHEL_DOOM_NO_SPRITES=1
-   forces the legacy glyph path (A/B compare, CI, narrow terminals)."
-  []
-  (let [cached @enemy-sprites-on?]
-    (if (nil? cached)
-      (let [on (not (php/=== "1" (php/getenv "PHEL_DOOM_NO_SPRITES")))]
-        (reset! enemy-sprites-on? on)
-        on)
-      cached)))
-;; =====================================================================
-;; § Wall texture (baked Freedoom WALL70_2)
 ;; =====================================================================
 
 (def wall-tex-px
@@ -1797,7 +1777,7 @@
         ;; way `dists` occludes them behind walls.
         edists                             (buf-mk)
         ;; Per-column billboard sprite buffers. Only written when
-        ;; enemy-sprites-enabled? AND the enemy type resolves to a
+        ;; sprites-enabled? AND the enemy type resolves to a
         ;; baked sprite. The zone pass populates these INSTEAD of
         ;; tops/bots/eheads/ebodys/elegss so the wall extent is
         ;; preserved behind transparent pixels.
@@ -1818,7 +1798,7 @@
         e-sh                               (buf-mk)
         e-fade                             (buf-mk)
         ;; Resolved once per frame — avoids per-column getenv overhead.
-        sprites-on                         (enemy-sprites-enabled?)
+        sprites-on                         (sprites-enabled?)
         blood-paint                        (buf-mk)
         ;; Project + depth-sort enemies once: the zone pass paints them
         ;; back-to-front, then a second pass grounds the shadows reading

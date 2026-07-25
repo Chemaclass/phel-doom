@@ -26,12 +26,18 @@
 ;; change.
 ;; ---------------------------------------------------------------------
 
-;; Seed explicitly: build-world draws from the global rng, so without this
-;; the fixture world depends on how much rng earlier test namespaces
-;; consumed - the hashes below would then hold only for one suite order.
-(rng/seed! 1337)
-
-(def world (mark-visible-cells (build-world 1 5 0 :normal #{:pistol})))
+;; build-world draws from the global rng, so this fixture has to seed to
+;; be reproducible - but seeding at load time would shift the stream for
+;; every other namespace, and the older render goldens build their own
+;; fixtures off whatever stream position they happen to load at. So:
+;; snapshot the generator, seed, build, put the state back. This file is
+;; then deterministic on its own AND invisible to everyone else.
+(def world
+  (let [prev @rng/state]
+    (rng/seed! 1337)
+    (let [w (mark-visible-cells (build-world 1 5 0 :normal #{:pistol}))]
+      (reset! rng/state prev)
+      w)))
 
 (def stats
   {:game-time 1.0 :debug? false :iframes 0.0 :lives 5 :max-lives 5
@@ -46,11 +52,21 @@
    them again - a leaked env var would silently retune every later test in
    the process."
   [vars f]
-  (try
-    (foreach [k vars] (php/putenv (str k "=1")))
-    (f)
-    (finally
-      (foreach [k vars] (php/putenv k)))))
+  (let [prev (php/array)]
+    (foreach [k vars] (php/aset prev k (php/getenv k)))
+    (try
+      (foreach [k vars] (php/putenv (str k "=1")))
+      (f)
+      (finally
+        ;; Restore the exact prior value rather than relying on putenv's
+        ;; unset form: these tests run in the same process as every other
+        ;; render test, and a stuck "1" would silently flip all of them to
+        ;; a low-detail path.
+        (foreach [k vars]
+          (let [was (php/aget prev k)]
+            (if (php/=== false was)
+              (php/putenv k)
+              (php/putenv (str k "=" was)))))))))
 
 (defn- frame-hash [vars stats-overrides cols rows]
   (with-env vars

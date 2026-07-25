@@ -69,6 +69,34 @@
         "async delivery is off after installing handlers")
     (reset-interrupt!)))
 
+(deftest test-a-second-signal-escalates-and-kills
+  ;; Trapping without escalation would make a wedged process (an infinite
+  ;; loop between checkpoints, a hung exec) killable only by `kill -9` -
+  ;; which leaves exactly the wrecked terminal this feature exists to
+  ;; prevent. The second signal must therefore terminate normally.
+  ;;
+  ;; Runs in a subprocess because a passing assertion here would otherwise
+  ;; kill the test runner.
+  (when (pcntl?)
+    (let [script (str (php/sys_get_temp_dir) "/" (php/uniqid "phel-doom-esc-") ".phel")
+          body   (str "(ns esc-probe (:require phel-doom.io.input :as in))\n"
+                      "(in/install-signal-handlers!)\n"
+                      "(php/posix_kill (php/getmypid) php/SIGINT)\n"
+                      "(in/interrupted?)\n"
+                      "(php/posix_kill (php/getmypid) php/SIGINT)\n"
+                      "(php/pcntl_signal_dispatch)\n"
+                      "(println \"REACHED-PAST-SECOND-SIGNAL\")\n")
+          _      (php/file_put_contents script body)
+          out    (php/array)
+          code   (php/array)]
+      (php/exec (str "PHEL_DOOM_SILENT=1 vendor/bin/phel run "
+                     (php/escapeshellarg script) " 2>&1")
+                out code)
+      (php/unlink script)
+      (is (= 130 code) "second SIGINT terminates the process (128 + SIGINT)")
+      (is (php/=== false (php/strpos (php/implode "\n" out) "REACHED-PAST-SECOND-SIGNAL"))
+          "execution does not continue past the second signal"))))
+
 (deftest test-flag-latches-until-reset
   (when (pcntl?)
     (install-signal-handlers!)

@@ -553,20 +553,21 @@
         (update trophy (fn [v] (conj (or v []) at))))))
 
 (defn- pack->level
-  "Coerce a `pack` arg to a backpack stack level. Accepts the legacy
-   boolean (true = level 1) or the new integer level for back-compat
-   with old callers; anything else reads as 0."
+  "Coerce a `pack` arg to a backpack stack level; anything that is not an
+   int reads as 0. NOTE this is not the save-format boundary - the legacy
+   `:backpack?` boolean a pre-#68 save carries is translated by
+   `state/backpack-level`, which is a live read path and must stay. By the
+   time a pack reaches here it has already been through that fn, so it is
+   always an int."
   [pack]
   (cond
-    (boolean? pack)   (if pack 1 0)
     (php/is_int pack) pack
     :else             0))
 
 (defn- maybe-spawn-backpack
   "Stacking backpack (#68 part 3): L2+ only, ~1 in 5 qualifying
-   levels. Skipped once the player is at `max-backpacks`. `pack`
-   accepts the legacy boolean (true = level 1) or the new integer
-   level for back-compat with old callers."
+   levels. Skipped once the player is at `max-backpacks`. `pack` is the
+   player's current stack level (an int)."
   [grid level-num pack]
   (let [lvl (pack->level pack)]
     ;; Both guards short-circuit before the roll, so a capped / too-early
@@ -762,8 +763,7 @@
          render reads per-enemy visuals from the catalog.
 
          `pack-level` (the 3rd positional) is the player's current backpack
-         stack count (0..max-backpacks). Accepts a legacy boolean for
-         back-compat: true coerces to 1, false to 0."
+         stack count (0..max-backpacks), an int."
    :see-also ["new-world" "config-for" "build-grid"]
    :example "(build-world 1 max-lives) ; => world map for level 1"}
   ([level-num lives] (build-world level-num lives 0 :normal #{:pistol}))

@@ -23,6 +23,8 @@ Kitty-enabled terminals (kitty, WezTerm, Ghostty, Alacritty >= 0.13, iTerm2 >= 3
 
 The session runs inside a `try` whose `finally` calls `restore!` (with `stop-music!` + `reset-off!`), so a throw anywhere in the loop still hands the terminal back cooked. The exception itself is not swallowed - it propagates once teardown has run.
 
+`finally` does not run on signal death, so SIGINT and SIGTERM are trapped instead of killing the process: `install-signal-handlers!` sets a quit flag that `interrupted?` reads, and every interruptible loop (game loop, start menu, settings page, end screens) polls it once per frame and returns `:quit`, unwinding through the same teardown as pressing `q`. Delivery is deliberately synchronous - symfony/console enables `pcntl_async_signals` in its `Application` constructor, which would let a signal land mid-render where writes are not retried, so `install-signal-handlers!` turns it back off and relies on the explicit `pcntl_signal_dispatch` in `interrupted?`. A PHP build without ext-pcntl installs nothing and keeps the old behaviour.
+
 `drain-keys` reads up to `drain-bytes` (512) per frame, sized so a fast mouse drag's burst of ~12-byte SGR reports isn't truncated mid-sequence.
 
 ## Reading input

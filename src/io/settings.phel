@@ -90,10 +90,23 @@
           [(coerce-settings default-settings) false])]
     (apply-terminal-defaults coerced saved?)))
 
+(def- write-failed
+  ;; Set by every save-settings! call. A read-only or full HOME makes each
+  ;; menu edit silently revert on the next launch, which is the same class
+  ;; of silent loss as #411/#418 - the caller reports it once at exit.
+  (atom false))
+
+(defn settings-write-failed?
+  "True when the last `save-settings!` could not write the file."
+  []
+  @write-failed)
+
 (defn save-settings!
   "Write `settings` back to the JSON file. Enum fields are stored as
    their bare keyword name (\"normal\", not \":normal\"). Returns the
-   settings so callers can thread it. Swallows write failures."
+   settings so callers can thread it. A failed write is recorded for
+   `settings-write-failed?` rather than thrown: losing the file must not
+   interrupt play, but it must not pass unnoticed either."
   [settings]
   ;; Re-coerce defensively: save-settings! is public, so a caller could
   ;; hand it a partial / out-of-range map. Clamping here keeps the file
@@ -103,5 +116,6 @@
     (foreach [f page-fields]
       (let [v (get s (:key f))]
         (php/aset arr (name (:key f)) (if (= :enum (:kind f)) (name v) v))))
-    (php/file_put_contents (settings-path) (php/json_encode arr))
+    (reset! write-failed
+            (php/=== false (php/file_put_contents (settings-path) (php/json_encode arr))))
     s))

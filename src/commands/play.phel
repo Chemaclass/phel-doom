@@ -15,7 +15,7 @@
   (:require phel-doom.io.sound    :refer [play-sfx! mute-for! set-sfx-scalar!])
   (:require phel-doom.io.music    :as music)
   (:require phel-doom.core.settings :refer [navigate music-volume sfx-scalar mouse-sensitivity view-bob-intensity valid-difficulty? pause-menu-move pause-menu-action])
-  (:require phel-doom.io.settings :refer [load-settings save-settings!])
+  (:require phel-doom.io.settings :refer [load-settings save-settings! settings-write-failed?])
   (:require phel-doom.io.savegame :refer [save-game! load-game])
   (:require phel-doom.io.demo     :as demo)
   (:require phel-doom.demo.phases :as showcase)
@@ -24,7 +24,7 @@
   (:require phel-doom.core.perf     :refer [target-frame-us cap-dims auto-pixel-scale auto-cal-frames])
   (:require phel-doom.core.version  :refer [version])
   (:require phel-doom.core.format   :refer [accuracy-pct run-grade])
-  (:require phel-doom.io.scores   :refer [update-scores!])
+  (:require phel-doom.io.scores   :refer [update-scores! scores-write-failed?])
   (:require phel-doom.io.render   :refer [render! clear-screen
                                           read-perf-snapshot scene-rows
                                           render-start-menu render-settings!
@@ -1401,6 +1401,14 @@
                 (finally
                   (teardown!)))]
           (clear-screen)
+          ;; Reported here, after teardown: a message printed inside the
+          ;; alternate screen is wiped by restore! moments later. Both are
+          ;; persistent conditions (an unwritable HOME), so saying it once
+          ;; on the way out is accurate and reaches a cooked terminal.
+          (when (settings-write-failed?)
+            (cli/error ctx "Could not save settings - your options changes will not persist."))
+          (when (scores-write-failed?)
+            (cli/error ctx "Could not save high scores - this run's bests were not recorded."))
           (if (:recorded? outcome)
             (do (when (:played? outcome)
                   (cli/success ctx "Thanks for playing.")

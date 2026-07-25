@@ -1,7 +1,7 @@
 (ns phel-doom-tests.io.settings-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.settings :as core)
-  (:require phel-doom.io.settings :refer [load-settings save-settings!]))
+  (:require phel-doom.io.settings :refer [load-settings save-settings! settings-write-failed?]))
 
 ;; Round-trip tests run against an isolated temp $HOME so they never
 ;; touch the user's real ~/.phel-doom-settings.json. settings-path reads
@@ -44,6 +44,32 @@
              (is (not (= (get core/default-settings k) (get custom k)))
                  (str (name k) " test value differs from the default"))
              (is (= (get custom k) (get loaded k)) (name k)))))))))
+
+(deftest test-write-failure-is-recorded-not-swallowed
+  ;; An unwritable HOME makes every options edit silently revert on the next
+  ;; launch - the same silent-loss class as the :view-bob / :light bug. The
+  ;; write cannot throw (that would interrupt play), so it has to be
+  ;; observable instead; run-play reports it once after teardown.
+  (with-temp-home
+   (fn []
+     (save-settings! core/default-settings)
+     (is (= false (settings-write-failed?)) "a writable HOME records no failure")
+     (let [dir (php/getenv "HOME")]
+       ;; Remove the file FIRST: writing to an existing file needs no
+       ;; directory write permission, so chmod-ing first would prove nothing.
+       (php/unlink (str dir "/.phel-doom-settings.json"))
+       (php/chmod dir 0500)                       ; read + execute, no write
+       ;; The failing write emits a PHP warning by design (src/ carries no
+       ;; `@` suppression - io-boundaries wants checked returns, not hidden
+       ;; errors). Silence it here so CI output stays readable; the return
+       ;; value is what this test is about.
+       (let [prev (php/error_reporting 0)]
+         (save-settings! core/default-settings)
+         (php/error_reporting prev))
+       (php/chmod dir 0700)                       ; restore so cleanup works
+       (is (= true (settings-write-failed?)) "an unwritable HOME is recorded"))
+     ;; Leave the flag clean for any later test in this process.
+     (save-settings! core/default-settings))))
 
 (deftest test-enum-fields-stored-as-keywords-after-load
   (with-temp-home

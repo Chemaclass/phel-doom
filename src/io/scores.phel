@@ -43,12 +43,24 @@
               empty-scores))))
       empty-scores)))
 
+(def- write-failed
+  ;; Set by every write-scores! call. A run's bests are only worth keeping
+  ;; if they reach disk; an unwritable HOME silently discards every record,
+  ;; so the caller reports it once at exit.
+  (atom false))
+
+(defn scores-write-failed?
+  "True when the last scores write could not reach the file."
+  []
+  @write-failed)
+
 (defn- write-scores! [scores]
   (let [arr (php/array)]
     (php/aset arr "best-kills"        (:best-kills        scores))
     (php/aset arr "best-level"        (:best-level        scores))
     (php/aset arr "fastest-victory-s" (:fastest-victory-s scores))
-    (php/file_put_contents (scores-path) (php/json_encode arr))))
+    (reset! write-failed
+            (php/=== false (php/file_put_contents (scores-path) (php/json_encode arr))))))
 
 (defn merge-run
   "Pure merge: fold a finished run's stats (kills, level, survived-s,

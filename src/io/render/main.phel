@@ -140,6 +140,40 @@
         (recur (php/+ i 1))))
     a))
 
+(def floor-tex-mips
+  "Box-filtered floor texture at 32, 16 and 8 (#462), keyed by edge
+   length, with the native 64 alongside - the floor twin of
+   `wall-tex-mips`, built from the contrast-softened `floor-tex-px` so
+   each level keeps the soften semantics rather than re-deriving them."
+  (let [m32 (half-mip {:w wall-tex-size :h wall-tex-size :px floor-tex-px})
+        m16 (half-mip m32)
+        m8  (half-mip m16)]
+    {64 floor-tex-px
+     32 (:px m32)
+     16 (:px m16)
+     8  (:px m8)}))
+
+(defn floor-mip-size
+  "Edge length of the floor-texture level to sample at perpendicular
+   ground distance `d` (#462).
+
+   The floor is sampled by wrapping world coordinates into the texture,
+   so a screen cell at distance d covers roughly d times the world span
+   one at distance 1 does - which means the texel density under a far
+   row climbs linearly with d. Same 3x / 6x / 24x oversampling ladder
+   the wall and sprite levels use, expressed in that distance.
+
+   `filter?` false pins 64, which makes every downstream expression
+   identical to the literal math it replaced."
+  [^bool filter? ^float d]
+  (if (not filter?)
+    wall-tex-size
+    (cond
+      (php/>= d 24.0) 8
+      (php/>= d 6.0)  16
+      (php/>= d 3.0)  32
+      :else           64)))
+
 (def door-tex-px
   "Procedural 64×64 amber metal door texture (flat row-major xterm-256
    colour-cube codes), sampled by the same per-cell (u, v) path as the
@@ -835,7 +869,7 @@
    e-stop e-sbot e-sx e-sxr e-spx e-sw e-sh e-fade                         ; sprite window
    sprites-on bp-trc                                                       ; sprite/blood flags
    wsub-top wsub-bot wsub-mix wsub-skylim wsub-floorfrom                   ; wall sub-sample
-   floor-flat? tex-fade-table bg-cell-cache                                ; fog + bg cache
+   floor-flat? texmip? tex-fade-table bg-cell-cache                        ; fog + bg cache
    ;; seam group: consumed only via the non-hygienic `seam-shade!` macro
    ;; (frame_math.phel) which captures these by name - not "unused".
    floor-code-at seam-darken-16 seam-darken-8 seam-darken-5                ; seam shading (via seam-shade!)
@@ -867,6 +901,18 @@
             ffade1         (php/aget tex-fade-table (php/aget floor-level-sub s4b))
             ffade2         (php/aget tex-fade-table (php/aget floor-level-sub s4c))
             ffade3         (php/aget tex-fade-table (php/aget floor-level-sub s4d))
+            ;; Floor texture level per SUB-ROW (#462): distance is
+            ;; row-constant, so the level and its array are resolved once
+            ;; per row here rather than per cell. Filter off -> 64 and
+            ;; every index below is the literal math it always was.
+            fsz0           (floor-mip-size texmip? dp0)
+            fsz1           (floor-mip-size texmip? dp1)
+            fsz2           (floor-mip-size texmip? dp2)
+            fsz3           (floor-mip-size texmip? dp3)
+            fpx0           (get floor-tex-mips fsz0)
+            fpx1           (get floor-tex-mips fsz1)
+            fpx2           (get floor-tex-mips fsz2)
+            fpx3           (get floor-tex-mips fsz3)
             sky-r2         (buf-get sky-gradient r2)
             blood-sky-r2   (if blood-sky-gradient (buf-get blood-sky-gradient r2) nil)
             flr-r2         (buf-get floor-gradient r2)
@@ -937,18 +983,18 @@
                         fy2 (php/+ pfy (php/* dp2 fdy))
                         fx3 (php/+ pfx (php/* dp3 fdx))
                         fy3 (php/+ pfy (php/* dp3 fdy))
-                        tc0 (php/aget floor-tex-px
-                                      (php/+ (php/* (php/intval (php/* (php/- fy0 (php/floor fy0)) 64)) 64)
-                                             (php/intval (php/* (php/- fx0 (php/floor fx0)) 64))))
-                        tc1 (php/aget floor-tex-px
-                                      (php/+ (php/* (php/intval (php/* (php/- fy1 (php/floor fy1)) 64)) 64)
-                                             (php/intval (php/* (php/- fx1 (php/floor fx1)) 64))))
-                        tc2 (php/aget floor-tex-px
-                                      (php/+ (php/* (php/intval (php/* (php/- fy2 (php/floor fy2)) 64)) 64)
-                                             (php/intval (php/* (php/- fx2 (php/floor fx2)) 64))))
-                        tc3 (php/aget floor-tex-px
-                                      (php/+ (php/* (php/intval (php/* (php/- fy3 (php/floor fy3)) 64)) 64)
-                                             (php/intval (php/* (php/- fx3 (php/floor fx3)) 64))))]
+                        tc0 (php/aget fpx0
+                                      (php/+ (php/* (php/intval (php/* (php/- fy0 (php/floor fy0)) fsz0)) fsz0)
+                                             (php/intval (php/* (php/- fx0 (php/floor fx0)) fsz0))))
+                        tc1 (php/aget fpx1
+                                      (php/+ (php/* (php/intval (php/* (php/- fy1 (php/floor fy1)) fsz1)) fsz1)
+                                             (php/intval (php/* (php/- fx1 (php/floor fx1)) fsz1))))
+                        tc2 (php/aget fpx2
+                                      (php/+ (php/* (php/intval (php/* (php/- fy2 (php/floor fy2)) fsz2)) fsz2)
+                                             (php/intval (php/* (php/- fx2 (php/floor fx2)) fsz2))))
+                        tc3 (php/aget fpx3
+                                      (php/+ (php/* (php/intval (php/* (php/- fy3 (php/floor fy3)) fsz3)) fsz3)
+                                             (php/intval (php/* (php/- fx3 (php/floor fx3)) fsz3))))]
                     (php/aset pack-reg 0
                               (php/+ (php/* (php/+ (php/* (php/+ (php/* (php/aget ffade0 tc0) 256)
                                                                  (php/aget ffade1 tc1))
@@ -1208,7 +1254,7 @@
    e-stop e-sbot e-sx e-sxr e-spx e-sw e-sh e-fade                         ; sprite window
    sprites-on bp-trc                                                       ; sprite/blood flags
    wsub-top wsub-bot wsub-mix wsub-skylim wsub-floorfrom                   ; wall sub-sample
-   floor-flat? tex-fade-table bg-cell-cache                                ; fog + bg cache
+   floor-flat? texmip? tex-fade-table bg-cell-cache                        ; fog + bg cache
    sky-hb tex-on? subpixel? quad? flat-walltex?                            ; px1 render-mode flags
    floor-dperp floor-level                                                 ; floor-cast (whole-row)
    mini-col0 mini-row-lo mini-row-hi                                       ; minimap window
@@ -1244,6 +1290,15 @@
             flr-fade-top  (php/aget ftab (php/aget floor-level-sub s-top))
             flr-fade-bot  (php/aget ftab (php/aget floor-level-sub s-bot))
             dp-cell       (buf-get floor-dperp row)
+            ;; Floor texture level per row (#462), resolved once here
+            ;; because the distance is row-constant. Off -> 64, and the
+            ;; indices below are the literal math they always were.
+            fszt          (floor-mip-size texmip? dpt)
+            fszb          (floor-mip-size texmip? dpb)
+            fszc          (floor-mip-size texmip? dp-cell)
+            fpxt          (get floor-tex-mips fszt)
+            fpxb          (get floor-tex-mips fszb)
+            fpxc          (get floor-tex-mips fszc)
             flr-fade-cell (php/aget ftab (buf-get floor-level row))]
         (loop [col 0 prev nil run 0]
           (if (php/>= col vw)
@@ -1320,10 +1375,10 @@
                                   fxtr (php/+ pfx (php/* dpt fdxr)) fytr (php/+ pfy (php/* dpt fdyr))
                                   fxbl (php/+ pfx (php/* dpb fdxl)) fybl (php/+ pfy (php/* dpb fdyl))
                                   fxbr (php/+ pfx (php/* dpb fdxr)) fybr (php/+ pfy (php/* dpb fdyr))
-                                  ftl  (php/aget flr-fade-top (php/aget floor-tex-px (php/+ (php/* (php/intval (php/* (php/- fytl (php/floor fytl)) 64)) 64) (php/intval (php/* (php/- fxtl (php/floor fxtl)) 64)))))
-                                  ftr  (php/aget flr-fade-top (php/aget floor-tex-px (php/+ (php/* (php/intval (php/* (php/- fytr (php/floor fytr)) 64)) 64) (php/intval (php/* (php/- fxtr (php/floor fxtr)) 64)))))
-                                  fbl  (php/aget flr-fade-bot (php/aget floor-tex-px (php/+ (php/* (php/intval (php/* (php/- fybl (php/floor fybl)) 64)) 64) (php/intval (php/* (php/- fxbl (php/floor fxbl)) 64)))))
-                                  fbr  (php/aget flr-fade-bot (php/aget floor-tex-px (php/+ (php/* (php/intval (php/* (php/- fybr (php/floor fybr)) 64)) 64) (php/intval (php/* (php/- fxbr (php/floor fxbr)) 64)))))]
+                                  ftl  (php/aget flr-fade-top (php/aget fpxt (php/+ (php/* (php/intval (php/* (php/- fytl (php/floor fytl)) fszt)) fszt) (php/intval (php/* (php/- fxtl (php/floor fxtl)) fszt)))))
+                                  ftr  (php/aget flr-fade-top (php/aget fpxt (php/+ (php/* (php/intval (php/* (php/- fytr (php/floor fytr)) fszt)) fszt) (php/intval (php/* (php/- fxtr (php/floor fxtr)) fszt)))))
+                                  fbl  (php/aget flr-fade-bot (php/aget fpxb (php/+ (php/* (php/intval (php/* (php/- fybl (php/floor fybl)) fszb)) fszb) (php/intval (php/* (php/- fxbl (php/floor fxbl)) fszb)))))
+                                  fbr  (php/aget flr-fade-bot (php/aget fpxb (php/+ (php/* (php/intval (php/* (php/- fybr (php/floor fybr)) fszb)) fszb) (php/intval (php/* (php/- fxbr (php/floor fxbr)) fszb)))))]
                               (php/aset cell-reg 0
                                         (if (if (php/=== ftl ftr) (php/=== fbl fbr) false)
                                           (hb ftl fbl)
@@ -1339,20 +1394,20 @@
                                   fyt (php/+ pfy (php/* dpt fdy))
                                   fxb (php/+ pfx (php/* dpb fdx))
                                   fyb (php/+ pfy (php/* dpb fdy))
-                                  txt (php/intval (php/* (php/- fxt (php/floor fxt)) 64))
-                                  tyt (php/intval (php/* (php/- fyt (php/floor fyt)) 64))
-                                  txb (php/intval (php/* (php/- fxb (php/floor fxb)) 64))
-                                  tyb (php/intval (php/* (php/- fyb (php/floor fyb)) 64))
-                                  tct (php/aget floor-tex-px (php/+ (php/* tyt 64) txt))
-                                  tcb (php/aget floor-tex-px (php/+ (php/* tyb 64) txb))]
+                                  txt (php/intval (php/* (php/- fxt (php/floor fxt)) fszt))
+                                  tyt (php/intval (php/* (php/- fyt (php/floor fyt)) fszt))
+                                  txb (php/intval (php/* (php/- fxb (php/floor fxb)) fszb))
+                                  tyb (php/intval (php/* (php/- fyb (php/floor fyb)) fszb))
+                                  tct (php/aget fpxt (php/+ (php/* tyt fszt) txt))
+                                  tcb (php/aget fpxb (php/+ (php/* tyb fszb) txb))]
                               (php/aset cell-reg 0
                                         (hb (php/aget flr-fade-top tct)
                                             (php/aget flr-fade-bot tcb)))))
                           (let [fx (php/+ pfx (php/* dp-cell (buf-get floordxs col)))
                                 fy (php/+ pfy (php/* dp-cell (buf-get floordys col)))
-                                tx (php/intval (php/* (php/- fx (php/floor fx)) 64))
-                                ty (php/intval (php/* (php/- fy (php/floor fy)) 64))
-                                tc (php/aget floor-tex-px (php/+ (php/* ty 64) tx))]
+                                tx (php/intval (php/* (php/- fx (php/floor fx)) fszc))
+                                ty (php/intval (php/* (php/- fy (php/floor fy)) fszc))
+                                tc (php/aget fpxc (php/+ (php/* ty fszc) tx))]
                             (php/aset cell-reg 0
                                       (paint-bg (php/aget flr-fade-cell tc))))))
                           ;; Glyph-mode enemy zones (sprite mode skips so
@@ -2269,13 +2324,18 @@
           ;; the seam-cell mixer calls this only for the few sub-rows that
           ;; fall below a wall bottom inside a boundary cell.
           floor-code-at       (fn [^int sub ^int col]
-                                (let [dp (php/aget floor-dperp-sub sub)
-                                      fx (php/+ pfx (php/* dp (buf-get floordxs col)))
-                                      fy (php/+ pfy (php/* dp (buf-get floordys col)))]
+                                (let [dp  (php/aget floor-dperp-sub sub)
+                                      fx  (php/+ pfx (php/* dp (buf-get floordxs col)))
+                                      fy  (php/+ pfy (php/* dp (buf-get floordys col)))
+                                      ;; Same level the row's own floor
+                                      ;; samples use (#462), so a seam
+                                      ;; cell never mixes a filtered floor
+                                      ;; against an unfiltered neighbour.
+                                      fsz (floor-mip-size texmip? dp)]
                                   (php/aget (php/aget tex-fade-table (php/aget floor-level-sub sub))
-                                            (php/aget floor-tex-px
-                                                      (php/+ (php/* (php/intval (php/* (php/- fy (php/floor fy)) 64)) 64)
-                                                             (php/intval (php/* (php/- fx (php/floor fx)) 64)))))))
+                                            (php/aget (get floor-tex-mips fsz)
+                                                      (php/+ (php/* (php/intval (php/* (php/- fy (php/floor fy)) fsz)) fsz)
+                                                             (php/intval (php/* (php/- fx (php/floor fx)) fsz)))))))
           ;; frame-constant: floor-tex-on? does not change within a frame,
           ;; so floor-flat? is hoisted here out of both per-row let bindings
           ;; (px1 dotimes row + px2 dotimes r2) to avoid recomputing it vh
@@ -2315,7 +2375,7 @@
                             e-stop e-sbot e-sx e-sxr e-spx e-sw e-sh e-fade
                             sprites-on bp-trc
                             wsub-top wsub-bot wsub-mix wsub-skylim wsub-floorfrom
-                            floor-flat? tex-fade-table bg-cell-cache
+                            floor-flat? texmip? tex-fade-table bg-cell-cache
                             floor-code-at seam-darken-16 seam-darken-8 seam-darken-5
                             hits cap-sr cap-scl cap-bot? cap-right?
                             mini-scol0 mini-srow-lo mini-srow-hi)
@@ -2329,7 +2389,7 @@
                             e-stop e-sbot e-sx e-sxr e-spx e-sw e-sh e-fade
                             sprites-on bp-trc
                             wsub-top wsub-bot wsub-mix wsub-skylim wsub-floorfrom
-                            floor-flat? tex-fade-table bg-cell-cache
+                            floor-flat? texmip? tex-fade-table bg-cell-cache
                             sky-hb tex-on? subpixel? quad? flat-walltex?
                             floor-dperp floor-level
                             mini-col0 mini-row-lo mini-row-hi

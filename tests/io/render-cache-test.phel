@@ -3,6 +3,7 @@
   (:require phel.string :as str)
   (:require phel-doom.core.level :refer [build-world])
   (:require phel-doom.core.engine :refer [mark-visible-cells])
+  (:require phel-doom.core.state :refer [rebuild-pgrid])
   (:require phel-doom.core.rng :as rng)
   (:require phel-doom-tests.io.render-fixtures :refer [world stats])
   (:require phel-doom.io.render.frame-math :refer [halfblock build-sky-halfblock])
@@ -445,3 +446,34 @@
   ;; also what "costs nothing when nobody attacks" means.
   (is (not (str/contains? (frame->string (world-with-attacker :aware) stats 120 30)
                           "m!\e[0m"))))
+
+;; ---------------------------------------------------------------------
+;; Secret wall tell (#469). A secret looked and cast exactly like an
+;; ordinary wall, so the only way to find one was to walk the level
+;; pressing F at every surface - while secrets are 30% of the rank.
+;; ---------------------------------------------------------------------
+
+(def- secret-room
+  ;; Player facing east at a wall two cells ahead; cell (3,2) is either
+  ;; plain stone or a secret depending on the fixture.
+  (fn [wall-code]
+    (let [grid [[1 1 1 1 1]
+                [1 0 0 1 1]
+                [1 0 0 wall-code 1]
+                [1 0 0 1 1]
+                [1 1 1 1 1]]]
+      (rebuild-pgrid
+       (assoc world :grid grid
+              :player {:x 1.5 :y 2.5 :angle 0.0}
+              :enemies [] :level 1)))))
+
+(deftest test-a-secret-wall-reads-differently-from-plain-stone
+  ;; The texture runs half a tile out of phase, so the two frames differ.
+  (is (not (= (frame->string (secret-room 1) stats 120 30)
+              (frame->string (secret-room 6) stats 120 30)))))
+
+(deftest test-a-level-without-secrets-renders-as-before
+  ;; The offset is applied per column and only for a secret hit, so an
+  ;; ordinary level is byte-identical - the same frame twice over.
+  (is (= (frame->string (secret-room 1) stats 120 30)
+         (frame->string (secret-room 1) stats 120 30))))

@@ -164,6 +164,12 @@ Plain stone walls are sampled from the baked Freedoom flat `wall-tex` (WALL70_2,
 
 The boss door and blood-band columns are NOT textured (`tex-level = -1`): they keep their flat shade so the boss nav glyph / the red hit-wash stay clean. `PHEL_DOOM_FLAT_WALLS=1` forces flat-shaded stone (and the striped flat door).
 
+## Secret wall tell (issue #469)
+
+A secret wall's column samples the stone texture with a half-tile `u` offset (`secret-tex-offset` 32 of 64), so the pattern runs visibly out of phase with the walls beside it - Doom's own misaligned-texture cue. Visible when you look for it, invisible when you do not.
+
+Secrets otherwise looked and cast exactly like ordinary walls, so the only way to find one was to walk the level pressing F at every surface, while secrets are worth 30% of the run rank. Nothing about the cast or the collision changes: a secret still reads as solid until it is opened. Per column, in the setup loop, and only when the hit cell is a secret - a level without one renders byte-identically.
+
 ## Textured doors
 
 Door columns (unlocked + keycard-locked, map cells 2/3/4/9) run through the same texture path as the stone walls, sampling `door-tex-px` instead of `wall-tex-px` - `compute-wall-shades` stores the per-column texel array in a `tex-px` buffer, so the hot loops bind one extra aget and stay texture-agnostic. The texture is a procedural 64x64 amber metal door baked at load: dark rust border + red-rust frame ring, six vertical planks (alternating amber fills, highlight/shadow edges, dark grooves) split by a horizontal mid rail - the classic two-panel DOOM door silhouette, scaled by perspective like any texture.

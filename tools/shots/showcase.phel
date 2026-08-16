@@ -1,0 +1,83 @@
+;; One frame with every on-screen feature lit at once, for eyeballing
+;; changes to the renderer (tools/frame-shot.sh). Deterministic: fixed
+;; seed, hand-placed enemies, one of them mid-windup.
+;;
+;;   tools/frame-shot.sh tools/shots/showcase.phel /tmp/showcase.png
+(ns phel-doom-shots.showcase
+  (:require phel-doom.core.rng :as rng)
+  (:require phel-doom.core.level :refer [build-world])
+  (:require phel-doom.core.enemy :refer [new-enemy])
+  (:require phel-doom.core.weapons :refer [weapon-spec])
+  (:require phel-doom.core.engine :refer [mark-visible-cells])
+  (:require phel-doom.io.render.main :refer [frame->string]))
+
+(def cols 160)
+(def rows 40)
+
+(rng/seed! 1337)
+(def base (build-world 3 10 0 :normal #{:pistol :shotgun :chaingun}))
+(def grid (:grid base))
+
+(defn- open? [x y] (= 0 (get (get grid y) x)))
+
+;; First cell with a long clear run east, so the staged enemies are all
+;; in frame at flattering depths.
+(def spot
+  (let [w (count (first grid))
+        h (count grid)]
+    (loop [y 1]
+      (if (>= y (- h 1))
+        [2 2]
+        (let [hit (loop [x 1]
+                    (cond
+                      (>= x (- w 8))                                        nil
+                      (and (open? x y) (open? (+ x 2) y) (open? (+ x 5) y)) x
+                      :else                                                 (recur (+ x 1))))]
+          (if hit [hit y] (recur (+ y 1))))))))
+
+(def sx (+ 0.5 (first spot)))
+(def sy (+ 0.5 (second spot)))
+
+(def world
+  (-> base
+      (assoc :player {:x sx :y sy :angle 0.0})
+      ;; The near cacodemon is mid-windup: attack pose (#463) + the `!`
+      ;; telegraph (#457) both render off its :attacking state.
+      (assoc :enemies [(assoc (new-enemy (+ sx 2.6) (- sy 0.45) 3 :caco) :state :attacking)
+                       (new-enemy (+ sx 4.2) (+ sy 0.7) 2 :demon)
+                       (new-enemy (+ sx 4.8) (+ sy 1.7) 1 :imp)])
+      (assoc :weapon :shotgun) (assoc :mag 4) (assoc :ammo-reserve 12)
+      (assoc :show-map true) (assoc :kills 7) (assoc :intro-secs 0.0)
+      ;; Without this the minimap is all fog and shows nothing at all.
+      (mark-visible-cells)))
+
+(def spec (weapon-spec world))
+
+(def stats
+  {:fps 60 :frame-ms 4.2 :kills 7 :lives 8 :armor 2 :max-lives 10
+   :iframes 0.0 :fire-anim 0.0 :fire-anim-duration 0.25 :intro-secs 0.0
+   :flash-secs 0.0 :fx nil :paused false :sound-on true :level 3
+   :level-name "the warrens" :hurt-side nil :streak 0 :heat 0.0 :jam-secs 0.0
+   :heartbeat-phase 0.0 :flicker-active-secs 0.0 :scare-secs 0.0
+   :blood-drops [] :door-face-active-secs 0.0 :game-time 184.0 :debug? false
+   :perf-stats nil :weapon :shotgun :weapon-name (get spec :name)
+   :palette (get spec :palette) :mag 4 :mag-size (get spec :mag-size)
+   :ammo-reserve 12 :reload-cooldown 0.0
+   :reload-duration (get spec :reload-duration) :empty-click-secs 0.0
+   :berserk-secs 0.0 :invuln-secs 0.0 :backpack-level 2 :difficulty :nightmare
+   :god? false :help? false :game-time-s 184.0 :held-keys #{:blue :red}
+   :door-lock nil :secrets-total 2 :secrets-found 0
+   :locked-door-bump-secs 0.0 :locked-door-bump-colour nil
+   :owned-weapons #{:pistol :shotgun :chaingun} :weapon-state {}
+   :stamina 55.0 :max-stamina 100.0 :sprint-blocked? false
+   :rear-warning? false :enemy :caco :save-flash-secs 0.0 :save-flash-msg nil
+   :settings nil :settings-cursor 0 :hide-weapon? false :hide-level-label? false
+   :run-timer? true
+   ;; Everything that only shows when something just happened.
+   :msg-text "Picked up the BLUE keycard." :msg-secs 1.4   ; #456
+   :hint-secs 9.0                                          ; #467
+   :hostile? true                                          ; #458 (red reticle)
+   :texmip? true})                                         ; #462
+
+(let [argv (php/aget php/$_SERVER "argv")]
+  (php/file_put_contents (php/aget argv 3) (frame->string world stats cols rows)))

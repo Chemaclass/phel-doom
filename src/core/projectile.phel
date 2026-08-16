@@ -1,7 +1,7 @@
 (ns phel-doom.core.projectile
   (:require phel-doom.core.map      :refer [wall?])
   (:require phel-doom.core.enemy-ai :refer [caster-spec])
-  (:require phel-doom.core.combat   :refer [hit-player-at player-immune? hit-damage-for]))
+  (:require phel-doom.core.combat   :refer [distance-volume hit-player-at player-immune? hit-damage-for push-sfx]))
 
 ;; ---------------------------------------------------------------------
 ;; Enemy projectiles (fireballs). Ranged casters (caco, baron) launch a
@@ -90,9 +90,21 @@
                       :enemies (conj (:enemies a) e)}))
                  {:bolts [] :enemies []}
                  enemies)]
-        (-> world
-            (assoc :enemies (:enemies acc))
-            (update :projectiles (fn [ps] (into (or ps []) (:bolts acc)))))))))
+        ;; Launch cue (#460): the bolt itself was silent, so a fireball
+        ;; leaving a caster you were not looking at gave no warning at
+        ;; all. One cue per frame however many fired, attenuated by the
+        ;; nearest launch - a wall of cacodemons is not a wall of noise.
+        (let [spawned (-> world
+                          (assoc :enemies (:enemies acc))
+                          (update :projectiles (fn [ps] (into (or ps []) (:bolts acc)))))
+              nearest (reduce (fn [best b]
+                                (let [dx (php/- (:x b) px)
+                                      dy (php/- (:y b) py)
+                                      d  (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))]
+                                  (if (php/< d best) d best)))
+                              9999.0
+                              (:bolts acc))]
+          (push-sfx spawned :fireball (distance-volume nearest)))))))
 
 (defn step
   "March each bolt one dt-scaled frame along its velocity. Drop a bolt

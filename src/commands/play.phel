@@ -8,7 +8,7 @@
   (:require phel-doom.core.physics  :refer [apply-physics tick-heartbeat tick-blood-drops tick-stamina])
   (:require phel-doom.core.engine   :refer [mark-visible-cells])
   (:require phel-doom.core.pickups :refer [pickup-hearts pickup-armors pickup-ammos pickup-berserks pickup-invulns pickup-soulspheres pickup-armor-shards pickup-backpacks pickup-weapon-pickups pickup-keycards])
-  (:require phel-doom.core.combat :refer [damage-step fire-anim-seconds push-sfx reload reloading? reload-cooldown-seconds target-in-sights? tick-armory tick-shooting])
+  (:require phel-doom.core.combat :refer [damage-step fire-anim-seconds push-sfx reload reloading? reload-cooldown-seconds distance-volume sight-sfx-for target-in-sights? tick-armory tick-shooting])
   (:require phel-doom.core.enemy    :refer [advance tick-scare rear-attacker?])
   (:require phel-doom.core.projectile :refer [tick-projectiles tick-tracers])
   (:require phel-doom.core.weapons :refer [switch-weapon weapon-spec weapon-order])
@@ -351,6 +351,33 @@
   (and (= (:door-lock world) :boss)
        (contains? (or (:held-keys world) #{}) :boss)))
 
+(defn- enemy-distance [e ^float px ^float py]
+  (let [dx (php/- (:x e) px)
+        dy (php/- (:y e) py)]
+    (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))))
+
+(defn- nearest-waker
+  ;; The closest enemy that went from :dormant to awake this frame, or
+  ;; nil. Compares the two enemy vectors positionally - `advance` maps
+  ;; over them in place, so index i is the same monster either side.
+  [before after ^float px ^float py]
+  (let [es0 (or (:enemies before) [])
+        es1 (or (:enemies after) [])]
+    (loop [i 0 best nil best-d 9999.0]
+      (if (php/>= i (count es1))
+        best
+        (let [b (get es0 i)
+              a (get es1 i)]
+          (if (and b a
+                   (= :dormant (:state b))
+                   (not (= :dormant (:state a)))
+                   (:alive a))
+            (let [d (enemy-distance a px py)]
+              (if (php/< d best-d)
+                (recur (php/+ i 1) a d)
+                (recur (php/+ i 1) best best-d)))
+            (recur (php/+ i 1) best best-d)))))))
+
 (defn- tick-enemies
   "Step every alive enemy one dt-scaled frame toward the player, using
    the world's per-level chase speed. `:pgrid` is forwarded so the
@@ -359,10 +386,18 @@
    'always chase' behaviour. Suspends respawns once the boss is down
    on L10 (see boss-down?)."
   [world ^float dt]
-  (let [p (:player world)]
-    (update world :enemies advance (:grid world) (:pgrid world) (:x p) (:y p) dt
-            (or (:chase-speed world) 0.75)
-            (not (boss-down? world)))))
+  (let [p       (:player world)
+        stepped (update world :enemies advance (:grid world) (:pgrid world) (:x p) (:y p) dt
+                        (or (:chase-speed world) 0.75)
+                        (not (boss-down? world)))]
+    ;; Wake cue (#460): a monster noticing you was silent, so the first
+    ;; sign of an ambush was taking the hit. One cue for the nearest
+    ;; enemy that woke this frame, not one per enemy - a room waking at
+    ;; once is one growl, not a chord.
+    (if-let [woke (nearest-waker world stepped (:x p) (:y p))]
+      (push-sfx stepped (sight-sfx-for (:type woke))
+                (distance-volume (enemy-distance woke (:x p) (:y p))))
+      stepped)))
 
 (defn- on-door?
   "True when the player's current cell is a door (auto-advances level)."
@@ -409,8 +444,8 @@
   "Action-key handler: when F was just pressed AND the cell directly
    in front of the player is a switch (either state), flip the
    switch glyph + every target cell listed under the matching
-   `:switches` entry. Plays the door sfx so the interaction is
-   audible. Chained AFTER `try-reveal-secret` so the two handlers
+   `:switches` entry. Plays the switch throw so the interaction is
+   audible and distinct from a door. Chained AFTER `try-reveal-secret` so the two handlers
    never claim the same F-press."
   [world action?]
   (if (not action?)
@@ -423,7 +458,7 @@
                                          (or (:switches world) [])
                                          cx cy))
              (rebuild-pgrid))
-         :door 1.0)
+         :switch 1.0)
         world))))
 
 (def reload-ready-flash-seconds

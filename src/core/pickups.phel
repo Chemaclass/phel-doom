@@ -6,6 +6,11 @@
 ;; Pure step-on pickup rules, extracted from commands/play.phel (#349).
 ;; Sound is enqueued via `push-sfx` (never played inline) so these stay
 ;; pure and unit-testable without an audio stub.
+;;
+;; Cues are per family since #460: `:item` for loot, `:weapon-up` for a
+;; gun, `:powerup` for the spheres. Before that everything shared the
+;; door tink (and on a non-macOS host that tink was the terminal BELL),
+;; so a shard, an ammo box and a keycard were audibly the same event.
 
 (defn- entities-not-at
   "All entities in `coll` whose integer cell is NOT (px, py). Shared by
@@ -34,7 +39,7 @@
 (defn pickup-hearts
   "If the player stands on a heart cell, consume it and gain a life."
   [world]
-  (consume-at world :hearts gain-life :berserk "Picked up a heart."))
+  (consume-at world :hearts gain-life :item "Picked up a heart."))
 
 (defn pickup-armors
   "Step-on triggers an armor pickup: bumps :armor by 1, capped at
@@ -45,7 +50,7 @@
   [world]
   (consume-at world :armors
               (fn [w] (update w :armor (fn [a] (php/min max-armor (php/+ (or a 0) 1)))))
-              :door "Picked up armor."))
+              :item "Picked up armor."))
 
 (defn- entity-at
   "Pick the first entity in `coll` at cell (px, py) so the caller can
@@ -99,7 +104,7 @@
           (if (= target (or (:weapon world) :pistol))
             (assoc refilled :ammo-reserve cur')
             refilled)
-          :door 1.0)
+          :item 1.0)
          "Picked up ammo.")))))
 
 (defn pickup-berserks
@@ -109,7 +114,7 @@
    rather than adding to it. Distinct `:berserk` sfx so the pickup is
    audibly different from a generic door/key tink."
   [world]
-  (consume-at world :berserks arm-berserk :berserk "Berserk!"))
+  (consume-at world :berserks arm-berserk :powerup "Berserk!"))
 
 (defn pickup-invulns
   "Step-on consumes the invulnerability sphere + arms
@@ -117,14 +122,14 @@
   [world]
   (consume-at world :invulns
               (fn [w] (assoc w :invuln-secs invuln-seconds))
-              :door "Invulnerability!"))
+              :powerup "Invulnerability!"))
 
 (defn pickup-soulspheres
   "Step-on consumes a soulsphere + bumps `:lives` toward
    `soulsphere-cap` via `gain-soulsphere`. Over-cap lives decay back
    to `max-lives` over time (see `decay-soul-overcap`)."
   [world]
-  (consume-at world :soulspheres gain-soulsphere :berserk "Supercharge!"))
+  (consume-at world :soulspheres gain-soulsphere :powerup "Supercharge!"))
 
 (defn pickup-armor-shards
   "Step-on consumes an armor shard + adds +1 armor via
@@ -133,7 +138,7 @@
    pattern). Common pickup so the door tink reads as routine
    loot rather than a special-event sfx."
   [world]
-  (consume-at world :armor-shards gain-armor-shard :door "Picked up an armor shard."))
+  (consume-at world :armor-shards gain-armor-shard :item "Picked up an armor shard."))
 
 (defn pickup-backpacks
   "Stacking pickup (#68 part 3): each step-on bumps `:backpack-level`
@@ -146,7 +151,7 @@
   [world]
   (consume-at world :backpacks
               (fn [w] (if (at-backpack-cap? w) w (gain-backpack w)))
-              :door "Picked up a backpack."))
+              :item "Picked up a backpack."))
 
 (defn pickup-weapon-pickups
   "Step-on consumes a weapon pickup, adds it to :owned-weapons, and
@@ -162,7 +167,7 @@
         (push-msg
          (push-sfx
           (give-weapon (assoc world :weapon-pickups kept) (:weapon on-pick))
-          :door 1.0)
+          :weapon-up 1.0)
          (str "You got the " (php/strtoupper (name (:weapon on-pick))) "!"))))))
 
 (defn pickup-keycards
@@ -180,5 +185,5 @@
           (assoc world
                  :keycards  kept
                  :held-keys (conj (or (:held-keys world) #{}) (:colour on-card)))
-          :door 1.0)
+          :item 1.0)
          (str "Picked up the " (php/strtoupper (name (:colour on-card))) " keycard."))))))

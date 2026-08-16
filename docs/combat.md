@@ -94,7 +94,7 @@ Weapons flagged `:pierce?` (the pistol) or `:spread?` (the shotgun) take a diffe
 On contact:
 - Armor absorbs the whole hit (drop one armor unit, no life lost regardless of damage size); otherwise lose `hit-damage-for (:type attacker)` HP.
 - Arm 1.0s i-frames (prevent double-drain).
-- 0.05s white flash (impact jolt).
+- 0.05s dark-red flash (impact jolt, issue #465 - Doom's pain language, and the white wash it replaced was the last full-screen strobe in the calm 3D view).
 - Knockback away from attacker (try 1.0 / 0.5 / 0.25 units on wall collision).
 - Stamp `:hurt-side` (`:front` / `:back` / `:left` / `:right`, via `attacker-side`) for the 4-way blood-drip edge columns. Front/back use ±30° wedges around facing; everything else routes to left/right.
 - Stamp `:hurt-dir` (octant 0..7, via `attacker-octant`) for the precise 8-way directional damage arc (issue #201): render paints a centred red bar on the matching edge for the four cardinals, or an L at the matching corner for the four diagonals, so the player reads the exact incoming-damage bearing while i-frames are active. Single-shot feedback, kept in the calm 3D view.

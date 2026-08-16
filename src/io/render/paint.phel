@@ -484,14 +484,31 @@
          (php/str_repeat "░" empty-n)
          "\e[40;97m")))
 
+(defn strip-visible-width
+  "Display columns `s` occupies once its SGR escapes are removed (#466).
+   `mb_strlen` so a multi-byte glyph (the keycard sigil) counts as the
+   one column it draws."
+  [s]
+  (php/mb_strlen (php/preg_replace "/\\x1b\\[[0-9;]*m/" "" s)))
+
 (defn paint-game-info
   "Top-left game-state strip: `L1 imps · kills 12 · ammo 7/10 [23]`,
    anchored at row 2 col 1 directly under the hearts/armor row. Left
    side stays clear of the minimap (top-right) and the centred
    compass / rear-warning. `_vw` is accepted for parity with the
    other paint-* helpers; the strip is left-anchored so vw doesn't
-   feed the col math."
-  [parts stats _vw]
+   feed the col math.
+
+   `right-edge` is the first column the strip may not touch - the
+   minimap panel's left margin when the map is shown, the viewport width
+   when it is not (#466). The strip was unbounded before: at 80 columns
+   a run carrying a backpack, stamina, a key and a difficulty tag painted
+   straight through the panel's border. Optional chips are appended only
+   while they fit, dropping in reverse priority - run timer, difficulty,
+   keys, backpack, stamina - so what survives a squeeze is what the
+   player needs mid-fight. The core (level, kills, weapon, ammo) is never
+   trimmed: it is the line's reason to exist."
+  [parts stats right-edge]
   (let [hide-wpn?  (get stats :hide-weapon?)
         hide-name? (get stats :hide-level-name?)
         lvl        (or (get stats :level) 1)
@@ -555,10 +572,23 @@
         ;; Same wash-preserving pattern for the inline mag / reserve
         ;; recolours: replace bare \e[0m resets with \e[40;97m so
         ;; the row never falls off the dark BG mid-string.
-        styled     (str "\e[40;97m\e[1mL" lvl "\e[22m " name'
+        core       (str "\e[40;97m\e[1mL" lvl "\e[22m " name'
                         "  \e[1mkills\e[22m " kills
-                        wpn-chunk
-                        pack sta-chip keys-tag diff-tag timer-tag "\e[0m")]
+                        wpn-chunk)
+        ;; Highest priority last-to-drop first: stamina is a resource
+        ;; spent mid-fight, the run timer is decoration.
+        optional   [sta-chip pack keys-tag diff-tag timer-tag]
+        fitted     (loop [cs    optional
+                          acc   core
+                          width (strip-visible-width core)]
+                     (if (empty? cs)
+                       acc
+                       (let [chip (first cs)
+                             w    (strip-visible-width chip)]
+                         (if (php/> (php/+ width w) right-edge)
+                           acc
+                           (recur (next cs) (str acc chip) (php/+ width w))))))
+        styled     (str fitted "\e[0m")]
     (buf-push parts (str "\e[2;1H" styled)))
   parts)
 ;; =====================================================================

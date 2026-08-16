@@ -48,7 +48,7 @@ Terminal quirks (kitty, tmux): [input.md](input.md).
 
 ## Weapons
 
-DPS-balanced niches, not monotonic upgrades. Found on the map, selected with keys 1-8.
+DPS-balanced niches, not monotonic upgrades. Found on the map, selected with keys 1-7 or cycled with `[` / `]` / the wheel.
 
 | Key | Weapon | Dmg | CD | Mag | DPS | Type / niche |
 |---|---|---|---|---|---|---|

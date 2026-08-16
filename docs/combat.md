@@ -158,10 +158,6 @@ Its point is the damage type: caco / baron / archvile / mancubus carry `:resists
 
 Mid-tier AoE (issue #123): fills the gap between the chaingun (no splash) and the rare BFG nuke. Carries `:splash-radius 2.0` + `:splash-damage 3`, with direct-hit damage 4 (so 4 + 3 splash total). Routes through the same `bfg-fire` path as the BFG with smaller numbers than BFG (radius 3.0 / splash 6). Single-action, `:fire-cooldown 0.9`, mag 1 / reserve cap 30. Damage type `:ballistic` (explosive shell), so no enemy resists it. The everyday crowd tool; the BFG stays the rare panic button.
 
-### Super shotgun (spread, slot 8, found L8)
-
-High-burst tank-killer (issue #126): DOOM II's SSG. Reuses the shotgun `:spread?` path with a heavier `:damage 5` (one-shots most, two-shots a 5HP baron), a fatter `:graze-damage 2`, and a wider `:spread-half-angle 0.45`, but a very short `:max-range 4.0` and a double-barrel mag of 2 with a slow `:reload-duration 2.5`. The TTK beats the basic shotgun against tanks, paid for by the short reach and the long reload - and unlike the BFG it costs no scarce plasma ammo. Appended at slot 8 (key `8`) rather than inserted next to the shotgun so the existing 1-7 keys keep their meaning.
-
 ## Berserk pickup
 
 Berserk sphere (`Ω` glyph, 1-in-8 levels). Melee-biased, DOOM-style (issue #127): it is a "go punch everything" surge plus a full heal, not a flat all-weapon buff.

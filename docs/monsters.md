@@ -130,7 +130,7 @@ Player ducks around corner:
 
 Killed enemy stays in vector with `:alive false` + `:respawn-after` timer (uniform 3-6s; nightmare: 1-2s).
 
-`tick-one` decays timer; on expiry, spawn at random cell ≥ 3.0 units away. No slot found: bump timer to 0.5s + retry next frame (no ambush spawn).
+`tick-one` decays timer; on expiry, spawn at random cell >= 3.0 units away AND out of the player's line of sight (issue #455) - distance alone is a few cells, which is well inside the frustum, so monsters used to pop into existence mid-room in plain view. Up to 8 candidates are drawn; the first unseen one wins, and a merely-far-enough candidate is kept as a fallback so an open arena with nowhere to hide still revives its dead. No slot found at all: bump timer to 0.5s + retry next frame (no ambush spawn).
 
 Optional `:max-concurrent` cap (per-type) enforces max-alive count. Revival checks live count; respawn delayed until a sibling dies. `:type` preserved across respawn.
 

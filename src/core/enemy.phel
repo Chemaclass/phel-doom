@@ -4,7 +4,7 @@
   (:require phel-doom.core.enemies    :refer [resists? default-lives-for])
   (:require phel-doom.core.engine     :refer [proj-dist])
   (:require phel-doom.core.projection :refer [sprite-half-rows wall-px])
-  (:require phel-doom.core.enemy-ai   :refer [apply-pain maybe-start-attack moves? observe start-wander target-pos tick-attack tick-pain tick-wander]))
+  (:require phel-doom.core.enemy-ai   :refer [apply-pain maybe-start-attack moves? observe sees-player? start-wander target-pos tick-attack tick-pain tick-wander]))
 
 ;; ---------------------------------------------------------------------
 ;; Enemy BODY: state, lifecycle, and physics. This module owns spawning
@@ -475,20 +475,35 @@
       enemies)))
 
 (defn- random-spawn-far-from
-  "Random open cell at least min-dist from (px, py). Falls back to nil
-   after a few attempts so the caller can keep the enemy dead another
-   frame instead of forcing an ambush spawn."
-  [grid min-dist px py]
-  (loop [attempts 8]
+  "Random open cell at least min-dist from (px, py), preferring one the
+   player cannot SEE (#455). Falls back to nil after a few attempts so
+   the caller can keep the enemy dead another frame instead of forcing
+   an ambush spawn.
+
+   Distance alone let a monster pop into existence mid-room in plain
+   view: `respawn-min-dist` is a few cells, and a few cells of open
+   floor is well inside the frustum. Every candidate that clears the
+   distance test is now also checked against `sees-player?`, and the
+   first unseen one wins. A candidate that is merely far enough is kept
+   as a fallback, so a room with nowhere to hide (an open arena) still
+   revives its dead rather than suspending them forever.
+
+   `pgrid` nil (test callers on the 7-arity `advance`) skips the sight
+   test and behaves exactly as before."
+  [grid pgrid min-dist px py]
+  (loop [attempts 8
+         far      nil]
     (if (php/<= attempts 0)
-      nil
+      far
       (let [[ex ey] (random-spawn grid)
             dx      (php/- ex px)
             dy      (php/- ey py)]
         (if (php/< (php/+ (php/* dx dx) (php/* dy dy))
                    (php/* min-dist min-dist))
-          (recur (php/- attempts 1))
-          [ex ey])))))
+          (recur (php/- attempts 1) far)
+          (if (or (nil? pgrid) (not (sees-player? pgrid ex ey px py)))
+            [ex ey]
+            (recur (php/- attempts 1) (or far [ex ey]))))))))
 
 (defn- alive-count-of-type
   "How many enemies in `enemies` are currently alive AND carry `:type`
@@ -587,7 +602,7 @@
               capped? (and cap (not (:nightmare? e))
                            (php/>= (alive-count-of-type all-enemies type-kw) cap))
               pos     (when (not capped?)
-                        (random-spawn-far-from grid respawn-min-dist player-x player-y))]
+                        (random-spawn-far-from grid pgrid respawn-min-dist player-x player-y))]
           (if pos
             ;; Carry :max-lives, :type, :max-concurrent, :nightmare?
             ;; across the respawn so a revived baron is still a baron,

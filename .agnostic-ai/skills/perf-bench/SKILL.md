@@ -27,6 +27,11 @@ alone; `frame-120x30` / `frame-180x45` / `frame-240x60` time the whole
 
 ## Procedure
 
+**Prefer `tools/bench-ab.sh <ref> [pairs] [filter]`** - it does the whole
+procedure below, interleaved, which is the only form that survives this
+machine's thermal drift (the same commit has read 4.65 ms and 6.91 ms in one
+sitting). Use the manual steps only when you need something it does not cover.
+
 Both runs on the SAME machine in ONE sitting: absolute durations do not travel,
 and the local php CLI runs without JIT. Close what else is running.
 

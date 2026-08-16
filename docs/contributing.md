@@ -19,6 +19,9 @@ make play            # or: composer play
 composer dev          # run CLI from source
 composer play         # launch game
 composer test         # run tests (PHEL_DOOM_SILENT=1)
+composer bench        # frame/cast benchmarks (tests/bench, phel bench)
+composer bench-store  # write .phel/bench-baseline.json (run on main)
+composer bench-ref    # compare against it, fail past +10% (same machine)
 composer format       # auto-format .phel files
 composer format-check # dry-run, fails CI on drift
 composer lint         # static analysis

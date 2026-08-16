@@ -2,6 +2,34 @@
 
 `frame->string` runs ~7ms at 80x24 up to ~17ms at 300x80 (interpreted PHP, no JIT, M-series laptop). The inner loop visits every cell per frame (cols x rows). Tricks that got it from "hundreds of ms" to here, roughly in order of impact.
 
+## How to measure
+
+`tests/bench/frame-bench.phel` is the tracked harness: `defbench` rows (phel
+0.50's `phel.bench`) over one fixed scene, level 3 seed 1337, three enemies in
+view, minimap on. `cast-120` / `cast-240` time `cast-frame` alone;
+`frame-120x30` / `frame-180x45` / `frame-240x60` time the whole
+`frame->string`. Each row reports its mean and `rstdev`; under 1% is normal on
+an idle machine, and a row above a few percent is noise to re-run, not a result.
+
+```sh
+composer bench                # every row, this machine
+composer bench-store          # on main: write .phel/bench-baseline.json
+composer bench-ref            # on the branch: delta per row, fail past +10%
+composer bench -- --filter=cast --revs=1000   # one family, more revs
+```
+
+`bench-ref` is a same-machine, same-session gate, not a CI one: absolute
+durations do not travel between machines, the local php CLI runs without JIT,
+and a shared runner's noise floor is wider than most real wins. Store the
+baseline and compare in one sitting; a change that claims a win here should
+show it in this table (and add a row when it moves something the table does
+not cover). The suite loads this file too, so nothing in it runs at load: the
+scene is a `delay` forced on the first warmup rev.
+
+The numbers quoted below predate the harness and came from `local/`
+one-offs of the same scene; the fixed-viewport 200-iteration means are
+comparable to the `frame-*` rows.
+
 ## No statement-forms in hot-loop binding values (the closure tax)
 
 The single biggest win (4-10x whole-frame). Phel compiles a `let` binding whose VALUE is a statement-form (`cond`, `and`, a `let`, a `when`) into an immediately-invoked PHP closure. The closure's `use(...)` list captures EVERY local in the enclosing scope - inside `frame->string`'s setup that is ~500 variables, and inside the per-cell loop of `emit-scene-px1` / `emit-scene-px2` (the scene emitters #350 lifted out of `frame->string`) it is that fn's ~70-param scene scope - and PHP copies each one into the closure on every invocation. Measured in isolation: 7 such closures per cell at 200x45 cost ~168ms/frame; the same work through a plain array register costs ~0.4ms.

@@ -1,6 +1,6 @@
 (ns phel-doom-tests.core.state-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.state :refer [new-player new-world move-player turn-player
+  (:require phel-doom.core.state :refer [note-hint-progress new-player new-world move-player turn-player
                                          rebuild-pgrid
                                          toggle-map toggle-pause toggle-debug toggle-sound with-enemies
                                          advance-game-time at-backpack-cap?
@@ -262,3 +262,20 @@
   (let [w (reset-reticle {:aim-col 119 :aim-row 0})]
     (is (nil? (:aim-col w)) "column cleared to centre")
     (is (nil? (:aim-row w)) "row cleared to centre")))
+
+;; The first-run hints retire early once the player has shown they can
+;; move, turn and shoot (#467) - leaving them up for the rest of the
+;; fifteen seconds would just be furniture.
+
+(deftest test-hints-clear-once-all-three-basics-are-shown
+  (let [w0 {:hint-secs 15.0}
+        w1 (note-hint-progress w0 true false false)
+        w2 (note-hint-progress w1 false true false)
+        w3 (note-hint-progress w2 false false true)]
+    (is (php/> (:hint-secs w1) 0.0) "moving alone is not enough")
+    (is (php/> (:hint-secs w2) 0.0) "nor moving and turning")
+    (is (= 0.0 (:hint-secs w3)) "all three -> the strip goes")))
+
+(deftest test-hint-progress-is-a-no-op-once-the-strip-is-down
+  (let [w {:hint-secs 0.0}]
+    (is (= w (note-hint-progress w true true true)))))

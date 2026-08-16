@@ -11,7 +11,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Added
 
-- Enemies show their wind-up (#457): an enemy in the frozen moment before a swing or a fireball now carries a steady `!` above its head, in its own colour. The wind-up is 0.3-0.8s and dodging it is meant to be the skill, but in sprite mode there was nothing to read - the billboard is one baked frame and the face overlay is skipped, so a far cacodemon about to fire looked exactly like a dormant one. No pulse, and it costs one pass over enemies the frame had already projected.
+- Enemies show their wind-up (#457): an enemy in the frozen moment before a swing or a fireball now carries a steady `!` above its head, in its own colour. The wind-up is 0.3-0.8s and dodging it is meant to be the skill, but in sprite mode there was nothing to read - the billboard is one baked frame and the face overlay is skipped, so a far cacodemon about to fire looked exactly like a dormant one. No pulse, and at full detail it costs one pass over enemies the frame had already projected.
 - A Doom-style message line names what just happened (#456): `Picked up a heart.`, `Picked up the BLUE keycard.`, `You got the SHOTGUN!`, `A secret is revealed!`, and the weapon plus its ammo when you switch slots. Every pickup used to be the same door tink and the item vanishing, so a first-timer could not tell an armor shard from an ammo box, know the keycard was now held, or see that a pickup had auto-switched their weapon. One steady row for 2 seconds, no blink, clipped to the viewport and hidden on very short ones; the frame is byte-identical when there is nothing to say.
 
 ### Changed

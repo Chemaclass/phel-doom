@@ -772,6 +772,27 @@
   [enemy player ^int vw]
   (project-enemy-pd proj-dist enemy player vw))
 
+(defn collect-enemy-projs-pd
+  "`collect-enemy-projs` for an explicit projection numerator (#457).
+
+   The pixel-doubled scene casts and places sprites with `0.5 *
+   proj-dist` (main/scene-pd), so a bundle projected at `svw` with the
+   FULL numerator puts an off-centre enemy at roughly twice its real
+   horizontal offset. Overlays that read `dists` / `edists` at a
+   projected column need the same numerator the scene used, or they
+   sample the wrong column and can hide - or leak - a mark."
+  [pd enemies player vw]
+  (let [raw (loop [es enemies acc []]
+              (if (php/=== es nil)
+                acc
+                (let [e (first es)]
+                  (recur (next es)
+                         (if (and e (:alive e))
+                           (let [p (project-enemy-pd pd e player vw)]
+                             (if p (conj acc p) acc))
+                           acc)))))]
+    (sort-by (fn [x] (php/- 0.0 (:dist x))) raw)))
+
 (defn collect-enemy-projs
   "Project every alive enemy and return a vector sorted by distance
    descending — back-to-front so closer sprites overwrite farther ones

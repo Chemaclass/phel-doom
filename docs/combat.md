@@ -180,6 +180,14 @@ Current resistances:
 
 The incinerator (slot 6) deals `:fire`, so it is the weapon those four mobs resist (zero damage). The BFG deals `:plasma`, which is NOT in any resist set, so it bypasses the fire resist by design. Pistol / shotgun / chaingun deal `:ballistic` and the chainsaw deals `:melee`; none of those are resisted by any current enemy.
 
+## Hostile reticle (issue #458)
+
+`frame-stats` asks `combat/target-in-sights?` once per frame: would a shot fired right now connect? It runs the same selection the trigger runs - `enemy/target-index`, the damage-free half of `enemy/shoot` - so the same aim angle, wall probe, weapon range, hit radius and vertical billboard gate. The crosshair paints steady red while the answer is yes.
+
+Asking the real rule rather than re-deriving it is the point: since #243 a shot only lands when the crosshair is on the drawn sprite, so aiming slightly at the floor or the sky misses, and the miss read as lag. A reticle running its own approximation would eventually disagree with the gun about where the shot goes, which is worse than no reticle. Hit-marker, wound and muzzle-flash states all still outrank the tint, since they are newer information.
+
+It answers where the shot goes, not whether the trigger works: an empty mag or a running reload keeps the target under the crosshair and the reticle red. The dry CLICK and the reload prompt already own the ammo story, and a reticle that dropped out mid-reload would read as the target having moved. Paused frames skip the probe entirely.
+
 ## Nightmare respawn
 
 `--difficulty=nightmare` stamps `:nightmare? true` on every enemy. Two effects:

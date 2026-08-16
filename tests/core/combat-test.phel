@@ -1,11 +1,11 @@
 (ns phel-doom-tests.core.combat-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.rng :as rng)
-  (:require phel-doom.core.state :refer [new-world new-player max-lives])
+  (:require phel-doom.core.state :refer [new-world new-player max-lives rebuild-pgrid])
   (:require phel-doom.core.enemy :refer [new-enemy])
   (:require phel-doom.core.loot :refer [pick-loot-weapon roll-loot-kind])
   (:require phel-doom.core.combat
-            :refer [aim-angle-offset arm-berserk armory-reserve closest-attacker attacker-side attacker-octant berserk? berserk-damage-mul berserk-melee-mul berserk-mul-for berserk-seconds can-fire? apply-heat damage-step empty-click-seconds fire-anim-seconds fire-extralight fire-shot hit-damage-for hit-player-at hit-stop-for hit-stop-tough-seconds hit-stop-boss-seconds invuln? knockback mag-size muzzle-extralight-steps muzzle-flash-fraction player-immune? push-sfx reload reloading? tick-armory tick-shooting]))
+            :refer [target-in-sights? aim-angle-offset arm-berserk armory-reserve closest-attacker attacker-side attacker-octant berserk? berserk-damage-mul berserk-melee-mul berserk-mul-for berserk-seconds can-fire? apply-heat damage-step empty-click-seconds fire-anim-seconds fire-extralight fire-shot hit-damage-for hit-player-at hit-stop-for hit-stop-tough-seconds hit-stop-boss-seconds invuln? knockback mag-size muzzle-extralight-steps muzzle-flash-fraction player-immune? push-sfx reload reloading? tick-armory tick-shooting]))
 
 ;; ---------------------------------------------------------------------
 ;; closest-attacker: selection rule.
@@ -1341,3 +1341,51 @@
   (let [w0 (assoc (boss-world) :weapon :bfg :owned-weapons #{:pistol :bfg} :shake-secs 0.5)
         w1 (fire-shot w0)]
     (is (= 0.5 (:shake-secs w1)) "the larger in-progress shake is kept")))
+
+;; ---------------------------------------------------------------------
+;; target-in-sights? (#458): the question the hostile reticle asks every
+;; frame. It must answer exactly what the gun would do, so it runs the
+;; real selection rather than its own approximation.
+;; ---------------------------------------------------------------------
+
+(def- sights-room
+  ;; `cast-wall-dist` probes the php-array mirror, so a world without a
+  ;; :pgrid reads as a wall at zero distance (nothing is ever in front).
+  (rebuild-pgrid
+   {:player {:x 5.0 :y 5.0 :angle 0.0}
+    :grid   [[1 1 1 1 1 1 1 1 1 1 1 1]
+             [1 0 0 0 0 0 0 0 0 0 0 1]
+             [1 0 0 0 0 0 0 0 0 0 0 1]
+             [1 0 0 0 0 0 0 0 0 0 0 1]
+             [1 0 0 0 0 0 0 0 0 0 0 1]
+             [1 0 0 0 0 0 0 0 0 0 0 1]
+             [1 1 1 1 1 1 1 1 1 1 1 1]]
+    :enemies [{:x 8.0 :y 5.0 :alive true :lives 1 :max-lives 1}]}))
+
+(deftest test-target-in-sights-sees-an-enemy-dead-ahead
+  (let [w sights-room]
+    (is (= true (target-in-sights? w)))
+    (is (= false (target-in-sights? (assoc w :enemies [])))
+        "empty room, nothing to shoot")
+    (is (= false (target-in-sights? (assoc w :enemies
+                                           [{:x 5.0 :y 2.0 :alive true :lives 1 :max-lives 1}])))
+        "enemy off to the side is not under the reticle")
+    (is (= false (target-in-sights? (assoc w :enemies
+                                           [{:x 8.0 :y 5.0 :alive false :lives 0 :max-lives 1}])))
+        "a corpse is not a target")))
+
+(deftest test-target-in-sights-is-quiet-while-paused
+  ;; Nothing to aim at behind a menu, and no reason to march a ray.
+  (is (= false (target-in-sights? (assoc sights-room :paused true)))))
+
+(deftest test-target-in-sights-ignores-the-trigger-state
+  ;; It answers WHERE the shot goes, not whether the gun would fire: an
+  ;; empty mag keeps the target under the crosshair (the dry CLICK and
+  ;; the reload prompt own the ammo story).
+  (is (= true (target-in-sights? (assoc sights-room :mag 0 :reload-cooldown 1.0)))))
+
+(deftest test-target-in-sights-does-not-fire
+  (let [w (assoc sights-room :enemies
+                 [{:x 8.0 :y 5.0 :alive true :lives 3 :max-lives 3}])]
+    (target-in-sights? w)
+    (is (= 3 (:lives (first (:enemies w)))) "asking costs the enemy nothing")))

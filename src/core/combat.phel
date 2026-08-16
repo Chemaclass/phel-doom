@@ -1,7 +1,7 @@
 (ns phel-doom.core.combat
   (:require phel-doom.core.engine     :refer [cast-ray fov-proj-dist])
   (:require phel-doom.core.projection :refer [pitch-rows])
-  (:require phel-doom.core.enemy      :refer [push-back-enemy shoot beam-impact splash pierce spread-shoot])
+  (:require phel-doom.core.enemy      :refer [push-back-enemy shoot target-index beam-impact splash pierce spread-shoot])
   (:require phel-doom.core.enemy-ai :refer [attacks? noise-wake])
   (:require phel-doom.core.physics  :refer [try-move])
   (:require phel-doom.core.state    :refer [max-lives])
@@ -643,6 +643,42 @@
   (if (nil? svh)
     0
     (pitch-rows (or (:pitch (:player world)) 0.0) svh)))
+
+(defn- target-in-sights?* [world]
+  (let [p    (:player world)
+        spec (w-spec world)
+        svh  (aim-svh world)]
+    (php/>= (target-index (:enemies world) (:x p) (:y p) (aim-angle world)
+                          (cast-wall-dist world)
+                          shot-hit-radius (or (:max-range spec) shot-max-range)
+                          svh (aim-pr world svh))
+            0)))
+
+(defn target-in-sights?
+  "True when a shot fired THIS instant would hit an enemy (#458).
+
+   Runs the same selection `resolve-shot` runs - same aim angle, same
+   wall probe, same weapon range, same vertical billboard gate - through
+   `enemy/target-index`, which is the extracted, damage-free half of
+   `enemy/shoot`. Asking the real rule rather than re-deriving it is the
+   whole point: since #243 a shot only lands when the crosshair is on the
+   drawn sprite, so an approximation would eventually disagree with the
+   gun and the reticle would be lying.
+
+   It answers WHERE the shot goes, not whether the trigger works: an
+   empty mag or a running reload leaves the target under the crosshair
+   and the reticle red, which is correct - the dry CLICK and the reload
+   prompt already own the ammo story, and a reticle that dropped out
+   mid-reload would read as the target having moved.
+
+   Called once per frame by `frame-stats` for the hostile reticle: one
+   `cast-ray` (against the 120+ the cast loop already marches) plus a
+   walk over the same handful of enemies the renderer projects. Skipped
+   entirely while paused, where there is nothing to aim at."
+  [world]
+  (if (:paused world)
+    false
+    (target-in-sights?* world)))
 
 (defn- resolve-shot [world]
   (let [p         (:player world)

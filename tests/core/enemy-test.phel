@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.rng :as rng)
   (:require phel-doom.core.enemy-ai :refer [sees-player?])
-  (:require phel-doom.core.enemy :refer [default-wander-fraction new-enemy promote-wanderers push-back-enemy spawn-enemies spawn-enemies-mixed shoot pierce spread-shoot splash beam-impact advance tick-scare rear-attacker? type-speed-mul]))
+  (:require phel-doom.core.enemy :refer [target-index default-wander-fraction new-enemy promote-wanderers push-back-enemy spawn-enemies spawn-enemies-mixed shoot pierce spread-shoot splash beam-impact advance tick-scare rear-attacker? type-speed-mul]))
 
 (def open-grid
   "Bordered 10x10 open arena, no interior walls."
@@ -860,3 +860,37 @@
   (let [e (first (advance [{:x 2.5 :y 2.5 :alive false :respawn-after 0.0}]
                           open-grid open-pgrid 5.5 5.5 0.5 0.75 true))]
     (is (= true (:alive e)))))
+
+;; ---------------------------------------------------------------------
+;; target-index (#458): the selection half of `shoot`, without the
+;; damage. The hostile reticle asks it every frame, so it must answer
+;; exactly what a shot fired this instant would hit - a reticle that
+;; lies is worse than no reticle.
+;; ---------------------------------------------------------------------
+
+(deftest test-target-index-finds-the-enemy-a-shot-would-hit
+  (let [es [(new-enemy 8.0 5.0)]]
+    (is (= 0 (target-index es 5.0 5.0 0.0 20.0 0.6 12.0 nil 0)))))
+
+(deftest test-target-index-agrees-with-shoot
+  ;; Same arguments, same verdict, for a hit and for a miss.
+  (let [es             [(new-enemy 8.0 5.0)]
+        [_ hit? _ idx] (shoot es 5.0 5.0 0.0 20.0 0.6 12.0)]
+    (is (= true hit?))
+    (is (= idx (target-index es 5.0 5.0 0.0 20.0 0.6 12.0 nil 0))))
+  (let [es             [(new-enemy 5.0 9.0)]
+        [_ hit? _ idx] (shoot es 5.0 5.0 0.0 20.0 0.6 12.0)]
+    (is (= false hit?))
+    (is (= idx (target-index es 5.0 5.0 0.0 20.0 0.6 12.0 nil 0)))))
+
+(deftest test-target-index-misses-past-the-wall-and-out-of-range
+  (let [es [(new-enemy 8.0 5.0)]]
+    (is (= -1 (target-index es 5.0 5.0 0.0 2.0 0.6 12.0 nil 0))
+        "enemy behind the wall the ray hit first")
+    (is (= -1 (target-index es 5.0 5.0 0.0 20.0 0.6 1.0 nil 0))
+        "enemy beyond the weapon range")))
+
+(deftest test-target-index-does-not-damage-anything
+  (let [es [(new-enemy 8.0 5.0 3)]]
+    (target-index es 5.0 5.0 0.0 20.0 0.6 12.0 nil 0)
+    (is (= 3 (:lives (first es))) "asking is not firing")))

@@ -183,6 +183,45 @@
         (and (php/<= (php/- feet-row h) cross)
              (php/<= cross feet-row)))))
 
+(defn target-index
+  "Index of the enemy a hitscan fired right now would hit, or -1 (#458).
+
+   The selection half of `shoot`, without the damage: nearest alive enemy
+   in front of the player, closer than the wall the ray hits (`wd`),
+   inside `max-r`, within `hr` perpendicular, and vertically on its drawn
+   billboard (`vertical-hit?`, issue #243). `svh` nil disables the
+   vertical gate, exactly as in `shoot`.
+
+   Extracted so the hostile reticle can ask the question every frame
+   without firing. A reticle that answers with its own approximation of
+   the rule would eventually disagree with the shot, which is worse than
+   no reticle at all."
+  [es ^float x ^float y ^float a ^float wd ^float hr ^float max-r svh ^int pr]
+  (let [cos-a (php/cos a)
+        sin-a (php/sin a)]
+    (loop [i      0
+           best-i -1
+           best-d max-r
+           rest-e es]
+      (if (nil? rest-e)
+        best-i
+        (let [e     (first rest-e)
+              along (when (and e (:alive e))
+                      (let [dx (php/- (:x e) x)
+                            dy (php/- (:y e) y)]
+                        (let [proj (php/+ (php/* dx cos-a) (php/* dy sin-a))]
+                          (when (and (php/> proj 0.0) (php/< proj best-d)
+                                     (php/< proj wd)
+                                     (vertical-hit? e proj svh pr))
+                            (let [perp-x (php/- dx (php/* proj cos-a))
+                                  perp-y (php/- dy (php/* proj sin-a))]
+                              (let [perp2 (php/+ (php/* perp-x perp-x) (php/* perp-y perp-y))]
+                                (when (php/<= perp2 (php/* hr hr))
+                                  proj)))))))]
+          (if along
+            (recur (php/+ i 1) i along (next rest-e))
+            (recur (php/+ i 1) best-i best-d (next rest-e))))))))
+
 (defn shoot
   "Fire a hitscan from the player along their facing. Returns
    `[new-enemies hit? hit-pos idx]`: the nearest alive enemy in
@@ -203,64 +242,41 @@
   ([es1 ^float px1 ^float py1 ^float a1 ^float wd1 ^float hr1 ^float mr1 ^int dmg1 dtype1]
    (shoot es1 px1 py1 a1 wd1 hr1 mr1 dmg1 dtype1 nil 0))
   ([es' ^float x' ^float y' ^float a' ^float wd' ^float hr ^float max-r ^int damage damage-type svh ^int pr]
-   (let [cos-a (php/cos a')
-         sin-a (php/sin a')]
-     (let [best (loop [i      0
-                       best-i -1
-                       best-d max-r
-                       es     es']
-                  (if (nil? es)
-                    best-i
-                    (let [e (first es)]
-                      (let [along (when (and e (:alive e))
-                                    (let [dx (php/- (:x e) x')
-                                          dy (php/- (:y e) y')]
-                                      (let [proj (php/+ (php/* dx cos-a) (php/* dy sin-a))]
-                                        (when (and (php/> proj 0.0) (php/< proj best-d)
-                                                   (php/< proj wd')
-                                                   (vertical-hit? e proj svh pr))
-                                          (let [perp-x (php/- dx (php/* proj cos-a))
-                                                perp-y (php/- dy (php/* proj sin-a))]
-                                            (let [perp2 (php/+ (php/* perp-x perp-x) (php/* perp-y perp-y))]
-                                              (when (php/<= perp2 (php/* hr hr))
-                                                proj)))))))]
-                        (if along
-                          (recur (php/+ i 1) i along (next es))
-                          (recur (php/+ i 1) best-i best-d (next es)))))))]
-       (if (= best -1)
-         [es' false nil -1]
+   (let [best (target-index es' x' y' a' wd' hr max-r svh pr)]
+     (if (= best -1)
+       [es' false nil -1]
         ;; Decrement lives; flip :alive only when the shot empties the
         ;; HP pool. Default-1 enemies still die in one hit because the
         ;; subtract takes them to 0. Multi-life enemies stay :alive true
         ;; with a lower :lives, which render shades darker as a tell.
-         (let [hit-enemy  (get es' best)
-               hit-pos    {:x (:x hit-enemy) :y (:y hit-enemy)}
-               prev-lives (or (:lives hit-enemy) 1)
-               eff-dmg    (if (resists? (:type hit-enemy) damage-type) 0 damage)
-               new-lives  (php/max 0 (php/- prev-lives eff-dmg))
-               hit-vec    (vec es')
+       (let [hit-enemy  (get es' best)
+             hit-pos    {:x (:x hit-enemy) :y (:y hit-enemy)}
+             prev-lives (or (:lives hit-enemy) 1)
+             eff-dmg    (if (resists? (:type hit-enemy) damage-type) 0 damage)
+             new-lives  (php/max 0 (php/- prev-lives eff-dmg))
+             hit-vec    (vec es')
                ;; Any hit wakes the target — being shot is the
                ;; loudest possible "I see you" signal, and a dormant
                ;; enemy that takes a bullet without reacting would
                ;; read as broken AI. Mirrors DOOM where damage forces
                ;; the target into chase regardless of prior state.
-               woken      (assoc-in hit-vec [best :state] :aware)
-               wounded    (assoc-in woken [best :lives] new-lives)]
-           (if (php/<= new-lives 0)
-             (let [delay   (respawn-delay-for hit-enemy)
-                   killed' (assoc-in (assoc-in wounded [best :alive] false)
-                                     [best :respawn-after] delay)]
-               [killed' true hit-pos best])
+             woken      (assoc-in hit-vec [best :state] :aware)
+             wounded    (assoc-in woken [best :lives] new-lives)]
+         (if (php/<= new-lives 0)
+           (let [delay   (respawn-delay-for hit-enemy)
+                 killed' (assoc-in (assoc-in wounded [best :alive] false)
+                                   [best :respawn-after] delay)]
+             [killed' true hit-pos best])
             ;; Stamp the hit-flash timer so render can paint the
             ;; remaining HP digit above the head for a beat. Also
             ;; roll the pain-chance: if it lands, apply-pain stamps
             ;; :state :pain + the stagger timer, overriding the
             ;; :aware wake above for the brief flinch window.
-             (let [flashed (assoc-in wounded [best :hit-flash-secs] hit-flash-seconds)
-                   roll    (rng/float!)
-                   final   (assoc flashed best
-                                  (apply-pain (get flashed best) roll))]
-               [final true hit-pos best]))))))))
+           (let [flashed (assoc-in wounded [best :hit-flash-secs] hit-flash-seconds)
+                 roll    (rng/float!)
+                 final   (assoc flashed best
+                                (apply-pain (get flashed best) roll))]
+             [final true hit-pos best])))))))
 
 (defn beam-impact
   "Where a hitscan beam from (px, py) along `angle` lands: the nearest

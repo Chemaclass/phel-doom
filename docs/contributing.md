@@ -22,8 +22,9 @@ composer test         # run tests (PHEL_DOOM_SILENT=1)
 composer bench        # frame/cast benchmarks (tests/bench, phel bench)
 composer bench-store  # write .phel/bench-baseline.json (run on main)
 composer bench-ref    # compare against it, fail past +10% (same machine)
-composer format       # auto-format .phel files
+composer format       # auto-format hand-written .phel files
 composer format-check # dry-run, fails CI on drift
+composer format-all   # include the generated data files (rarely needed)
 composer lint         # static analysis
 composer check-layers # io/ -> glue/ -> core/ direction holds
 composer check-cycles # no require cycles (+ the guard's own fixtures)
@@ -35,6 +36,8 @@ composer doctor       # env diagnostics
 ```
 
 CI runs `composer ci` on PHP 8.5. PHP 8.4 works locally but isn't CI-tested.
+
+`format` / `format-check` go through `tools/format-sources.sh`, which formats every hand-written `.phel` file and skips the four generated ones (`enemy_sprites_data`, `weapon_sprites_data`, `wall_texture_data`, `sound_data`). `phel format` is quadratic in the number of elements inside a single collection literal ([phel-lang#3218](https://github.com/phel-lang/phel-lang/issues/3218)), and each baked asset file is one enormous literal: `enemy_sprites_data.phel` alone took 94.7s of a 124s check, which was 70% of the whole pre-commit gate. Skipping them takes the check to 4.8s and the gate from 173s to 50s. Those files are written by `tools/bake-*.phel` and never by hand, so formatting them was pure cost. The script fails loudly if one is renamed, so the skip list cannot silently stop matching. `composer format-all` still runs the formatter over everything.
 
 `check-deprecations` re-runs the suite under `PHEL_WARN_DEPRECATIONS=1` and fails
 on any notice. It exists for the quiet half: phel 0.50 infers a parameter's type

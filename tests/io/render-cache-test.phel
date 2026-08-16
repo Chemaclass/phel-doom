@@ -1,5 +1,6 @@
 (ns phel-doom-tests.io.render-cache-test
   (:require phel.test :refer [deftest is])
+  (:require phel.string :as str)
   (:require phel-doom.core.level :refer [build-world])
   (:require phel-doom.core.engine :refer [mark-visible-cells])
   (:require phel-doom.core.rng :as rng)
@@ -418,3 +419,29 @@
     (is (not (php/str_contains locked minimap-door-pulse)) "locked: no orange door yet")
     (is (php/str_contains unlocked minimap-door-pulse)   "killed: door turns orange")
     (is (not (php/str_contains unlocked boss-door-marker)) "killed: red marker gone")))
+
+;; ---------------------------------------------------------------------
+;; Attack telegraph at frame level (#457). The unit tests call the
+;; painter directly; this pins the 9-arg wiring in frame->string, where a
+;; swapped dists/edists pair would otherwise pass everything.
+;; ---------------------------------------------------------------------
+
+(defn- world-with-attacker [state]
+  ;; One enemy dead ahead of the player, close enough to be unobstructed.
+  (let [p  (:player world)
+        px (:x p)
+        py (:y p)]
+    (assoc world :enemies
+           [{:x (php/+ px 1.5) :y py :alive true :lives 3 :max-lives 3
+             :type :imp :state state :hit-flash-secs 0.0}])))
+
+(deftest test-frame-marks-an-attacking-enemy
+  (is (str/contains? (frame->string (world-with-attacker :attacking) stats 120 30)
+                     "m!\e[0m")
+      "the windup mark reaches the emitted frame"))
+
+(deftest test-frame-shows-no-mark-without-a-windup
+  ;; Same enemy, same place, not winding up: nothing is painted, which is
+  ;; also what "costs nothing when nobody attacks" means.
+  (is (not (str/contains? (frame->string (world-with-attacker :aware) stats 120 30)
+                          "m!\e[0m"))))

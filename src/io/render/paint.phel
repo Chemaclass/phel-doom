@@ -904,6 +904,62 @@
                            (:lives proj) "\e[0m")))))))
   parts)
 
+(defn paint-attack-telegraphs
+  "Steady `!` one row above the head of every enemy mid-windup (#457).
+
+   A caster freezes for its 0.6-0.8s `:attacking` window before the bolt
+   launches, and a melee monster for 0.3-0.8s before the swing - the
+   whole point being that the player can read it and strafe. In sprite
+   mode there was nothing to read: the billboard is one baked frame and
+   `paint-face-overlay` is skipped, so a far cacodemon about to fire
+   looked exactly like a dormant one.
+
+   Held for the whole windup with no pulse (calm 3D view), in the type's
+   head colour on a dark BG so it reads against any sprite behind it.
+
+   Depth-gated by `enemy-front-visible-at?` exactly like the face glyph:
+   `collect-enemy-projs` projects every alive enemy in the frustum with
+   no occlusion test, so without the gate an enemy winding up BEHIND a
+   wall would float an `!` over that wall - a free wallhack pointing at
+   the next ambush.
+
+   Scene-space contract matches `paint-face-overlay`: `vw` / `vh` /
+   `dists` / `edists` / `pr` are scene cells and `sc` is the render pixel
+   scale applied to the emitted terminal coordinates, so the caller
+   passes a bundle projected at the same `vw` AND the same projection
+   numerator the scene cast with (`collect-enemy-projs-pd`).
+
+   Two overlaps are deliberate. A wounded attacker's HP digit targets the
+   same cell; this pass paints later, so the `!` wins for the windup and
+   the digit resumes after it - the wind-up is the more urgent read. And
+   a point-blank attacker's mark can land on HUD row 1 or 2: hiding the
+   cue on the enemy about to hit you would be worse than one transient
+   cell of compass."
+  [parts enemy-projs stats ^int vw ^int vh dists edists ^int sc & [pr-arg]]
+  (let [pr (or pr-arg 0)]
+    (doseq [proj enemy-projs]
+      (when (and (= :attacking (:state proj))
+                 (php/> (or (:lives proj) 0) 0))
+        (let [col (:col proj)
+              d   (:dist proj)]
+          (when (and (php/>= col 0)
+                     (php/< col vw)
+                     (enemy-front-visible-at? d col dists edists))
+            ;; `:scale` matters here where it does not for the face glyph:
+            ;; the cyberdemon's billboard is 2x tall, so a 1.0 height would
+            ;; put the mark on its chest in the one fight where reading the
+            ;; windup matters most.
+            (let [h        (sprite-h vh d (or (:scale proj) 1.0))
+                  feet-row (php/+ (php/intval (php/round (php/+ (php// vh 2.0) (php/* 0.5 (wall-px proj-dist d))))) pr)
+                  row      (php/- (php/- feet-row h) 1)]
+              (when (and (php/>= row 1) (php/<= row vh))
+                (buf-push parts
+                          (str "\e[" (php/* sc row) ";" (php/+ (php/* sc col) 1)
+                               "H\e[40;1;38;5;"
+                               (or (:head-code (visuals-for-type (:type proj) stats)) 196)
+                               "m!\e[0m")))))))))
+  parts)
+
 (defn paint-hearts-hud
   "Top-left lives + armor count. Hearts are held steady bright (calmer 3D
    view): the old dim/bright pulse while bloody read as a strobe, and the

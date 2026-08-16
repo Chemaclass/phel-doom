@@ -126,6 +126,10 @@ Player ducks around corner:
 3. Hunter walks to frozen `:lkp` while player runs.
 4. Hunter reaches `:lkp` with no LOS → `:dormant`. Escape.
 
+## Attack telegraph
+
+An enemy in `:attacking` (the frozen windup before a swing or a bolt) carries a steady `!` above its head, in its own head colour. See [rendering.md](rendering.md#attack-telegraph-issue-457) - without it the windup was invisible in sprite mode, and dodging depends on reading it.
+
 ## Respawn
 
 Killed enemy stays in vector with `:alive false` + `:respawn-after` timer (uniform 3-6s; nightmare: 1-2s).

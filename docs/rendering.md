@@ -230,6 +230,18 @@ When the game-loop's startup calibration finds full detail too slow for a smooth
 
 H/ESC info menu width-adaptive: max 44 chars, min 36. Drops CONTROLS section first, then COMPASS HINT on squeeze.
 
+## Attack telegraph (issue #457)
+
+A steady `!` one row above the head of any enemy in the `:attacking` state, in the type's head colour on a dark BG. Casters freeze for a 0.6-0.8s windup before the bolt launches and melee monsters for 0.3-0.8s before the swing, which is what makes dodging a skill - but in sprite mode there was nothing to read: the billboard is one baked frame and `paint-face-overlay` is skipped, so a far cacodemon about to fire looked exactly like a dormant one.
+
+`paint-attack-telegraphs` filters the enemy bundle the zone pass already built (`project-enemy-pd` carries `:state` at no extra cost), so at full detail it is one pass over an existing list. Pixel-doubled mode re-projects at `svw` because the scene casts with a halved numerator - see below. Held for the whole windup with no pulse, tracking the pitch shear, and scaled by the sprite's own `:scale` so the boss's mark sits above its 2x head rather than on its chest.
+
+Depth-gated by `enemy-front-visible-at?` like the face glyph, and for the same reason: `collect-enemy-projs` projects every alive enemy in the frustum with no occlusion test, so an ungated mark would float over the wall an enemy is winding up behind - a free wallhack pointing at the next ambush. Scene-space contract as well: `vw` / `vh` / `dists` / `edists` / `pr` are scene cells and `sc` scales the emitted terminal coordinates.
+
+Pixel-doubled mode needs the SCENE projection numerator, not the full one: the px2 scene casts and places sprite bodies with `scene-pd = 0.5 * proj-dist`, so a bundle projected at `svw` with the full numerator puts an off-centre enemy at roughly twice its real horizontal offset - and the depth gate then samples `dists` / `edists` at that drifted column. `collect-enemy-projs-pd` takes the numerator for exactly this. The face overlay still builds its px2 bundle with the full numerator (same latent drift, but changing it moves golden hashes, so it is tracked separately).
+
+Two overlaps are deliberate. A wounded attacker's HP digit targets the same cell; the telegraph paints later, so the `!` wins during the windup and the digit resumes after - the windup is the more urgent read. And a point-blank attacker's mark can land on HUD row 1 or 2, which is better than hiding the cue on the enemy about to hit you.
+
 ## Message line (issue #456)
 
 One left-aligned row at row 3 naming what just happened: `Picked up a heart.`, `Picked up the BLUE keycard.`, `You got the SHOTGUN!`, `A secret is revealed!`, or the weapon and its ammo on a slot switch. Before it, every pickup was the same door tink plus the item vanishing, so a first-timer could not tell a shard from an ammo box or know a keycard was now held.

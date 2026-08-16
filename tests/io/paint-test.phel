@@ -3,7 +3,7 @@
   (:require phel.string :as str)
   (:require phel-doom.io.render.buffer :refer [buf-mk])
   (:require phel-doom.io.render.paint :refer [paint-crosshair paint-game-info paint-compass paint-hearts-hud paint-hit-vignette paint-intro-splash paint-reload-ready paint-message message-visible? paint-attack-telegraphs
-                                              strip-visible-width]))
+                                              strip-visible-width paint-hint-strip]))
 
 ;; ---------------------------------------------------------------------
 ;; Crosshair legibility. The reticle must be a SOLID glyph, never the old
@@ -398,3 +398,26 @@
   (let [out (php/implode "" (paint-game-info (buf-mk) crowded-stats 10))]
     (is (str/contains? out "L1"))
     (is (str/contains? out "kills"))))
+
+;; ---------------------------------------------------------------------
+;; First-run key hints (#467). A new player landed in L1 with no
+;; reminder of the controls: the help panel has to be discovered, and
+;; the objective splash says what to do, never how.
+;; ---------------------------------------------------------------------
+
+(deftest test-hint-strip-shows-while-its-timer-runs
+  (let [out (php/implode "" (paint-hint-strip (buf-mk) {:hint-secs 12.0} 80 24))]
+    (is (str/contains? out "WASD"))
+    (is (str/contains? out "SPACE fire"))
+    (is (str/contains? out "\e[23;1H") "bottom row, out of the scene's way")))
+
+(deftest test-hint-strip-is-gone-once-the-timer-expires
+  (is (= "" (php/implode "" (paint-hint-strip (buf-mk) {:hint-secs 0.0} 80 24))))
+  (is (= "" (php/implode "" (paint-hint-strip (buf-mk) {} 80 24)))))
+
+(deftest test-hint-strip-yields-on-a-short-viewport
+  (is (= "" (php/implode "" (paint-hint-strip (buf-mk) {:hint-secs 12.0} 80 11)))))
+
+(deftest test-hint-strip-clips-to-the-viewport
+  (let [out (php/implode "" (paint-hint-strip (buf-mk) {:hint-secs 12.0} 20 24))]
+    (is (php/<= (strip-visible-width (php/substr out 7)) 20))))

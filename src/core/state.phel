@@ -178,6 +178,7 @@
     :flash-secs  0.0
     :msg-text    nil
     :msg-secs    0.0
+    :hint-secs   0.0
     :fire-cooldown 0.0
     :reload-cooldown 0.0
     :empty-click-secs 0.0
@@ -246,6 +247,38 @@
     :sprint-cooldown-secs     0.0
     :sprint-blocked?          false
     :moves      empty-moves}))
+
+(def onboarding-hint-secs
+  "How long the first-run key hints stay up (seconds, #467). Long enough
+   to read twice without hurrying, and the strip clears early the moment
+   the player has moved, turned and fired - whichever comes first."
+  15.0)
+
+(defn hints-cleared
+  "Drop the onboarding hint strip (#467)."
+  [world]
+  (assoc world :hint-secs 0.0))
+
+(defn note-hint-progress
+  "Tick off what the player has demonstrated while the hint strip is up
+   (#467): moving, turning and firing. Once all three are done the strip
+   goes early - it has served its purpose, and leaving it up for the rest
+   of the fifteen seconds would just be furniture.
+
+   Cheap by construction: returns `world` untouched the moment the strip
+   is down, which is every frame after the first fifteen seconds of a
+   first level."
+  [world moved? turned? fired?]
+  (if (php/<= (or (:hint-secs world) 0.0) 0.0)
+    world
+    (let [seen (conj (or (:hints-seen world) #{})
+                     (if moved? :moved :none)
+                     (if turned? :turned :none)
+                     (if fired? :fired :none))
+          w    (assoc world :hints-seen seen)]
+      (if (and (contains? seen :moved) (contains? seen :turned) (contains? seen :fired))
+        (hints-cleared w)
+        w))))
 
 (def message-secs
   "How long a message line stays up (seconds). Long enough to read

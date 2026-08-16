@@ -1,7 +1,7 @@
 (ns phel-doom.commands.play
   (:require phel.cli :as cli)
   (:require phel.string :as str)
-  (:require phel-doom.core.state :refer [advance-game-time backpack-level clamp-pitch decay-soul-overcap empty-moves max-lives max-stamina push-msg turn-player rebuild-pgrid reset-reticle toggle-debug toggle-map toggle-pause toggle-sound])
+  (:require phel-doom.core.state :refer [advance-game-time backpack-level clamp-pitch decay-soul-overcap empty-moves max-lives max-stamina note-hint-progress push-msg turn-player rebuild-pgrid reset-reticle toggle-debug toggle-map toggle-pause toggle-sound])
   (:require phel-doom.core.map      :refer [door? reveal-secret secret? switch? toggle-switch])
   (:require phel-doom.glue.controls :refer [wheel-weapon-step refresh-from-keys key-states rising-edges
                                             initial-key-snapshot nav-deltas mouse-aim])
@@ -529,7 +529,21 @@
             ;; 1.6x frame "for free". Drain reads the just-refreshed
             ;; :moves slots (refresh-from-keys above), so the player
             ;; pays for the intent the same frame they signal it.
-            w1b  (try-reveal-secret w1am (:action edges))
+            ;; First-run hints (#467) retire as soon as the player has
+            ;; shown they can move, turn and shoot. `:moves` carries the
+            ;; live hold counters, so this reads what they just did.
+            w1ah (note-hint-progress
+                  w1am
+                  (php/> (php/+ (php/+ (or (get-in w1am [:moves :fwd]) 0.0)
+                                       (or (get-in w1am [:moves :back]) 0.0))
+                                (php/+ (or (get-in w1am [:moves :strafe-left]) 0.0)
+                                       (or (get-in w1am [:moves :strafe-right]) 0.0)))
+                         0.0)
+                  (php/> (php/+ (or (get-in w1am [:moves :turn-left]) 0.0)
+                                (or (get-in w1am [:moves :turn-right]) 0.0))
+                         0.0)
+                  (boolean (:fire edges)))
+            w1b  (try-reveal-secret w1ah (:action edges))
             ;; Switch (issue #62): flip the cell glyph + every target
             ;; on the world's :switches metadata. Chained AFTER
             ;; reveal-secret so the F-press never double-fires.
@@ -669,6 +683,8 @@
    ;; the real hitscan selection so the cue can never disagree with the gun.
    :hostile?             (target-in-sights? world)
    :msg-text             (:msg-text world)
+   ;; First-run key hints (#467).
+   :hint-secs            (or (:hint-secs world) 0.0)
    :msg-secs             (or (:msg-secs world) 0.0)
    :reload-ready-secs    (or (:reload-ready-secs world) 0.0)
    ;; Settings page (issue #107): the pause overlay paints the box from

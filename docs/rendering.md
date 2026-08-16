@@ -246,6 +246,12 @@ Pixel-doubled mode needs the SCENE projection numerator, not the full one: the p
 
 Two overlaps are deliberate. A wounded attacker's HP digit targets the same cell; the telegraph paints later, so the `!` wins during the windup and the digit resumes after - the windup is the more urgent read. And a point-blank attacker's mark can land on HUD row 1 or 2, which is better than hiding the cue on the enemy about to hit you.
 
+## First-run key hints (issue #467)
+
+One dim, steady line along the bottom of the viewport for the first fifteen seconds of level 1: `WASD move   mouse / arrows look   SPACE fire   F use   TAB help`. A first-time player landed in L1 with no reminder of the controls at all - the help panel exists but has to be discovered, and the objective splash says what to do, never how.
+
+L1 only (every later level is reached by someone who already walked through a door), and it retires early the moment the player has moved, turned and fired, since after that it is furniture. `:hint-secs` decays with the other feel timers; `note-hint-progress` is a no-op once the strip is down, which is every frame of the rest of the game. Suppressed under `vh` 12 and clipped to the viewport width. Quick-saves drop it - somebody loading a save is past needing it.
+
 ## Message line (issue #456)
 
 One left-aligned row at row 3 naming what just happened: `Picked up a heart.`, `Picked up the BLUE keycard.`, `You got the SHOTGUN!`, `A secret is revealed!`, or the weapon and its ammo on a slot switch. Before it, every pickup was the same door tink plus the item vanishing, so a first-timer could not tell a shard from an ammo box or know a keycard was now held.

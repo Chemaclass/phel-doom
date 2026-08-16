@@ -3,7 +3,8 @@
   (:require phel-doom.core.level :refer [ammo-box-count armor-shard-count config-for heart-count num-levels build-world place-secret-reward secret-trophies])
   (:require phel-doom.core.map :refer [door? cell-floor cell-wall cell-door-boss find-door-cell passable?])
   (:require phel-doom.core.rng :as rng)
-  (:require phel-doom.core.combat :as combat))
+  (:require phel-doom.core.combat :as combat)
+  (:require phel-doom.core.weapons :as weapons))
 
 ;; ---------------------------------------------------------------------
 ;; Seeded determinism (issue #64): same rng seed => identical level.
@@ -132,6 +133,59 @@
   (let [saws (filter (fn [p] (= :chainsaw (:weapon p)))
                      (:weapon-pickups (build-world 4 5 0 :normal #{:pistol :chainsaw})))]
     (is (= 0 (count saws)))))
+
+;; #453: a level seeds the weapons the player MISSED, not only its own
+;; debut drop. Before the fix an L8+ start (a death retry, or `-l N`)
+;; carried the pistol into archviles with no weapon on the floor at all,
+;; because the spawn table only answered levels 2..7.
+(deftest test-build-world-seeds-missed-weapons-on-a-late-level
+  (let [ws (:weapon-pickups (build-world 8 5 0 :normal #{:pistol}))]
+    (is (= 2 (count ws)) "pistol-only on L8 -> the two most recent unowned")
+    (is (= #{:incinerator :bfg} (set (map (fn [p] (:weapon p)) ws)))
+        "most recent first: bfg (7) + incinerator (6)")))
+
+(deftest test-build-world-still-seeds-the-levels-own-debut-weapon
+  ;; The level's own weapon is by definition the most recent, so the
+  ;; two-slot cap can never drop it.
+  (let [ws (:weapon-pickups (build-world 5 5 0 :normal #{:pistol}))]
+    (is (contains? (set (map (fn [p] (:weapon p)) ws)) :rocket))))
+
+(deftest test-build-world-seeds-no-weapon-when-all-are-owned
+  (let [owned (set weapons/weapon-order)]
+    (is (= 0 (count (:weapon-pickups (build-world 8 5 0 :normal owned)))))))
+
+(deftest test-build-world-owed-list-is-most-recent-missing-not-most-recent
+  ;; Owning the BFG (the newest weapon) must not stop the older gaps from
+  ;; being filled: the cap picks the two most recent MISSING weapons.
+  (let [ws (:weapon-pickups (build-world 8 5 0 :normal #{:pistol :bfg}))]
+    (is (= #{:incinerator :rocket} (set (map (fn [p] (:weapon p)) ws))))))
+
+;; Why a death retry must rebuild from the rack the player ENTERED with
+;; (#453, play/retry-loadout): weapon-pickup cells are drawn from the run
+;; PRNG BEFORE the ammo boxes, so changing the owed count changes every
+;; later draw. Same seed + same owned set is the only thing that
+;; reproduces a level, which is what `R` promises.
+(deftest test-build-world-owned-set-shifts-every-later-spawn
+  (rng/seed! 4242)
+  (let [a (build-world 5 5 0 :normal #{:pistol :shotgun :chaingun :chainsaw})]
+    (rng/seed! 4242)
+    (let [same (build-world 5 5 0 :normal #{:pistol :shotgun :chaingun :chainsaw})]
+      (is (= (map (fn [b] [(:x b) (:y b)]) (:ammo-boxes a))
+             (map (fn [b] [(:x b) (:y b)]) (:ammo-boxes same)))
+          "same seed + same rack -> identical ammo boxes"))
+    (rng/seed! 4242)
+    (let [richer (build-world 5 5 0 :normal #{:pistol :shotgun :chaingun :chainsaw :rocket})]
+      (is (= 0 (count (:weapon-pickups richer))) "nothing owed -> no draw")
+      (is (not (= (map (fn [b] [(:x b) (:y b)]) (:ammo-boxes a))
+                  (map (fn [b] [(:x b) (:y b)]) (:ammo-boxes richer))))
+          "one weapon more owned -> one draw fewer -> later spawns shift"))))
+
+(deftest test-build-world-weapon-pickups-never-share-a-cell
+  ;; Two pickups on one cell = one silently consumed (the same trap
+  ;; `spawn-ammo-boxes` retries around).
+  (let [ws    (:weapon-pickups (build-world 8 5 0 :normal #{:pistol}))
+        cells (set (map (fn [p] [(:x p) (:y p)]) ws))]
+    (is (= (count ws) (count cells)))))
 
 ;; ---------------------------------------------------------------------
 ;; Slim-entry refactor regression: each level's `:enemy` kw is stamped

@@ -1078,6 +1078,32 @@
   [settings]
   (boolean (:minimap settings)))
 
+(defn retry-loadout
+  "What a death-screen retry (`r` / `R`) re-enters the level with: the
+   rack the player ENTERED that level carrying, never the one they died
+   holding (#453).
+
+   Before this, both retry branches recurred with `#{:pistol}` and
+   backpack 0, so dying on L7 restarted L7 with the pistol against
+   archviles - unwinnable, since kill loot only refills weapons already
+   owned (docs/combat.md) and a level seeded only its own debut weapon.
+
+   Entry, not death, for determinism: `build-world` seeds weapon pickups
+   from the owned set and draws their cells from the run's PRNG BEFORE the
+   ammo boxes, so a retry that owned one weapon more would draw one cell
+   fewer and shift every later spawn. `R` promises an identical replay
+   (docs/game-loop.md), and entry values are the ones the level was built
+   from, so rebuilding with them is identical by construction. A weapon
+   grabbed during the fatal attempt is back on the floor where it was.
+
+   Ammo is not carried either: the caller passes a nil weapon-state, so
+   build-world seeds fresh mags and reserves. Kills, time and lives still
+   reset - a retry is a fresh attempt at the level, not a checkpoint."
+  [owned bp-level weapon]
+  {:owned-weapons  (or owned #{:pistol})
+   :backpack-level (or bp-level 0)
+   :weapon         (or weapon :pistol)})
+
 (defn- run-levels
   "Outer loop driving one full run. Each iteration captures a fresh
    PRNG seed before calling build-world so the player can replay the
@@ -1093,7 +1119,9 @@
    refill in combat/tick-armory keeps the pool topped up so every
    weapon stays testable without grinding for boxes. `start-level`
    (from --level / -l) sets where the run begins — 1..num-levels,
-   clamped. Death + retry reset to L1 (the start-level only seeds
+   clamped. A death retry re-enters the level you died on with the
+   loadout carried (`retry-loadout`); a victory restart resets to L1
+   with a fresh rack (the start-level only seeds
    the initial loop entry). `demo-phase` (nil for normal play, 1..4 for
    the tech-talk showcase) applies a per-phase world transform after
    build-world (see phel-doom.demo.phases/apply-phase). `max-rows` /
@@ -1190,13 +1218,20 @@
         (and (map? result) (:game-over result))
         (let [[k t stats]     (carry-on carry-kills carry-time carry-stats result)
               [kind new-seed] (handle-end death-loop k t (run-summary stats) result seed false)
-              died-on         (or (:level result) 1)]
+              died-on         (or (:level result) 1)
+              ;; The rack survives the death screen (#453); the ammo does
+              ;; not - a nil weapon-state means build-world seeds fresh
+              ;; mags for the gun that comes back in hand. Fed from THIS
+              ;; iteration's bindings (what the level was built with), not
+              ;; from `result` (what the player died holding), so the
+              ;; same-seed replay rebuilds the identical level.
+              kit             (retry-loadout owned bp-level weapon)]
           (cond
             ;; r: try the level you died on again with a fresh map.
-            (= kind :fresh) (recur died-on max-lives 0 0 empty-run-stats (rng/fresh-seed) 0 #{:pistol} nil nil (restart-show-map? init-settings) true init-settings)
+            (= kind :fresh) (recur died-on max-lives 0 0 empty-run-stats (rng/fresh-seed) (:backpack-level kit) (:owned-weapons kit) (:weapon kit) nil (restart-show-map? init-settings) true init-settings)
             ;; R: replay the exact level you died on (same seed + same
             ;; level number reproduces identical geometry + enemies).
-            (= kind :same)  (recur died-on max-lives 0 0 empty-run-stats new-seed 0 #{:pistol} nil nil (restart-show-map? init-settings) true init-settings)
+            (= kind :same)  (recur died-on max-lives 0 0 empty-run-stats new-seed (:backpack-level kit) (:owned-weapons kit) (:weapon kit) nil (restart-show-map? init-settings) true init-settings)
             :else           nil))
 
         :else

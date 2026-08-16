@@ -1,6 +1,7 @@
 (ns phel-doom-tests.io.frame-math-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.io.render.frame-math :refer [scene-rows collect-enemy-projs layout]))
+  (:require phel-doom.io.render.frame-math :refer [scene-rows collect-enemy-projs collect-enemy-projs-pd layout])
+  (:require phel-doom.core.engine :refer [proj-dist]))
 
 ;; ---------------------------------------------------------------------
 ;; scene-rows (#243): the full-detail viewport height the renderer uses
@@ -61,3 +62,41 @@
     ;; The near enemy sits at (7,5), dist ~2; the far at (10,5), dist ~5.
     (is (php/> d0 4.0) "farther sprite is ~5 world-units away")
     (is (php/< d1 3.0) "nearer sprite is ~2 world-units away")))
+
+;; ---------------------------------------------------------------------
+;; Pixel-doubled projection numerator (#477). The px2 scene casts and
+;; places sprite BODIES with scene-pd (half proj-dist), but the face /
+;; telegraph overlays used to build their own bundle at svw with the
+;; FULL numerator. An off-centre enemy's glyph then landed at roughly
+;; twice its real horizontal offset - and since those overlays gate on
+;; dists/edists at the projected column, they sampled the wrong column
+;; too, so a glyph could leak past a wall or hide behind one.
+;; ---------------------------------------------------------------------
+
+(def- px2-player {:x 5.0 :y 5.0 :angle 0.0})
+(def- px2-svw 60)
+(def- px2-pd (php/* 0.5 proj-dist))
+
+(defn- body-col
+  ;; Where the zone pass actually puts the body in px2: projected at the
+  ;; FULL width, then halved.
+  [enemy]
+  (php/intdiv (:col (first (collect-enemy-projs [enemy] px2-player (php/* 2 px2-svw)))) 2))
+
+(defn- overlay-col [enemy]
+  (:col (first (collect-enemy-projs-pd px2-pd [enemy] px2-player px2-svw))))
+
+(deftest test-px2-overlay-column-tracks-the-body
+  ;; Within a cell either way: the glyph must sit ON the sprite.
+  (foreach [dy [0.0 0.5 1.0 2.0 3.0]]
+    (let [e {:x 11.0 :y (php/+ 5.0 dy) :alive true :lives 1 :max-lives 1 :type :imp}]
+      (is (php/<= (php/abs (php/- (overlay-col e) (body-col e))) 1)
+          (str "off-axis " dy " -> overlay " (overlay-col e) " vs body " (body-col e))))))
+
+(deftest test-the-full-numerator-is-what-drifted
+  ;; The bug, pinned: the old bundle disagrees badly off-centre, so a
+  ;; regression back to collect-enemy-projs would fail the test above.
+  (let [e     {:x 11.0 :y 8.0 :alive true :lives 1 :max-lives 1 :type :imp}
+        wrong (:col (first (collect-enemy-projs [e] px2-player px2-svw)))]
+    (is (php/> (php/abs (php/- wrong (body-col e))) 8)
+        "the full-pd bundle lands many cells from the body")))

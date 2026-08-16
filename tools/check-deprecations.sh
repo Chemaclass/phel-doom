@@ -21,6 +21,13 @@
 # is cleared first so the whole tree recompiles under the flag. `phel test`
 # has no --no-cache, and the cache key does not include the flag.
 #
+# This is also the gate's ONLY suite run. `composer ci` used to run
+# `composer test` first and then this: the same 3800 tests twice, 12s warm
+# plus 28s cold, for 40s of a 50s gate. The cold run is a superset - it
+# compiles everything from scratch AND runs every test - so the warm one
+# was pure duplication. `composer test` on its own is untouched and stays
+# the fast way to run tests while working.
+#
 # Fail-closed: an empty run (no tests discovered) is a failure, not a pass.
 set -uo pipefail
 
@@ -47,8 +54,15 @@ if ! grep -qE '^Total: [0-9]+' "$log"; then
 fi
 
 if [ "$status" -ne 0 ]; then
-  echo "check-deprecations: the suite itself failed; fix that first."
-  tail -20 "$log"
+  # This is the gate's only suite run, so a plain test failure lands here.
+  # Print the failures themselves, not just the tail, or the developer has
+  # to re-run the suite by hand to find out what broke.
+  echo "check-deprecations: the suite failed."
+  echo
+  grep -E "^(FAIL|Error|Failed asserting|Total|Passed|Failed)" "$log" | head -40
+  echo
+  echo "Full output: $log (copied to /tmp/phel-doom-ci-failure.log)"
+  cp "$log" /tmp/phel-doom-ci-failure.log 2>/dev/null
   exit "$status"
 fi
 

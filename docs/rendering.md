@@ -276,6 +276,18 @@ Measured drift before the fix, at a 120-column terminal pixel-doubled: an enemy 
 
 Two overlaps are deliberate. A wounded attacker's HP digit targets the same cell; the telegraph paints later, so the `!` wins during the windup and the digit resumes after - the windup is the more urgent read. And a point-blank attacker's mark can land on HUD row 1 or 2, which is better than hiding the cue on the enemy about to hit you.
 
+## Overlay coverage
+
+`tests/io/render-cache-test.phel` pins the QUIET frame - nothing picked up, nothing attacking, no hints - so each overlay was covered only by its own unit test and nothing pinned them together, which is where the interactions live: paint order, the row-3 clip against the minimap panel, two overlays reaching for the same cell.
+
+`tests/io/overlay-golden-test.phel` pins a frame with all of them at once, and names each in its own assertion so a broken hash says WHICH one went missing rather than just "something moved". The scene mirrors `tools/shots/showcase.phel`, so when a hash does move you can look at the picture:
+
+```bash
+tools/frame-shot.sh tools/shots/showcase.phel /tmp/showcase.png
+```
+
+It was mutation-checked: disabling the telegraph, the message line or the hint strip each fails it.
+
 ## First-run key hints (issue #467)
 
 One dim, steady line along the bottom of the viewport for the first fifteen seconds of level 1: `WASD move   mouse / arrows look   SPACE fire   F use   TAB help`. A first-time player landed in L1 with no reminder of the controls at all - the help panel exists but has to be discovered, and the objective splash says what to do, never how.

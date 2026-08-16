@@ -1,0 +1,78 @@
+(ns phel-doom-tests.io.overlay-golden-test
+  (:require phel.test :refer [deftest is])
+  (:require phel.string :as str)
+  (:require phel-doom-tests.io.render-fixtures :refer [world stats])
+  (:require phel-doom.core.enemy :refer [new-enemy])
+  (:require phel-doom.io.render.main :refer [frame->string]))
+
+;; ---------------------------------------------------------------------
+;; The OVERLAY frame: message line, first-run hints, an enemy mid-windup
+;; (attack pose + its `!`), a hostile reticle and the full HUD strip, all
+;; in one frame.
+;;
+;; render-cache-test pins the quiet default frame - no message, no hints,
+;; no attacking enemy - so every overlay shipped in this batch was covered
+;; only by its own unit test. Nothing pinned them TOGETHER, which is where
+;; the interactions live: paint order, the row-3 clip against the minimap,
+;; two overlays reaching for the same cell.
+;;
+;; The scene mirrors tools/shots/showcase.phel, which is the picture you
+;; look at when a hash below moves and you want to see what changed.
+;; ---------------------------------------------------------------------
+
+(def overlay-world
+  (assoc world
+         :show-map true
+         ;; Dead ahead of the fixture player (11.5, 13.5 facing 5.847 rad),
+         ;; so the enemy is in frame, unobstructed and under the centre
+         ;; reticle - which is what makes the telegraph and the hostile
+         ;; tint both fire.
+         :enemies [(assoc (new-enemy 14.67 12.02 3 :caco) :state :attacking)]))
+
+(def overlay-stats
+  (merge stats
+         {:msg-text "Picked up the BLUE keycard." :msg-secs 1.4
+          :hint-secs 9.0
+          :hostile? true
+          :held-keys #{:blue :red}
+          :backpack-level 2
+          :difficulty :nightmare
+          :run-timer? true
+          :stamina 55.0 :max-stamina 100.0}))
+
+(deftest test-overlay-frame-bytes-pinned
+  ;; Update DELIBERATELY, and look at the frame before you do:
+  ;;   tools/frame-shot.sh tools/shots/showcase.phel /tmp/showcase.png
+  (is (= "fe4c446d8f13ef61586800e729b82144"
+         (php/md5 (frame->string overlay-world overlay-stats 120 30))))
+  ;; Same inputs twice: a hash that drifts run to run is worse than none.
+  (is (= (php/md5 (frame->string overlay-world overlay-stats 120 30))
+         (php/md5 (frame->string overlay-world overlay-stats 120 30)))))
+
+(deftest test-every-overlay-is-actually-in-the-frame
+  ;; The hash says "something changed"; these say WHICH thing went missing.
+  (let [f (frame->string overlay-world overlay-stats 120 30)]
+    (is (str/contains? f "Picked up the BLUE keycard.") "message line (#456)")
+    (is (str/contains? f "WASD move") "first-run hints (#467)")
+    (is (str/contains? f "m!\e[0m") "attack telegraph (#457)")
+    (is (str/contains? f "\e[91;1m+") "hostile reticle (#458)")
+    (is (str/contains? f "+pack x2") "HUD strip chips (#466)")
+    (is (str/contains? f "MAP") "minimap panel")))
+
+(deftest test-the-overlays-stay-out-of-each-others-cells
+  ;; Row 3 carries the message line AND the minimap's first content row;
+  ;; #466 clips the HUD strip at the panel's left margin for the same
+  ;; reason. If either regresses, the panel border loses cells.
+  (let [f    (frame->string overlay-world overlay-stats 120 30)
+        rows (php/explode "\n" f)]
+    (is (php/> (php/count rows) 3))
+    ;; The message must not run into the panel: the minimap's left border
+    ;; glyph still has to appear on its own rows.
+    (is (str/contains? f "│") "minimap panel borders survive the overlays")))
+
+(deftest test-a-quiet-frame-is-untouched-by-all-of-this
+  ;; The same fixture with nothing happening still matches the default
+  ;; golden in render-cache-test, so none of these overlays costs a byte
+  ;; when there is nothing to say.
+  (is (= "453c4baf9062da97bed130cc89623807"
+         (php/md5 (frame->string world stats 120 30)))))

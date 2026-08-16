@@ -64,7 +64,7 @@ The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself; the g
 |---|---|---|
 | `handle-toggles` | Rising-edge: pause / map / sound / debug / about-face | `commands/play` |
 | `refresh-from-keys` | Refresh `:moves` counters from input bytes | `glue/controls` |
-| `switch-weapon` (1-8) | Key-edge swap active weapon (no-op while reloading) | `core/weapons` |
+| `switch-weapon` (1-7), `cycle-weapon` (`[` / `]` / wheel) | Key-edge swap active weapon (no-op while reloading) | `core/weapons` |
 | `try-reveal-secret` / `try-toggle-switch` | F-key adjacent: secret reveal OR switch toggle + targets | `commands/play` |
 | `mark-visible-cells` | Stamp LOS cells onto `:visited` (fog-of-war reveal) | `core/engine` |
 | `tick-stamina` + `apply-physics` | Drain sprint pool; rotate + translate + decay counters | `core/physics` |

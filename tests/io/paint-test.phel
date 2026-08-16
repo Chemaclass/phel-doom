@@ -2,7 +2,8 @@
   (:require phel.test :refer [deftest is])
   (:require phel.string :as str)
   (:require phel-doom.io.render.buffer :refer [buf-mk])
-  (:require phel-doom.io.render.paint :refer [paint-crosshair paint-game-info paint-compass paint-hearts-hud paint-hit-vignette paint-intro-splash paint-reload-ready paint-message message-visible? paint-attack-telegraphs]))
+  (:require phel-doom.io.render.paint :refer [paint-crosshair paint-game-info paint-compass paint-hearts-hud paint-hit-vignette paint-intro-splash paint-reload-ready paint-message message-visible? paint-attack-telegraphs
+                                              strip-visible-width]))
 
 ;; ---------------------------------------------------------------------
 ;; Crosshair legibility. The reticle must be a SOLID glyph, never the old
@@ -341,3 +342,59 @@
   (let [out (crosshair-att {:hostile? true})]
     (is (= out (crosshair-att {:hostile? true})))
     (is (not (str/contains? out "\e[5m")))))
+
+;; ---------------------------------------------------------------------
+;; HUD strip overflow (#466). With the minimap on, the row-2 strip was
+;; unbounded: at 80 columns a run with a backpack, stamina, a key and a
+;; difficulty tag painted straight through the minimap's top border.
+;; ---------------------------------------------------------------------
+
+(def- crowded-stats
+  {:level 1 :level-name "imps" :kills 12 :weapon-name "chaingun"
+   :mag 30 :mag-size 30 :ammo-reserve 90 :backpack-level 2
+   :held-keys #{:blue :red :yellow} :difficulty :nightmare
+   :run-timer? true :game-time 754.0 :stamina 55.0 :max-stamina 100.0})
+
+(defn- info-width [stats right-edge]
+  ;; Minus the `\e[2;1H` cursor move, which costs no display columns and
+  ;; is not SGR, so strip-visible-width (rightly) leaves it in place.
+  (php/- (strip-visible-width
+          (php/implode "" (paint-game-info (buf-mk) stats right-edge)))
+         6))
+
+(deftest test-strip-visible-width-ignores-the-escapes
+  (is (= 3 (strip-visible-width "\e[40;97mabc\e[0m")))
+  (is (= 0 (strip-visible-width "\e[1m\e[0m"))))
+
+(deftest test-the-strip-never-crosses-the-minimap-edge
+  ;; 80-col terminal with the map on: the panel's left margin is ~52.
+  (is (php/<= (info-width crowded-stats 52) 52)))
+
+(deftest test-a-wide-terminal-keeps-every-chip
+  (let [out (php/implode "" (paint-game-info (buf-mk) crowded-stats 200))]
+    (is (str/contains? out "+pack"))
+    (is (str/contains? out "[nightmare]"))
+    (is (str/contains? out "STA"))))
+
+(deftest test-the-timer-is-dropped-before-the-stamina-bar
+  ;; Priority when space runs out: the run timer is decoration, the
+  ;; stamina bar is a resource you spend mid-fight. At 80 columns every
+  ;; other chip fits and the timer is the one that does not.
+  (let [out (php/implode "" (paint-game-info (buf-mk) crowded-stats 80))]
+    (is (str/contains? out "STA"))
+    (is (str/contains? out "+pack"))
+    (is (not (str/contains? out "12:34")))))
+
+(deftest test-a-squeeze-drops-the-decoration-first
+  ;; Tighter still: only the stamina bar survives alongside the core.
+  (let [out (php/implode "" (paint-game-info (buf-mk) crowded-stats 60))]
+    (is (str/contains? out "STA"))
+    (is (not (str/contains? out "+pack")))
+    (is (not (str/contains? out "[nightmare]")))))
+
+(deftest test-the-core-line-is-never-truncated
+  ;; Even at an absurd clip the level, kills and ammo survive: they are
+  ;; the line's reason to exist.
+  (let [out (php/implode "" (paint-game-info (buf-mk) crowded-stats 10))]
+    (is (str/contains? out "L1"))
+    (is (str/contains? out "kills"))))

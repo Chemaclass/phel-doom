@@ -56,7 +56,7 @@ Pure data shapes that every other module operates on. `src/core/state.phel`.
  :shake-secs <float seconds>  ; screen-shake kick (damage + heavy-weapon fire/blast)
  :fire-anim  <float seconds>  ; muzzle flash visibility
  :intro-secs <float seconds>  ; level intro splash countdown
- :flash-secs <float seconds>  ; 1-frame white impact flash
+ :flash-secs <float seconds>  ; 1-frame dark-red impact flash
  :msg-text   <string|nil>     ; message line: what was just picked up / revealed / switched to
  :msg-secs   <float seconds>  ; how long that line stays up
  :fx         <vector of blood splatters>
@@ -159,7 +159,7 @@ Float-seconds countdowns on the world, decayed by `decay-timers` in `core/combat
 |---|---|---|
 | `:iframes` | `take-damage` (1.0s) | Red palette flush + immunity window |
 | `:shake-secs` | `take-damage` (0.25s), heavy-weapon fire/blast (splash-radius-scaled) | Cursor-home offset screen-shake |
-| `:flash-secs` | `take-damage` (0.05s) | 1-frame all-white impact |
+| `:flash-secs` | `take-damage` (0.05s) | 1-frame all-red impact wash (#465) |
 | `:fire-anim` | `fire-shot` (0.09s) | Muzzle flash visibility |
 | `:intro-secs` | `build-world` (1.5s) | "LEVEL N · NAME" splash overlay |
 | `:msg-secs` | `push-msg` (2.0s) | Message line naming the pickup / secret / weapon (#456) |

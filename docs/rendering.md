@@ -24,7 +24,7 @@ Entry point: `render! [world stats cols rows]` - cursor home, pick impact flash 
 ```phel
 (print "\e[H")                      ; cursor home
 (if (php/> (get stats :flash-secs) 0.0)
-  (print (white-flash-frame ...))   ; hit flash overlay
+  (print (pain-flash-frame ...))    ; hit flash overlay (dark red, #465)
   (print (frame->string ...)))
 (php/flush)
 ```
@@ -188,7 +188,7 @@ Camera pitch (arrow keys or mouse, issue #243) is rendered as a pure **vertical 
 
 **Weapon bob (#412)** shares the same `:bob-phase` and View bob intensity, applied to the viewmodel anchor in `paint-weapon-sprite` instead of the horizon. Two terms fold into the sprite's existing `shift`/`c0`: `projection/weapon-bob-rows` = `round(intensity * weapon-bob-cap * vh * abs(sin(phase)))` (`weapon-bob-cap` = 0.04) drops the gun on each footfall (`abs(sin)` = a downward bowl, so the gun dips but never rises above rest, unlike the symmetric head-bob), and `projection/weapon-bob-cols` = `round(intensity * weapon-sway-cap * vw * sin(phase))` (`weapon-sway-cap` = 0.02) sways it left/right. The muzzle flash tracks both. `c0` is clamped so the sway never runs the sprite off-screen. Same byte-identical contract: `intensity = 0` or `phase = 0` yields 0 in both axes, so a resting / bob-off frame draws the gun exactly where the no-bob path did.
 
-**Weapon-fire extralight (#413)** briefly brightens the room the frame or two after a shot, the feasible stand-in for a dynamic muzzle point-light (epic #408). `frame->string` subtracts `combat/fire-extralight((:fire-anim stats), duration)` from the near-death `haze-shift`, so the net shift can go NEGATIVE and pull walls toward the bright end of the 24-step shade table. `fire-extralight` returns `muzzle-extralight-steps` (4) while `fire-anim` sits in the first `muzzle-flash-fraction` (0.25) of its animation and 0 otherwise, so the flash lasts ~1-2 frames rather than the whole recoil, and is 0 when idle (resting frame stays byte-identical). Because a negative shift can push a shade index above 23, `compute-wall-shades` clamps `idx` to `[0, 23]`; without the upper clamp the index runs past the shade table and the frame breaks. It cannot collide with the pain-flash: a damage frame short-circuits to `white-flash-frame` before `frame->string` runs. Sky and floor stay untouched, exactly as the near-death haze leaves them.
+**Weapon-fire extralight (#413)** briefly brightens the room the frame or two after a shot, the feasible stand-in for a dynamic muzzle point-light (epic #408). `frame->string` subtracts `combat/fire-extralight((:fire-anim stats), duration)` from the near-death `haze-shift`, so the net shift can go NEGATIVE and pull walls toward the bright end of the 24-step shade table. `fire-extralight` returns `muzzle-extralight-steps` (4) while `fire-anim` sits in the first `muzzle-flash-fraction` (0.25) of its animation and 0 otherwise, so the flash lasts ~1-2 frames rather than the whole recoil, and is 0 when idle (resting frame stays byte-identical). Because a negative shift can push a shade index above 23, `compute-wall-shades` clamps `idx` to `[0, 23]`; without the upper clamp the index runs past the shade table and the frame breaks. It cannot collide with the pain-flash: a damage frame short-circuits to `pain-flash-frame` before `frame->string` runs. Sky and floor stay untouched, exactly as the near-death haze leaves them.
 
 
 ## Half-block sub-pixel rendering (floor / walls / sky)

@@ -10,7 +10,7 @@
                                             mouse-sensitivity mouse-sensitivity-neutral
                                             view-bob-intensity
                                             pause-menu-options pause-menu-count
-                                            pause-menu-move pause-menu-action]))
+                                            pause-menu-move pause-menu-action resolve-glyphs hud-glyph]))
 
 ;; ---------------------------------------------------------------------
 ;; Defaults + page shape
@@ -32,15 +32,17 @@
   (is (= false (:truecolor default-settings)) "truecolor off by default (256-palette parity)")
   (is (= false (:quad default-settings)) "quad detail off by default")
   (is (= 0 (:view-bob default-settings)) "head bob off by default (#411, shipped look unchanged)")
-  (is (= false (:light default-settings)) "room light off by default (#418, golden frames unchanged)"))
+  (is (= false (:light default-settings)) "room light off by default (#418, golden frames unchanged)")
+  (is (= :unicode (:glyphs default-settings)) "drawn glyphs by default (#471)"))
 
 (deftest test-page-has-all-fields-in-order
   ;; Mouse + Sensitivity (#246) sit after Run timer, before the
   ;; accessibility block. View bob (#411) then Room light (#418) are
   ;; appended last.
-  (is (= 16 (field-count)))
+  (is (= 17 (field-count)))
   (is (= [:music :sfx :minimap :difficulty :crosshair :timer
-          :mouse :sensitivity :high-contrast :colorblind :fast-walls :subpixel :truecolor :quad :view-bob :light]
+          :mouse :sensitivity :high-contrast :colorblind :fast-walls :subpixel :truecolor :quad :view-bob :light
+          :glyphs]
          (map :key page-fields))))
 
 (deftest test-field-at-returns-descriptor-or-nil
@@ -57,7 +59,8 @@
   (is (= :quad (:key (field-at 13))))
   (is (= :view-bob (:key (field-at 14))))
   (is (= :light (:key (field-at 15))))
-  (is (nil? (field-at 16)))
+  (is (= :glyphs (:key (field-at 16))))
+  (is (nil? (field-at 17)))
   (is (nil? (field-at -1))))
 
 ;; ---------------------------------------------------------------------
@@ -361,3 +364,24 @@
   (is (= :quit     (pause-menu-action 3)))
   ;; Out-of-range wraps rather than returning nil.
   (is (= :resume   (pause-menu-action 4))))
+
+;; ---------------------------------------------------------------------
+;; HUD glyph set (#471). A font without the keycard / half-heart / info
+;; codepoints draws tofu, and a tofu box is often DOUBLE width - so it
+;; does not merely look wrong, it shifts every column after it.
+;; ---------------------------------------------------------------------
+
+(deftest test-glyph-sets-are-the-same-width
+  ;; The whole point: each stand-in occupies one display column, like
+  ;; the glyph it replaces.
+  (foreach [k [:heart :half-heart :empty-pip :key :info :star]]
+    (is (= 1 (php/mb_strlen (hud-glyph false k))) (str "unicode " (name k)))
+    (is (= 1 (php/mb_strlen (hud-glyph true k)))  (str "ascii " (name k)))))
+
+(deftest test-a-saved-choice-beats-the-locale
+  (is (= :unicode (resolve-glyphs :unicode true false)) "player knows better than LANG")
+  (is (= :ascii   (resolve-glyphs :ascii true true))))
+
+(deftest test-a-non-utf8-locale-defaults-to-ascii
+  (is (= :ascii   (resolve-glyphs :unicode false false)))
+  (is (= :unicode (resolve-glyphs :unicode false true))))

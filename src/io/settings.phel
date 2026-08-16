@@ -1,5 +1,5 @@
 (ns phel-doom.io.settings
-  (:require phel-doom.core.settings :refer [coerce-settings default-settings page-fields resolve-subpixel])
+  (:require phel-doom.core.settings :refer [coerce-settings default-settings page-fields resolve-glyphs resolve-subpixel])
   (:require phel-doom.io.input :refer [terminal-program halfblock-seams?]))
 
 ;; ---------------------------------------------------------------------
@@ -53,16 +53,26 @@
   []
   (php/=== "1" (php/getenv "PHEL_DOOM_SUBPIXEL")))
 
+(defn- utf8-locale?
+  ;; Does the environment claim a UTF-8 locale? A terminal without one
+  ;; is very unlikely to have the HUD glyphs in its font (#471).
+  []
+  (let [v (str (php/getenv "LC_ALL") (php/getenv "LC_CTYPE") (php/getenv "LANG"))]
+    (php/=== 1 (php/preg_match "/utf-?8/i" v))))
+
 (defn- apply-terminal-defaults
   "Overlay terminal-derived startup defaults onto a coerced settings map.
    `saved?` says whether the on-disk file carried an explicit sub-pixel
-   choice (honored over the terminal default). Currently only the #332
-   sub-pixel auto-off. Reads $TERM_PROGRAM + env, so it is side-effecting."
+   choice (honored over the terminal default). The #332 sub-pixel auto-off and the
+   #471 non-UTF-8 glyph fallback. Reads $TERM_PROGRAM + env, so it is side-effecting."
   [settings saved?]
-  (assoc settings :subpixel
-         (resolve-subpixel (:subpixel settings) saved?
-                           (halfblock-seams? (terminal-program))
-                           (subpixel-force-on?))))
+  (-> settings
+      (assoc :subpixel
+             (resolve-subpixel (:subpixel settings) saved?
+                               (halfblock-seams? (terminal-program))
+                               (subpixel-force-on?)))
+      (assoc :glyphs
+             (resolve-glyphs (:glyphs settings) saved? (utf8-locale?)))))
 
 (defn load-settings
   "Read the persisted settings file, returning the coerced defaults

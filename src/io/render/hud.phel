@@ -641,6 +641,13 @@
 
     :else          (php/strval val)))
 
+(defn- settings-section-row
+  "A dim section header inside the settings box (#468). The page grew to
+   seventeen fields, which reads as one undifferentiated list; grouping
+   them says which knob belongs to which concern."
+  [label w]
+  (str "│\e[2;96m" (pause-pad (str "  " (php/strtoupper (or label ""))) w) "\e[22;40;97m│"))
+
 (defn- settings-row
   "One settings field as a full bordered row. The selected row paints
    bold yellow with a ▸ marker; others stay plain white. The visible
@@ -717,13 +724,44 @@
                      blnk
                      (str "│\e[1;93m" (pause-pad "                SETTINGS" w) "\e[40;97m│")
                      blnk]
-        rows-fields (vec (map-indexed
-                          (fn [i field]
-                            (settings-row field settings (php/=== i cursor) w))
-                          page-fields))
+        ;; Visible slice: the page has more fields than a short terminal
+        ;; has rows, so the LIST scrolls (#468) rather than the box
+        ;; growing past the screen. 9 rows of chrome: borders, title,
+        ;; separators, the hint line and the footer.
+        n-fields    (count page-fields)
+        room        (php/max 3 (php/- vh 11))
+        ;; Section headers occupy rows too, so a window sized purely by
+        ;; field count would still overflow a short terminal. Size it
+        ;; once, count the headers that slice would introduce, then size
+        ;; it again with those rows subtracted.
+        window0     (php/min n-fields room)
+        start0      (php/max 0 (php/min (php/- n-fields window0)
+                                        (php/- cursor (php/intdiv window0 2))))
+        headers0    (loop [i start0 prev nil n 0]
+                      (if (php/>= i (php/+ start0 window0))
+                        n
+                        (let [sec (:section (get page-fields i))]
+                          (recur (php/+ i 1) sec (if (= sec prev) n (php/+ n 1))))))
+        window      (php/max 1 (php/min n-fields (php/- room headers0)))
+        first-shown (php/max 0 (php/min (php/- n-fields window)
+                                        (php/- cursor (php/intdiv window 2))))
+        ;; Each row is positioned with its own absolute cursor move, so a
+        ;; header and its first field must be SEPARATE entries - not one
+        ;; string with a newline in it.
+        rows-fields (vec (apply concat
+                                (for [i :range [first-shown (php/+ first-shown window)]
+                                      :let [field (get page-fields i)
+                                            prev  (if (php/> i first-shown) (get page-fields (php/- i 1)) nil)
+                                            row   (settings-row field settings (php/=== i cursor) w)]]
+                                  (if (= (:section field) (:section prev))
+                                    [row]
+                                    [(settings-section-row (:section field) w) row]))))
+        ;; One hint for the field under the cursor, sourced from the same
+        ;; table that drives the page - a field cannot ship without one.
+        hint        (or (:hint (get page-fields cursor)) "")
         rows-foot   [blnk
                      (str "├" bar "┤")
-                     blnk
+                     (str "│\e[2;97m" (pause-pad (str "  " hint) w) "\e[22;40;97m│")
                      (str "│\e[2;97m" (pause-pad (str "  " footer) w) "\e[22;40;97m│")
                      blnk
                      (str "└" bar "┘")]

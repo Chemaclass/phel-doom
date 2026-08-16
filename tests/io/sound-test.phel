@@ -1,6 +1,8 @@
 (ns phel-doom-tests.io.sound-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.io.sound :refer [play-sfx! set-sfx-scalar! audio-player state])
+  (:require phel.string :as str)
+  (:require phel-doom.io.sound :refer [play-sfx! set-sfx-scalar! audio-player state
+                                       sfx-command sidecar-command sidecar stop-sfx!])
   (:require phel-doom.io.sound-data :refer [freedoom-sfx]))
 
 ;; play-sfx! returns nil under PHEL_DOOM_SILENT=1 — that's the
@@ -80,3 +82,40 @@
       (is (= "RIFF" (php/substr wav 0 4)) (str evt " starts with RIFF"))
       (is (= "WAVE" (php/substr wav 8 4)) (str evt " has WAVE tag"))
       (is (php/> (php/strlen wav) 44) (str evt " has PCM payload")))))
+
+;; ---------------------------------------------------------------------
+;; Sidecar (#459). Every sfx used to fork+exec a shell on the game
+;; thread (~4.4ms here); the chaingun fires 20 times a second inside an
+;; 8.3ms budget, so a kill frame could layer three of them and blow the
+;; frame. One long-lived `sh` now reads command lines from a pipe.
+;; ---------------------------------------------------------------------
+
+(deftest test-sidecar-stays-unstarted-under-test-env
+  ;; The purity guarantee the suite leans on: nothing is spawned.
+  (is (= nil (:proc @sidecar)))
+  (play-sfx! :shoot)
+  (is (= nil (:proc @sidecar)) "a silent play never starts the sidecar"))
+
+(deftest test-sfx-command-quotes-the-path
+  (let [cmd (sfx-command "afplay" "/tmp/a b.wav" 0.5)]
+    (is (str/contains? cmd "afplay"))
+    (is (str/contains? cmd "'/tmp/a b.wav'") "a path with a space stays one argument")
+    (is (str/contains? cmd "-v 0.500") "afplay takes the volume")
+    (is (str/contains? cmd ">/dev/null 2>&1 &") "backgrounded so the reader stays free")))
+
+(deftest test-sfx-command-omits-volume-for-players-without-it
+  (is (not (str/contains? (sfx-command "aplay" "/tmp/a.wav" 0.5) "-v")))
+  (is (str/contains? (sfx-command "paplay" "/tmp/a.wav" 0.5) "--volume=32768")
+      "paplay takes 0..65536 (#460 wires the rest)"))
+
+(deftest test-sidecar-command-dies-with-the-game
+  (let [cmd (sidecar-command 4242)]
+    (is (str/contains? cmd "kill -0 4242") "watchdog on the game pid, like the music loop")
+    (is (str/contains? cmd "read") "reads commands from its stdin")))
+
+(deftest test-stop-sfx-is-safe-on-a-session-that-never-made-a-sound
+  (is (= nil (stop-sfx!)))
+  (is (= nil (stop-sfx!)) "and idempotent")
+  (is (= nil (:proc @sidecar)))
+  (is (= nil (:in @sidecar)))
+  (is (= false (:failed @sidecar)) "a clean stop re-arms the next session"))

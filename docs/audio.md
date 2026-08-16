@@ -4,6 +4,19 @@ One-shot SFX via `src/io/sound.phel` (shell-out) plus a background OST riff via 
 
 `audio-player` probes once and memoises: macOS uses `afplay` plus `/System/Library/Sounds/*.aiff`. Linux tries `paplay` / `aplay` / `play` or terminal bell (`\a`) fallback.
 
+
+## The sfx sidecar (issue #459)
+
+Every sound effect used to be `php/exec "player file &"` on the game thread: a fork+exec of a shell, measured at **3.30 ms per event** on the reference machine. The chaingun fires at 0.05s intervals - 20 events a second inside an 8.3ms frame budget - and a kill frame layers report + kill + wound, so three forks could blow the frame on their own. None of it showed in F3's cast/render split, which is why it read as mystery jitter.
+
+`io/sound` now starts one long-lived `sh` on the first audible event and writes it a command line per sound: **0.0012 ms per event**, a plain buffered write. The sidecar reads a line at a time (so it costs nothing between events), backgrounds each player so a long sound cannot delay the next one, and guards on `kill -0 <game-pid>` like the music loop, so a SIGKILLed game leaves no orphan playing into an empty terminal. Closing the pipe on teardown ends it via EOF.
+
+The pipe is non-blocking, because a full pipe must never stall a frame. Losing a sound is an acceptable trade - sfx are disposable, a stuttered frame is not.
+
+A torn write would be worse than a lost one: a fragment left in the pipe gets the next event appended to it, producing one spliced command rather than one dropped sound. POSIX pipe atomicity is what actually rules that out - a non-blocking write at or below `PIPE_BUF` (512 bytes on macOS, 4096 on Linux) either lands whole or fails with EAGAIN, and these lines are 60-90 bytes. The explicit terminator after a short write is belt-and-braces for a pathological path length, not the primary safety.
+
+The sidecar's own stdout and stderr go to `/dev/null`, so a shell-level error can never print into the alternate screen mid-frame, and a write is skipped when `proc_get_status` says the shell is gone - Ctrl-C reaches the whole foreground process group, so the sidecar can die while the game finishes its frame, and writing to a dead pipe would print "Broken pipe" over the ANSI screen once per event. A failed start is remembered rather than retried, since retrying per event is exactly the cost this removes. Hosts without `proc_open` fall back to the old per-event exec, and a silent session (tests, `PHEL_DOOM_SILENT`, muted settings) never starts a sidecar at all.
+
 ## Event tags
 
 Combat enqueues events on the world's per-frame `:sfx` queue via `combat/push-sfx`: `:shoot`, `:shoot-shotgun`, `:shoot-chaingun`, `:shoot-chainsaw`, `:shoot-bfg`, `:shoot-incinerator`, `:shoot-rocket`, `:hit`, `:kill`, `:reload`, `:click`, `:door`, `:heartbeat`, `:berserk`, `:wound`.

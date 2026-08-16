@@ -216,6 +216,55 @@
       true)
     false))
 
+(def- resize-flag
+  ;; Set by the SIGWINCH handler, read at the same frame checkpoint the
+  ;; interrupt flag uses. The handler must not shell out to `stty` - the
+  ;; whole point is to keep the fork off the hot path, and doing IO in a
+  ;; handler would race the render write it interrupts.
+  (atom false))
+
+(def- resize-armed
+  ;; Whether install-resize-handler! armed SIGWINCH this session.
+  (atom false))
+
+(defn install-resize-handler!
+  "Ask for SIGWINCH to raise a flag when the terminal is resized (#459).
+
+   Without it the loops fork `stty size` every 12th frame - a ~5ms hitch
+   at 10Hz, on a frame budget of 8.3ms, to answer a question whose answer
+   changes about once a session. With it, the poll only runs when the
+   terminal actually says something changed.
+
+   Same synchronous delivery as SIGINT / SIGTERM: dispatch happens at the
+   frame checkpoint, never asynchronously mid-render (see
+   .claude/rules/io-boundaries.md). Returns true when armed; false on a
+   build without ext-pcntl, where the frame-count poll stays the only
+   mechanism."
+  []
+  (if (and (php/function_exists "pcntl_signal") (php/defined "SIGWINCH"))
+    (do (php/pcntl_signal (php/constant "SIGWINCH")
+                          (fn [_signal] (reset! resize-flag true)))
+        (reset! signals-armed true)
+        (reset! resize-armed true)
+        true)
+    false))
+
+(defn resize-armed?
+  "True when `install-resize-handler!` armed SIGWINCH this session. The
+   game loop reads it to decide whether the frame-count `stty` poll is
+   still needed at all."
+  []
+  @resize-armed)
+
+(defn resized?
+  "True when a SIGWINCH arrived since the last call, clearing the flag.
+   The pending-signal dispatch runs in `interrupted?`, which every
+   interruptible loop already calls once per frame."
+  []
+  (if @resize-flag
+    (do (reset! resize-flag false) true)
+    false))
+
 (defn interrupted?
   "True once SIGINT / SIGTERM has been received. Runs the pending-signal
    dispatch itself, so the game loop only has to call this once per frame

@@ -12,7 +12,7 @@
   (:require phel-doom.core.enemy    :refer [advance tick-scare rear-attacker?])
   (:require phel-doom.core.projectile :refer [tick-projectiles tick-tracers])
   (:require phel-doom.core.weapons :refer [switch-weapon weapon-spec weapon-order])
-  (:require phel-doom.io.sound    :refer [play-sfx! mute-for! set-sfx-scalar!])
+  (:require phel-doom.io.sound    :refer [play-sfx! mute-for! set-sfx-scalar! stop-sfx!])
   (:require phel-doom.io.music    :as music)
   (:require phel-doom.core.settings :refer [navigate music-volume sfx-scalar mouse-sensitivity view-bob-intensity valid-difficulty? pause-menu-move pause-menu-action pause-menu-index-of])
   (:require phel-doom.io.settings :refer [load-settings save-settings! settings-write-failed?])
@@ -29,7 +29,7 @@
                                           read-perf-snapshot scene-rows
                                           render-start-menu render-settings!
                                           render-death-screen render-victory-screen])
-  (:require phel-doom.io.input    :refer [init-input! restore! drain-keys rearm-mouse! terminal-program pointer-limit-notice install-signal-handlers! interrupted?]))
+  (:require phel-doom.io.input    :refer [init-input! restore! drain-keys rearm-mouse! terminal-program pointer-limit-notice install-signal-handlers! install-resize-handler! resized? resize-armed? interrupted?]))
 
 ;; ---------------------------------------------------------------------
 ;; The play subcommand wires together:
@@ -95,7 +95,12 @@
    frame (so initial sizing is never delayed) or every
    `resize-poll-frames`th frame thereafter. Pure so it is unit-testable;
    between samples the loops reuse the last measured [rows cols], which
-   `redraw-if-resized` + the auto-calibration already tolerate."
+   `redraw-if-resized` + the auto-calibration already tolerate.
+
+   The frame count is the FALLBACK path since #459: with ext-pcntl the
+   loop also samples whenever SIGWINCH says the terminal changed, which
+   is the only time the answer differs. A build without ext-pcntl keeps
+   this cadence as its only mechanism."
   [frame]
   (or (php/=== frame 0)
       (php/=== 0 (php/% frame resize-poll-frames))))
@@ -109,13 +114,34 @@
    idempotent escape burst, so the frame budget is untouched."
   120)
 
+(defn sample-size?
+  "Whether this frame should fork `stty size` (#459).
+
+   `winch?` - SIGWINCH fired, so the terminal really did change.
+   `armed?` - the SIGWINCH handler is installed, so the signal is a
+   complete answer and the frame-count poll is pure overhead.
+   `frame`  - the loop's frame counter, for the fallback cadence.
+
+   Frame 0 always samples so initial sizing is never delayed. After that
+   an armed loop samples ONLY on the signal, which is the point of the
+   change: the fork was ~5ms at 10Hz on an 8.3ms budget, answering a
+   question that changes about once a session. Unarmed (no ext-pcntl, or
+   a build without SIGWINCH) keeps the old cadence.
+
+   The menu / end-screen loops never read `resized?`, so they keep
+   `poll-size?` and their resize latency is unchanged. Pure."
+  [winch? armed? ^int frame]
+  (or (boolean winch?)
+      (php/=== frame 0)
+      (and (not armed?) (poll-size? frame))))
+
 (defn rearm-mouse?
   "True when frame `frame` should re-assert the mouse-reporting escapes:
-   on a resize (`resized?`, the band where the terminal most often drops
+   on a resize (`resized-flag?`, the band where the terminal most often drops
    tracking) or every `rearm-mouse-frames`th frame. Pure / unit-testable;
    the caller still gates the actual emit on the Mouse setting."
-  [frame resized?]
-  (or resized?
+  [frame resized-flag?]
+  (or resized-flag?
       (php/=== 0 (php/% frame rearm-mouse-frames))))
 
 ;; =====================================================================
@@ -898,7 +924,12 @@
       ;; Manual --max-cols/--max-rows still inset-cap the render area;
       ;; auto mode always fills the terminal (cap-dims with -1 = no-op)
       ;; and varies pixel detail instead.
-      (let [[trows tcols] (if (poll-size? poll-frame) (term-size) tdims-last)
+      ;; SIGWINCH first: `resized?` clears the flag, so it must be asked
+      ;; every frame rather than short-circuited by the frame count.
+      (let [winch?        (resized?)
+            [trows tcols] (if (sample-size? winch? (resize-armed?) poll-frame)
+                            (term-size)
+                            tdims-last)
             [rows cols]   (cap-dims trows tcols max-rows max-cols)
             px2?          (and auto? (php/=== 2 (:px cal)))]
         (redraw-if-resized dims rows cols)
@@ -1442,10 +1473,12 @@
    safe to call after a partial startup - each step is a no-op when the
    thing it undoes was never started.
 
-   Order matters: the music process is killed before `restore!` swallows
-   pending input, so a still-running player cannot outlive the session."
+   Order matters: the music process and the sfx sidecar are killed before
+   `restore!` swallows pending input, so nothing still playing can
+   outlive the session."
   []
   (music/stop-music!)
+  (stop-sfx!)
   (demo/reset-off!)
   (restore!))
 
@@ -1499,6 +1532,7 @@
         ;; landing in that window would kill the process with the terminal
         ;; already in raw mode and the alt screen up.
         (install-signal-handlers!)
+        (install-resize-handler!)
         (init-input! (:mouse settings0))
         (apply-audio-settings! settings0)
         (cond
@@ -1562,6 +1596,7 @@
   ;; screencast shouldn't have the terminal capturing the pointer.
   ;; Handlers before raw mode - see run-play.
   (install-signal-handlers!)
+  (install-resize-handler!)
   (init-input! false)
   (let [settings0 (load-settings)
         ;; Audio only once enemies are in play (phase 3+); the

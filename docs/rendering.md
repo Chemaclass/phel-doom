@@ -240,6 +240,16 @@ H/ESC info menu width-adaptive: max 44 chars, min 36. Drops CONTROLS section fir
 
 The crosshair paints steady red while `stats :hostile?` is set, which `frame-stats` fills from `combat/target-in-sights?` (see [combat.md](combat.md#hostile-reticle-issue-458)). Kill, wound and muzzle-flash attributes still win over it - newer information. No blink.
 
+## Attack poses (issue #463)
+
+Each monster has a second baked frame - the pose it holds during its wind-up - selected in the zone pass when the projection's `:state` is `:attacking`. One frame per type meant a monster about to swing looked exactly like one standing still, so the `!` telegraph was carrying the whole read on its own.
+
+`attack-sprites` is a separate map beside `enemy-sprites` rather than a restructure of it: that map IS the rest pose, so leaving it untouched keeps its consumers, its mip chain and the golden frames exactly as they are, and a type without a baked attack frame simply keeps resting. `attack-mips` runs the same box filter, m2 contrast-stretch and silhouette-darken, so a winding-up monster at distance reads like a resting one.
+
+Freedoom does not follow Doom's frame letters for every actor: the revenant and archvile walk on A/B/C (combo-named with their mirrored rotations) and attack later in the alphabet, and the archvile's attack frames are rotation-0 - one sprite for every angle. The bake tool verifies each name against the WAD directory and reports anything missing instead of dropping it silently.
+
+Cost, measured: `enemy_sprites_data.phel` 486 KB -> 621 KB, phar 4.081 -> 4.106 MB (+24 KB - the grids compress well), cold start 162 -> 190 ms for the extra load-time mip chains. The walk cycle is deliberately NOT baked: a two-frame rest/walk alternation at terminal resolution risks reading as silhouette flicker at mid range, which is the shimmer the sprite mips exist to kill.
+
 ## Attack telegraph (issue #457)
 
 A steady `!` one row above the head of any enemy in the `:attacking` state, in the type's head colour on a dark BG. Casters freeze for a 0.6-0.8s windup before the bolt launches and melee monsters for 0.3-0.8s before the swing, which is what makes dodging a skill - but in sprite mode there was nothing to read: the billboard is one baked frame and `paint-face-overlay` is skipped, so a far cacodemon about to fire looked exactly like a dormant one.

@@ -1,7 +1,7 @@
 ;; Pure helpers for sampling baked Freedoom enemy sprite pixels.
 ;; No side effects; used by main.phel's row loop.
 (ns phel-doom.io.render.enemy-sprite
-  (:require phel-doom.io.render.enemy-sprites-data :refer [enemy-sprites])
+  (:require phel-doom.io.render.enemy-sprites-data :refer [attack-sprites enemy-sprites])
   (:require phel-doom.io.render.frame-math :refer [tex-fade-table])
   (:require phel-doom.io.render.palette :refer [code-r code-g code-b nearest-256
                                                 block-cache fg-cache bg-cache]))
@@ -232,6 +232,21 @@
    {}
    (keys enemy-sprites)))
 
+(def attack-mips
+  "Mip chain for the attack poses (#463), built exactly like
+   `sprite-mips`: same box filter, same m2 contrast-stretch and
+   silhouette-darken, so a winding-up monster reads at distance the way
+   a resting one does."
+  (reduce
+   (fn [acc sid]
+     (let [m1  (half-mip (get attack-sprites sid))
+           m2r (half-mip m1 1)
+           m2c (contrast-stretch m2r 40)
+           m2  (silhouette-darken m2c 0.40)]
+       (assoc acc sid {:m1 m1 :m2 m2})))
+   {}
+   (keys attack-sprites)))
+
 (defn sprite-for-type-lod
   "Like `sprite-for-type` but mip-aware: given the billboard's
    on-screen sub-pixel row count (2 rows per cell), return the sprite
@@ -245,20 +260,25 @@
      native           : otherwise (oversampling ratio < 1.5)
 
    Returns nil when the type has no baked sprite."
-  [type-kw ^int sub-rows]
-  (let [sid (get sprite-type-map type-kw)]
-    (when sid
-      (let [base (get enemy-sprites sid)]
-        (when base
-          (let [sh   (:h base)
-                mips (get sprite-mips sid)
+  ([type-kw ^int sub-rows] (sprite-for-type-lod type-kw sub-rows nil))
+  ([type-kw ^int sub-rows pose]
+   (let [sid (get sprite-type-map type-kw)]
+     (when sid
+      ;; Attack pose (#463) when the monster is mid-windup and the type
+      ;; has one baked; otherwise the rest pose, which is what every
+      ;; frame used before and what the golden fixtures still render.
+       (let [attack? (and (= pose :attack) (get attack-sprites sid))
+             base    (if attack? (get attack-sprites sid) (get enemy-sprites sid))]
+         (when base
+           (let [sh   (:h base)
+                 mips (if attack? (get attack-mips sid) (get sprite-mips sid))
                 ;; sub-rows * 3/2 expressed as integer: sh >= 3*sub-rows/2
                 ;; i.e. sh*2 >= sub-rows*3 to avoid float
-                sh2  (php/* sh 2)]
-            (cond
-              (php/>= sh (php/* 3 sub-rows))  (:m2 mips)
-              (php/>= sh2 (php/* 3 sub-rows)) (:m1 mips)
-              :else                           base)))))))
+                 sh2  (php/* sh 2)]
+             (cond
+               (php/>= sh (php/* 3 sub-rows))  (:m2 mips)
+               (php/>= sh2 (php/* 3 sub-rows)) (:m1 mips)
+               :else                           base))))))))
 
 ;; =====================================================================
 ;; § Per-cell sampling

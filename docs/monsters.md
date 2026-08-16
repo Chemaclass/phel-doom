@@ -128,7 +128,7 @@ Player ducks around corner:
 
 ## Attack telegraph
 
-An enemy in `:attacking` (the frozen windup before a swing or a bolt) carries a steady `!` above its head, in its own head colour. See [rendering.md](rendering.md#attack-telegraph-issue-457) - without it the windup was invisible in sprite mode, and dodging depends on reading it.
+An enemy in `:attacking` (the frozen windup before a swing or a bolt) switches to its baked attack pose (issue #463) and carries a steady `!` above its head, in its own head colour. See [rendering.md](rendering.md#attack-telegraph-issue-457) - without it the windup was invisible in sprite mode, and dodging depends on reading it.
 
 ## Respawn
 

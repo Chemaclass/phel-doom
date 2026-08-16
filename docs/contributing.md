@@ -40,6 +40,10 @@ CI runs `composer ci` on PHP 8.5. PHP 8.4 works locally but isn't CI-tested.
 
 `format` / `format-check` go through `tools/format-sources.sh`, which formats every hand-written `.phel` file and skips the four generated ones (`enemy_sprites_data`, `weapon_sprites_data`, `wall_texture_data`, `sound_data`). `phel format` is quadratic in the number of elements inside a single collection literal ([phel-lang#3218](https://github.com/phel-lang/phel-lang/issues/3218)), and each baked asset file is one enormous literal: `enemy_sprites_data.phel` alone took 94.7s of a 124s check, which was 70% of the whole pre-commit gate. Skipping them takes the check to 4.8s and the gate from 173s to 50s. Those files are written by `tools/bake-*.phel` and never by hand, so formatting them was pure cost. The script fails loudly if one is renamed, so the skip list cannot silently stop matching. `composer format-all` still runs the formatter over everything.
 
+`check-deprecations` is the gate's ONLY suite run. `composer ci` used to run `composer test` and then this - the same ~3900 tests twice, 12s warm plus 28s cold - so the warm pass was pure duplication and the gate spent 40 of its 50 seconds running one test suite two ways. `composer test` on its own is untouched and stays the fast way to run tests while working; a plain test failure inside the gate now prints the failing test names, and copies the full log to `/tmp/phel-doom-ci-failure.log`.
+
+The cold recompile it needs is a workaround for [phel-lang#3222](https://github.com/phel-lang/phel-lang/issues/3222) (the compile cache key ignores the warn-deprecations flag, so a warm cache reports nothing). If that lands, the cache clear can go and this step drops back to about 12s.
+
 `check-deprecations` re-runs the suite under `PHEL_WARN_DEPRECATIONS=1` and fails
 on any notice. It exists for the quiet half: phel 0.50 infers a parameter's type
 from its body, so comparing a parameter to an int literal emits `int $p` and a

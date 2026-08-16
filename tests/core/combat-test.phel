@@ -1389,3 +1389,49 @@
                  [{:x 8.0 :y 5.0 :alive true :lives 3 :max-lives 3}])]
     (target-in-sights? w)
     (is (= 3 (:lives (first (:enemies w)))) "asking costs the enemy nothing")))
+
+;; The reticle must ask the rule the HELD weapon fires. The shotgun takes
+;; the nearest enemy inside a cone with no perpendicular corridor, so the
+;; single-target rule disagrees in both directions at shotgun range: a
+;; point-blank enemy just off-axis is inside the corridor but outside the
+;; cone, and one further out is outside the corridor but inside the cone.
+
+(defn- sights-with [enemies weapon]
+  (assoc sights-room :enemies enemies :weapon weapon
+         :owned-weapons #{:pistol :shotgun :chaingun :chainsaw}))
+
+(deftest test-reticle-follows-the-shotgun-cone-not-the-corridor
+  ;; Point blank, 0.45 off axis: inside the 0.5 corridor, outside the
+  ;; 0.30 rad cone. The pistol would connect; the shotgun whiffs.
+  (let [close-off-axis [{:x 6.2 :y 5.45 :alive true :lives 1 :max-lives 1}]]
+    (is (= true  (target-in-sights? (sights-with close-off-axis :pistol))))
+    (is (= false (target-in-sights? (sights-with close-off-axis :shotgun)))
+        "red-but-whiff was the bug"))
+  ;; Further out, 0.8 off axis: outside the corridor, inside the cone.
+  (let [far-off-axis [{:x 10.0 :y 5.8 :alive true :lives 1 :max-lives 1}]]
+    (is (= false (target-in-sights? (sights-with far-off-axis :pistol))))
+    (is (= true  (target-in-sights? (sights-with far-off-axis :shotgun)))
+        "white-but-hit was the same bug, mirrored")))
+
+(deftest test-reticle-agrees-with-what-the-shotgun-does
+  ;; Not just "different rule" - the SAME verdict the trigger reaches.
+  (let [close-off-axis [{:x 6.2 :y 5.45 :alive true :lives 1 :max-lives 1}]
+        w              (sights-with close-off-axis :shotgun)
+        after          (fire-shot w)]
+    (is (= false (target-in-sights? w)))
+    (is (= 1 (:lives (first (:enemies after)))) "and the shot indeed left it alive")))
+
+(deftest test-reticle-respects-the-vertical-aim-gate
+  ;; The miss this cue exists to disclose (#243): aiming at the floor.
+  (let [level   (assoc sights-room :scene-rows 30)
+        pitched (assoc-in level [:player :pitch] -0.9)]
+    (is (= true  (target-in-sights? level)))
+    (is (= false (target-in-sights? pitched))
+        "aimed at the floor -> the shot misses, so the reticle stays white")))
+
+(deftest test-reticle-respects-the-weapons-range
+  ;; The chainsaw reaches 1.5 units; the enemy is three away.
+  (is (= false (target-in-sights? (sights-with [{:x 8.0 :y 5.0 :alive true :lives 1 :max-lives 1}]
+                                               :chainsaw))))
+  (is (= true  (target-in-sights? (sights-with [{:x 8.0 :y 5.0 :alive true :lives 1 :max-lives 1}]
+                                               :chaingun)))))

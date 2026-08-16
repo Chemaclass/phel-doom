@@ -186,6 +186,8 @@ The incinerator (slot 6) deals `:fire`, so it is the weapon those four mobs resi
 
 Asking the real rule rather than re-deriving it is the point: since #243 a shot only lands when the crosshair is on the drawn sprite, so aiming slightly at the floor or the sky misses, and the miss read as lag. A reticle running its own approximation would eventually disagree with the gun about where the shot goes, which is worse than no reticle. Hit-marker, wound and muzzle-flash states all still outrank the tint, since they are newer information.
 
+The rule is per weapon, because the guns do not share one. The shotgun fires a cone with no perpendicular corridor (`enemy/spread-target-index`, the damage-free half of `spread-shoot`), and the two rules disagree in both directions at the range a shotgun is used at: an enemy 0.45 off axis at point blank is inside the corridor but outside the cone, and one 0.8 off axis at five units is outside the corridor but inside the cone. The piercing pistol needs no special case - `pierce` gates each enemy on exactly the single-target predicate set, so "some enemy passes" is the same question. Splash weapons are the loose end: red still means the blast connects, but the blast can also catch an enemy the reticle left white, since it clips everything near the impact.
+
 It answers where the shot goes, not whether the trigger works: an empty mag or a running reload keeps the target under the crosshair and the reticle red. The dry CLICK and the reload prompt already own the ammo story, and a reticle that dropped out mid-reload would read as the target having moved. Paused frames skip the probe entirely.
 
 ## Nightmare respawn

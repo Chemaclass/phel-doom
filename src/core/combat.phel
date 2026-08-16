@@ -1,7 +1,7 @@
 (ns phel-doom.core.combat
   (:require phel-doom.core.engine     :refer [cast-ray fov-proj-dist])
   (:require phel-doom.core.projection :refer [pitch-rows])
-  (:require phel-doom.core.enemy      :refer [push-back-enemy shoot target-index beam-impact splash pierce spread-shoot])
+  (:require phel-doom.core.enemy      :refer [push-back-enemy shoot target-index spread-target-index beam-impact splash pierce spread-shoot])
   (:require phel-doom.core.enemy-ai :refer [attacks? noise-wake])
   (:require phel-doom.core.physics  :refer [try-move])
   (:require phel-doom.core.state    :refer [max-lives])
@@ -645,14 +645,27 @@
     (pitch-rows (or (:pitch (:player world)) 0.0) svh)))
 
 (defn- target-in-sights?* [world]
-  (let [p    (:player world)
-        spec (w-spec world)
-        svh  (aim-svh world)]
-    (php/>= (target-index (:enemies world) (:x p) (:y p) (aim-angle world)
-                          (cast-wall-dist world)
-                          shot-hit-radius (or (:max-range spec) shot-max-range)
-                          svh (aim-pr world svh))
-            0)))
+  (let [p      (:player world)
+        spec   (w-spec world)
+        svh    (aim-svh world)
+        pr     (aim-pr world svh)
+        wall-d (cast-wall-dist world)
+        max-r  (or (:max-range spec) shot-max-range)
+        idx    (if (:spread? spec)
+                 ;; The shotgun takes the nearest enemy inside its CONE,
+                 ;; with no perpendicular corridor, and the two rules
+                 ;; disagree in both directions at shotgun range: a
+                 ;; point-blank enemy 0.45 off-axis is inside the corridor
+                 ;; but outside the cone (red, whiffs), and one 0.8 off at
+                 ;; five units is outside the corridor but inside the cone
+                 ;; (white, hits). Ask the rule this weapon actually fires.
+                 (spread-target-index (:enemies world) (:x p) (:y p) (aim-angle world)
+                                      wall-d
+                                      (or (:spread-half-angle spec) shotgun-spread-half-angle)
+                                      max-r svh pr)
+                 (target-index (:enemies world) (:x p) (:y p) (aim-angle world)
+                               wall-d shot-hit-radius max-r svh pr))]
+    (php/>= idx 0)))
 
 (defn target-in-sights?
   "True when a shot fired THIS instant would hit an enemy (#458).
@@ -665,6 +678,14 @@
    drawn sprite, so an approximation would eventually disagree with the
    gun and the reticle would be lying.
 
+   Dispatches on the weapon: `:spread?` (the shotgun) fires a CONE with
+   no perpendicular corridor, so it asks `spread-target-index` instead.
+   The two rules disagree in both directions at shotgun range, which is
+   the range a shotgun is used at. Splash weapons (BFG, rocket) are the
+   one loose end: red still means the blast connects, but the blast can
+   also catch an enemy the reticle left white, since it clips everything
+   near the impact.
+
    It answers WHERE the shot goes, not whether the trigger works: an
    empty mag or a running reload leaves the target under the crosshair
    and the reticle red, which is correct - the dry CLICK and the reload
@@ -676,7 +697,7 @@
    walk over the same handful of enemies the renderer projects. Skipped
    entirely while paused, where there is nothing to aim at."
   [world]
-  (if (:paused world)
+  (if (or (:paused world) (nil? (some :alive (:enemies world))))
     false
     (target-in-sights?* world)))
 

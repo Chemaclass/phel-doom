@@ -402,6 +402,37 @@
          (php/> dist 0.0)
          (php/>= (php// proj dist) cos-half))))
 
+(defn spread-target-index
+  "Index of the enemy a CONE shot fired right now would hit as its
+   primary, or -1 (#458).
+
+   The selection half of `spread-shoot`, without the damage, extracted
+   the same way `target-index` was extracted from `shoot`. The shotgun
+   does not use the perpendicular corridor the single-target hitscan
+   does: it takes the nearest alive enemy inside `half-angle`, vertically
+   on its billboard. The two rules disagree in BOTH directions at the
+   ranges a shotgun is used at, so the hostile reticle has to ask the
+   same one the trigger will."
+  [enemies ^float px ^float py ^float angle ^float wall-dist ^float half-angle ^float max-range svh ^int pr]
+  (let [cos-a    (php/cos angle)
+        sin-a    (php/sin angle)
+        cos-half (php/cos half-angle)
+        cap      (php/min wall-dist max-range)]
+    (loop [i 0 best -1 best-d cap]
+      (if (php/>= i (count enemies))
+        best
+        (let [e (get enemies i)]
+          (if (not (:alive e))
+            (recur (php/+ i 1) best best-d)
+            (let [dx   (php/- (:x e) px)
+                  dy   (php/- (:y e) py)
+                  proj (php/+ (php/* dx cos-a) (php/* dy sin-a))]
+              (if (and (php/< proj best-d)
+                       (in-cone? dx dy cos-a sin-a cos-half cap)
+                       (vertical-hit? e proj svh pr))
+                (recur (php/+ i 1) i proj)
+                (recur (php/+ i 1) best best-d)))))))))
+
 (defn spread-shoot
   "Shotgun cone (#125): a multi-target graze. The PRIMARY (nearest alive
    enemy inside the `half-angle` cone in front of the player) takes the
@@ -429,19 +460,8 @@
          in-shot? (fn [e ^float dx ^float dy ^float proj]
                     (and (in-cone? dx dy cos-a sin-a cos-half cap)
                          (vertical-hit? e proj svh pr)))
-         primary  (loop [i 0 best -1 best-d cap]
-                    (if (php/>= i (count enemies))
-                      best
-                      (let [e (get enemies i)]
-                        (if (not (:alive e))
-                          (recur (php/+ i 1) best best-d)
-                          (let [dx   (php/- (:x e) px)
-                                dy   (php/- (:y e) py)
-                                proj (php/+ (php/* dx cos-a) (php/* dy sin-a))]
-                            (if (and (php/< proj best-d)
-                                     (in-shot? e dx dy proj))
-                              (recur (php/+ i 1) i proj)
-                              (recur (php/+ i 1) best best-d)))))))]
+         primary  (spread-target-index enemies px py angle wall-dist half-angle
+                                       max-range svh pr)]
      (if (php/< primary 0)
        [enemies 0 nil 0]
        (loop [i 0 acc [] killed 0 tough 0 grazed 0 hit-pos nil]

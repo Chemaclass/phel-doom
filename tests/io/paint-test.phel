@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel.string :as str)
   (:require phel-doom.io.render.buffer :refer [buf-mk])
-  (:require phel-doom.io.render.paint :refer [paint-crosshair paint-game-info paint-compass paint-hearts-hud paint-hit-vignette paint-intro-splash paint-reload-ready paint-message message-visible?]))
+  (:require phel-doom.io.render.paint :refer [paint-crosshair paint-game-info paint-compass paint-hearts-hud paint-hit-vignette paint-intro-splash paint-reload-ready paint-message message-visible? paint-attack-telegraphs]))
 
 ;; ---------------------------------------------------------------------
 ;; Crosshair legibility. The reticle must be a SOLID glyph, never the old
@@ -240,3 +240,75 @@
 (deftest test-paint-message-is-byte-identical-when-silent
   (is (= "" (php/implode "" (paint-message (buf-mk) {:msg-secs 0.0} 80 24))))
   (is (= "" (php/implode "" (paint-message (buf-mk) {} 80 24)))))
+
+;; ---------------------------------------------------------------------
+;; Attack telegraph (#457). A caster freezes for its 0.6-0.8s windup
+;; before launching, but the sprite is one static frame and the face
+;; overlay is skipped in sprite mode, so a far cacodemon about to fire
+;; looked exactly like a dormant one. A steady `!` over the head is the
+;; tell, held for the whole windup (no pulse - calm 3D view).
+;; ---------------------------------------------------------------------
+
+(def- clear-dists
+  ;; Every column's wall is far away, and no nearer enemy anywhere: the
+  ;; depth gate lets everything through.
+  (let [a (php/array)] (dotimes [i 81] (php/aset a i 99.0)) a))
+
+(def- no-enemy-depths
+  (let [a (php/array)] (dotimes [i 81] (php/aset a i nil)) a))
+
+(defn- telegraph-out [projs]
+  (php/implode "" (paint-attack-telegraphs (buf-mk) projs {} 80 24
+                                           clear-dists no-enemy-depths 1 0)))
+
+(def- winding-up
+  {:col 40 :dist 6.0 :type :caco :state :attacking :lives 3 :max-lives 3})
+
+(deftest test-telegraph-marks-an-enemy-winding-up
+  (is (str/contains? (telegraph-out [winding-up]) "!")))
+
+(deftest test-telegraph-ignores-every-other-state
+  (is (= "" (telegraph-out [(assoc winding-up :state :aware)])))
+  (is (= "" (telegraph-out [(assoc winding-up :state :dormant)])))
+  (is (= "" (telegraph-out [(assoc winding-up :state :hunting)])))
+  (is (= "" (telegraph-out [(dissoc winding-up :state)]))
+      "a projection without a state says nothing"))
+
+(deftest test-telegraph-skips-the-dead
+  (is (= "" (telegraph-out [(assoc winding-up :lives 0)]))))
+
+(deftest test-telegraph-skips-off-screen-columns
+  (is (= "" (telegraph-out [(assoc winding-up :col -1)])))
+  (is (= "" (telegraph-out [(assoc winding-up :col 80)]))))
+
+(deftest test-telegraph-does-not-shine-through-a-wall
+  ;; collect-enemy-projs has no occlusion test, so without the depth gate
+  ;; an enemy winding up behind a wall would float an `!` over it - a free
+  ;; wallhack pointing at the next ambush.
+  (let [near-wall (let [a (php/array)] (dotimes [i 81] (php/aset a i 2.0)) a)
+        out       (php/implode "" (paint-attack-telegraphs
+                                   (buf-mk) [winding-up] {} 80 24
+                                   near-wall no-enemy-depths 1 0))]
+    (is (= "" out) "enemy at depth 6 behind a wall at depth 2 paints nothing")))
+
+(deftest test-telegraph-hides-behind-a-nearer-sprite
+  (let [nearer (let [a (php/array)] (dotimes [i 81] (php/aset a i 3.0)) a)]
+    (is (= "" (php/implode "" (paint-attack-telegraphs
+                               (buf-mk) [winding-up] {} 80 24
+                               clear-dists nearer 1 0))))))
+
+(deftest test-telegraph-scales-into-terminal-cells-when-pixel-doubled
+  ;; Scene-space contract: sc multiplies the emitted coordinates, so the
+  ;; px2 mark lands on the doubled terminal cell, not the scene cell.
+  (let [out (php/implode "" (paint-attack-telegraphs
+                             (buf-mk) [(assoc winding-up :col 20)] {} 40 12
+                             clear-dists no-enemy-depths 2 0))]
+    (is (str/contains? out "!"))
+    (is (str/contains? out ";41H") "scene col 20 -> terminal col 2*20+1")))
+
+(deftest test-telegraph-does-not-blink
+  ;; Calm 3D view: no terminal blink attribute, and the same projection
+  ;; paints the same bytes on every frame.
+  (let [out (telegraph-out [winding-up])]
+    (is (not (str/contains? out "\e[5")))
+    (is (= out (telegraph-out [winding-up])))))

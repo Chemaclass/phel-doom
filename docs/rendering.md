@@ -230,6 +230,14 @@ When the game-loop's startup calibration finds full detail too slow for a smooth
 
 H/ESC info menu width-adaptive: max 44 chars, min 36. Drops CONTROLS section first, then COMPASS HINT on squeeze.
 
+## Attack telegraph (issue #457)
+
+A steady `!` one row above the head of any enemy in the `:attacking` state, in the type's head colour on a dark BG. Casters freeze for a 0.6-0.8s windup before the bolt launches and melee monsters for 0.3-0.8s before the swing, which is what makes dodging a skill - but in sprite mode there was nothing to read: the billboard is one baked frame and `paint-face-overlay` is skipped, so a far cacodemon about to fire looked exactly like a dormant one.
+
+`paint-attack-telegraphs` filters the same already-projected enemy bundle the face glyph uses (`project-enemy-pd` carries `:state` at no extra cost), so it is one pass over a list the frame already built. Held for the whole windup with no pulse, tracking the pitch shear.
+
+Depth-gated by `enemy-front-visible-at?` like the face glyph, and for the same reason: `collect-enemy-projs` projects every alive enemy in the frustum with no occlusion test, so an ungated mark would float over the wall an enemy is winding up behind - a free wallhack pointing at the next ambush. Scene-space contract as well: `vw` / `vh` / `dists` / `edists` / `pr` are scene cells and `sc` scales the emitted terminal coordinates, so pixel-doubled mode re-projects at `svw` exactly like the face overlay.
+
 ## Message line (issue #456)
 
 One left-aligned row at row 3 naming what just happened: `Picked up a heart.`, `Picked up the BLUE keycard.`, `You got the SHOTGUN!`, `A secret is revealed!`, or the weapon and its ammo on a slot switch. Before it, every pickup was the same door tink plus the item vanishing, so a first-timer could not tell a shard from an ammo box or know a keycard was now held.

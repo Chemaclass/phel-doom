@@ -9,6 +9,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-08-16
+
 ### Added
 
 - View + weapon bob while walking (#411, #412): opt-in **View bob** setting (0-100%, off by default) nods the scene on a distance-driven walk cycle and dips/sways the first-person gun on the same cycle. Cosmetic - never moves where a shot lands; byte-identical at rest.
@@ -470,7 +472,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `cast + render` under 5 ms per frame at 120×30.
 - Flat PHP arrays on hot paths; `:tag` types for OPcache JIT tracing.
 
-[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/Chemaclass/phel-doom/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/Chemaclass/phel-doom/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/Chemaclass/phel-doom/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/Chemaclass/phel-doom/compare/v0.13.0...v0.14.0

@@ -38,6 +38,25 @@
    default) maps to 0.30."
   0.5)
 
+(def glyph-choices
+  "HUD symbol sets (#471): the drawn glyphs, or ASCII stand-ins of the
+   same single-column width."
+  [:unicode :ascii])
+
+(def hud-glyph-sets
+  "HUD symbols per set (#471). Each ascii stand-in is a single display
+   column, exactly like the glyph it replaces: a font without these
+   codepoints draws tofu, and a tofu box is often DOUBLE width, which
+   shifts every column after it and breaks the strip alignment."
+  {:unicode {:heart "♥" :half-heart "◖" :empty-pip "·" :key "⚿" :info "ⓘ" :star "✦"}
+   :ascii   {:heart "@" :half-heart "%" :empty-pip "." :key "K" :info "i" :star "*"}})
+
+(defn hud-glyph
+  "One HUD symbol for the active set. `ascii?` comes from the Glyphs
+   setting, projected once per frame into stats - never read per cell."
+  [ascii? key]
+  (get (get hud-glyph-sets (if ascii? :ascii :unicode)) key))
+
 (def page-fields
   "Ordered field descriptors driving both navigation and rendering.
    `:kind` selects the adjust + paint behaviour (:pct slider, :bool
@@ -84,7 +103,14 @@
    ;; golden frames; ON folds a per-cell room-light bias (#418) into the wall
    ;; shade index so rooms read as dark-vs-lit pools. Cheap per-column lookup;
    ;; the bias grid is derived from the map at load (core/light).
-   {:key :light          :label "Room light"     :kind :bool :default false}])
+   {:key :light          :label "Room light"     :kind :bool :default false}
+   ;; :glyphs picks the HUD symbol set (#471). :unicode (default) uses the
+   ;; keycard, half-heart, info and bullet glyphs; :ascii swaps each for a
+   ;; single-column stand-in, for a font that renders them as tofu boxes -
+   ;; which also shifts every column after them and breaks the strip
+   ;; alignment. io/settings picks :ascii on first run when the locale is
+   ;; not UTF-8; the player can always override here.
+   {:key :glyphs         :label "HUD glyphs"     :kind :enum :choices glyph-choices :default :unicode}])
 
 (def default-settings
   "Out-of-the-box options, derived from `page-fields`' `:default`s so the
@@ -161,6 +187,22 @@
     saved?    value
     seams?    false
     :else     value))
+
+(defn resolve-glyphs
+  "Effective startup `:glyphs` (#471). A locale that is not UTF-8 means
+   the terminal is very unlikely to draw the keycard, half-heart and
+   info symbols - it renders tofu boxes, which are often DOUBLE width
+   and so shift every column after them, breaking the HUD strip
+   alignment rather than merely looking wrong.
+
+   Precedence: a saved choice always wins (the player may know better
+   than the locale), then the non-UTF-8 default to `:ascii`, then the
+   normal default. Pure: the IO layer supplies the locale boolean."
+  [value saved? utf8?]
+  (cond
+    saved?      value
+    (not utf8?) :ascii
+    :else       value))
 
 (defn- wrap [i n]
   (php/% (php/+ (php/% i n) n) n))

@@ -9,7 +9,8 @@
   (:require phel-doom.core.engine :refer [proj-dist])
   (:require phel-doom.core.projection :refer [wall-px weapon-bob-rows weapon-bob-cols])
   (:require phel-doom.core.format :refer [format-duration])
-  (:require phel-doom.core.map :refer [find-door-cell]))
+  (:require phel-doom.core.map :refer [find-door-cell])
+  (:require phel-doom.core.settings :refer [hud-glyph]))
 
 ;; Each fn appends one logical UI overlay to the `parts` PHP-array via
 ;; absolute cursor positioning. `frame->string` (in render/main) composes
@@ -242,12 +243,13 @@
   (let [secs (or (get stats :locked-door-bump-secs) 0.0)]
     (when (php/> secs 0.0)
       (let [colour (get stats :locked-door-bump-colour)
+            k      (hud-glyph (boolean (get stats :ascii-glyphs?)) :key)
             label  (cond
-                     (php/=== colour :blue)   "  ⚿  NEED BLUE KEY  ⚿  "
-                     (php/=== colour :red)    "  ⚿  NEED RED KEY  ⚿   "
-                     (php/=== colour :yellow) "  ⚿  NEED YELLOW KEY  ⚿"
+                     (php/=== colour :blue)   (str "  " k "  NEED BLUE KEY  " k "  ")
+                     (php/=== colour :red)    (str "  " k "  NEED RED KEY  " k "   ")
+                     (php/=== colour :yellow) (str "  " k "  NEED YELLOW KEY  " k)
                      (php/=== colour :boss)   "  ☠  KILL THE BOSS  ☠  "
-                     :else                    "  ⚿  NEED KEY  ⚿  ")
+                     :else                    (str "  " k "  NEED KEY  " k "  "))
             sgr    (cond
                      (php/=== colour :blue)   "\e[40;94;1m"
                      (php/=== colour :red)    "\e[40;91;1m"
@@ -1031,30 +1033,31 @@
    `t` and `bloody?` are retained for signature stability with the
    caller."
   [parts ^float t stats bloody?]
-  (let [hp        (or (get stats :lives) 0)
-        cap       (or (get stats :max-lives) 10)
+  (let [hp            (or (get stats :lives) 0)
+        cap           (or (get stats :max-lives) 10)
         ;; HP is a half-heart pool: 2 HP per heart. Draw `slots` base
         ;; hearts (10 HP -> 5) as full ♥ / half ◖ / empty ·, with any
         ;; soulsphere over-cap HP shown as extra full hearts beyond the
         ;; base row. Clamp the displayed pool (cap + soul headroom) so
         ;; dev god mode (lives = thousands) can't blow the strip across
         ;; the screen; the engine still tracks the real :lives value.
-        slots     (php/intdiv (php/+ cap 1) 2)
-        disp      (php/max 0 (php/min hp (php/+ cap 4)))
-        full      (php/intdiv disp 2)
-        half?     (php/=== 1 (php/% disp 2))
-        empty     (php/max 0 (php/- slots (php/+ full (if half? 1 0))))
-        armor     (or (get stats :armor) 0)
-        god?      (:god? stats)
+        slots         (php/intdiv (php/+ cap 1) 2)
+        disp          (php/max 0 (php/min hp (php/+ cap 4)))
+        full          (php/intdiv disp 2)
+        half?         (php/=== 1 (php/% disp 2))
+        empty         (php/max 0 (php/- slots (php/+ full (if half? 1 0))))
+        armor         (or (get stats :armor) 0)
+        god?          (:god? stats)
         ;; High-contrast (#200): empty heart pips in plain white instead
         ;; of the dim grey (90) that disappears on washed-out terminals.
-        empty-sgr (if (get stats :high-contrast?) "\e[40;97m" "\e[40;90m")]
+        empty-sgr     (if (get stats :high-contrast?) "\e[40;97m" "\e[40;90m")
+        ascii-glyphs? (boolean (get stats :ascii-glyphs?))]
     (buf-push parts
               (str "\e[1;1H\e[40m\e[1m\e[91m"
-                   (php/str_repeat "♥ " full)
-                   (if half? "◖ " "")
+                   (php/str_repeat (str (hud-glyph ascii-glyphs? :heart) " ") full)
+                   (if half? (str (hud-glyph ascii-glyphs? :half-heart) " ") "")
                    empty-sgr
-                   (php/str_repeat "· " empty)
+                   (php/str_repeat (str (hud-glyph ascii-glyphs? :empty-pip) " ") empty)
                    (if (php/> armor 0)
                      (str "\e[40;94;1m" (php/str_repeat "◆ " armor))
                      "")

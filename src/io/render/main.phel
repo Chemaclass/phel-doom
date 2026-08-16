@@ -10,7 +10,7 @@
   (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-message paint-hint-strip paint-attack-telegraphs paint-save-flash paint-reload-ready paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-weapon-hud])
   (:require phel-doom.io.render.sprites :refer [paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols sprites-enabled?])
   (:require phel-doom.core.engine :refer [cast-frame max-depth proj-dist])
-  (:require phel-doom.core.map :refer [cell-door cell-door-blue cell-door-red cell-door-boss cell-door-yellow])
+  (:require phel-doom.core.map :refer [cell-door cell-door-blue cell-door-red cell-door-boss cell-door-yellow cell-secret])
   (:require phel-doom.core.combat :refer [fire-extralight fire-anim-seconds])
   (:require phel-doom.core.projection :refer [char-aspect wall-px pitch-rows bob-rows])
   (:require phel-doom.core.perf :refer [render-scale]))
@@ -46,6 +46,16 @@
 ;; =====================================================================
 ;; § Wall texture (baked Freedoom WALL70_2)
 ;; =====================================================================
+
+(def secret-tex-offset
+  "Texture u-shift (of 64) applied to a secret wall's column (#469).
+   Half a tile: enough that the stone runs visibly out of phase with the
+   walls beside it, not so much that it reads as a different material.
+
+   Secrets otherwise looked and cast exactly like ordinary walls, so the
+   only way to find one was to walk the whole level pressing F at every
+   surface - while secrets are worth 30% of the run rank."
+  32)
 
 (def wall-tex-px
   "Flat row-major xterm-256 palette array of the baked stone wall
@@ -372,7 +382,8 @@
         c-door-blue                                                    cell-door-blue
         c-door-red                                                     cell-door-red
         c-door-boss                                                    cell-door-boss
-        c-door-yellow                                                  cell-door-yellow]
+        c-door-yellow                                                  cell-door-yellow
+        c-secret                                                       cell-secret]
     (loop [col 0]
       (when (php/< col vw)
         (let [dist         (buf-get dists col)
@@ -470,7 +481,15 @@
                 ;; the texture fog level so depth + EW side-shading match
                 ;; the flat path exactly.
                 (when (not blood?)
-                  (buf-set tex-u     col (php/min 63 (php/intval (php/* (buf-get wallxs col) 64))))
+                  ;; Secret walls carry a half-tile texture offset (#469):
+                  ;; the stone pattern runs out of alignment with the
+                  ;; walls beside them, which is Doom's own tell. Visible
+                  ;; when you look for it, invisible when you do not, and
+                  ;; it changes nothing about the cast or the collision -
+                  ;; a secret still reads as solid until it is opened.
+                  (buf-set tex-u     col (php/% (php/+ (php/min 63 (php/intval (php/* (buf-get wallxs col) 64)))
+                                                       (if (php/=== c-secret h) secret-tex-offset 0))
+                                                64))
                   (buf-set tex-level col idx)
                   (buf-set tex-px    col wall-tex-px)))))
           (recur (php/+ col 1)))))

@@ -40,8 +40,11 @@ fractional caller is TRUNCATED at the signature, with no error and no failing
 test unless one happens to assert that exact value. PHP reports it as "Implicit
 conversion from float X to int loses precision", which is invisible at the
 default error level. It catches superseded interop spellings (`php/new`,
-`php/->`, `php/::`, `set-var`) in the same pass. See `.claude/rules/phel.md`,
-"Type inference traps".
+`php/->`, `php/::`, `set-var`) in the same pass. Those are raised while a
+namespace COMPILES, so the script clears `.phel/cache` first: with the cache
+warm from the `composer test` step just before it, nothing recompiles and a
+`php/new` in the tree passes clean. See `.claude/rules/phel.md`, "Type
+inference traps".
 
 ## AI agent config (generated, not committed)
 

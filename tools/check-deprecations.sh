@@ -15,10 +15,26 @@
 #      returning 0.0 for every sub-cell offset. See .claude/rules/phel.md
 #      "Type inference traps".
 #
+# Class 1 is raised while a namespace COMPILES, so a warm compile cache hides
+# it: `composer test` right before this step (as `composer ci` runs it) leaves
+# every namespace cached, and a `php/new` probe then passes clean. The cache
+# is cleared first so the whole tree recompiles under the flag. `phel test`
+# has no --no-cache, and the cache key does not include the flag.
+#
 # Fail-closed: an empty run (no tests discovered) is a failure, not a pass.
 set -uo pipefail
 
-log=$(mktemp -t phel-doom-deprecations)
+root="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$root" || exit 2
+cache="$root/.phel/cache"   # phel-config default `cache-dir`; `vendor/bin/phel config` prints it
+case "$cache" in
+  "$root"/.phel/*) ;;
+  *) echo "check-deprecations: refusing to clear '$cache' (not under $root/.phel)"; exit 2 ;;
+esac
+echo "check-deprecations: clearing compile cache $cache"
+rm -rf "$cache"
+
+log=$(mktemp "${TMPDIR:-/tmp}/phel-doom-deprecations.XXXXXX")
 trap 'rm -f "$log"' EXIT
 
 PHEL_WARN_DEPRECATIONS=1 PHEL_DOOM_SILENT=1 vendor/bin/phel test >"$log" 2>&1

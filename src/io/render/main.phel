@@ -5,7 +5,7 @@
   (:require phel-doom.io.render.palette :refer [enemy-head enemy-body sprite-shadow heart-shade heart-shade-bright heart-glyph heart-glyph-bright armor-shade armor-shade-bright armor-glyph armor-glyph-bright armor-shard-shade armor-shard-shade-bright armor-shard-glyph armor-shard-glyph-bright ammo-shade ammo-shade-bright ammo-glyph ammo-glyph-bright berserk-shade berserk-shade-bright berserk-glyph berserk-glyph-bright invuln-shade invuln-shade-bright invuln-glyph invuln-glyph-bright soulsphere-shade soulsphere-shade-bright soulsphere-glyph soulsphere-glyph-bright backpack-shade backpack-shade-bright backpack-glyph backpack-glyph-bright shotgun-pickup-shade shotgun-pickup-bright shotgun-pickup-glyph shotgun-pickup-glyph-bright chaingun-pickup-shade chaingun-pickup-bright chaingun-pickup-glyph chaingun-pickup-glyph-bright bfg-pickup-shade bfg-pickup-bright bfg-pickup-glyph bfg-pickup-glyph-bright incinerator-pickup-shade incinerator-pickup-bright incinerator-pickup-glyph incinerator-pickup-glyph-bright rocket-pickup-shade rocket-pickup-bright rocket-pickup-glyph rocket-pickup-glyph-bright keycard-blue-shade keycard-blue-bright keycard-blue-glyph keycard-blue-glyph-bright keycard-red-shade keycard-red-bright keycard-red-glyph keycard-red-glyph-bright keycard-yellow-shade keycard-yellow-bright keycard-yellow-glyph keycard-yellow-glyph-bright shade-table shade-code-table shade-table-blood shade-code-table-blood theme-floor-code])
   (:require phel-doom.io.render.frame-math :refer [enemy-shade-string enemy-textured-shade-string boss-col-paint aggro-distance enemy-aggro-head-string build-horizon-gradient build-themed-gradient build-themed-gradient-codes tex-fade-table tex-fade-tc bg-cell-cache halfblock halfblock-tc paint-bg quadblock build-sky-halfblock build-sky-codes-sub seam-darken-16 seam-darken-8 seam-darken-5 seam-shade! collect-enemy-projs collect-enemy-projs-pd layout pulse visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.wall-texture-data :refer [wall-tex])
-  (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type-lod sprite-fade sprite-fade-index sprite-col-x sprite-subcol-x enemy-sprite-cell enemy-sprite-quad])
+  (:require phel-doom.io.render.enemy-sprite :refer [half-mip sprite-for-type-lod sprite-fade sprite-fade-index sprite-col-x sprite-subcol-x enemy-sprite-cell enemy-sprite-quad])
   (:require phel-doom.io.render.hud :refer [minimap-door-pulse minimap-rows minimap-frame hud-debug-line hud-line-str help-menu-string settings-menu-string pause-menu-string])
   (:require phel-doom.io.render.paint :refer [paint-face-overlay paint-crosshair paint-intro-splash paint-locked-bump paint-blood-drops paint-rear-warning paint-low-ammo paint-reload-reminder paint-message paint-hint-strip paint-attack-telegraphs paint-save-flash paint-reload-ready paint-game-info paint-berserk-badge paint-invuln-badge paint-empty-click paint-heartbeat-vignette paint-hit-vignette paint-berserk-tint paint-heat-bar paint-kill-streak paint-compass paint-enemy-hp-flashes paint-hearts-hud paint-weapon-hud])
   (:require phel-doom.io.render.sprites :refer [paint-blood-fx-into paint-pickups-into paint-projectiles-into paint-tracers-into build-blood-cols sprites-enabled?])
@@ -61,6 +61,55 @@
   "Flat row-major xterm-256 palette array of the baked stone wall
    texture, sampled per wall cell by (u, v)."
   (:px wall-tex))
+
+(def wall-tex-size
+  "Edge length of the baked wall texture. Every sample site derives its
+   index math from the CHOSEN level's size (see `wall-tex-mips`), never
+   from a literal, so a mipped column indexes its own smaller array."
+  64)
+
+(def wall-tex-mips
+  "Box-filtered wall texture at 32, 16 and 8 (#462), keyed by edge
+   length, with the native 64 alongside so a caller looks any level up
+   the same way.
+
+   A far wall projects a few screen rows out of 64 texels, so it point-
+   samples a different texel per frame as the player moves: that is the
+   speckle on distant stone. Pre-filtering to a size that matches the
+   projected height replaces the sampling noise with an average - the
+   same reason `sprite-mips` exists for billboards.
+
+   Reuses `half-mip` from the sprite path: the wall texture is fully
+   opaque, so its min-opaque rule never fires and it is a plain 2x2 box
+   filter. Built once at load; 64+32+16+8 squared is ~5.4K texels."
+  (let [m32 (half-mip {:w wall-tex-size :h wall-tex-size :px wall-tex-px})
+        m16 (half-mip m32)
+        m8  (half-mip m16)]
+    {64 wall-tex-px
+     32 (:px m32)
+     16 (:px m16)
+     8  (:px m8)}))
+
+(defn wall-mip-size
+  "Edge length of the wall-texture level to sample for a wall whose
+   projected height is `screen-rows` SUB-rows (2 per scene cell at full
+   detail, 4 in the pixel-doubled scene - the caller passes the right
+   one, or the level lands two steps off in px2).
+
+   Same oversampling thresholds the sprite LOD uses: drop a level once
+   the source is 3x denser than the box, so native is kept until the
+   sampling is genuinely oversampled. `filter?` false pins 64, which
+   makes every downstream expression identical to the pre-#462 literal
+   math."
+  [^bool filter? ^int screen-rows]
+  (if (not filter?)
+    wall-tex-size
+    (let [r (php/max 1 screen-rows)]
+      (cond
+        (php/>= wall-tex-size (php/* 24 r)) 8
+        (php/>= wall-tex-size (php/* 6 r))  16
+        (php/>= wall-tex-size (php/* 3 r))  32
+        :else                               64))))
 
 (def floor-tex-mid
   "Mid-grey the floor texture is contrast-compressed toward (~texture mean)."
@@ -145,6 +194,18 @@
    flag (no point casting a floor texture with textures off)."
   []
   (not (php/=== "1" (php/getenv "PHEL_DOOM_FLAT_FLOOR"))))
+
+(defn- texmip-on?
+  "Texture filter (#462) for this frame: the setting, ORed with the
+   PHEL_DOOM_TEXMIP env override.
+
+   A plain call, not an `if` / `or` in the caller's binding value - both
+   of those closure-compile there, and frame->string's closure count is a
+   tracked guard (docs/performance.md)."
+  [stats]
+  (if (php/=== "1" (php/getenv "PHEL_DOOM_TEXMIP"))
+    true
+    (boolean (get stats :texmip?))))
 
 (defn- subpixel-enabled?
   "Half-block sub-pixel rendering (▀ with independent top/bottom colours,
@@ -339,7 +400,7 @@
                 added to every wall top so the whole wall band slides
                 down (look up) / up (look down) with the sky/floor
                 split. pr=0 keeps the shading byte-identical."
-  [vw vh haze-shift cast palette blood-cols ^float pd & [pr-arg light-grid gw]]
+  [vw vh haze-shift cast palette blood-cols ^float pd & [pr-arg light-grid gw texmip? subrows]]
   (let [{:keys [dists hits sides wallxs hxs hys]}                      cast
         {:keys [stbl ctbl door-shade-now door-code-now
                 door-tex-boost
@@ -364,6 +425,11 @@
         tex-u                                                          (buf-mk)
         tex-level                                                      (buf-mk)
         tex-px                                                         (buf-mk)
+        ;; Edge length of the texture level this column samples (#462).
+        ;; Rides beside `tex-px` because the per-cell index math needs the
+        ;; size the chosen array actually has; with the filter off every
+        ;; column is 64 and the math is bit-for-bit what it was.
+        tex-sz                                                         (buf-mk)
         ;; Per-column wall height, floored at 1 (same safety clamp the
         ;; per-cell texture samplers used to apply themselves). `bot -
         ;; top` is column-constant, so precomputing it here turns the
@@ -383,7 +449,10 @@
         c-door-red                                                     cell-door-red
         c-door-boss                                                    cell-door-boss
         c-door-yellow                                                  cell-door-yellow
-        c-secret                                                       cell-secret]
+        c-secret                                                       cell-secret
+        ;; Aliased like the cell codes: read once per call, not per column.
+        mip?                                                           (boolean texmip?)
+        subrows-                                                       (or subrows 2)]
     (loop [col 0]
       (when (php/< col vw)
         (let [dist         (buf-get dists col)
@@ -406,7 +475,14 @@
                                       blood-floor-code-grad
                                       floor-code-grad)
                                     flr-edge-row)
-              h            (buf-get hits col)]
+              h            (buf-get hits col)
+              ;; Texture level for this column (#462), bound HERE and not
+              ;; in a nested let inside the wall branch: a `let` down
+              ;; there compiles to a PHP closure capturing the whole
+              ;; column scope, once per column per frame - the tax
+              ;; docs/performance.md opens with. Off -> 64, so the sample
+              ;; math below is the literal arithmetic it always was.
+              tsz          (wall-mip-size mip? (php/* subrows- wall-h))]
           (buf-set tops col top)
           (buf-set bots col (php/+ top wall-h))
           (buf-set wall-h-buf col (php/max 1 wall-h))
@@ -443,6 +519,7 @@
                                                       (if (php/=== (buf-get sides col) 0) 3 0))))]
                     (buf-set tex-u     col (php/min 63 (php/intval (php/* (buf-get wallxs col) 64))))
                     (buf-set tex-level col (php/min 23 (php/+ (php/max 8 (php/min 21 didx)) door-tex-boost)))
+                    (buf-set tex-sz    col wall-tex-size)
                     (buf-set tex-px    col door-tex-px))))
             :else
             (let [;; Room-light bias (#418): shade offset for the cell this
@@ -487,16 +564,18 @@
                   ;; when you look for it, invisible when you do not, and
                   ;; it changes nothing about the cast or the collision -
                   ;; a secret still reads as solid until it is opened.
-                  (buf-set tex-u     col (php/% (php/+ (php/min 63 (php/intval (php/* (buf-get wallxs col) 64)))
-                                                       (if (php/=== c-secret h) secret-tex-offset 0))
-                                                64))
+                  (buf-set tex-u     col (php/% (php/+ (php/min (php/- tsz 1)
+                                                                (php/intval (php/* (buf-get wallxs col) tsz)))
+                                                       (if (php/=== c-secret h) (php/intdiv tsz 2) 0))
+                                                tsz))
                   (buf-set tex-level col idx)
-                  (buf-set tex-px    col wall-tex-px)))))
+                  (buf-set tex-sz    col tsz)
+                  (buf-set tex-px    col (get wall-tex-mips tsz))))))
           (recur (php/+ col 1)))))
     {:tops tops :bots bots :normal normal
      :top-edge top-edge :bot-edge bot-edge
      :top-shadow top-shadow :bot-shadow bot-shadow
-     :tex-u tex-u :tex-level tex-level :tex-px tex-px
+     :tex-u tex-u :tex-level tex-level :tex-px tex-px :tex-sz tex-sz
      :wall-h wall-h-buf}))
 
 ;; =====================================================================
@@ -751,7 +830,7 @@
    sky-gradient sky-sub-codes floor-gradient blood-sky-gradient blood-cols  ; gradients
    floordxs floordys pfx pfy floor-dperp-sub floor-level-sub floor-dperp floor-level  ; floor-cast
    tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow  ; wall spans + shades
-   shades-tex-u shades-tex-level shades-tex-px                              ; wall texture
+   shades-tex-u shades-tex-level shades-tex-px shades-tex-sz                 ; wall texture
    mids lowers emask eheads ebodys elegss                                  ; enemy glyph rows
    e-stop e-sbot e-sx e-sxr e-spx e-sw e-sh e-fade                         ; sprite window
    sprites-on bp-trc                                                       ; sprite/blood flags
@@ -899,16 +978,18 @@
                       whs    (php/max 1 (php/- bs-sub ts-sub))
                       u      (buf-get shades-tex-u col)
                       tpx    (buf-get shades-tex-px col)
+                      tsz    (buf-get shades-tex-sz col)
+                      tszm1  (php/- tsz 1)
                       fade   (php/aget tex-fade-table (buf-get shades-tex-level col))
                       rel    (php/- s4 ts-sub)]
                   (if (if (php/> rel 0) (php/< (php/+ s4 3) (php/- bs-sub 2)) false)
                     (php/aset pack-reg 0
-                              (php/+ (php/* (php/+ (php/* (php/+ (php/* (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u))) 256)
-                                                                 (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u))))
+                              (php/+ (php/* (php/+ (php/* (php/+ (php/* (php/aget fade (php/aget tpx (php/+ (php/* (php/min tszm1 (php/intdiv (php/* rel tsz) whs)) tsz) u))) 256)
+                                                                 (php/aget fade (php/aget tpx (php/+ (php/* (php/min tszm1 (php/intdiv (php/* (php/+ rel 1) tsz) whs)) tsz) u))))
                                                           256)
-                                                   (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 2) 64) whs)) 64) u))))
+                                                   (php/aget fade (php/aget tpx (php/+ (php/* (php/min tszm1 (php/intdiv (php/* (php/+ rel 2) tsz) whs)) tsz) u))))
                                             256)
-                                     (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 3) 64) whs)) 64) u)))))
+                                     (php/aget fade (php/aget tpx (php/+ (php/* (php/min tszm1 (php/intdiv (php/* (php/+ rel 3) tsz) whs)) tsz) u)))))
                         ;; Seam accents: graduated dark border tracing
                         ;; the exact wall/floor + wall/sky diagonals -
                         ;; near-black wall base sub-row, dark sub-row
@@ -1122,7 +1203,7 @@
    sky-gradient sky-sub-codes floor-gradient blood-sky-gradient blood-cols  ; gradients
    floordxs floordys pfx pfy floor-dperp-sub floor-level-sub                ; floor-cast
    tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow  ; wall spans + shades
-   shades-tex-u shades-tex-level shades-tex-px shades-wall-h                ; wall texture
+   shades-tex-u shades-tex-level shades-tex-px shades-tex-sz shades-wall-h   ; wall texture
    mids lowers emask eheads ebodys elegss                                  ; enemy glyph rows
    e-stop e-sbot e-sx e-sxr e-spx e-sw e-sh e-fade                         ; sprite window
    sprites-on bp-trc                                                       ; sprite/blood flags
@@ -1316,6 +1397,8 @@
                               whs    (php/max 1 (php/- bs-sub ts-sub))
                               u      (buf-get shades-tex-u col)
                               tpx    (buf-get shades-tex-px col)
+                              tsz    (buf-get shades-tex-sz col)
+                              tszm1  (php/- tsz 1)
                               fade   (php/aget tex-fade-table (buf-get shades-tex-level col))
                               s2     (php/* 2 row)
                               s2b    (php/+ s2 1)
@@ -1328,10 +1411,10 @@
                                 ;; loses vertical half-row detail. Default: 2-sample ▀.
                             (if flat-walltex?
                               (php/aset cell-reg 0
-                                        (php/aget bg-cell-cache (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u)))))
+                                        (php/aget bg-cell-cache (php/aget fade (php/aget tpx (php/+ (php/* (php/min tszm1 (php/intdiv (php/* rel tsz) whs)) tsz) u)))))
                               (php/aset cell-reg 0
-                                        (halfblock (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* rel 64) whs)) 64) u)))
-                                                   (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/intdiv (php/* (php/+ rel 1) 64) whs)) 64) u))))))
+                                        (halfblock (php/aget fade (php/aget tpx (php/+ (php/* (php/min tszm1 (php/intdiv (php/* rel tsz) whs)) tsz) u)))
+                                                   (php/aget fade (php/aget tpx (php/+ (php/* (php/min tszm1 (php/intdiv (php/* (php/+ rel 1) tsz) whs)) tsz) u))))))
                             (if quad?
                                   ;; Quad silhouette AA: sample the wall edge at
                                   ;; TWO sub-columns (bounds lerped 0.25 toward
@@ -1357,11 +1440,11 @@
                                     ts-r (php/+ (php/* 0.75 ts-sub) (php/* 0.25 trb))
                                     bs-l (php/+ (php/* 0.75 bs-sub) (php/* 0.25 blb))
                                     bs-r (php/+ (php/* 0.75 bs-sub) (php/* 0.25 brb))
-                                    wc2  (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/max 0 (php/intdiv (php/* rel 64) whs))) 64) u)))
+                                    wc2  (php/aget fade (php/aget tpx (php/+ (php/* (php/min tszm1 (php/max 0 (php/intdiv (php/* rel tsz) whs))) tsz) u)))
                                     wl2  (if (php/>= s2 (php/- bs-sub 1)) (php/aget seam-darken-16 wc2)
                                              (if (php/>= s2 (php/- bs-sub 2)) (php/aget seam-darken-8 wc2)
                                                  (if (php/=== s2 ts-sub) (php/aget seam-darken-5 wc2) wc2)))
-                                    wc2b (php/aget fade (php/aget tpx (php/+ (php/* (php/min 63 (php/max 0 (php/intdiv (php/* (php/+ rel 1) 64) whs))) 64) u)))
+                                    wc2b (php/aget fade (php/aget tpx (php/+ (php/* (php/min tszm1 (php/max 0 (php/intdiv (php/* (php/+ rel 1) tsz) whs))) tsz) u)))
                                     wl2b (if (php/>= s2b (php/- bs-sub 1)) (php/aget seam-darken-16 wc2b)
                                              (if (php/>= s2b (php/- bs-sub 2)) (php/aget seam-darken-8 wc2b)
                                                  (if (php/=== s2b ts-sub) (php/aget seam-darken-5 wc2b) wc2b)))
@@ -1394,20 +1477,27 @@
                                   ;; Half-block wall: two V samples down
                                   ;; the column (same U, same fog level)
                                   ;; stacked into one ▀ cell.
-                              (let [wh   (buf-get shades-wall-h col)
-                                    u    (buf-get shades-tex-u col)
-                                    tpx  (buf-get shades-tex-px col)
-                                    rel2 (php/* 2 (php/- row top))
-                                    tvt  (php/min 63 (php/intdiv (php/* rel2 32) wh))
-                                    tvb  (php/min 63 (php/intdiv (php/* (php/+ rel2 1) 32) wh))
-                                    fade (php/aget tex-fade-table lvl)]
+                              (let [wh    (buf-get shades-wall-h col)
+                                    u     (buf-get shades-tex-u col)
+                                    tpx   (buf-get shades-tex-px col)
+                                    tsz   (buf-get shades-tex-sz col)
+                                    tszm1 (php/- tsz 1)
+                                    rel2  (php/* 2 (php/- row top))
+                                    ;; rel2 counts SUB-rows, so the stride
+                                    ;; is half the texture edge (#462: it
+                                    ;; was the literal 32 of 64).
+                                    thalf (php/intdiv tsz 2)
+                                    tvt   (php/min tszm1 (php/intdiv (php/* rel2 thalf) wh))
+                                    tvb   (php/min tszm1 (php/intdiv (php/* (php/+ rel2 1) thalf) wh))
+                                    fade  (php/aget tex-fade-table lvl)]
                                 (php/aset cell-reg 0
-                                          (halfblock (php/aget fade (php/aget tpx (php/+ (php/* tvt 64) u)))
-                                                     (php/aget fade (php/aget tpx (php/+ (php/* tvb 64) u))))))
+                                          (halfblock (php/aget fade (php/aget tpx (php/+ (php/* tvt tsz) u)))
+                                                     (php/aget fade (php/aget tpx (php/+ (php/* tvb tsz) u))))))
                               (let [wh   (buf-get shades-wall-h col)
-                                    tv   (php/min 63 (php/intdiv (php/* (php/- row top) 64) wh))
+                                    tsz  (buf-get shades-tex-sz col)
+                                    tv   (php/min (php/- tsz 1) (php/intdiv (php/* (php/- row top) tsz) wh))
                                     tc   (php/aget (buf-get shades-tex-px col)
-                                                   (php/+ (php/* tv 64) (buf-get shades-tex-u col)))
+                                                   (php/+ (php/* tv tsz) (buf-get shades-tex-u col)))
                                     fade (php/aget tex-fade-table lvl)]
                                 (php/aset cell-reg 0
                                           (php/aget bg-cell-cache (php/aget fade tc)))))
@@ -1590,6 +1680,12 @@
         {:keys [dists hits sides wallxs floordxs floordys hxs hys]} cast-result
         scene-pd                           (if px2? (php/* 0.5 proj-dist) proj-dist)
         tex-on?                            (wall-textures-enabled?)
+        ;; Texture filter (#462): setting ORed with the env override.
+        ;; Written as nested `if`s - an `or` in a binding value
+        ;; closure-compiles (docs/performance.md).
+        texmip?                            (texmip-on? stats)
+        ;; Sub-rows per scene cell: 4 pixel-doubled, 2 at full detail.
+        wall-subrows                       (if px2? 4 2)
         floor-tex-on?                      (and tex-on? (floor-textures-enabled?))
         ;; Half-block sub-pixel rendering: ▀ cells with independent
         ;; top/bottom colours give 2× vertical resolution on floor /
@@ -1751,6 +1847,7 @@
          :tex-u             shades-tex-u
          :tex-level         shades-tex-level
          :tex-px            shades-tex-px
+         :tex-sz            shades-tex-sz
          :wall-h            shades-wall-h}
         (compute-wall-shades svw svh haze-shift
                              {:dists dists :hits hits :sides sides :wallxs wallxs
@@ -1773,7 +1870,9 @@
                              scene-pd
                              pr
                              light-grid
-                             gw)
+                             gw
+                             texmip?
+                             wall-subrows)
         ;; Enemy sprite zone boundaries (head/body/legs). For each
         ;; column carrying an enemy:
         ;;   row in [tops, mids)   -> head
@@ -2211,7 +2310,7 @@
                             sky-gradient sky-sub-codes floor-gradient blood-sky-gradient blood-cols
                             floordxs floordys pfx pfy floor-dperp-sub floor-level-sub floor-dperp floor-level
                             tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow
-                            shades-tex-u shades-tex-level shades-tex-px
+                            shades-tex-u shades-tex-level shades-tex-px shades-tex-sz
                             mids lowers emask eheads ebodys elegss
                             e-stop e-sbot e-sx e-sxr e-spx e-sw e-sh e-fade
                             sprites-on bp-trc
@@ -2225,7 +2324,7 @@
                             sky-gradient sky-sub-codes floor-gradient blood-sky-gradient blood-cols
                             floordxs floordys pfx pfy floor-dperp-sub floor-level-sub
                             tops bots shades-normal shades-top-edge shades-bot-edge shades-top-shadow shades-bot-shadow
-                            shades-tex-u shades-tex-level shades-tex-px shades-wall-h
+                            shades-tex-u shades-tex-level shades-tex-px shades-tex-sz shades-wall-h
                             mids lowers emask eheads ebodys elegss
                             e-stop e-sbot e-sx e-sxr e-spx e-sw e-sh e-fade
                             sprites-on bp-trc

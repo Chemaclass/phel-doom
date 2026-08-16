@@ -96,3 +96,29 @@
   (frame-hash ["PHEL_DOOM_FLAT_WALLS"] {} 120 30)
   (is (= "453c4baf9062da97bed130cc89623807"
          (php/md5 (frame->string world stats 120 30)))))
+
+;; ---------------------------------------------------------------------
+;; Texture filter (#462). Off is the default and must reproduce the
+;; default golden exactly; on selects a pre-filtered smaller texture
+;; level per column, so it MUST differ - and must do so deterministically.
+;; ---------------------------------------------------------------------
+
+(deftest test-texture-filter-off-is-the-default-frame
+  (is (= (frame-hash [] {} 120 30)
+         (frame-hash [] {:texmip? false} 120 30))))
+
+(deftest test-texture-filter-on-changes-the-frame
+  (is (not (= (frame-hash [] {} 120 30)
+              (frame-hash [] {:texmip? true} 120 30)))))
+
+(deftest test-texture-filter-is-deterministic
+  (is (= (frame-hash [] {:texmip? true} 120 30)
+         (frame-hash [] {:texmip? true} 120 30))))
+
+(deftest test-texture-filter-composes-with-the-other-paths
+  ;; Each of these takes a different emit path; the filter must not
+  ;; break any of them, and must still change what they draw.
+  (foreach [override [{:quad true} {:truecolor? true} {:px2? true}]]
+    (is (not (= (frame-hash [] override 120 30)
+                (frame-hash [] (merge override {:texmip? true}) 120 30)))
+        (str "filter changes the frame under " (php/json_encode (keys override))))))

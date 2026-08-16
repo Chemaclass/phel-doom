@@ -164,6 +164,18 @@ Plain stone walls are sampled from the baked Freedoom flat `wall-tex` (WALL70_2,
 
 The boss door and blood-band columns are NOT textured (`tex-level = -1`): they keep their flat shade so the boss nav glyph / the red hit-wash stay clean. `PHEL_DOOM_FLAT_WALLS=1` forces flat-shaded stone (and the striped flat door).
 
+## Texture filter: distance mips for walls (issue #462)
+
+Opt-in **Texture filter** setting (default off, `PHEL_DOOM_TEXMIP=1` to force). A far wall projects a handful of screen rows out of 64 texels, so it point-samples a different texel per frame as the player moves - that is the speckle on distant stone. With the filter on, each column picks a pre-filtered level (`wall-tex-mips`: 64 / 32 / 16 / 8, box-filtered at load with the sprite path's `half-mip`) whose density matches its projected height, using the sprite LOD's oversampling thresholds.
+
+The size travels per column in a `tex-sz` buffer beside the `tex-px` array reference, and `u` is rescaled into the chosen level once in the setup loop, so no per-cell site touches it and the sample expression becomes `(min tszm1 (intdiv (* rel tsz) whs)) * tsz + u`. With the filter off every column is size 64 and every one of those expressions reduces to the literal arithmetic it always held - the default golden hash is unchanged, byte for byte.
+
+Two traps worth keeping written down. The level is chosen against the wall's height in SUB-rows (2 per scene cell, 4 pixel-doubled), because that is the unit the per-cell sampler divides by; picking from cell rows mips the pixel-doubled scene two steps off. And the flag must be resolved by a plain function call rather than an `if` or `or` in `frame->string`'s binding list, which closure-compiles and moves the tracked closure count.
+
+Doors keep the native 64 unconditionally: they are nav cues and want to stay crisp.
+
+Measured on the L1 fixture at 200x50, counting how often the background colour changes between adjacent cells (a speckle proxy): the wall band drops from 82.5% to 79.9%, and the frame is ~1.2% smaller because the runs coalesce better. Frame time is unchanged either way (interleaved, both 120x30 and 240x60, mixed signs). **The floor is not mipped yet and is where most of the surface area is** - 3342 floor cells against 1082 wall cells in that frame, unchanged at 72.7% churn. That is the bigger half of #462 and it is still open.
+
 ## Secret wall tell (issue #469)
 
 A secret wall's column samples the stone texture with a half-tile `u` offset (`secret-tex-offset` 32 of 64), so the pattern runs visibly out of phase with the walls beside it - Doom's own misaligned-texture cue. Visible when you look for it, invisible when you do not.

@@ -154,7 +154,8 @@ Sprint slot decays with movement counters, so releasing clears it the same frame
 
 Per byte, counter is set to its hold value (seconds); each frame physics subtracts `dt` (elapsed seconds), not a fixed count - so the hold survives the same wall-clock duration at any frame rate/cap. At 0 direction stops.
 
-- `move-hold-secs` = 0.30 (~300ms, frame-rate independent): bridges OS initial-key-repeat delay (250-500ms). Avoids stutter on press. Trade-off: ~300ms post-release glide on non-kitty terminals. Kitty release events (event type 3) override with instant clear.
+- `move-hold-secs` = 0.30 (~300ms, frame-rate independent): bridges the OS initial-key-repeat delay (250-500ms) so a press reads as one smooth walk instead of stuttering. Paid once, on the FIRST byte of a press.
+- `move-hold-repeat-secs` = 0.15 (~150ms), issue #461: a movement byte that lands while its slot is still warm is an auto-repeat, and the initial delay it was bridging has already been paid - it only has to reach the next repeat. Before this every byte re-armed the full 0.30s, so on a terminal without release events the last repeat kept the player walking ~300ms after they let go: past the doorway, into melee range, through the strafe meant to dodge a bolt. 0.15s covers auto-repeat rates down to ~7/s, below every default (macOS ~15/s at its slowest, X11 ~25/s); a deliberately crippled rate (`xset r rate 400 5`) would stutter. Kitty release events (event type 3) override both with an instant clear, so best-tier terminals are unaffected.
 - `turn-hold-secs` = 0.05 (~50ms): quick halt for aiming.
 - `pitch-hold-secs` = 0.05 (~50ms): same quick halt for look up/down (↑/↓ arrows), so the camera stops on release instead of drifting.
 

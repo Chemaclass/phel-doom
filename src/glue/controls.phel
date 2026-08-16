@@ -25,6 +25,23 @@
    supported) override this with an instant clear."
   0.30)
 
+(def move-hold-repeat-secs
+  "Seconds a movement slot stays active after a REPEAT byte - one that
+   arrived while the slot was still warm (#461).
+
+   `move-hold-secs` is sized to bridge the OS initial-key-repeat delay,
+   which is only ever paid once, on the first byte of a press. On a
+   terminal without kitty release events every byte re-armed the full
+   0.30s, so the last auto-repeat byte kept the player walking ~300ms
+   after they let go: past the doorway, into melee range, through the
+   strafe that was meant to dodge a bolt.
+
+   0.15s covers auto-repeat rates down to ~7 per second, which is below
+   every default (macOS ~15/s at the slowest setting, X11 ~25/s). A
+   deliberately crippled rate (`xset r rate 400 5`) would stutter; that
+   is documented in docs/input.md rather than paid for by everyone."
+  0.15)
+
 (def turn-hold-secs
   "Seconds a turn direction (←/→) stays active after each input byte.
    Short, so rotation halts within ~50ms of releasing the arrow. The
@@ -94,10 +111,26 @@
     (= slot :sprint)   sprint-hold-secs
     :else              move-hold-secs))
 
+(defn- refresh-secs-for
+  ;; How long to arm `slot` for, given what is left on its counter
+  ;; (#461). A movement byte landing on a slot that is STILL WARM is an
+  ;; auto-repeat: the OS initial delay was already bridged, so it only
+  ;; needs to reach the next repeat. Turn / pitch / sprint holds are
+  ;; already ~50ms and stay as they were.
+  [world slot]
+  (if (and (php/=== move-hold-secs (hold-secs-for slot))
+           (php/> (or (get-in world [:moves slot]) 0.0) 0.0))
+    move-hold-repeat-secs
+    (hold-secs-for slot)))
+
 (defn refresh-move
   "If `byte` maps to a direction slot, refresh that slot's counter on
    `world`. Capital W/A/S/D additionally refresh `:sprint` so SHIFT+WASD
    sprints on terminals without kitty CSI-u (Terminal.app, xterm).
+   A byte landing on a slot that is still warm is an auto-repeat and
+   gets the shorter `move-hold-repeat-secs` (#461), so releasing a key
+   stops the player within ~150ms instead of ~300ms.
+
    Anything else (unmapped bytes) leaves the world untouched."
   [world byte]
   (let [slot       (get key->slot byte)
@@ -105,11 +138,11 @@
     (cond
       (some? shift-slot)
       (-> world
-          (assoc-in [:moves shift-slot] (hold-secs-for shift-slot))
+          (assoc-in [:moves shift-slot] (refresh-secs-for world shift-slot))
           (assoc-in [:moves :sprint]    (hold-secs-for :sprint)))
 
       (some? slot)
-      (assoc-in world [:moves slot] (hold-secs-for slot))
+      (assoc-in world [:moves slot] (refresh-secs-for world slot))
 
       :else              world)))
 

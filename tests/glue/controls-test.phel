@@ -2,7 +2,8 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.glue.controls
             :refer [key-states refresh-from-keys rising-edges initial-key-snapshot
-                    nav-deltas refresh-move mouse-aim edge-pan-rate mouse-look-gain]))
+                    nav-deltas refresh-move mouse-aim edge-pan-rate mouse-look-gain
+                    move-hold-secs move-hold-repeat-secs]))
 
 (def blank-moves
   {:fwd          0
@@ -784,3 +785,46 @@
   (is (= true  (:quit-request (rising-edges (key-states "q") (key-states "")))))
   (is (= false (:quit-request (rising-edges (key-states "q") (key-states "q"))))
       "held q does not re-fire"))
+
+;; ---------------------------------------------------------------------
+;; Repeat-aware hold bridge (#461). Terminals without kitty release
+;; events (Terminal.app, GNOME Terminal, xterm) can only say "a key
+;; produced a byte", so every byte re-armed a 0.30s hold - and since the
+;; OS auto-repeats while the key is down, the LAST repeat byte kept
+;; walking the player ~300ms after they let go: past the doorway, into
+;; melee range, through the strafe that was meant to dodge a bolt.
+;;
+;; The 0.30s exists to bridge the OS initial-repeat DELAY, which only
+;; applies to the first byte. A byte that arrives while the slot is
+;; still warm is a repeat, and only needs to cover the gap to the next
+;; one.
+;; ---------------------------------------------------------------------
+
+(deftest test-a-fresh-press-gets-the-full-bridge
+  (let [w (refresh-move {:moves blank-moves} "w")]
+    (is (= move-hold-secs (:fwd (:moves w))))))
+
+(deftest test-a-repeat-byte-gets-the-short-hold
+  ;; Slot still warm -> the key is repeating -> no need to bridge the
+  ;; initial delay again.
+  (let [warm (assoc blank-moves :fwd 0.12)
+        w    (refresh-move {:moves warm} "w")]
+    (is (= move-hold-repeat-secs (:fwd (:moves w))))
+    (is (php/< move-hold-repeat-secs move-hold-secs) "and it is shorter")))
+
+(deftest test-a-decayed-slot-is-a-fresh-press-again
+  ;; Let go, the counter ran out, press again: the OS delay is back.
+  (let [w (refresh-move {:moves (assoc blank-moves :fwd 0.0)} "w")]
+    (is (= move-hold-secs (:fwd (:moves w))))))
+
+(deftest test-the-sprint-path-follows-the-same-rule
+  (let [warm (assoc blank-moves :fwd 0.2 :sprint 0.02)
+        w    (refresh-move {:moves warm} "W")]
+    (is (= move-hold-repeat-secs (:fwd (:moves w))) "repeat, so the short hold")
+    (is (php/> (:sprint (:moves w)) 0.0) "and sprint stays armed")))
+
+(deftest test-turn-and-pitch-holds-are-untouched
+  ;; They are already ~50ms; the glide problem is the movement slots.
+  (let [warm (assoc blank-moves :turn-left 0.03)
+        w    (refresh-move {:moves warm} "\e[D")]
+    (is (php/> (:turn-left (:moves w)) 0.0))))

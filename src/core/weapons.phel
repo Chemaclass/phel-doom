@@ -319,6 +319,32 @@
              :mag           (:mag loaded)
              :ammo-reserve  (:reserve loaded)))))
 
+(defn cycle-weapon
+  "Step to the next (`+1`) or previous (`-1`) OWNED weapon, wrapping at
+   both ends (#464). Any other step, or a rack of one, is a no-op.
+
+   Owned-only on purpose: stepping onto a gun the player has not found
+   would either tease them with a weapon they cannot fire or, through
+   `switch-weapon`'s ownership guard, silently do nothing - which reads
+   as a dropped input. Routing through `switch-weapon` also keeps the
+   mag / reserve bookkeeping and the mid-reload lockout identical to
+   pressing the slot number."
+  [world step]
+  (if (php/=== 0 step)
+    world
+    (let [owned (filterv (fn [kw] (owns? world kw)) weapon-order)
+          n     (count owned)]
+      (if (php/<= n 1)
+        world
+        (let [cur (current-weapon world)
+              idx (loop [i 0]
+                    (cond
+                      (php/>= i n)          0
+                      (= cur (get owned i)) i
+                      :else                 (recur (php/+ i 1))))
+              nxt (get owned (php/% (php/+ (php/+ idx step) n) n))]
+          (switch-weapon world nxt))))))
+
 (defn give-weapon
   "Add `kw` to `:owned-weapons` AND snap to it (DOOM-style auto-switch
    on first pickup). Refills the weapon's mag+reserve to its starting

@@ -645,3 +645,21 @@
   ;; No ext-pcntl (or no SIGWINCH): the poll is the only mechanism left.
   (is (= true  (sample-size? false false 12)))
   (is (= false (sample-size? false false 5))))
+
+;; Weapon cycling reaches the world through the same tick (#464).
+
+(deftest test-cycle-edge-switches-and-announces
+  (let [w0 (assoc (new-world open-grid (new-player 5.0 5.0 0.0))
+                  :owned-weapons #{:pistol :chaingun}
+                  :weapon :pistol
+                  :weapon-state {:chaingun {:mag 30 :reserve 90}})
+        w  (tick-world w0 "" 0.016 (assoc no-edges :next-weapon true))]
+    (is (= :chaingun (:weapon w)))
+    (is (= "CHAINGUN 30/90" (:msg-text w)) "and the message line names it (#456)")))
+
+(deftest test-cycle-with-nothing-to-cycle-to-is-silent
+  (let [w0 (assoc (new-world open-grid (new-player 5.0 5.0 0.0))
+                  :owned-weapons #{:pistol} :weapon :pistol)
+        w  (tick-world w0 "" 0.016 (assoc no-edges :next-weapon true))]
+    (is (= :pistol (:weapon w)))
+    (is (= nil (:msg-text w)))))

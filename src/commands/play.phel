@@ -3,7 +3,7 @@
   (:require phel.string :as str)
   (:require phel-doom.core.state :refer [advance-game-time backpack-level clamp-pitch decay-soul-overcap empty-moves max-lives max-stamina push-msg turn-player rebuild-pgrid reset-reticle toggle-debug toggle-map toggle-pause toggle-sound])
   (:require phel-doom.core.map      :refer [door? reveal-secret secret? switch? toggle-switch])
-  (:require phel-doom.glue.controls :refer [refresh-from-keys key-states rising-edges
+  (:require phel-doom.glue.controls :refer [wheel-weapon-step refresh-from-keys key-states rising-edges
                                             initial-key-snapshot nav-deltas mouse-aim])
   (:require phel-doom.core.physics  :refer [apply-physics tick-heartbeat tick-blood-drops tick-stamina])
   (:require phel-doom.core.engine   :refer [mark-visible-cells])
@@ -11,7 +11,7 @@
   (:require phel-doom.core.combat :refer [damage-step fire-anim-seconds push-sfx reload reloading? reload-cooldown-seconds distance-volume sight-sfx-for target-in-sights? tick-armory tick-shooting])
   (:require phel-doom.core.enemy    :refer [advance tick-scare rear-attacker?])
   (:require phel-doom.core.projectile :refer [tick-projectiles tick-tracers])
-  (:require phel-doom.core.weapons :refer [switch-weapon weapon-spec weapon-order])
+  (:require phel-doom.core.weapons :refer [cycle-weapon switch-weapon weapon-spec weapon-order])
   (:require phel-doom.io.sound    :refer [play-sfx! mute-for! set-sfx-scalar! stop-sfx!])
   (:require phel-doom.io.music    :as music)
   (:require phel-doom.core.settings :refer [navigate music-volume sfx-scalar mouse-sensitivity view-bob-intensity valid-difficulty? pause-menu-move pause-menu-action pause-menu-index-of])
@@ -508,6 +508,10 @@
                    (:select-weapon5 edges) (switch-weapon w1 (get weapon-order 4))
                    (:select-weapon6 edges) (switch-weapon w1 (get weapon-order 5))
                    (:select-weapon7 edges) (switch-weapon w1 (get weapon-order 6))
+                   ;; Wheel / bracket step (#464), after the slot keys so
+                   ;; an explicit number always wins.
+                   (:next-weapon edges)    (cycle-weapon w1 1)
+                   (:prev-weapon edges)    (cycle-weapon w1 -1)
                    :else                   w1)
             ;; Name the weapon on the message line when the swap actually
             ;; took (#456), so a slot press never needs a glance at the
@@ -1017,9 +1021,15 @@
                                      (mouse-sensitivity (:settings world))
                                      (php// ms 1000.0)
                                      [rows cols])
+                ;; Wheel ticks are weapon steps (#464): the same drained
+                ;; byte string, read for scroll reports the aim path
+                ;; deliberately ignores. Brackets already arrive as edges.
+                wheel     (wheel-weapon-step keys)
                 edges     (assoc edges0
                                  :fire      (or (:fire edges0) (:fire? look))
-                                 :fire-held (or (:fire-held edges0) (:fire-held? look)))]
+                                 :fire-held (or (:fire-held edges0) (:fire-held? look))
+                                 :next-weapon (or (:next-weapon edges0) (php/=== 1 wheel))
+                                 :prev-weapon (or (:prev-weapon edges0) (php/=== -1 wheel)))]
             (cond
             ;; Quitting straight from the pause/settings page still
             ;; persists edits (q never hits the resume transition).

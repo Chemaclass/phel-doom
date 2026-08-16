@@ -2,7 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.state :refer [new-player new-world])
   (:require phel-doom.core.enemies :refer [resists?])
-  (:require phel-doom.core.weapons :refer [current-weapon effective-reserve-cap give-weapon initial-weapon-state owns? switch-weapon weapon-order weapon-spec weapons]))
+  (:require phel-doom.core.weapons :refer [current-weapon effective-reserve-cap give-weapon initial-weapon-state owns? switch-weapon cycle-weapon weapon-order weapon-spec weapons]))
 
 (def empty-grid [[1 1 1] [1 0 1] [1 1 1]])
 
@@ -288,3 +288,35 @@
     (is (= 1 (:graze-damage sg)) "grazes for reduced damage")
     (is (php/>= (:spread-targets sg) 2) "hits 2+ targets")
     (is (php/< (:graze-damage sg) (:damage sg)) "graze < primary damage")))
+
+;; ---------------------------------------------------------------------
+;; cycle-weapon (#464): the wheel / bracket step. Walks OWNED weapons
+;; only - stepping onto a gun you have not found would be a tease and,
+;; worse, a silent no-op that reads as a dropped input.
+;; ---------------------------------------------------------------------
+
+(def- rack {:owned-weapons #{:pistol :chaingun :rocket} :weapon :pistol
+            :weapon-state {}})
+
+(deftest test-cycle-forward-skips-what-you-do-not-own
+  ;; Order is pistol shotgun chaingun chainsaw bfg incinerator rocket;
+  ;; owning 1, 3 and 7 means next from the pistol is the chaingun.
+  (is (= :chaingun (:weapon (cycle-weapon rack 1))))
+  (is (= :rocket   (:weapon (cycle-weapon (assoc rack :weapon :chaingun) 1)))))
+
+(deftest test-cycle-wraps-both-ways
+  (is (= :pistol (:weapon (cycle-weapon (assoc rack :weapon :rocket) 1))))
+  (is (= :rocket (:weapon (cycle-weapon rack -1)))))
+
+(deftest test-cycle-backward-walks-the-other-way
+  (is (= :chaingun (:weapon (cycle-weapon (assoc rack :weapon :rocket) -1)))))
+
+(deftest test-cycle-with-one-weapon-stays-put
+  (is (= :pistol (:weapon (cycle-weapon {:owned-weapons #{:pistol} :weapon :pistol} 1)))))
+
+(deftest test-a-zero-step-changes-nothing
+  (is (= :pistol (:weapon (cycle-weapon rack 0)))))
+
+(deftest test-cycle-respects-the-reload-lockout
+  ;; Same rule as a number key: no hot-swapping out of a reload.
+  (is (= :pistol (:weapon (cycle-weapon (assoc rack :reload-cooldown 0.5) 1)))))

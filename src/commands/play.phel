@@ -1,7 +1,7 @@
 (ns phel-doom.commands.play
   (:require phel.cli :as cli)
   (:require phel.string :as str)
-  (:require phel-doom.core.state :refer [advance-game-time backpack-level clamp-pitch decay-soul-overcap max-lives max-stamina turn-player rebuild-pgrid reset-reticle toggle-debug toggle-map toggle-pause toggle-sound])
+  (:require phel-doom.core.state :refer [advance-game-time backpack-level clamp-pitch decay-soul-overcap empty-moves max-lives max-stamina turn-player rebuild-pgrid reset-reticle toggle-debug toggle-map toggle-pause toggle-sound])
   (:require phel-doom.core.map      :refer [door? reveal-secret secret? switch? toggle-switch])
   (:require phel-doom.glue.controls :refer [refresh-from-keys key-states rising-edges
                                             initial-key-snapshot nav-deltas mouse-aim])
@@ -14,7 +14,7 @@
   (:require phel-doom.core.weapons :refer [switch-weapon weapon-spec weapon-order])
   (:require phel-doom.io.sound    :refer [play-sfx! mute-for! set-sfx-scalar!])
   (:require phel-doom.io.music    :as music)
-  (:require phel-doom.core.settings :refer [navigate music-volume sfx-scalar mouse-sensitivity view-bob-intensity valid-difficulty? pause-menu-move pause-menu-action])
+  (:require phel-doom.core.settings :refer [navigate music-volume sfx-scalar mouse-sensitivity view-bob-intensity valid-difficulty? pause-menu-move pause-menu-action pause-menu-index-of])
   (:require phel-doom.io.settings :refer [load-settings save-settings! settings-write-failed?])
   (:require phel-doom.io.savegame :refer [save-game! load-game])
   (:require phel-doom.io.demo     :as demo)
@@ -146,21 +146,83 @@
       (update-in w1 [:player :pitch]
                  (fn [p] (clamp-pitch (php/+ (or p 0.0) pitch)))))))
 
+(defn quit-confirmed?
+  "True when `q` should end the run outright: only from the pause page
+   (menu or its settings sub-page), which is where the question was
+   asked (#454).
+
+   `q` used to quit a live run on the spot, one key away from `w`. In
+   game it now opens the pause menu on Quit (`arm-quit-menu`), so the
+   second press - or Enter on the highlighted row - is the confirmation.
+   The start menu and the end screens run their own loops and keep
+   quitting on a single `q`.
+
+   The H / ESC info panel also freezes the world, but it is NOT a confirm
+   surface: it carries no Quit row, and ESC is the universal back-out key,
+   so a `q` there would be the very accident this exists to stop. It arms
+   the menu like a live run does.
+
+   On a terminal without kitty release events, HOLDING `q` reaches the
+   quit through key autorepeat (arm, then a fresh press edge on the next
+   burst). That is deliberate: a held key is not an accident."
+  [world quit-request?]
+  (and (boolean quit-request?)
+       (boolean (:paused world))
+       (not (:help? world))))
+
+(defn arm-quit-menu
+  "Open the pause menu with the cursor on Quit, so the next `q` (or
+   Enter) leaves and anything else is a way back into the run (#454).
+   Drops the movement hold counters for the same reason pausing on focus
+   loss does: whatever was held when the question came up must not still
+   be gliding when the player answers it."
+  [world]
+  (assoc world
+         :paused        true
+         :help?         false
+         :pause-screen  :menu
+         :pause-cursor  (pause-menu-index-of :quit)
+         :pause-action  nil
+         :pause-confirm nil
+         :moves         empty-moves))
+
 (defn- handle-toggles
   "Apply rising-edge toggle keys (pause / minimap / sound / debug /
    help / about-face) for this frame. Debug + help edges stay
    outside the paused short-circuit so F3 / H / ESC still flip
    overlays while paused."
   [world edges]
-  (let [after-pause (if (:toggle-pause edges)
+  (let [;; Focus loss (#454): the terminal reported the window going to
+        ;; the background, so freeze the run before the player comes back
+        ;; to a corpse. Already-paused worlds are left exactly as they
+        ;; are - re-opening the top menu would yank them off the settings
+        ;; sub-page they were reading.
+        after-focus (if (and (:focus-out edges) (not (:paused world)))
+                      (assoc world
+                             :paused        true
+                             :pause-screen  :menu
+                             :pause-cursor  0
+                             :pause-action  nil
+                             :pause-confirm nil
+                             :moves         empty-moves)
+                      world)
+        ;; `q` in a live run asks instead of quitting (#454): it opens the
+        ;; menu on Quit, where a second `q` (or Enter) confirms. A paused
+        ;; `q` never reaches here - the game loop quits on it directly.
+        after-quit  (if (and (:quit-request edges)
+                             (not (quit-confirmed? after-focus true)))
+                      (arm-quit-menu after-focus)
+                      after-focus)
+        after-pause (if (:toggle-pause edges)
                       ;; Pausing ON opens the navigable pause MENU (#203):
                       ;; reset its cursor + screen so P always lands on the
                       ;; top menu, not whatever sub-page was last open.
-                      (let [tp (toggle-pause world)]
+                      (let [tp (toggle-pause after-quit)]
                         (if (:paused tp)
-                          (assoc tp :pause-screen :menu :pause-cursor 0 :pause-action nil)
+                          (assoc tp :pause-screen :menu :pause-cursor 0 :pause-action nil
+                                 :pause-confirm nil)
                           tp))
-                      world)
+                      after-quit)
         after-map   (if (:toggle-map edges) (toggle-map after-pause) after-pause)
         after-sound (if (:toggle-sound edges) (toggle-sound after-map) after-map)
         after-debug (if (:toggle-debug edges) (toggle-debug after-sound) after-sound)
@@ -219,15 +281,26 @@
    game loop to hand back to the run lifecycle. No select = just move."
   [world cursor-steps select?]
   (let [cursor (pause-menu-move (or (:pause-cursor world) 0) cursor-steps)
-        w      (assoc world :pause-cursor cursor)]
+        ;; Moving the cursor disarms a pending Restart (#454): the
+        ;; confirmation belongs to the row it was asked on.
+        moved? (not (php/=== cursor (or (:pause-cursor world) 0)))
+        armed  (if moved? nil (:pause-confirm world))
+        w      (assoc world :pause-cursor cursor :pause-confirm armed)]
     (if (not select?)
       w
       (let [action (pause-menu-action cursor)]
         (cond
-          (= action :resume)   (assoc w :paused false)
-          (= action :settings) (assoc w :pause-screen :settings)
-          (= action :restart)  (assoc w :pause-action :restart)
-          (= action :quit)     (assoc w :pause-action :quit)
+          (= action :resume)   (assoc w :paused false :pause-confirm nil)
+          (= action :settings) (assoc w :pause-screen :settings :pause-confirm nil)
+          ;; Restart erases the run, and Enter is one keypress away from
+          ;; the cursor keys, so the first select only ARMS it (#454);
+          ;; hud/pause-menu-string paints the armed row as a question.
+          (= action :restart)  (if (= :restart armed)
+                                 (assoc w :pause-action :restart :pause-confirm nil)
+                                 (assoc w :pause-confirm :restart))
+          ;; Quit needs no second ask here: reaching this row is already
+          ;; deliberate (navigated to, or `q` which opened the menu on it).
+          (= action :quit)     (assoc w :pause-action :quit :pause-confirm nil)
           :else                w)))))
 
 (defn resumed-pause?
@@ -525,6 +598,9 @@
    ;; right overlay.
    :pause-screen         (or (:pause-screen world) :menu)
    :pause-cursor         (or (:pause-cursor world) 0)
+   ;; Which menu row is waiting for a second Enter (#454): render paints
+   ;; that row as a question instead of its plain label.
+   :pause-confirm        (:pause-confirm world)
    ;; Generic HUD-suppression flags (the demo showcase sets them; normal
    ;; play leaves them nil): hide the weapon name/ammo chunk and the
    ;; enemy-themed level label from the top game-info line.
@@ -867,7 +943,9 @@
               ;; is the one frame checkpoint where SIGINT / SIGTERM lands.
               ;; Quitting here unwinds through run-play's finally, so a
               ;; Ctrl-C restores the terminal exactly like pressing q.
-              (or (:end? frame) (str/contains? keys "q") (interrupted?))
+              (or (:end? frame)
+                  (quit-confirmed? world (:quit-request edges))
+                  (interrupted?))
               (do (when (:paused world) (persist-settings! world))
                   :quit)
 

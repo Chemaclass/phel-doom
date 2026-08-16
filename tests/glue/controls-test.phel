@@ -754,3 +754,33 @@
         w'   (refresh-from-keys blank-world drag)]
     (is (= false (:sp st)) "no phantom fire from the mouse digits")
     (is (= blank-moves (:moves w')) "no phantom movement from the report")))
+
+;; ---------------------------------------------------------------------
+;; Focus tracking (#454). `\e[?1004h` makes the terminal report focus
+;; loss as `\e[O` and focus gain as `\e[I`; the game pauses on the
+;; former so alt-tabbing away does not leave the player being chewed on.
+;; ---------------------------------------------------------------------
+
+(deftest test-key-states-reads-focus-out
+  (is (= true  (:focus-out (key-states "\e[O"))))
+  (is (= false (:focus-out (key-states "\e[I")))  "focus IN is not focus out")
+  (is (= false (:focus-out (key-states "")))))
+
+(deftest test-focus-events-are-not-keyboard-input
+  ;; The report embeds an ESC byte; ESC opens the help menu, so a focus
+  ;; event must never read as an ESC press (or as any movement byte).
+  (let [ks (key-states "\e[O\e[I")]
+    (is (= false (:esc ks)) "no phantom ESC from a focus report")
+    (is (= false (:enter ks)))
+    (is (= false (:sp ks))))
+  (let [w (refresh-from-keys {:moves blank-moves} "\e[O\e[I")]
+    (is (= blank-moves (:moves w)) "no phantom movement from a focus report")))
+
+(deftest test-quit-key-is-tracked-as-an-edge
+  ;; q used to be read straight off the raw byte string; it is a tracked
+  ;; key now so the pause menu can arm on its rising edge (#454).
+  (is (= true  (:q (key-states "q"))))
+  (is (= false (:q (key-states ""))))
+  (is (= true  (:quit-request (rising-edges (key-states "q") (key-states "")))))
+  (is (= false (:quit-request (rising-edges (key-states "q") (key-states "q"))))
+      "held q does not re-fire"))

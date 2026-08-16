@@ -24,6 +24,21 @@
    enabled this session)."
   "\e[?1003l\e[?1006l\e[>1p")
 
+(def focus-enable
+  "Focus tracking on (`\\e[?1004h`, #454): the terminal then reports the
+   window losing focus as `\\e[O` and regaining it as `\\e[I`. The game
+   pauses on the loss, so alt-tabbing away can't leave the player standing
+   in front of an enemy. Unconditional - unlike mouse reporting there is
+   nothing to opt out of, and a terminal without the mode ignores it.
+   Inside tmux the outer terminal's report only reaches the pane with
+   `focus-events on` (see docs/input.md)."
+  "\e[?1004h")
+
+(def focus-disable
+  "Reverse of `focus-enable`, emitted on teardown so the terminal stops
+   reporting focus changes to whatever runs next."
+  "\e[?1004l")
+
 (defn init-escapes
   "Pure: the terminal-setup escape string init-input! emits. Alt screen
    (`\\e[?1049h`) + hide cursor (`\\e[?25l`) + no autowrap (`\\e[?7l`) +
@@ -32,7 +47,7 @@
    `mouse?` is true (#246). Split out from the side-effecting init-input!
    so the mouse gating is unit-testable without touching the terminal."
   [mouse?]
-  (str "\e[?1049h\e[?25l\e[?7l\e[2J\e[H\e[>3u"
+  (str "\e[?1049h\e[?25l\e[?7l\e[2J\e[H\e[>3u" focus-enable
        (if mouse? mouse-enable "")))
 
 (def unhideable-pointer-terminals
@@ -139,7 +154,7 @@
    terminal stops emitting key / pointer reports before the teardown
    drain. mouse-disable is always sent (harmless if mouse was never
    enabled). Split out so the teardown contract is unit-testable."
-  (str "\e[<u" mouse-disable))
+  (str "\e[<u" mouse-disable focus-disable))
 
 (def- signals-armed
   ;; Whether install-signal-handlers! armed anything; interrupted? skips

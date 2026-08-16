@@ -23,7 +23,7 @@ Full controls, pickups, weapons, and CLI flags. The README has the short version
 | `h` / `ESC` | Info menu + pause |
 | `F3` | Debug overlay |
 | `F5` / `F9` | Save / load (slot 1) |
-| `q` | Quit |
+| `q` | Quit (opens the pause menu on Quit; press again to confirm) |
 
 Walk into doors to advance. Top-center compass tints the cardinal (E/S/W/N) toward target. Orange = exit. Blue/red = keycard needed.
 

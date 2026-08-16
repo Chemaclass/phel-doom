@@ -7,7 +7,12 @@
   (:require phel-doom.commands.play  :refer [tick-world resumed-pause? step-pause-menu
                                              apply-mouse-look clamp-frame-ms adopt-loaded-world
                                              poll-size? resize-poll-frames restart-show-map?
-                                             rearm-mouse? rearm-mouse-frames retry-loadout]))
+                                             rearm-mouse? rearm-mouse-frames retry-loadout
+                                             quit-confirmed? arm-quit-menu])
+  (:require phel-doom.core.settings :refer [pause-menu-action pause-menu-index-of]))
+
+(defn- restart-cursor [] (pause-menu-index-of :restart))
+(defn- quit-cursor [] (pause-menu-index-of :quit))
 
 (def open-grid
   (apply vector
@@ -287,8 +292,12 @@
 
 (deftest test-step-pause-menu-restart-and-quit-stamp-action
   ;; cursor 2 = Restart, cursor 3 = Quit -> :pause-action for the loop.
-  (is (= :restart (:pause-action (step-pause-menu {:paused true :pause-cursor 2} 0 true))))
-  (is (= :quit    (:pause-action (step-pause-menu {:paused true :pause-cursor 3} 0 true)))))
+  ;; Restart asks twice since #454, so the action lands on the second
+  ;; select; Quit still fires on the first.
+  (let [armed (step-pause-menu {:paused true :pause-cursor (restart-cursor)} 0 true)]
+    (is (= nil      (:pause-action armed)))
+    (is (= :restart (:pause-action (step-pause-menu armed 0 true)))))
+  (is (= :quit    (:pause-action (step-pause-menu {:paused true :pause-cursor (quit-cursor)} 0 true)))))
 
 (deftest test-step-pause-menu-cursor-wraps-then-selects
   ;; From cursor 0, up wraps to 3 (Quit); selecting stamps :quit.
@@ -484,3 +493,109 @@
     (is (= entry (:owned-weapons l)))
     (is (= false (contains? (:owned-weapons l) :rocket))
         "the rocket picked up on the fatal attempt is back on the floor")))
+
+;; Run safety (#454). `q` sat one key away from `w` and quit the run on
+;; the spot; it now opens the pause menu on Quit, so quitting takes a
+;; second press. The pause page is the confirm surface, so `q` there
+;; still quits (and still persists settings on the way out).
+
+(deftest test-quit-key-does-not-quit-a-live-run
+  (is (= false (quit-confirmed? {:paused false} true))
+      "in-game q asks, it does not quit"))
+
+(deftest test-quit-key-quits-from-the-pause-page
+  (is (= true (quit-confirmed? {:paused true} true)))
+  (is (= true (quit-confirmed? {:paused true :pause-screen :settings} true))
+      "the settings sub-page confirms too"))
+
+(deftest test-quit-key-does-not-quit-from-the-help-panel
+  ;; H / ESC freezes the world too, but the info panel has no Quit row
+  ;; and ESC is the universal back-out key, so a q there is the accident
+  ;; #454 exists to stop.
+  (is (= false (quit-confirmed? {:paused true :help? true} true))))
+
+(deftest test-quit-key-arms-the-menu-from-the-help-panel
+  (let [w (tick-world (assoc (new-world open-grid (new-player 5.0 5.0 0.0))
+                             :paused true :help? true)
+                      "" 0.016 (assoc no-edges :quit-request true))]
+    (is (= false (:help? w)) "the info panel closes so the menu is visible")
+    (is (= true (:paused w)))
+    (is (= :quit (pause-menu-action (:pause-cursor w))))))
+
+(deftest test-quit-key-in-a-live-run-arms-the-menu
+  ;; The wiring, not just the helper: a live world plus the edge must
+  ;; land on the menu (deleting the handle-toggles branch would otherwise
+  ;; leave q inert with the suite still green).
+  (let [w (tick-world (assoc (new-world open-grid (new-player 5.0 5.0 0.0))
+                             :moves {:fwd 0.3})
+                      "" 0.016 (assoc no-edges :quit-request true))]
+    (is (= true (:paused w)))
+    (is (= :menu (:pause-screen w)))
+    (is (= :quit (pause-menu-action (:pause-cursor w))))
+    (is (= 0.0 (:fwd (:moves w))) "held movement dropped, no glide into the menu")))
+
+(deftest test-pause-confirm-does-not-survive-a-resume
+  ;; Arm Restart, unpause with p, pause again: the question must not be
+  ;; on screen for a row the player never armed this session.
+  (let [armed    (step-pause-menu {:paused true :pause-cursor (restart-cursor)} 0 true)
+        live     (tick-world (merge (new-world open-grid (new-player 5.0 5.0 0.0)) armed)
+                             "" 0.016 (assoc no-edges :toggle-pause true))
+        repaused (tick-world live "" 0.016 (assoc no-edges :toggle-pause true))]
+    (is (= false (:paused live)) "p resumes")
+    (is (= true (:paused repaused)))
+    (is (= nil (:pause-confirm repaused)))))
+
+(deftest test-quit-key-quits-nothing-when-not-pressed
+  (is (= false (quit-confirmed? {:paused true} false))))
+
+(deftest test-arm-quit-menu-opens-the-menu-on-quit
+  (let [w (arm-quit-menu {:paused false :moves {:fwd 0.3} :pause-action :stale})]
+    (is (= true (:paused w)) "the run freezes while the question is up")
+    (is (= :menu (:pause-screen w)) "top menu, not whatever sub-page was open")
+    (is (= :quit (pause-menu-action (:pause-cursor w)))
+        "cursor lands on Quit so enter confirms")
+    (is (= nil (:pause-action w)) "no stale action fires")
+    (is (= 0.0 (:fwd (:moves w))) "held movement is dropped, not glided into the menu")))
+
+;; Restart is one keypress from erasing a run, so it asks twice (#454).
+
+(deftest test-pause-restart-arms-before-it-fires
+  (let [armed (step-pause-menu {:pause-cursor (restart-cursor)} 0 true)]
+    (is (= :restart (:pause-confirm armed)) "first select arms")
+    (is (= nil (:pause-action armed)) "and does not restart yet")
+    (let [fired (step-pause-menu armed 0 true)]
+      (is (= :restart (:pause-action fired)) "second select restarts"))))
+
+(deftest test-pause-restart-arming-clears-on-cursor-move
+  (let [armed (step-pause-menu {:pause-cursor (restart-cursor)} 0 true)
+        moved (step-pause-menu armed 1 false)]
+    (is (= nil (:pause-confirm moved)) "moving away disarms")
+    (let [back (step-pause-menu moved -1 true)]
+      (is (= :restart (:pause-confirm back)) "coming back asks again")
+      (is (= nil (:pause-action back))))))
+
+(deftest test-pause-quit-still-fires-on-one-select
+  ;; Quit already had its confirm: reaching this row means the player
+  ;; either navigated here or pressed q, both deliberate.
+  (let [w (step-pause-menu {:pause-cursor (quit-cursor)} 0 true)]
+    (is (= :quit (:pause-action w)))))
+
+;; Focus loss pauses the run: alt-tabbing away used to leave the player
+;; standing in front of an enemy, with up to 300 ms of held movement
+;; still gliding (#454).
+
+(deftest test-focus-out-pauses-and-drops-held-movement
+  (let [w (tick-world (assoc (new-world open-grid (new-player 5.0 5.0 0.0))
+                             :moves {:fwd 0.3})
+                      "" 0.016 (assoc no-edges :focus-out true))]
+    (is (= true (:paused w)))
+    (is (= :menu (:pause-screen w)) "pauses into the menu, like p")
+    (is (= 0.0 (:fwd (:moves w))))))
+
+(deftest test-focus-out-while-paused-changes-nothing
+  (let [w0 (assoc (new-world open-grid (new-player 5.0 5.0 0.0))
+                  :paused true :pause-screen :settings :pause-cursor 2)
+        w  (tick-world w0 "" 0.016 (assoc no-edges :focus-out true))]
+    (is (= true (:paused w)))
+    (is (= :settings (:pause-screen w)) "does not yank the player off a sub-page")
+    (is (= 2 (:pause-cursor w)))))

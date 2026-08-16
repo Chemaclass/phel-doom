@@ -32,7 +32,8 @@ Four lifecycle layers:
               world'   (tick-world world keys (php// ms 1000.0)
                                    (rising-edges now-keys prev-keys))]
           (cond
-            (str/contains? keys "q")    :quit
+            (quit-confirmed? world
+                             (:quit-request edges))    :quit
             (php/<= (:lives world') 0)  (result-game-over world' t-start now)
             (on-door? world')           (door-result      world' t-start now)
             :else                       (recur world' now ms
@@ -46,7 +47,7 @@ Four lifecycle layers:
 3. Drain input: `drain-keys` reads up to `drain-bytes` (512) bytes non-blocking. Held keys send multiple bytes per frame.
 4. Compute dt + edges: `ms-since` for wall-clock; `rising-edges` diffs key snapshots for one-shots.
 5. Tick world: pure `tick-world` call (used by tests too).
-6. Branch: quit (Q), die (lives <= 0), door (next level or victory), or recur.
+6. Branch: quit (confirmed Q, see Restart modes), die (lives <= 0), door (next level or victory), or recur.
 
 ## tick-world
 
@@ -98,13 +99,21 @@ The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself; the g
 ## Per-level result kinds
 
 ```phel
-:quit                                ; player pressed Q
+:quit                                ; player confirmed Q from the pause page
 {:game-over true ... }               ; lives reached 0
 {:victory   true ... }               ; stepped on door of L5
 {:next-level true :level N ... }     ; stepped on door of L<5
 ```
 
 `run-levels` matches on these to decide the next iteration.
+
+## Quitting and restarting (issue #454)
+
+`q` in a live run does not quit: it opens the pause menu with the cursor on Quit and drops the movement hold counters, so the confirmation is the second `q` (or Enter on that row). The H / ESC info panel freezes the world too but is not a confirm surface - it has no Quit row - so `q` there closes it and opens the menu the same way. `quit-confirmed?` is the single gate: pause page yes, help panel no. The start menu and the end screens run their own loops and still quit on one `q`, and Ctrl-C still quits from anywhere.
+
+Restart on the pause menu asks twice for the same reason: the first select arms it (the row reads `Restart?  enter again`), a second select fires, moving the cursor disarms. The armed flag never leaves the session - resume, re-pause and quick-saves all clear it.
+
+Losing terminal focus (`\e[?1004h`, see [input.md](input.md#focus-tracking-issue-454)) pauses a live run and drops held movement, so alt-tabbing away cannot leave the player being chewed on. An already-paused world is left alone.
 
 ## Restart modes
 

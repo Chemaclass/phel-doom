@@ -29,7 +29,7 @@ Player options across audio, gameplay defaults, input, accessibility, and perfor
 
 ## Access
 
-Pressing `p` opens the navigable **pause menu** (issue #203): `Resume` / `Settings` / `Restart` / `Quit`. `up`/`down` (or `w`/`s`) move the cursor; `enter` or `space` selects. `Resume` unpauses, `Settings` drops into the options sub-page below, `Restart` restarts the run from level 1 with a fresh seed, `Quit` exits to the shell. Start menu: ENTER to play, `s` for settings, `q` quit.
+Pressing `p` opens the navigable **pause menu** (issue #203): `Resume` / `Settings` / `Restart` / `Quit`. `up`/`down` (or `w`/`s`) move the cursor; `enter` or `space` selects. `Resume` unpauses, `Settings` drops into the options sub-page below, `Restart` restarts the run from level 1 with a fresh seed and asks twice before it does (the row reads `Restart?  enter again`; moving the cursor disarms), `Quit` exits to the shell. `q` in a live run opens this menu on Quit, so a second `q` quits (issue #454). Start menu: ENTER to play, `s` for settings, `q` quit.
 
 On the **Settings** sub-page: `up`/`down` (or `w`/`s`) move cursor, `left`/`right` (or `a`/`d`) adjust the selected value. WASD fallback when arrow codes misfire. Holding ramps sliders. `enter` or `space` (or `p`) backs out to the pause menu; leaving the pause overlay persists changes.
 

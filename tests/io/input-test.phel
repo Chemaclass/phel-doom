@@ -3,6 +3,7 @@
   (:require phel.string :as str)
   (:require phel-doom.io.input :refer [mouse-enable mouse-disable
                                        init-escapes restore-prelude
+                                       focus-enable focus-disable
                                        pointer-limit-notice halfblock-seams?]))
 
 ;; ---------------------------------------------------------------------
@@ -39,7 +40,15 @@
     ;; The keyboard / screen setup is untouched by the mouse gate (BC).
     (is (str/contains? s "\e[>3u") "kitty opt-in still present when mouse off")
     (is (str/contains? s "\e[?1049h") "alt screen still present when mouse off")
-    (is (str/ends-with? s "\e[>3u") "ends at the kitty opt-in, no mouse tail")))
+    (is (str/ends-with? s focus-enable) "ends at the focus opt-in, no mouse tail")))
+
+(deftest test-init-escapes-always-enable-focus-tracking
+  ;; #454: focus reporting is not opt-in the way the mouse is - there is
+  ;; nothing to opt out of, and a terminal without the mode ignores it.
+  (is (str/contains? (init-escapes true)  focus-enable))
+  (is (str/contains? (init-escapes false) focus-enable))
+  (is (= "\e[?1004h" focus-enable))
+  (is (= "\e[?1004l" focus-disable)))
 
 (deftest test-pointer-limit-notice-fires-only-on-unhideable-terminals
   ;; Known can't-hide terminals (#295/#313) get a start-menu caveat that the
@@ -65,6 +74,7 @@
 (deftest test-restore-prelude-pops-kitty-then-disables-mouse
   ;; Teardown always disables mouse reporting, regardless of whether it
   ;; was enabled (idempotent).
-  (is (= (str "\e[<u" mouse-disable) restore-prelude))
+  (is (= (str "\e[<u" mouse-disable focus-disable) restore-prelude))
   (is (str/contains? restore-prelude "\e[<u") "kitty pop present")
-  (is (str/contains? restore-prelude mouse-disable) "mouse disable present"))
+  (is (str/contains? restore-prelude mouse-disable) "mouse disable present")
+  (is (str/contains? restore-prelude focus-disable) "focus reporting off (#454)"))

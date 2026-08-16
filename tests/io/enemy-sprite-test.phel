@@ -1,6 +1,6 @@
 (ns phel-doom-tests.io.enemy-sprite-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type sprite-for-type-lod sprite-mips sprite-fade half-mip sprite-col-x enemy-sprite-cell enemy-sprite-quad])
+  (:require phel-doom.io.render.enemy-sprite :refer [sprite-for-type sprite-for-type-lod sprite-mips attack-mips sprite-fade half-mip sprite-col-x enemy-sprite-cell enemy-sprite-quad])
   (:require phel-doom.io.render.enemy-sprites-data :refer [enemy-sprites projectile-sprites death-sprites blood-sprites pickup-sprites]))
 
 ;; ---------------------------------------------------------------------
@@ -374,3 +374,37 @@
     ;; Body shadow bulk must be present (lifted mid-gray, not collapsed to near-black)
     (is (php/>= (php/aget cnt 95) 100)
         "code 95 (135,135,135) dominant body shadow - correct quantisation active")))
+
+;; ---------------------------------------------------------------------
+;; Attack poses (#463). One baked frame per type meant a monster mid
+;; wind-up looked exactly like one standing still - the `!` telegraph
+;; from #457 was carrying the whole read on its own.
+;; ---------------------------------------------------------------------
+
+(deftest test-the-attack-pose-differs-from-the-rest-pose
+  (foreach [t [:imp :demon :caco :baron :cyber :revenant :archvile :mancubus]]
+    (let [rest-spr (sprite-for-type-lod t 40)
+          atk-spr  (sprite-for-type-lod t 40 :attack)]
+      (is (some? atk-spr) (str (name t) " has an attack pose"))
+      (is (not (= (:px rest-spr) (:px atk-spr)))
+          (str (name t) " attacks with a different frame")))))
+
+(deftest test-no-pose-is-the-rest-pose
+  ;; Every caller that does not ask for a pose gets exactly what it got
+  ;; before - which is why the golden frames did not move.
+  (foreach [t [:imp :cyber]]
+    (is (= (:px (sprite-for-type-lod t 40))
+           (:px (sprite-for-type-lod t 40 nil))))))
+
+(deftest test-attack-poses-are-mipped-like-the-rest-poses
+  ;; A winding-up monster at distance must read as cleanly as a resting
+  ;; one: same chain, same thresholds.
+  (foreach [t [:imp :baron]]
+    (let [near (sprite-for-type-lod t 200 :attack)
+          far  (sprite-for-type-lod t 8 :attack)]
+      (is (php/> (:h near) (:h far)) (str (name t) " drops to a smaller level when far")))))
+
+(deftest test-attack-mips-cover-every-baked-pose
+  (foreach [sid (keys attack-mips)]
+    (is (some? (:m1 (get attack-mips sid))) (str sid " m1"))
+    (is (some? (:m2 (get attack-mips sid))) (str sid " m2"))))

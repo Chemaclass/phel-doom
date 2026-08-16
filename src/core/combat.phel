@@ -492,7 +492,7 @@
    eye reads it as a jolt, short enough not to mask the attacker behind it."
   0.03)
 
-(defn- distance-volume
+(defn ^:pure distance-volume
   "Map a world-units distance to a 0-1 sound volume. 1.0 at the player,
    ~0.1 floor at shot-max-range so a far kill / hit is still audible.
    Used by both `take-damage` (player pain) and `play-shot-sfx`
@@ -548,7 +548,7 @@
             ;; 8-way bearing for the precise directional damage arc
             ;; (issue #201); :hurt-side stays for the 4-way blood-drip cols.
             :hurt-dir   (attacker-octant att (:x p) (:y p) (:angle p)))
-     :hit vol)))
+     :player-pain vol)))
 
 (defn hit-player-at
   "Apply one hit from a point source at world `(sx, sy)` for `dmg` HP —
@@ -808,6 +808,46 @@
 (defn- on-shot-miss [world]
   (assoc world :fire-anim fire-anim-seconds))
 
+(def sight-sfx-by-type
+  "Per-type wake cue (#460): the growl a monster makes on noticing the
+   player. Types with no baked cry of their own borrow a sibling's, so
+   every monster in the catalog has a voice."
+  {:imp       :sight-imp
+   :demon     :sight-demon
+   :spectre   :sight-spectre
+   :pinky     :sight-pinky
+   :caco      :sight-caco
+   :baron     :sight-baron
+   :cyber     :sight-cyber
+   :revenant  :sight-revenant
+   :archvile  :sight-archvile
+   :mancubus  :sight-mancubus})
+
+(defn sight-sfx-for
+  "The wake cue for `type-kw`, falling back to the imp's so an unlisted
+   or typeless enemy still announces itself."
+  [type-kw]
+  (or (get sight-sfx-by-type type-kw) :sight-imp))
+
+(def death-sfx-by-type
+  "Per-type death cry (#460). Keys are the baked `freedoom-sfx` events;
+   a type absent here keeps the generic `:kill` cue alone."
+  {:imp       :death-imp
+   :demon     :death-demon
+   :spectre   :death-demon
+   :pinky     :death-demon
+   :caco      :death-caco
+   :baron     :death-baron
+   :cyber     :death-cyber
+   :revenant  :death-revenant
+   :archvile  :death-archvile
+   :mancubus  :death-mancubus})
+
+(defn death-sfx-for
+  "The death cry for `type-kw`, or nil when the catalog has none."
+  [type-kw]
+  (get death-sfx-by-type type-kw))
+
 (defn- enqueue-shot-sfx
   "Append the shot's sound events to `out`'s :sfx queue and return it.
    `src` is the pre-shot world (active weapon spec + player position).
@@ -840,7 +880,15 @@
             d     (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))
             vol   (distance-volume d)
             fired (push-sfx out fire-sfx vol)]
-        (if killed? (push-sfx fired :kill vol) fired))
+        ;; Per-type death cry (#460) layered on the generic kill cue: an
+        ;; imp and a cyberdemon dying used to make exactly the same noise.
+        ;; `corpse-type-at` is the same lookup the corpse sprite uses, and
+        ;; an unbaked type simply has no extra cry.
+        (if killed?
+          (let [killed-cue (push-sfx fired :kill vol)
+                death-sfx  (death-sfx-for (corpse-type-at src hit-pos))]
+            (if death-sfx (push-sfx killed-cue death-sfx vol) killed-cue))
+          fired))
       ;; MISS: no enemy struck, but the shot still collides with a wall.
       ;; Attenuate by that wall distance so a near wall reads loud and a
       ;; far wall / open level reads quiet, matching the enemy-hit path.

@@ -3,7 +3,7 @@
 ;; Bake Freedoom (BSD) weapon DMX sounds into a committed base64 WAV map.
 ;; Runtime (io/sound) decodes + writes each to a temp WAV once, then
 ;; afplays it per weapon-fire event. No binary asset in the repo.
-;; Usage: vendor/bin/phel run tools/bake-weapon-sounds.phel <freedoom1.wad>
+;; Usage: vendor/bin/phel run tools/bake-weapon-sounds.phel <freedoom1.wad> [freedoom2.wad]
 
 (defn u16 [s o] (php/aget (php/unpack "v" (php/substr s o 2)) 1))
 (defn u32 [s o] (php/aget (php/unpack "V" (php/substr s o 4)) 1))
@@ -25,15 +25,48 @@
 
 (let [argv (php/aget php/$_SERVER "argv")
       wad  (if (php/>= (php/count argv) 4) (php/aget argv 3) "/tmp/fd1.wad")
+      ;; Freedoom splits its bestiary across the two IWADs: the revenant,
+      ;; archvile and mancubus sounds live in freedoom2 only. Pass it as
+      ;; the second argument and any lump missing from the first is taken
+      ;; from there.
+      wad2 (if (php/>= (php/count argv) 5) (php/aget argv 4) nil)
       s    (php/file_get_contents wad)
       dir  (parse-directory s (parse-header s))
-      ;; weapon-fire event -> freedoom1 DMX lump. chaingun reuses the
-      ;; pistol report (as in classic DOOM); incinerator borrows the
-      ;; fireball whoosh; super-shotgun has no fd1 sound (keeps fallback).
+      s2   (if (and wad2 (php/file_exists wad2)) (php/file_get_contents wad2) nil)
+      dir2 (if s2 (parse-directory s2 (parse-header s2)) nil)
+      ;; event -> freedoom1 DMX lump. chaingun reuses the pistol report
+      ;; (as in classic DOOM); incinerator borrows the fireball whoosh;
+      ;; super-shotgun has no fd1 sound (keeps fallback).
+      ;;
+      ;; Enemy + world events (#460): before these, everything except a
+      ;; weapon report fell back to per-OS system sounds, which only
+      ;; exist on macOS - so on Linux/BSD a hit, a kill, a pickup or a
+      ;; door was the terminal BELL. And nothing at all voiced a monster:
+      ;; no sight cue when one woke, no fireball launch, no death.
       emap [[":shoot" "DSPISTOL"] [":shoot-chaingun" "DSPISTOL"]
             [":shoot-shotgun" "DSSHOTGN"] [":shoot-bfg" "DSBFG"]
             [":shoot-incinerator" "DSFIRSHT"] [":shoot-rocket" "DSRLAUNC"]
-            [":shoot-chainsaw" "DSSAWFUL"]]
+            [":shoot-chainsaw" "DSSAWFUL"]
+            ;; Monster wake, one per type (falls back to :sight-imp).
+            [":sight-imp" "DSPOSIT1"] [":sight-demon" "DSSGTSIT"]
+            [":sight-caco" "DSCACSIT"] [":sight-baron" "DSBRSSIT"]
+            [":sight-cyber" "DSCYBSIT"] [":sight-revenant" "DSSKESIT"]
+            [":sight-archvile" "DSVILSIT"] [":sight-mancubus" "DSMANSIT"]
+            [":sight-spectre" "DSSGTSIT"] [":sight-pinky" "DSSGTSIT"]
+            ;; Monster attacks: the launched bolt, and the melee swing.
+            [":fireball" "DSFIRSHT"] [":claw" "DSCLAW"]
+            ;; Monster pain + death, one per family.
+            [":enemy-pain" "DSPOPAIN"] [":enemy-pain-heavy" "DSDMPAIN"]
+            [":death-imp" "DSPODTH1"] [":death-demon" "DSSGTDTH"]
+            [":death-caco" "DSCACDTH"] [":death-baron" "DSBRSDTH"]
+            [":death-cyber" "DSCYBDTH"] [":death-revenant" "DSSKEDTH"]
+            [":death-archvile" "DSVILDTH"] [":death-mancubus" "DSMANDTH"]
+            ;; The player taking a hit.
+            [":player-pain" "DSPLPAIN"]
+            ;; World: pickups, a door, a refused door, a switch.
+            [":item" "DSITEMUP"] [":weapon-up" "DSWPNUP"]
+            [":powerup" "DSGETPOW"] [":door" "DSDOROPN"]
+            [":locked" "DSNOWAY"] [":switch" "DSSWTCHN"]]
       sb   (php/array)
       n    (php/array)]
   (php/aset n 0 0)
@@ -43,12 +76,20 @@
   (php/array_push sb ";; each to a temp file once and afplays it. Do NOT hand-edit; re-bake.\n\n")
   (php/array_push sb "(def freedoom-sfx\n  {")
   (foreach [pair emap]
-           (let [e (find-lump dir (php/aget pair 1))]
-             (when e
-               (php/array_push sb (php/sprintf "\n   %s\n   \"%s\""
-                                               (php/aget pair 0)
-                                               (php/base64_encode (dmx->wav s e))))
-               (php/aset n 0 (php/+ (php/aget n 0) 1)))))
+           (let [name (php/aget pair 1)
+                 e    (find-lump dir name)
+                 e2   (if (or e (nil? dir2)) nil (find-lump dir2 name))]
+             (cond
+               e  (do (php/array_push sb (php/sprintf "\n   %s\n   \"%s\""
+                                                      (php/aget pair 0)
+                                                      (php/base64_encode (dmx->wav s e))))
+                      (php/aset n 0 (php/+ (php/aget n 0) 1)))
+               e2 (do (php/array_push sb (php/sprintf "\n   %s\n   \"%s\""
+                                                      (php/aget pair 0)
+                                                      (php/base64_encode (dmx->wav s2 e2))))
+                      (php/aset n 0 (php/+ (php/aget n 0) 1)))
+               :else (php/printf "  skipped %s (%s not in either wad)\n"
+                                 (php/aget pair 0) name))))
   (php/array_push sb "})\n")
   (php/file_put_contents "src/io/sound_data.phel" (php/implode "" sb))
   (php/printf "wrote src/io/sound_data.phel (%d sounds)\n" (php/aget n 0)))

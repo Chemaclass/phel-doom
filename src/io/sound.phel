@@ -129,19 +129,125 @@
                           :sounds (resolve-sounds)
                           :probed true}))))
 
+(def sidecar
+  ;; The long-lived `sh` that plays sfx, its stdin pipe, and whether a
+  ;; start already failed (then we stop trying and fall back to exec). Started on
+  ;; the first audible event and killed on teardown; nil until then, so a
+  ;; silent session (tests, PHEL_DOOM_SILENT, muted settings) never
+  ;; spawns anything. NOT a docstring - `def-` would store it as the
+  ;; value; this is a plain `def` so tests can read the state.
+  (atom {:proc nil :in nil :failed false}))
+
+(defn sfx-command
+  "The shell line the sidecar runs for one event: the player, its volume
+   flag if it has one, the escaped path, backgrounded.
+
+   Backgrounded inside the sidecar so a long sound cannot stall the
+   reader and delay the next shot. `afplay` takes `-v 0..1`; `paplay`
+   takes `--volume=0..65536`; `play` (sox) takes `-v`; anything else
+   just gets the file."
+  [player path ^float vol]
+  (let [v   (php/max 0.0 (php/min 1.0 vol))
+        arg (cond
+              (php/=== player "afplay") (str " -v " (php/number_format v 3))
+              (php/=== player "paplay") (str " --volume=" (php/intval (php/round (php/* v 65536))))
+              (php/=== player "play")   (str " -v " (php/number_format v 3))
+              :else                     "")]
+    (str player arg " " (php/escapeshellarg path) " >/dev/null 2>&1 &")))
+
+(defn sidecar-command
+  "The sidecar shell itself: read a command line at a time from stdin and
+   run it, for as long as the game (`ppid`) is alive.
+
+   The read blocks, so the loop costs nothing between events, and EOF on
+   the pipe (the game exited, or teardown closed it) ends it. The
+   `kill -0` guard is the same crash-safety the music loop uses: a
+   SIGKILLed game leaves no orphan playing sounds into an empty
+   terminal."
+  [^int ppid]
+  (str "sh -c 'while kill -0 " ppid " 2>/dev/null; do "
+       "IFS= read -r c || exit 0; "
+       "[ -n \"$c\" ] && eval \"$c\"; "
+       "done' >/dev/null 2>&1"))
+
+(defn- sidecar-alive?
+  ;; Is the sidecar still running? Ctrl-C reaches the whole foreground
+  ;; process group, so the shell can die while the game finishes its
+  ;; frame - and writing to a dead pipe both loses the sound AND prints
+  ;; "Broken pipe" onto the raw-mode alt screen, one notice per event.
+  ;; `proc_get_status` is a waitpid(WNOHANG), cheap next to the fork it
+  ;; is protecting.
+  [proc]
+  (let [st (php/proc_get_status proc)]
+    (boolean (php/aget st "running"))))
+
+(defn- ensure-sidecar!
+  ;; Start the sidecar on first use. Returns the stdin pipe, or nil when
+  ;; the process could not be started (then the caller falls back to the
+  ;; per-event exec, so a host without proc_open keeps working). One
+  ;; failed start is remembered: retrying per event would reintroduce
+  ;; exactly the per-event spawn cost this exists to remove.
+  []
+  (let [cur (:in @sidecar)]
+    (cond
+      (and cur (sidecar-alive? (:proc @sidecar))) cur
+      cur                                         (do (reset! sidecar {:proc nil :in nil :failed true}) nil)
+      (:failed @sidecar)                          nil
+      :else
+      (if (not (php/function_exists "proc_open"))
+        (do (swap! sidecar assoc :failed true) nil)
+        (let [pipes (php/array)
+              spec  (php/array (php/array "pipe" "r"))
+              proc  (php/proc_open (sidecar-command (php/getmypid)) spec pipes)]
+          (if (not (php/is_resource proc))
+            (do (swap! sidecar assoc :failed true) nil)
+            (let [in (php/aget pipes 0)]
+              ;; Non-blocking: a full pipe must never stall the frame.
+              ;; Losing a sound is the right trade - sfx are disposable, a
+              ;; stuttered frame is not - but the WRITE has to stay clean;
+              ;; see the torn-line guard in play-file-async!.
+              (php/stream_set_blocking in false)
+              (swap! sidecar merge {:proc proc :in in :failed false})
+              in)))))))
+
+(defn stop-sfx!
+  "Close the sidecar's pipe (it exits on EOF) and reap it. Idempotent,
+   and safe on a session that never made a sound."
+  []
+  (let [{:keys [proc in]} @sidecar]
+    (when in (php/fclose in))
+    (when proc (php/proc_close proc))
+    (reset! sidecar {:proc nil :in nil :failed false})
+    nil))
+
 (defn- play-file-async!
-  "Fire-and-forget shell-out to the resolved audio player. Optional
-   `volume` in [0.0, 1.0] is wired through afplay's `-v` flag (other
-   players ignore it). Always backgrounded so the game loop never
-   blocks."
+  "Hand one sound to the sidecar. Falls back to a direct backgrounded
+   exec only when no sidecar could be started.
+
+   The direct exec is what this used to do for EVERY event: a fork+exec
+   of `sh` on the game thread, measured ~4.4ms locally. The chaingun
+   fires 20 times a second inside an 8.3ms budget, so a kill frame could
+   layer report + kill + wound and blow the frame - and none of it shows
+   in F3's cast/render split, which is why it read as mystery jitter."
   ([player path]                (play-file-async! player path 1.0))
-  ([bin audio-path ^float vol] (let [v   (php/max 0.0 (php/min 1.0 vol))
-                                     arg (if (php/=== bin "afplay")
-                                           (str " -v " (php/number_format v 3))
-                                           "")]
-                                 (php/exec (str bin arg " "
-                                                (php/escapeshellarg audio-path)
-                                                " > /dev/null 2>&1 &")))))
+  ([bin audio-path ^float vol] (let [cmd (sfx-command bin audio-path vol)
+                                     in  (ensure-sidecar!)]
+                                 (if in
+                                   (let [line    (str cmd "\n")
+                                         written (php/fwrite in line)]
+                                     ;; A non-blocking pipe can take only PART
+                                     ;; of the line, and the next event would
+                                     ;; then be appended to the fragment - one
+                                     ;; spliced, nonsensical command rather
+                                     ;; than one lost sound. Terminate the torn
+                                     ;; line so the fragment fails on its own
+                                     ;; and the next event starts clean.
+                                     (when (and (not (php/=== written false))
+                                                (php/> written 0)
+                                                (php/< written (php/strlen line)))
+                                       (php/fwrite in "\n")))
+                                   (php/exec cmd))
+                                 nil)))
 
 (defn- bell! []
   (print "\a")

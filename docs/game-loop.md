@@ -115,6 +115,10 @@ Restart on the pause menu asks twice for the same reason: the first select arms 
 
 Losing terminal focus (`\e[?1004h`, see [input.md](input.md#focus-tracking-issue-454)) pauses a live run and drops held movement, so alt-tabbing away cannot leave the player being chewed on. An already-paused world is left alone.
 
+## Resize: SIGWINCH, not polling (issue #459)
+
+The loops sampled `term-size` every 12th frame, and each sample forks `stty size` (~5ms) to answer a question whose answer changes about once a session. `install-resize-handler!` traps SIGWINCH and raises a flag; the game loop asks `resized?` at the same frame checkpoint it already asks `interrupted?`, and `sample-size?` then forks only on the signal (plus frame 0, so initial sizing is never delayed). The menu and end-screen loops do not read the flag, so they keep the frame-count `poll-size?` cadence and their resize latency is unchanged - a menu is static and a resize is a human-timescale event. Delivery is synchronous like SIGINT / SIGTERM - never asynchronously mid-render, per [io-boundaries](../.claude/rules/io-boundaries.md). A build without ext-pcntl keeps the frame-count poll as its only mechanism.
+
 ## Restart modes
 
 - `r` (restart, fresh): new PRNG seed, new level sequence.

@@ -4,6 +4,7 @@
   (:require phel-doom.io.input :refer [mouse-enable mouse-disable
                                        init-escapes restore-prelude
                                        focus-enable focus-disable
+                                       install-resize-handler! resized? resize-armed?
                                        pointer-limit-notice halfblock-seams?]))
 
 ;; ---------------------------------------------------------------------
@@ -78,3 +79,33 @@
   (is (str/contains? restore-prelude "\e[<u") "kitty pop present")
   (is (str/contains? restore-prelude mouse-disable) "mouse disable present")
   (is (str/contains? restore-prelude focus-disable) "focus reporting off (#454)"))
+
+;; ---------------------------------------------------------------------
+;; SIGWINCH (#459). The loops forked `stty size` every 12th frame - a
+;; ~5ms hitch at 10Hz on an 8.3ms budget, to answer a question whose
+;; answer changes about once a session.
+;; ---------------------------------------------------------------------
+
+(deftest test-resized-is-false-until-the-terminal-says-otherwise
+  (is (= false (resized?))))
+
+(deftest test-resize-armed-reports-whether-the-signal-is-the-answer
+  ;; The game loop drops the stty poll only when this says yes.
+  (is (= false (resize-armed?)) "nothing armed before install")
+  (install-resize-handler!)
+  (is (= (and (php/function_exists "pcntl_signal") (php/defined "SIGWINCH"))
+         (resize-armed?))))
+
+(deftest test-resize-handler-arms-where-pcntl-exists
+  ;; Reports honestly either way: false on a build without ext-pcntl,
+  ;; where the frame-count poll stays the only mechanism.
+  (is (= (and (php/function_exists "pcntl_signal") (php/defined "SIGWINCH"))
+         (install-resize-handler!))))
+
+(deftest test-resize-flag-clears-when-read
+  ;; Raise it the way the kernel would, then confirm it is one-shot.
+  (when (and (install-resize-handler!) (php/function_exists "posix_kill"))
+    (php/posix_kill (php/getmypid) (php/constant "SIGWINCH"))
+    (php/pcntl_signal_dispatch)
+    (is (= true  (resized?)) "the signal raised the flag")
+    (is (= false (resized?)) "and reading it cleared it")))

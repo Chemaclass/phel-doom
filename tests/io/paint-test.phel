@@ -1,7 +1,8 @@
 (ns phel-doom-tests.io.paint-test
   (:require phel.test :refer [deftest is])
+  (:require phel.string :as str)
   (:require phel-doom.io.render.buffer :refer [buf-mk])
-  (:require phel-doom.io.render.paint :refer [paint-crosshair paint-game-info paint-compass paint-hearts-hud paint-hit-vignette paint-intro-splash paint-reload-ready]))
+  (:require phel-doom.io.render.paint :refer [paint-crosshair paint-game-info paint-compass paint-hearts-hud paint-hit-vignette paint-intro-splash paint-reload-ready paint-message message-visible?]))
 
 ;; ---------------------------------------------------------------------
 ;; Crosshair legibility. The reticle must be a SOLID glyph, never the old
@@ -204,3 +205,38 @@
 (deftest test-reload-ready-flash-hidden-on-tiny-viewport
   (is (= "" (reload-ready-str {:reload-ready-secs 0.30} 8))
       "suppressed under 9 rows"))
+
+;; ---------------------------------------------------------------------
+;; Message line (#456). Steady for its ttl (no blink - calm 3D view),
+;; suppressed on short viewports, clipped to the viewport width.
+;; ---------------------------------------------------------------------
+
+(deftest test-message-visible-only-while-it-has-something-to-say
+  (is (= true  (message-visible? "Picked up a heart." 1.2 24)))
+  (is (= false (message-visible? "Picked up a heart." 0.0 24)) "expired")
+  (is (= false (message-visible? nil 1.2 24)) "no text")
+  (is (= false (message-visible? "" 1.2 24)) "empty text")
+  (is (= false (message-visible? "Picked up a heart." 1.2 7)) "short viewport")
+  (is (= true  (message-visible? "Picked up a heart." 1.2 8)) "vh 8 is the boundary"))
+
+(deftest test-paint-message-writes-one-steady-row
+  (let [parts (paint-message (buf-mk) {:msg-text "Berserk!" :msg-secs 1.0} 80 24)
+        out   (php/implode "" parts)]
+    (is (str/contains? out "Berserk!"))
+    (is (str/contains? out "\e[3;1H") "row 3, left aligned")
+    (is (not (str/contains? out "\e[5")) "no terminal blink attribute")))
+
+(deftest test-paint-message-clips-at-its-right-edge
+  ;; The minimap panel's content starts on row 3 as well and this pass
+  ;; paints after it, so the line must stop at the panel's left margin.
+  (let [long-text (php/str_repeat "x" 200)
+        out       (php/implode "" (paint-message (buf-mk)
+                                                 {:msg-text long-text :msg-secs 1.0}
+                                                 40 24))]
+    (is (str/contains? out (php/str_repeat "x" 40)))
+    (is (not (str/contains? out (php/str_repeat "x" 41)))
+        "never past the edge the caller reserved")))
+
+(deftest test-paint-message-is-byte-identical-when-silent
+  (is (= "" (php/implode "" (paint-message (buf-mk) {:msg-secs 0.0} 80 24))))
+  (is (= "" (php/implode "" (paint-message (buf-mk) {} 80 24)))))

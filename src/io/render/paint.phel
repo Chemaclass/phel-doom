@@ -381,6 +381,39 @@
                                       " press R to RELOAD ")))))
   parts)
 
+(defn message-visible?
+  {:doc "True when the message line has something to say this frame
+         (#456): text present, its timer still running, and the viewport
+         tall enough that the line is not stealing scene rows. Pure so
+         the rule is testable without the ANSI paint."
+   :see-also ["paint-message"]
+   :example "(message-visible? \"Picked up a heart.\" 1.2 24) ; => true"}
+  [text ^float secs ^int vh]
+  (and (php/> secs 0.0)
+       (not (nil? text))
+       (not (php/=== text ""))
+       (php/>= vh 8)))
+
+(defn paint-message
+  "Doom-style message line: one left-aligned row under the HUD strip
+   naming what just happened (#456 - a pickup used to be a tink and the
+   item vanishing, which never said WHAT). Held steady for its ttl, no
+   blink, so it reads as information rather than an alarm.
+
+   `right-edge` is the first column the line may NOT touch: the minimap
+   panel starts its content on this same row 3, and this overlay paints
+   after it, so an unclipped line would erase the panel's left edge.
+   Callers pass the minimap's left margin when the map is shown and the
+   viewport width when it is not."
+  [parts stats ^int right-edge ^int vh]
+  (let [text (get stats :msg-text)
+        secs (or (get stats :msg-secs) 0.0)]
+    (when (message-visible? text secs vh)
+      (buf-push parts (str "\e[3;1H\e[40;1;97m"
+                           (php/mb_substr text 0 (php/max 1 right-edge))
+                           "\e[0m"))))
+  parts)
+
 (defn paint-save-flash
   "Brief centred SAVED / LOADED cue near the top after F5 / F9 quick
    save / load (issue #63). Green chip so it's distinct from the amber

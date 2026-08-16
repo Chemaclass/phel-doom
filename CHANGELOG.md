@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Added
+
+- A Doom-style message line names what just happened (#456): `Picked up a heart.`, `Picked up the BLUE keycard.`, `You got the SHOTGUN!`, `A secret is revealed!`, and the weapon plus its ammo when you switch slots. Every pickup used to be the same door tink and the item vanishing, so a first-timer could not tell an armor shard from an ammo box, know the keycard was now held, or see that a pickup had auto-switched their weapon. One steady row for 2 seconds, no blink, clipped to the viewport and hidden on very short ones; the frame is byte-identical when there is nothing to say.
+
 ### Changed
 
 - Quitting and restarting ask before they act, and the game pauses when you alt-tab away (#454). `q` sits one key from `w` and used to end a run on the spot; in game it now opens the pause menu with the cursor on Quit, so the confirmation is the second `q` (or Enter on that row). From the pause page `q` still quits and still persists settings, and the start menu and end screens are unchanged. Restart on the pause menu asks the same way: the first select arms it (`Restart?  enter again`), moving the cursor disarms it. And the terminal now reports focus (`\e[?1004h`), so losing the window pauses a live run and drops the held movement instead of leaving the player standing in front of an enemy. Inside tmux the pane needs `focus-events on`.

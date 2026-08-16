@@ -174,9 +174,9 @@ In tmux: `set -g extended-keys on` + `setw -g xterm-keys on`, and `set -g focus-
 
 ## One-shot actions (rising edges)
 
-`key-states` snaps all tracked keys each frame: `m` (map), `sp` (fire), `p` (pause), `n` (sound), `e` (about-face), `f` (action/secret), `f3` (debug), `r` (reload), `h` (help), `esc` (help alias), `q` (quit request), `k1-k7` (weapon select), `f5` (save), `f9` (load). It also carries `focus-out`, which is a terminal report rather than a key.
+`key-states` snaps all tracked keys each frame: `m` (map), `sp` (fire), `p` (pause), `n` (sound), `e` (about-face), `f` (action/secret), `f3` (debug), `r` (reload), `h` (help), `esc` (help alias), `q` (quit request), `[` / `]` (weapon cycle), `k1-k7` (weapon select), `f5` (save), `f9` (load). It also carries `focus-out`, which is a terminal report rather than a key.
 
-`rising-edges` computes deltas: `:fire` (space pressed), `:fire-held` (space held), `:toggle-map`, `:toggle-pause`, `:toggle-sound`, `:toggle-debug`, `:toggle-help` (h or esc), `:reload`, `:about-face`, `:action`, `:quit-request`, `:select-weapon1-7`, `:save`, `:load`, plus `:focus-out` (presence, not an edge: the report arrives once per focus loss).
+`rising-edges` computes deltas: `:fire` (space pressed), `:fire-held` (space held), `:toggle-map`, `:toggle-pause`, `:toggle-sound`, `:toggle-debug`, `:toggle-help` (h or esc), `:reload`, `:about-face`, `:action`, `:quit-request`, `:next-weapon` / `:prev-weapon`, `:select-weapon1-7`, `:save`, `:load`, plus `:focus-out` (presence, not an edge: the report arrives once per focus loss).
 
 ## Focus tracking (issue #454)
 
@@ -200,3 +200,9 @@ The pause overlay (issue #203) is a two-screen state machine on the world: `:pau
 
 - `io/input.phel`: side effects (stty, ANSI escapes, fread).
 - `glue/controls.phel`: pure byte -> world transformation. No terminal access.
+
+## Weapon cycling (issue #464)
+
+The scroll wheel and `[` / `]` step through the weapons you OWN, wrapping at both ends. `wheel-weapon-step` reads the same drained byte string the aim path reads, for the scroll reports that path deliberately ignores (SGR bit 6; 64 up, 65 down); the last tick in a frame wins, so a fast flick lands on one weapon rather than replaying the rack. Brackets arrive as ordinary rising edges, so holding one steps once.
+
+Both route through `weapons/cycle-weapon` -> `switch-weapon`, which keeps the mag / reserve bookkeeping and the mid-reload lockout identical to pressing a slot number, and an explicit number key still wins over a step in the same frame. Owned-only: stepping onto a gun you have not found would either tease you with something you cannot fire or silently do nothing, which reads as a dropped input.

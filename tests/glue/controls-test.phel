@@ -3,7 +3,7 @@
   (:require phel-doom.glue.controls
             :refer [key-states refresh-from-keys rising-edges initial-key-snapshot
                     nav-deltas refresh-move mouse-aim edge-pan-rate mouse-look-gain
-                    move-hold-secs move-hold-repeat-secs]))
+                    move-hold-secs move-hold-repeat-secs wheel-weapon-step]))
 
 (def blank-moves
   {:fwd          0
@@ -828,3 +828,31 @@
   (let [warm (assoc blank-moves :turn-left 0.03)
         w    (refresh-move {:moves warm} "\e[D")]
     (is (php/> (:turn-left (:moves w)) 0.0))))
+
+;; ---------------------------------------------------------------------
+;; Weapon cycling (#464). The wheel was parsed and thrown away, and
+;; there was no next / prev key at all, so switching meant reaching for
+;; a number - the one thing every FPS player's hand does in a fight.
+;; ---------------------------------------------------------------------
+
+(deftest test-wheel-reports-become-a-weapon-step
+  ;; SGR button 64 = wheel up, 65 = wheel down.
+  (is (= 1  (wheel-weapon-step "\e[<64;10;10M")) "wheel up -> next")
+  (is (= -1 (wheel-weapon-step "\e[<65;10;10M")) "wheel down -> prev")
+  (is (= 0  (wheel-weapon-step "")) "no report -> no step"))
+
+(deftest test-a-wheel-tick-is-not-a-shot
+  ;; The fire path reads the same byte string; a scroll must never fire.
+  (let [aim (mouse-aim "\e[<64;10;10M" nil 1.0 0.016 [24 80])]
+    (is (= false (:fire? aim)))
+    (is (= false (:fire-held? aim)))))
+
+(deftest test-bracket-keys-step-the-weapon
+  (is (= true  (:next-weapon (rising-edges (key-states "]") (key-states "")))))
+  (is (= true  (:prev-weapon (rising-edges (key-states "[") (key-states "")))))
+  (is (= false (:next-weapon (rising-edges (key-states "]") (key-states "]"))))
+      "held bracket does not spin the wheel"))
+
+(deftest test-a-drag-is-not-a-weapon-step
+  ;; Motion reports (bit 5) share the byte space; only the wheel bit counts.
+  (is (= 0 (wheel-weapon-step "\e[<35;10;10M"))))

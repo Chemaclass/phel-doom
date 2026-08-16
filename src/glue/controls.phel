@@ -515,6 +515,31 @@
 (defn- mouse-wheel? [b]
   (bit-set? b mouse-wheel-bit))
 
+(defn wheel-weapon-step
+  "Weapon step the scroll wheel asks for in `keys`: +1 next, -1 previous,
+   0 for none (#464).
+
+   The wheel was parsed and discarded - it carries no aim delta - but it
+   is the control every FPS player's hand reaches for to change weapon.
+   SGR button codes: bit 6 marks a wheel report, and the low bits give
+   the direction (64 = up, 65 = down). The LAST tick in the frame wins,
+   so a fast flick lands on one weapon rather than replaying the rack."
+  [keys]
+  (let [re    "/\\x1b\\[<(\\d+);\\d+;\\d+[Mm]/"
+        m     (php/array)
+        found (php/preg_match_all re keys m)]
+    (if (or (php/=== found false) (php/=== found 0))
+      0
+      (loop [i 0 step 0]
+        (if (php/>= i found)
+          step
+          (let [b (php/intval (php/aget (php/aget m 1) i))]
+            (recur (php/+ i 1)
+                   (cond
+                     (not (mouse-wheel? b))  step
+                     (php/=== 0 (php/% b 2)) 1
+                     :else                   -1))))))))
+
 (defn- left-press?
   "True for a left-button (button 0) PRESS report: `final` is the M
    terminator (m = release) and the code is neither a wheel tick nor a
@@ -838,6 +863,8 @@
    :r  (key-pressed? keys "r" 114)
    :h  (key-pressed? keys "h" 104)
    :q  (key-pressed? keys "q" 113)
+   :bracket-left  (key-pressed? keys "[" 91)
+   :bracket-right (key-pressed? keys "]" 93)
    :focus-out (focus-out? keys)
    :esc (esc-pressed? keys)
    :enter (enter-pressed? keys)
@@ -875,6 +902,10 @@
    ;; Focus loss is a terminal report, not a key: it arrives once per
    ;; alt-tab, so presence is the edge (no prev comparison).
    :focus-out      (boolean (:focus-out now))
+   ;; Weapon cycling (#464). Rising-edge so a held bracket steps once
+   ;; rather than spinning through the rack.
+   :next-weapon    (and (:bracket-right now) (not (:bracket-right prev)))
+   :prev-weapon    (and (:bracket-left now)  (not (:bracket-left prev)))
    :toggle-sound   (and (:n now)  (not (:n prev)))
    :toggle-debug   (and (:f3 now) (not (:f3 prev)))
    :reload         (and (:r now)  (not (:r prev)))

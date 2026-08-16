@@ -2,6 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel-doom.io.render :refer [direction-char project-enemy enemy-front-visible-at? reload-reminder-visible? help-menu-rows])
   (:require phel-doom.io.render.hud :refer [pause-menu-string])
+  (:require phel-doom.io.render.screens :refer [intermission-rows])
   (:require phel-doom.core.settings :refer [pause-menu-index-of])
   (:require phel.string :as str))
 
@@ -217,3 +218,29 @@
   (let [rows (help-menu-rows 80 60 {})]
     (is (some (fn [r] (php/!== false (php/strpos r "F5 / F9"))) rows)
         "H info menu lists F5 / F9 quick save / load")))
+
+;; ---------------------------------------------------------------------
+;; Intermission card (#470). A level exit cut straight into the next
+;; level, so the per-level numbers the run already tracked were never
+;; shown until the whole run was over.
+;; ---------------------------------------------------------------------
+
+(defn- card [level name kills sf st secs]
+  ;; intermission-rows returns a Phel vector; implode wants a php array.
+  (php/implode "" (to-php-array (intermission-rows level name kills sf st secs 30))))
+
+(deftest test-intermission-card-reports-the-level-just-finished
+  (let [out (card 3 "cacodemons" 12 1 2 754)]
+    (is (str/contains? out "LEVEL 3 CLEARED"))
+    (is (str/contains? out "cacodemons"))
+    (is (str/contains? out "kills:    12"))
+    (is (str/contains? out "secrets:  1/2"))
+    (is (str/contains? out "12:34") "elapsed time, formatted")))
+
+(deftest test-intermission-card-hides-secrets-on-a-level-without-any
+  (let [out (card 1 "imps" 5 0 0 30)]
+    (is (not (str/contains? out "secrets")))
+    (is (str/contains? out "kills:    5"))))
+
+(deftest test-intermission-card-says-how-to-continue
+  (is (str/contains? (card 1 "imps" 5 0 0 30) "press any key")))

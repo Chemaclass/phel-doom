@@ -28,7 +28,8 @@
   (:require phel-doom.io.render   :refer [render! clear-screen
                                           read-perf-snapshot scene-rows
                                           render-start-menu render-settings!
-                                          render-death-screen render-victory-screen])
+                                          render-death-screen render-victory-screen
+                                          render-intermission-screen])
   (:require phel-doom.io.input    :refer [init-input! restore! drain-keys rearm-mouse! terminal-program pointer-limit-notice install-signal-handlers! install-resize-handler! resized? resize-armed? interrupted?]))
 
 ;; ---------------------------------------------------------------------
@@ -857,9 +858,31 @@
 (defn- redraw-if-resized [dims rows cols]
   (when (not= [rows cols] dims) (clear-screen)))
 
+(def death-beat-us
+  "Microseconds the killing frame is held before the death screen (#470).
+   Death used to cut straight to the box, so the blow that ended the run
+   was never seen - 0.6s is long enough to register what killed you and
+   short enough that a retry does not feel gated."
+  600000)
+
 (defn- draw-frame [world fps frame-ms rows cols px2?]
   (render! world (assoc (frame-stats world fps frame-ms) :px2? px2?)
            cols rows))
+
+(defn- death-beat!
+  "Hold the killing frame for `death-beat-us` before the death screen
+   (#470), then swallow whatever was typed during it.
+
+   Death cut straight to the box, so the blow that ended the run was
+   never seen. Input is drained rather than buffered so a panicked
+   keypress during the beat cannot select something on the screen that
+   follows. Skipped under demo replay, where nothing is watching and the
+   pause would only stretch the recording."
+  [world fps frame-ms rows cols px2?]
+  (when (not (demo/replaying?))
+    (draw-frame world fps frame-ms rows cols px2?)
+    (php/usleep death-beat-us)
+    (drain-keys)))
 
 (defn- adaptive-sleep!
   "Yield the CPU for whatever's left of the per-iteration budget,
@@ -1139,7 +1162,8 @@
                   (do (persist-settings! world') :quit)
                   (= (:pause-action world') :restart)
                   (do (persist-settings! world') :restart)
-                  (php/<= (:lives world') 0)          (result-end :game-over world' t-start now)
+                  (php/<= (:lives world') 0)          (do (death-beat! world' fps frame-ms rows cols px2?)
+                                                          (result-end :game-over world' t-start now))
                   (on-door? world')                   (door-result      world' t-start now)
                   :else                               (recur world' now ms
                                                              (fps-from-ms ms)
@@ -1176,6 +1200,38 @@
           (str/contains? keys "R")                     :restart-same
           (str/contains? keys "r")                     :restart
           :else                                        (recur [rows cols] (php/+ frame 1) [rows cols]))))))
+
+(defn- intermission-loop
+  "Show the between-level card until the player presses something (#470).
+
+   A level exit cut straight into the next level, so the per-level
+   numbers `run-stat-fields` already tracked were never shown until the
+   run ended. Any key continues; `q` and Ctrl-C still quit, since a card
+   must never be a place the player is stuck.
+
+   Skipped entirely under demo replay: a recorded run has no one to
+   press the key, and pausing for input would desync the playback."
+  [result]
+  (if (demo/replaying?)
+    :continue
+    (loop [dims       [0 0]
+           frame      0
+           tdims-last [0 0]]
+      (let [[rows cols] (if (poll-size? frame) (term-size) tdims-last)]
+        (redraw-if-resized dims rows cols)
+        (render-intermission-screen cols rows
+                                    (php/- (:level result) 1)
+                                    (:level-name result)
+                                    (:kills result)
+                                    (or (:secrets-found result) 0)
+                                    (or (:secrets-total result) 0)
+                                    (or (:survived-s result) 0))
+        (php/usleep menu-frame-us)
+        (let [keys (drain-keys)]
+          (cond
+            (or (str/contains? keys "q") (interrupted?)) :quit
+            (php/> (php/strlen keys) 0)                  :continue
+            :else                                        (recur [rows cols] (php/+ frame 1) [rows cols])))))))
 
 (defn- death-loop [kills survived-s level level-name scores summary]
   (end-loop (fn [cols rows]
@@ -1379,6 +1435,9 @@
         ;; fresh seed, same reset as a fresh end-screen restart.
         (= result :restart)
         (recur 1 max-lives 0 0 empty-run-stats (rng/fresh-seed) 0 #{:pistol} nil nil (restart-show-map? init-settings) true init-settings)
+
+        (and (map? result) (:next-level result) (= :quit (intermission-loop result)))
+        nil
 
         (and (map? result) (:next-level result))
         ;; Stamina + sprint-cooldown + :sprint-blocked? are deliberately

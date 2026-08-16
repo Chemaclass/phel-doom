@@ -7,7 +7,7 @@
   (:require phel-doom.commands.play  :refer [tick-world resumed-pause? step-pause-menu
                                              apply-mouse-look clamp-frame-ms adopt-loaded-world
                                              poll-size? resize-poll-frames restart-show-map?
-                                             rearm-mouse? rearm-mouse-frames]))
+                                             rearm-mouse? rearm-mouse-frames retry-loadout]))
 
 (def open-grid
   (apply vector
@@ -453,3 +453,34 @@
       "an absent :minimap setting coerces to a strict false")
   (is (= false (restart-show-map? {:minimap nil}))
       "a nil :minimap setting coerces to a strict false"))
+
+;; retry-loadout (#453): pressing r / R on the death screen used to recur
+;; with #{:pistol} and backpack 0, so dying on L7 restarted L7 with the
+;; pistol against archviles - a progression wall, since kill loot only
+;; feeds weapons you already own. The rack carries; the ammo does not
+;; (mags come back fresh from build-world).
+
+(deftest test-retry-loadout-keeps-the-guns-and-the-backpack
+  (let [l (retry-loadout #{:pistol :shotgun :chaingun :rocket} 2 :rocket)]
+    (is (= #{:pistol :shotgun :chaingun :rocket} (:owned-weapons l)))
+    (is (= 2 (:backpack-level l)))
+    (is (= :rocket (:weapon l)) "you retry holding the gun you entered with")))
+
+(deftest test-retry-loadout-defaults-when-the-run-carries-nothing
+  (let [l (retry-loadout nil nil nil)]
+    (is (= #{:pistol} (:owned-weapons l)))
+    (is (= 0 (:backpack-level l)))
+    (is (= :pistol (:weapon l)))))
+
+;; The retry is fed the ENTRY rack, never the death rack. build-world
+;; seeds weapon pickups from the owned set and draws their cells before
+;; the ammo boxes, so retrying with one weapon more would draw one cell
+;; fewer and shift every later spawn - and `R` promises an identical
+;; replay. Entering L5 with 4 weapons, grabbing the rocket and dying must
+;; still rebuild from the 4.
+(deftest test-retry-loadout-ignores-what-was-grabbed-during-the-attempt
+  (let [entry #{:pistol :shotgun :chaingun :chainsaw}
+        l     (retry-loadout entry 0 :chaingun)]
+    (is (= entry (:owned-weapons l)))
+    (is (= false (contains? (:owned-weapons l) :rocket))
+        "the rocket picked up on the fatal attempt is back on the floor")))

@@ -120,7 +120,7 @@ Per build: grid (hand-authored or random), player spawn + angle, enemies from mi
 - Heart: only if `lives < max-lives`.
 - Armor (50%), berserk (1/8), invuln (1/12), soulsphere (1/10), backpack (L2+, 1/5).
 - 3 armor shards per level.
-- Keycard if locked (not `:boss`); weapon drops if not owned: shotgun (L2), chaingun (L3), chainsaw (L4), rocket (L5), incinerator (L6), BFG (L7).
+- Keycard if locked (not `:boss`). Weapon drops: every weapon whose debut level has passed and the player does not own, most recent debut first, capped at 2 per level. Debuts: shotgun (L2), chaingun (L3), chainsaw (L4), rocket (L5), incinerator (L6), BFG (L7). The level's own debut weapon is by definition the most recent, so the cap never drops it; the rest of the rule covers a player who arrives with an empty rack (`--level=N`, or a retry) and would otherwise find nothing on the floor.
 - Ammo boxes: `max(2, ceil(total_hp / 8))` where `total_hp = sum(count * lives)`.
 
 Stamps: `:enemy` (primary type fallback), `:level-name`, `:difficulty`, `:intro-secs` (1.5s).

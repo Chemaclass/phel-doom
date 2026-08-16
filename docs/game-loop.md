@@ -111,4 +111,6 @@ The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself; the g
 - `r` (restart, fresh): new PRNG seed, new level sequence.
 - `R` (replay, same): reuse the captured seed, replay identical levels.
 
+Both restart the level you died on, and both carry the loadout back: owned weapons, backpack stack, and the gun in hand (`retry-loadout`). It is the rack you ENTERED the level with, not the one you died holding: weapon-pickup cells are drawn from the run PRNG before the ammo boxes, so rebuilding with a weapon grabbed during the fatal attempt would shift every later spawn and `R` would no longer replay an identical level. A weapon you picked up on that attempt is back on the floor where it was. Ammo does not carry - mags and reserves come back fresh from `build-world`. Kills, time and lives reset, so a retry is a fresh attempt at the level rather than a checkpoint.
+
 Lets the player practice a tough spawn or die-on level. See [input.md](input.md) for key flow and [rendering.md](rendering.md) for render pipeline.

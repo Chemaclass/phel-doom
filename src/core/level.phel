@@ -656,28 +656,52 @@
               (assoc-in grid [y door-x] target)
               (recur (php/+ y 1)))))))))
 
+(def weapon-debut-levels
+  "Level a weapon first appears on: L2 shotgun, L3 chaingun, L4 chainsaw,
+   L5 the rocket launcher (issue #123), L6 the incinerator (issue #122),
+   L7 the rare BFG (issue #58). The pistol is the fresh-run default and
+   never drops."
+  {:shotgun 2 :chaingun 3 :chainsaw 4 :rocket 5 :incinerator 6 :bfg 7})
+
+(def max-weapon-drops-per-level
+  "Cap on weapon pickups seeded into one level. A player arriving with an
+   empty rack (`--level=8`) is owed up to six weapons; handing all of them
+   over at once turns the level into an armoury. Two keeps a late level
+   winnable without erasing progression."
+  2)
+
+(defn- weapons-owed
+  "Weapons missing from `owned'` whose debut level has already passed,
+   most recent debut first, capped at `max-weapon-drops-per-level` (#453).
+
+   Before #453 this answered only the level's OWN debut weapon, so an L8+
+   start put the player in front of archviles with a pistol and nothing on
+   the floor, and kill loot only refills weapons already owned
+   (docs/combat.md). The level's own weapon is by definition the most
+   recent, so the cap can never drop it."
+  [level-num owned']
+  (let [owed (filterv (fn [kw]
+                        (and (php/<= (get weapon-debut-levels kw) level-num)
+                             (not (contains? owned' kw))))
+                      (keys weapon-debut-levels))]
+    (take max-weapon-drops-per-level
+          (sort-by (fn [kw] (php/- 0 (get weapon-debut-levels kw))) owed))))
+
 (defn- maybe-spawn-weapon-pickups
-  "Per-level weapon drops. L2 always seeds a shotgun, L3 a chaingun,
-   L4 the chainsaw, L5 the rocket launcher (issue #123), L6 the
-   incinerator (issue #122), L7 the rare BFG (issue #58). Each skipped
-   if the player already owns the weapon so a re-played level doesn't
-   spam duplicate pickups. Returns a
-   vector of `{:x :y :weapon kw}` items."
+  "Weapon drops for `level-num`: one per weapon the player is owed (see
+   `weapons-owed`), each at its own open cell. Already-owned weapons are
+   skipped so a re-played level doesn't spam duplicate pickups.
+
+   Cells come from `spawn-unique-pickups`, which drops a colliding draw
+   rather than stacking two pickups on one cell (stepping on the shared
+   cell would silently consume one of them). A weapon left without a cell
+   by that bail-out is dropped with it. Returns a vector of
+   `{:x :y :weapon kw}` items."
   [grid level-num owned]
-  (let [owned'     (or owned #{:pistol})
-        candidates
-        (cond
-          (php/=== level-num 2) (if (contains? owned' :shotgun)       [] [:shotgun])
-          (php/=== level-num 3) (if (contains? owned' :chaingun)      [] [:chaingun])
-          (php/=== level-num 4) (if (contains? owned' :chainsaw)      [] [:chainsaw])
-          (php/=== level-num 5) (if (contains? owned' :rocket)        [] [:rocket])
-          (php/=== level-num 6) (if (contains? owned' :incinerator)   [] [:incinerator])
-          (php/=== level-num 7) (if (contains? owned' :bfg)           [] [:bfg])
-          :else                 [])]
-    (mapv (fn [kw]
-            (let [[wx wy] (random-spawn grid)]
-              {:x wx :y wy :weapon kw}))
-          candidates)))
+  (let [kws   (weapons-owed level-num (or owned #{:pistol}))
+        cells (spawn-unique-pickups grid (count kws))]
+    (mapv (fn [[cell kw]] (assoc cell :weapon kw))
+          (map vector cells kws))))
 
 (defn- maybe-spawn-keycard
   "Drop one keycard at a random open cell when the level is locked

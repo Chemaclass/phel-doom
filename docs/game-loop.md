@@ -107,6 +107,16 @@ The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself; the g
 
 `run-levels` matches on these to decide the next iteration.
 
+## Run transitions (issue #470)
+
+Two beats the run used to skip.
+
+**Death** cut straight to the YOU DIED box, so the blow that ended the run was never seen. `death-beat!` holds the killing frame for 0.6s first, then drains whatever was typed during it, so a panicked keypress cannot select something on the screen that follows.
+
+**Level exits** jumped straight into the next level, so the per-level numbers `run-stat-fields` already tracked were only ever shown once the whole run was over. `intermission-loop` shows a card with the level just cleared, its kills, its secrets and its time; any key continues, `q` and Ctrl-C still quit.
+
+Both are skipped under `--demo` replay: nothing is watching, and waiting for input would desync a recorded run.
+
 ## Quitting and restarting (issue #454)
 
 `q` in a live run does not quit: it opens the pause menu with the cursor on Quit and drops the movement hold counters, so the confirmation is the second `q` (or Enter on that row). The H / ESC info panel freezes the world too but is not a confirm surface - it has no Quit row - so `q` there closes it and opens the menu the same way. `quit-confirmed?` is the single gate: pause page yes, help panel no. The start menu and the end screens run their own loops and still quit on one `q`, and Ctrl-C still quits from anywhere.

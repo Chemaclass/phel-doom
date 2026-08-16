@@ -334,6 +334,42 @@
     (print (php/implode "" parts))
     (php/flush)))
 
+(defn intermission-rows
+  "Interior rows for the between-level card (#470): what you just did on
+   the level you finished. Pure so the content is testable without the
+   ANSI wash."
+  [level level-name kills secrets-found secrets-total ^int survived-s width]
+  (let [bl   (end-row-text "" width)
+        stat (fn [text] (str "\e[97m" (end-row-text (str "  " text) width) "\e[0m"))]
+    (vec (concat
+          [bl
+           (end-centre (str "LEVEL " level " CLEARED") width "\e[93;1m")
+           (end-centre (or level-name "") width "\e[2;97m")
+           bl
+           (stat (str "kills:    " kills))]
+          (if (php/> (or secrets-total 0) 0)
+            [(stat (str "secrets:  " secrets-found "/" secrets-total))]
+            [])
+          [(stat (str "time:     " (format-duration survived-s)))
+           bl
+           (end-centre "press any key" width "\e[2;97m")
+           bl]))))
+
+(defn render-intermission-screen
+  "Between-level card (#470): the level you just finished, its kills,
+   its secrets and its time, on a dark wash. Same responsive box as the
+   end screens.
+
+   Level exits used to jump straight into the next level, so the
+   per-level numbers `run-stat-fields` already tracked were never shown
+   until the run was over - and the door was a cut rather than a beat."
+  [cols rows level level-name kills secrets-found secrets-total ^int survived-s]
+  (let [w (end-box-width-for cols)]
+    (render-end-screen cols rows "\e[48;5;235m"
+                       (intermission-rows level level-name kills secrets-found
+                                          secrets-total survived-s w)
+                       w)))
+
 (defn render-death-screen
   "Centred YOU DIED box on a dark-red wash. Shows this run + the
    persisted bests from the scores file. Box width adapts to `cols`

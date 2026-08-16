@@ -169,13 +169,23 @@ Event codes: 1 = press, 2 = repeat, 3 = release. `refresh-from-keys` parses kitt
 Best-tier terminals: kitty, WezTerm, Ghostty, Alacritty >= 0.13, iTerm2 >= 3.5 (instant release).
 Legacy fallback: Terminal.app, GNOME Terminal, xterm (hold-secs bridge only).
 
-In tmux: `set -g extended-keys on` + `setw -g xterm-keys on`.
+In tmux: `set -g extended-keys on` + `setw -g xterm-keys on`, and `set -g focus-events on` so the outer terminal's focus reports reach the pane (see Focus tracking below).
 
 ## One-shot actions (rising edges)
 
-`key-states` snaps all tracked keys each frame: `m` (map), `sp` (fire), `p` (pause), `n` (sound), `e` (about-face), `f` (action/secret), `f3` (debug), `r` (reload), `h` (help), `esc` (help alias), `k1-k7` (weapon select), `f5` (save), `f9` (load).
+`key-states` snaps all tracked keys each frame: `m` (map), `sp` (fire), `p` (pause), `n` (sound), `e` (about-face), `f` (action/secret), `f3` (debug), `r` (reload), `h` (help), `esc` (help alias), `q` (quit request), `k1-k7` (weapon select), `f5` (save), `f9` (load). It also carries `focus-out`, which is a terminal report rather than a key.
 
-`rising-edges` computes deltas: `:fire` (space pressed), `:fire-held` (space held), `:toggle-map`, `:toggle-pause`, `:toggle-sound`, `:toggle-debug`, `:toggle-help` (h or esc), `:reload`, `:about-face`, `:action`, `:select-weapon1-7`, `:save`, `:load`.
+`rising-edges` computes deltas: `:fire` (space pressed), `:fire-held` (space held), `:toggle-map`, `:toggle-pause`, `:toggle-sound`, `:toggle-debug`, `:toggle-help` (h or esc), `:reload`, `:about-face`, `:action`, `:quit-request`, `:select-weapon1-7`, `:save`, `:load`, plus `:focus-out` (presence, not an edge: the report arrives once per focus loss).
+
+## Focus tracking (issue #454)
+
+`init-escapes` sends `\e[?1004h` unconditionally, so the terminal reports the window losing focus as `\e[O` and regaining it as `\e[I`; `restore!` sends `\e[?1004l`. Losing focus pauses a live run and drops the movement hold counters, so alt-tabbing away cannot leave the player standing in front of an enemy with 300 ms of held movement still gliding. An already-paused world is left alone, so reading the settings sub-page is not interrupted.
+
+Both reports are scrubbed from the drain string (`strip-focus-events`) before the movement byte-walk, the same way mouse reports are: they embed an ESC byte, and ESC opens the info menu. Terminals without the mode ignore the request; inside tmux the pane needs `focus-events on`.
+
+## Quitting (issue #454)
+
+`q` in a live run no longer quits: it opens the pause menu with the cursor on Quit (`arm-quit-menu`), so the confirmation is the second `q` (or Enter on that row). It sits one key away from `w`, and an accidental press used to end the run outright. From the pause page - menu or settings sub-page - `q` quits and persists settings, and the start menu and end screens keep quitting on a single press. Restart on the pause menu asks twice for the same reason: the first select arms it (`Restart?  enter again`), moving the cursor disarms it.
 
 F5 / F9 fire in `game-loop` (side-effect layer), not `tick-world`, so pure tick stays effect-free. See [savegame.md](savegame.md).
 

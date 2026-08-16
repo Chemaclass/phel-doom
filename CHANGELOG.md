@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Changed
+
+- Quitting and restarting ask before they act, and the game pauses when you alt-tab away (#454). `q` sits one key from `w` and used to end a run on the spot; in game it now opens the pause menu with the cursor on Quit, so the confirmation is the second `q` (or Enter on that row). From the pause page `q` still quits and still persists settings, and the start menu and end screens are unchanged. Restart on the pause menu asks the same way: the first select arms it (`Restart?  enter again`), moving the cursor disarms it. And the terminal now reports focus (`\e[?1004h`), so losing the window pauses a live run and drops the held movement instead of leaving the player standing in front of an enemy. Inside tmux the pane needs `focus-events on`.
+
 ### Fixed
 
 - Dying no longer strips your arsenal (#453). Both death-screen retries (`r` fresh map, `R` same seed) restarted the level you died on with the pistol and backpack 0, so an L7 retry met archviles with a starting weapon and no way back up: kill loot only refills weapons you already own, and a level seeded only its own debut weapon, so L8-L10 had nothing on the floor at all. A retry now re-enters with the rack you ENTERED that level carrying - weapons, backpack stack and the gun in hand - while kills, time, lives and ammo still reset. Entry rather than death rack on purpose: weapon-pickup cells are drawn from the run PRNG before the ammo boxes, so rebuilding with a weapon the player grabbed during the fatal attempt would shift every later spawn and break the identical replay `R` promises. Levels also seed the weapons you are owed rather than only their own debut drop - most recent debut first, two at most - so `--level=N` starts with a usable rack too.

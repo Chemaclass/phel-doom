@@ -305,6 +305,29 @@
   [keys]
   (php/preg_replace mouse-report-re "" keys))
 
+(def- focus-out-re
+  ;; Focus tracking (`\e[?1004h`, enabled by io/input): the terminal
+  ;; reports focus LOSS as `\e[O` and focus GAIN as `\e[I`. Neither is a
+  ;; keypress, so both are scrubbed from the drain string before the byte
+  ;; walk, exactly like a mouse report.
+  "/\\x1b\\[O/")
+
+(def- focus-event-re "/\\x1b\\[[OI]/")
+
+(defn- focus-out?
+  "True when the terminal reported the window losing focus this frame
+   (#454). The game pauses on it, so alt-tabbing away can't leave the
+   player standing in front of an enemy."
+  [keys]
+  (= 1 (php/preg_match focus-out-re keys)))
+
+(defn- strip-focus-events
+  "Remove focus in / out reports from `keys`. `esc-pressed?` already
+   discards them with its CSI strip, but the movement walk should never
+   see them either."
+  [keys]
+  (php/preg_replace focus-event-re "" keys))
+
 (defn refresh-from-keys
   "Fold every input byte into `world`. Four-stage parse: strip SGR mouse
    reports (#246, handled separately by mouse-look) → kitty CSI-u events
@@ -313,7 +336,7 @@
    refresh. Terminals supporting any subset of kitty fall through
    gracefully to the legacy path."
   [world keys]
-  (let [no-mouse       (strip-mouse-reports keys)
+  (let [no-mouse       (strip-focus-events (strip-mouse-reports keys))
         [w1 leftover1] (apply-kitty-events world no-mouse)
         [w2 leftover2] (apply-kitty-arrow-events w1 leftover1)]
     (let [normalised (normalise-arrows leftover2)
@@ -662,6 +685,7 @@
 (def initial-key-snapshot
   "First-frame snapshot — nothing held yet."
   {:m false :sp false :p false :n false :e false :f false :f3 false :r false :h false
+   :q false :focus-out false
    :esc false :k1 false :k2 false :k3 false :k4 false :k5 false :k6 false :k7 false})
 
 (defn- f3-pressed? [keys]
@@ -780,6 +804,8 @@
    :f9 (f9-pressed? keys)
    :r  (key-pressed? keys "r" 114)
    :h  (key-pressed? keys "h" 104)
+   :q  (key-pressed? keys "q" 113)
+   :focus-out (focus-out? keys)
    :esc (esc-pressed? keys)
    :enter (enter-pressed? keys)
    :k1 (key-pressed? keys "1" 49)
@@ -810,6 +836,12 @@
                         (not (or (:sp prev) (:enter prev))))
    :toggle-map     (and (:m now)  (not (:m prev)))
    :toggle-pause   (and (:p now)  (not (:p prev)))
+   ;; q asks to quit; it no longer quits on its own (#454). Unpaused it
+   ;; opens the pause menu on Quit, so the confirm is the second press.
+   :quit-request   (and (:q now)  (not (:q prev)))
+   ;; Focus loss is a terminal report, not a key: it arrives once per
+   ;; alt-tab, so presence is the edge (no prev comparison).
+   :focus-out      (boolean (:focus-out now))
    :toggle-sound   (and (:n now)  (not (:n prev)))
    :toggle-debug   (and (:f3 now) (not (:f3 prev)))
    :reload         (and (:r now)  (not (:r prev)))

@@ -1,7 +1,7 @@
 (ns phel-doom.commands.play
   (:require phel.cli :as cli)
   (:require phel.string :as str)
-  (:require phel-doom.core.state :refer [advance-game-time backpack-level clamp-pitch decay-soul-overcap empty-moves max-lives max-stamina turn-player rebuild-pgrid reset-reticle toggle-debug toggle-map toggle-pause toggle-sound])
+  (:require phel-doom.core.state :refer [advance-game-time backpack-level clamp-pitch decay-soul-overcap empty-moves max-lives max-stamina push-msg turn-player rebuild-pgrid reset-reticle toggle-debug toggle-map toggle-pause toggle-sound])
   (:require phel-doom.core.map      :refer [door? reveal-secret secret? switch? toggle-switch])
   (:require phel-doom.glue.controls :refer [refresh-from-keys key-states rising-edges
                                             initial-key-snapshot nav-deltas mouse-aim])
@@ -368,13 +368,15 @@
     (let [[cx cy] (cell-ahead world)]
       (if (secret? (:grid world) cx cy)
         (let [idx (or (:secrets-found world) 0)]
-          (push-sfx
-           (-> world
-               (assoc :grid (reveal-secret (:grid world) cx cy))
-               (rebuild-pgrid)
-               (place-secret-reward cx cy idx)
-               (update :secrets-found (fn [n] (php/+ (or n 0) 1))))
-           :door 1.0))
+          (push-msg
+           (push-sfx
+            (-> world
+                (assoc :grid (reveal-secret (:grid world) cx cy))
+                (rebuild-pgrid)
+                (place-secret-reward cx cy idx)
+                (update :secrets-found (fn [n] (php/+ (or n 0) 1))))
+            :door 1.0)
+           "A secret is revealed!"))
         world))))
 
 (defn- try-toggle-switch
@@ -446,6 +448,15 @@
                    (:select-weapon6 edges) (switch-weapon w1 (get weapon-order 5))
                    (:select-weapon7 edges) (switch-weapon w1 (get weapon-order 6))
                    :else                   w1)
+            ;; Name the weapon on the message line when the swap actually
+            ;; took (#456), so a slot press never needs a glance at the
+            ;; top-left HUD. A refused swap - unowned slot, mid-reload -
+            ;; returns the same weapon and says nothing.
+            w1am (if (= (:weapon w1a) (:weapon w1))
+                   w1a
+                   (push-msg w1a (str (php/strtoupper (name (:weapon w1a)))
+                                      " " (or (:mag w1a) 0)
+                                      "/" (or (:ammo-reserve w1a) 0))))
             ;; tick-stamina runs BEFORE apply-physics so that, on the
             ;; frame the player's pool empties, the `:sprint-blocked?`
             ;; latch fires before physics samples it — apply-physics
@@ -453,7 +464,7 @@
             ;; 1.6x frame "for free". Drain reads the just-refreshed
             ;; :moves slots (refresh-from-keys above), so the player
             ;; pays for the intent the same frame they signal it.
-            w1b  (try-reveal-secret w1a (:action edges))
+            w1b  (try-reveal-secret w1am (:action edges))
             ;; Switch (issue #62): flip the cell glyph + every target
             ;; on the world's :switches metadata. Chained AFTER
             ;; reveal-secret so the F-press never double-fires.
@@ -587,6 +598,10 @@
    :enemy                (or (:enemy world) :imp)
    :save-flash-secs      (or (:save-flash-secs world) 0.0)
    :save-flash-msg       (:save-flash-msg world)
+   ;; Doom-style message line (#456): what was just picked up / revealed /
+   ;; switched to. Render gates on the timer, so the text can stay put.
+   :msg-text             (:msg-text world)
+   :msg-secs             (or (:msg-secs world) 0.0)
    :reload-ready-secs    (or (:reload-ready-secs world) 0.0)
    ;; Settings page (issue #107): the pause overlay paints the box from
    ;; these. The page IS the pause screen, so the render layer keys off

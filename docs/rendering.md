@@ -230,6 +230,12 @@ When the game-loop's startup calibration finds full detail too slow for a smooth
 
 H/ESC info menu width-adaptive: max 44 chars, min 36. Drops CONTROLS section first, then COMPASS HINT on squeeze.
 
+## Message line (issue #456)
+
+One left-aligned row at row 3 naming what just happened: `Picked up a heart.`, `Picked up the BLUE keycard.`, `You got the SHOTGUN!`, `A secret is revealed!`, or the weapon and its ammo on a slot switch. Before it, every pickup was the same door tink plus the item vanishing, so a first-timer could not tell a shard from an ammo box or know a keycard was now held.
+
+The model is two flat world fields, `:msg-text` and `:msg-secs` (`state/push-msg`, 2.0s), decayed with every other feel timer in `combat/decay-timers`. `paint-message` gates on `message-visible?`: text present, timer running, `vh >= 8`. Held steady for its whole ttl with no blink (calm 3D view), clipped with `mb_substr` to the viewport width so a long name cannot wrap into the scene, and byte-identical to the old frame when there is nothing to say. Quick-saves drop both fields - a save must not load mid-message.
+
 ## Why so many overlay passes
 
 Walls/sky/floor/enemies go into one string via the row loop. HUD, minimap, crosshair use absolute cursor positioning escapes (`\e[r;cH`) to paint anywhere. Alternate screen buffer + cursor-home redraw overwrites in place: no flicker, no scroll, no full clear.

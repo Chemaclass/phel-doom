@@ -131,6 +131,7 @@
         w'          (tick-world (new-world secret-grid (new-player 1.5 1.5 0.0))
                                 "" 0.016 (assoc no-edges :action true))]
     (is (= 1 (:secrets-found w')) "secret revealed + counted")
+    (is (= "A secret is revealed!" (:msg-text w')) "and the message line says so (#456)")
     (is (>= (count (:ammo-boxes w')) 1) "ammo dropped")
     (is (>= (count (:armor-shards w')) 1) "shard dropped")
     (is (= 1 (count (:soulspheres w'))) "idx-0 trophy is a soulsphere")
@@ -599,3 +600,29 @@
     (is (= true (:paused w)))
     (is (= :settings (:pause-screen w)) "does not yank the player off a sub-page")
     (is (= 2 (:pause-cursor w)))))
+
+;; The weapon-slot message (#456): a swap that took names the weapon and
+;; its ammo, a refused one says nothing.
+
+(deftest test-weapon-switch-names-the-weapon
+  (let [w0 (assoc (new-world open-grid (new-player 5.0 5.0 0.0))
+                  :owned-weapons #{:pistol :shotgun}
+                  :weapon :pistol
+                  :weapon-state {:shotgun {:mag 4 :reserve 12}})
+        w  (tick-world w0 "" 0.016 (assoc no-edges :select-weapon2 true))]
+    (is (= :shotgun (:weapon w)))
+    (is (= "SHOTGUN 4/12" (:msg-text w)))))
+
+(deftest test-refused-weapon-switch-says-nothing
+  ;; Slot 5 is the BFG and the player does not own it: switch-weapon is a
+  ;; no-op, so the message line must stay quiet.
+  (let [w0 (assoc (new-world open-grid (new-player 5.0 5.0 0.0))
+                  :owned-weapons #{:pistol} :weapon :pistol)
+        w  (tick-world w0 "" 0.016 (assoc no-edges :select-weapon5 true))]
+    (is (= :pistol (:weapon w)))
+    (is (= nil (:msg-text w))))
+  ;; Pressing the slot already held is not an event either.
+  (let [w0 (assoc (new-world open-grid (new-player 5.0 5.0 0.0))
+                  :owned-weapons #{:pistol} :weapon :pistol)
+        w  (tick-world w0 "" 0.016 (assoc no-edges :select-weapon1 true))]
+    (is (= nil (:msg-text w)))))

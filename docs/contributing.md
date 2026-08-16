@@ -57,6 +57,20 @@ warm from the `composer test` step just before it, nothing recompiles and a
 `php/new` in the tree passes clean. See `.claude/rules/phel.md`, "Type
 inference traps".
 
+## Looking at a frame
+
+The suite pins bytes and hashes, which proves a frame did not CHANGE - never that it looks right. To actually see one:
+
+```bash
+tools/frame-shot.sh tools/shots/showcase.phel /tmp/showcase.png
+```
+
+`tools/shots/showcase.phel` is a deterministic frame with every on-screen feature lit at once: the message line, the first-run key hints, an enemy mid-windup (attack pose plus its `!`), a red hostile reticle, the full HUD strip with keycards and difficulty, and the minimap. Any script that writes raw ANSI to its first CLI argument works the same way.
+
+The frame goes through `tools/frame-to-html.php`, which emulates a terminal cell grid so absolutely-positioned overlays land where they would on screen, then through headless Chrome. Without a browser installed you still get the HTML.
+
+Worth knowing before chasing what looks like a bug: a dotted teal outline around the gun is the `:steel` floor theme showing through the sprite's transparent gaps, and the keycard glyphs may render as tofu boxes depending on the font - which is exactly what the **HUD glyphs** setting exists for.
+
 ## AI agent config (generated, not committed)
 
 The per-tool agent config is generated, not tracked. Only the specs are.

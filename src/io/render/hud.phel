@@ -98,21 +98,22 @@
 (defn- enemy-cells [enemies step out-w]
   (scaled-cells enemies step out-w (fn [e] (:alive e))))
 
-(defn- block-has-wall?
+(defn- ^bool block-has-wall?
   "True when any cell in the step×step grid block at (r0, c0) is a
    wall (code 1). Walls take minimap priority so corridors never
-   visually vanish when a sampled block is mixed."
+   visually vanish when a sampled block is mixed.
+
+   ONE flat loop over both axes, not a nested loop: a `loop` sitting in
+   a binding value or a `cond` TEST compiles to a PHP closure that
+   copies the whole in-scope local set, and this runs once per minimap
+   cell per frame. Same rule as emit-scene-px1 - see docs/performance.md."
   [pgrid step r0 c0]
-  (loop [dr 0]
+  (loop [dr 0 dc 0]
     (cond
-      (php/>= dr step) false
-      (let [grow (buf-get pgrid (php/+ r0 dr))]
-        (loop [dc 0]
-          (cond
-            (php/>= dc step)                         false
-            (php/=== 1 (buf-get grow (php/+ c0 dc))) true
-            :else                                    (recur (php/+ dc 1))))) true
-      :else (recur (php/+ dr 1)))))
+      (php/>= dr step)                                                  false
+      (php/>= dc step)                                                  (recur (php/+ dr 1) 0)
+      (php/=== 1 (buf-get (buf-get pgrid (php/+ r0 dr)) (php/+ c0 dc))) true
+      :else                                                             (recur dr (php/+ dc 1)))))
 
 (defn- sample-cell
   "Collapse the step×step grid block at (r0, c0) to one minimap code.
@@ -120,34 +121,27 @@
    Door + switch variants flow through so the caller can paint
    blue/red/yellow/boss + switch-on/off markers distinct from each other."
   [pgrid step r0 c0]
-  (loop [dr 0 found 0]
-    (if (php/>= dr step)
-      found
-      (let [grow (buf-get pgrid (php/+ r0 dr))
-            v    (loop [dc 0 acc 0]
-                   (if (php/>= dc step)
-                     acc
-                     (let [cell (buf-get grow (php/+ c0 dc))]
-                       (cond
-                         (php/=== cell 1) 1
-                         (or (php/=== cell 2)
-                             (php/=== cell 3)
-                             (php/=== cell 4)
-                             (php/=== cell 5)
-                             (php/=== cell 7)
-                             (php/=== cell 8)
-                             (php/=== cell 9)) (recur (php/+ dc 1) cell)
-                         :else            (recur (php/+ dc 1) acc)))))]
+  ;; ONE flat loop over both axes: the inner `loop` used to sit in a
+  ;; binding VALUE, which compiles to a PHP closure capturing every
+  ;; in-scope local - allocated once per minimap cell per frame. The
+  ;; door/switch code carried in `found` is row-major-last either way, so
+  ;; flattening is byte-identical. See docs/performance.md.
+  (loop [dr 0 dc 0 found 0]
+    (cond
+      (php/>= dr step) found
+      (php/>= dc step) (recur (php/+ dr 1) 0 found)
+      :else
+      (let [cell (buf-get (buf-get pgrid (php/+ r0 dr)) (php/+ c0 dc))]
         (cond
-          (php/=== v 1) 1
-          (or (php/=== v 2)
-              (php/=== v 3)
-              (php/=== v 4)
-              (php/=== v 5)
-              (php/=== v 7)
-              (php/=== v 8)
-              (php/=== v 9)) (recur (php/+ dr 1) v)
-          :else         (recur (php/+ dr 1) found))))))
+          (php/=== cell 1) 1
+          (or (php/=== cell 2)
+              (php/=== cell 3)
+              (php/=== cell 4)
+              (php/=== cell 5)
+              (php/=== cell 7)
+              (php/=== cell 8)
+              (php/=== cell 9)) (recur dr (php/+ dc 1) cell)
+          :else                 (recur dr (php/+ dc 1) found))))))
 
 (defn minimap-rows
   "Render the world's grid into a PHP array of ANSI-coded strings,
@@ -174,26 +168,21 @@
         ;; reads as visited.
         visited             (:visited world)
         full-map?           (boolean (:full-map? world))
+        ;; One flat loop over both axes - the nested `loop` in a binding
+        ;; value allocated a PHP closure per minimap cell per frame (same
+        ;; rule as sample-cell / emit-scene-px1, docs/performance.md).
         block-visited?      (fn [r0 c0]
                               (or full-map?
-                                  (loop [dr 0]
+                                  (loop [dr 0 dc 0]
                                     (cond
                                       (php/>= dr step) false
-                                      :else
-                                      (let [hit?
-                                            (loop [dc 0]
-                                              (cond
-                                                (php/>= dc step) false
-                                                (php/=== 1
-                                                         (php/aget visited
-                                                                   (php/+ (php/* (php/+ r0 dr) gw)
-                                                                          (php/+ c0 dc))))
-                                                true
-                                                :else
-                                                (recur (php/+ dc 1))))]
-                                        (if hit?
-                                          true
-                                          (recur (php/+ dr 1))))))))
+                                      (php/>= dc step) (recur (php/+ dr 1) 0)
+                                      (php/=== 1
+                                               (php/aget visited
+                                                         (php/+ (php/* (php/+ r0 dr) gw)
+                                                                (php/+ c0 dc))))
+                                      true
+                                      :else            (recur dr (php/+ dc 1))))))
         ;; Aliased into locals rather than referenced as bare defs: a def
         ;; reference inside the per-cell cond compiles to a getDefinition
         ;; probe (same reason engine.phel aliases max-depth).

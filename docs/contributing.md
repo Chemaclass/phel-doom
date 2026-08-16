@@ -24,6 +24,7 @@ composer format-check # dry-run, fails CI on drift
 composer lint         # static analysis
 composer check-layers # io/ -> glue/ -> core/ direction holds
 composer check-cycles # no require cycles (+ the guard's own fixtures)
+composer check-deprecations # suite again with every deprecation channel on
 composer build        # compile to out/main.php
 composer ci           # full pre-push gate
 composer repl         # REPL
@@ -31,6 +32,16 @@ composer doctor       # env diagnostics
 ```
 
 CI runs `composer ci` on PHP 8.5. PHP 8.4 works locally but isn't CI-tested.
+
+`check-deprecations` re-runs the suite under `PHEL_WARN_DEPRECATIONS=1` and fails
+on any notice. It exists for the quiet half: phel 0.50 infers a parameter's type
+from its body, so comparing a parameter to an int literal emits `int $p` and a
+fractional caller is TRUNCATED at the signature, with no error and no failing
+test unless one happens to assert that exact value. PHP reports it as "Implicit
+conversion from float X to int loses precision", which is invisible at the
+default error level. It catches superseded interop spellings (`php/new`,
+`php/->`, `php/::`, `set-var`) in the same pass. See `.claude/rules/phel.md`,
+"Type inference traps".
 
 ## AI agent config (generated, not committed)
 

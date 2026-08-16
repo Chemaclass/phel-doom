@@ -26,7 +26,9 @@ Result on the 3-enemy corridor bench (ms/frame, same machine):
 
 Frame output is byte-identical before/after (verified by md5 over a 24-config matrix: angles, sizes, blood, minimap, px2, flat/no-subpixel/no-sprite toggles).
 
-To check for regressions: build and grep the artifact - `grep -c 'function() use(' out/phel_doom/io/render/main.php` should stay unchanged vs a same-environment main build (the absolute count varies by build environment; ~26-35 observed), all of them once-per-frame or once-per-column sites (pickup-painter chain arguments, centre-cell capture, debug snapshot), none inside the per-cell `while` loops. The raycaster artifact `out/phel_doom/core/engine.php` should stay at 2 (the once-per-width FOV-table build + the once-per-frame pause-cache probe); the per-column cast loop has been closure-free since issue #345 (the DDA march + `wallx` were lifted out of binding position into the reused `hit-reg` register).
+To check for regressions: build and grep the artifact - `grep -c 'function() use(' out/phel_doom/io/render/main.php` should stay unchanged vs a same-environment main build (the absolute count varies by build environment and compiler version; ~26-35 observed, 28 on phel 0.50), all of them once-per-frame or once-per-column sites (pickup-painter chain arguments, centre-cell capture, debug snapshot), none inside the per-cell `while` loops. The raycaster artifact `out/phel_doom/core/engine.php` should stay at 1 (the once-per-width FOV-table build; phel 0.50 lowers the once-per-frame pause-cache probe that used to be the second); the per-column cast loop has been closure-free since issue #345 (the DDA march + `wallx` were lifted out of binding position into the reused `hit-reg` register).
+
+The same rule binds the MINIMAP overlay, which runs its own per-cell loop: `hud/sample-cell`, `hud/block-has-wall?` and the `block-visited?` closure inside `minimap-rows` each scan a step x step grid block per minimap cell per frame, and each used to write that scan as a nested `loop` sitting in a binding value or a `cond` test. Flattened to ONE loop over both axes they carry 0 closures; `minimap-rows` keeps 4, all once-per-frame setup. Measured: `sample-cell` self time -43%, `minimap-rows` total -17%.
 
 ## Big screens: uniform cadence + crisp walls
 
@@ -121,6 +123,40 @@ Unspecialised Phel dispatch through the runtime. Hot loops use `php/+`, `php/<`,
 (php/aget shade-table idx)   ; $shade_table[$idx]
 (php/+ a b)                  ; $a + $b
 ```
+
+## `php/.` for hot string building, not `str` (phel 0.50)
+
+`str` is a runtime `phel.core` call plus one `val-to-str` per argument. phel 0.50
+lowers it to a native PHP `.` chain, but ONLY when every non-literal argument is
+statically known to be a `string`; one int argument keeps the whole call at
+runtime. Almost every hot cell builder concatenates a colour CODE, so almost
+none of them qualified.
+
+Two fixes, both byte-identical (20-config md5 matrix unchanged):
+
+- **Pre-bake the SGR fragment, then concatenate strings.** `palette/fg-cache`,
+  `bg-cache` and `block-cache` hold `\e[38;5;<n>m` / `\e[48;5;<n>m` /
+  `\e[38;5;<n>m█` for all 256 codes. `paint/weapon-row-string` (the densest
+  per-frame string path: one cell per weapon-sprite pixel, up to four `str`
+  calls each) and `enemy-sprite/enemy-sprite-cell` now index those instead of
+  formatting a code.
+- **Write `php/.` where the fragments are already strings.** The six seam-cell
+  builders in `compute-wall-shades` run twice per COLUMN per frame.
+
+Also in that pass: `enemy-sprite/quadrant-glyph` became a php-array indexed by
+the 2x2 mask, so the per-cell glyph lookup is one `aget` instead of a
+`phel.core/get` dispatch on a Phel map.
+
+Measured over 200 frames: `str` calls per frame 874 -> 113 (-87%), `val-to-str`
+3500 -> ~570, `weapon-row-string` 84.5 -> 18.5 us/call (-78%),
+`enemy-sprite-cell` 2.12 -> 0.63 us/call (-70%), `compute-wall-shades` total
+874.7 -> 336.9 us/call (-61%). Whole frame: -8.4% at 120x30, -5.6% at 180x45,
+-5.7% at 240x60.
+
+The trap: do NOT swap `str` for `php/.` over a float, a bool or nil. PHP renders
+those differently from Phel (`1.0` -> `"1"` not `"1.0"`, `true` -> `"1"` not
+`"true"`, nil -> `""`). Ints and strings are safe, and colour codes are always
+one of those.
 
 ## Pre-baked shade tables
 
@@ -226,14 +262,45 @@ LocalVar / Call / If / Vector / Set / Map return nodes - a `LetNode` was NOT on 
 list, so any `defn` whose body is a `let` (or an `if`/`cond` with a `let` branch)
 fell back to dispatch even with `^:pure`, ruling out the highest-frequency helpers
 (`map/cell` ~600-1400 calls/frame, `map/wall?`, `enemy/in-cone?`). **phel-lang 0.46
-(#2586) lifted that limit**: let-bodied pure `defn`s now inline at opt >= 2, so
-phel-doom requires `phel-lang/phel-lang` `^0.46`.
+(#2586) lifted that limit**: let-bodied pure `defn`s inlined at opt >= 2.
 
 Caveat (history): the first dev-main build of #2586 mis-renamed inlined variables
 (undefined-variable codegen -> runtime crash, fixed in phel-lang#2622); 0.46 ships
 the fix. The crash surfaced only in the FULL unit suite (it hit physics / AI /
 projectile paths), NOT the render golden hashes - so always full-suite a `^:pure`
 change.
+
+### Typed callees stopped inlining (phel-lang 0.50)
+
+phel-doom requires `phel-lang/phel-lang` `^0.50`.
+
+0.50 (#3126) stops the inliner splicing away a callee whose parameters carry a
+`:tag`, because splicing dropped the emitted parameter type and the native
+arithmetic lowering that type enables. The same release widened type INFERENCE,
+so a parameter now picks up a tag just from being compared to a typed literal.
+The two together mean most of the annotated helpers no longer inline. Measured
+by counting `"<name>")->__invoke` dispatch sites in `out/`, same source, 0.49
+build vs 0.50 build:
+
+| helper | 0.49 | 0.50 |
+|---|---|---|
+| `map/cell` | 0 | 6 |
+| `map/wall?` | 0 | 2 |
+| `projection/wall-px` | 0 | 8 |
+| `frame-math/fade-256` | 0 | 4 |
+| `enemy/in-cone?` | 0 | 1 |
+| `frame-math/project-enemy-pd` | 2 | 9 |
+
+38 of the 54 `^:pure` helpers now have at least one dispatch site. This is a
+trade, not a regression: 0.50 is faster end to end on the same source and the
+same golden frames (120x30 8.8 -> 6.6 ms/frame, 240x60 22.7 -> 19.7, unit suite
+25.9s -> 10.7s), and the dispatch it costs was always "small in absolute ms",
+per the section above. Keep the tags. There is no way to ask for both, and
+dropping a tag to buy back one inline trades native arithmetic for a saved PHP
+frame, which is the worse half.
+
+So do NOT treat a dispatch site on a `^:pure` helper as a bug now. The structural
+check that still means something is the CLOSURE count, not the dispatch count.
 
 ## DDA raycaster
 

@@ -2,6 +2,7 @@
 ;; the base frame (face, crosshair, vignettes, badges, pistol HUD).
 (ns phel-doom.io.render.paint
   (:require phel-doom.io.render.buffer :refer [buf-get buf-push])
+  (:require phel-doom.io.render.palette :refer [fg-cache bg-cache])
   (:require phel-doom.io.render.sprites :refer [sprites-enabled?])
   (:require phel-doom.io.render.frame-math :refer [sprite-h aggro-distance visuals-for-type enemy-front-visible-at?])
   (:require phel-doom.io.render.weapon-sprites-data :refer [baked-weapons weapon-flashes])
@@ -1135,16 +1136,20 @@
           (recur (php/+ x 1) acc (php/+ skip 1) pf pb)
           ;; At least one half is lit. fg = the lit half (top wins when
           ;; both); bg = bot when both lit, else the floor (-1 sentinel).
-          (let [lead  (if (php/> skip 0) (str "\e[" skip "C") "")
+          ;; Every fragment is a string or a pre-baked SGR table entry, so
+          ;; `php/.` lowers the whole cell to one native PHP concatenation
+          ;; instead of a `phel.core/str` call per cell (four of them, on
+          ;; the densest per-frame string path in the renderer).
+          (let [lead  (if (php/> skip 0) (php/. "\e[" skip "C") "")
                 half? (or (php/=== top -1) (php/=== bot -1))
                 nf    (if (php/=== top -1) bot top)
                 nb    (if half? -1 bot)
-                fg    (if (php/=== nf pf) "" (str "\e[38;5;" nf "m"))
+                fg    (if (php/=== nf pf) "" (php/aget fg-cache nf))
                 bg'   (cond (php/=== nb pb) ""
                             (php/=== nb -1) bg
-                            :else           (str "\e[48;5;" nb "m"))
+                            :else           (php/aget bg-cache nb))
                 glyph (if (php/=== top -1) "▄" "▀")]
-            (php/array_push acc (str lead bg' fg glyph))
+            (php/array_push acc (php/. lead bg' fg glyph))
             (recur (php/+ x 1) acc 0 nf nb)))))))
 
 (defn paint-weapon-sprite

@@ -373,6 +373,35 @@
     t))
 
 ;; ---------------------------------------------------------------------
+;; Per-code SGR fragment tables. Pre-baking all 256 means a hot-path cell
+;; builder concatenates ready strings (`php/.` lowers that to a native PHP
+;; `.` chain) instead of calling `phel.core/str` with an int argument,
+;; which stays a runtime call plus one `val-to-str` per argument.
+;; ---------------------------------------------------------------------
+
+(defn- build-sgr-cache [^string tpl]
+  (let [a (php/array)]
+    (dotimes [i 256] (php/aset a i (php/sprintf tpl i)))
+    a))
+
+(def block-cache
+  "Full-block `\\e[38;5;<n>m█` per xterm-256 index. Used for an edge
+   cell where only one of the two stacked sub-pixels is opaque: filling
+   the whole cell solid (rather than a half-block over an unknown
+   background) keeps the silhouette clean with no halo."
+  (build-sgr-cache "\e[38;5;%dm█"))
+
+(def fg-cache
+  "Foreground SGR `\\e[38;5;<n>m` per index, for the top sub-pixel of a
+   two-opaque half-block cell."
+  (build-sgr-cache "\e[38;5;%dm"))
+
+(def bg-cache
+  "Background SGR `\\e[48;5;<n>m` per index, for the bottom sub-pixel of
+   a two-opaque half-block cell."
+  (build-sgr-cache "\e[48;5;%dm"))
+
+;; ---------------------------------------------------------------------
 ;; Colour-space helpers: 256-colour code <-> RGB. Used by load-time LUT
 ;; bakes (distance fog) that must lerp in true RGB so a fade lands on the
 ;; perceptually nearest code instead of jumping hue. All load-time only;

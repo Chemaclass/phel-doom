@@ -1,0 +1,108 @@
+;; Frame-cost benchmarks over one fixed scene: the raycast alone and the
+;; whole cast+render pipeline at the three viewports docs/performance.md
+;; quotes. Written with phel.bench (phel 0.50), so `phel bench` reports mean
+;; + rstdev per row and can gate a branch against a stored baseline:
+;;
+;;   composer bench          # every row, this machine
+;;   composer bench-store    # write .phel/bench-baseline.json (run on main)
+;;   composer bench-ref      # compare against it, fail past the tolerance
+;;
+;; Absolute numbers do not travel between machines (and the local php CLI
+;; runs without JIT); only a same-machine, same-session delta means anything.
+;; A row's `rstdev` above a few percent is noise, not a result: re-run.
+;;
+;; The scene: level 3, seed 1337, three enemies in view (caco / demon / imp),
+;; shotgun held, minimap on. It lives under tests/ because that is where
+;; `phel bench` looks by default (and a namespace outside the configured dirs
+;; loads without its requires from a warm compile cache), so `phel test`
+;; also loads this file: nothing may run at load time. The scene is a
+;; `delay`, built on the first rev of the warmup iteration, and there is no
+;; deftest here - the suite discovers zero tests and moves on.
+(ns phel-doom-tests.bench.frame-bench
+  (:require phel.bench :refer [defbench])
+  (:require phel-doom.core.rng :as rng)
+  (:require phel-doom.core.level :refer [build-world])
+  (:require phel-doom.core.enemy :refer [new-enemy])
+  (:require phel-doom.core.engine :refer [cast-frame])
+  (:require phel-doom.core.weapons :refer [weapon-spec])
+  (:require phel-doom.io.render.main :refer [frame->string]))
+
+(defn- open? [grid x y] (= 0 (get (get grid y) x)))
+
+;; First cell with a clear corridor of >= 6 cells to the east, so the three
+;; enemies placed ahead of the player are all in the frustum.
+(defn- corridor-spot [grid]
+  (let [w (count (first grid))
+        h (count grid)]
+    (loop [y 1]
+      (if (>= y (- h 1))
+        [2 2]
+        (let [hit (loop [x 1]
+                    (cond
+                      (>= x (- w 8))                                                       nil
+                      (and (open? grid x y) (open? grid (+ x 2) y) (open? grid (+ x 5) y)) x
+                      :else                                                                (recur (+ x 1))))]
+          (if hit [hit y] (recur (+ y 1))))))))
+
+(defn- build-scene []
+  (rng/seed! 1337)
+  (let [base    (build-world 3 10 0 :normal #{:pistol :shotgun :chaingun})
+        [cx cy] (corridor-spot (:grid base))
+        sx      (+ 0.5 cx)
+        sy      (+ 0.5 cy)
+        world   (-> base
+                    (assoc :player {:x sx :y sy :angle 0.0})
+                    (assoc :enemies [(new-enemy (+ sx 2.6) (- sy 0.45) 3 :caco)
+                                     (new-enemy (+ sx 4.2) (+ sy 0.7) 2 :demon)
+                                     (new-enemy (+ sx 4.8) (+ sy 1.7) 1 :imp)])
+                    (assoc :weapon :shotgun) (assoc :mag 4) (assoc :ammo-reserve 12)
+                    (assoc :show-map true) (assoc :kills 7) (assoc :intro-secs 0.0))
+        spec    (weapon-spec world)
+        stats   {:fps 60 :frame-ms 4.2 :kills 7 :lives 8 :armor 2 :max-lives 10
+                 :iframes 0.0 :fire-anim 0.0 :fire-anim-duration 0.25 :intro-secs 0.0 :flash-secs 0.0
+                 :fx nil :paused false :sound-on true :level 3 :level-name "the warrens"
+                 :hurt-side nil :streak 0 :heat 0.0 :jam-secs 0.0 :heartbeat-phase 0.0
+                 :flicker-active-secs 0.0 :scare-secs 0.0 :blood-drops [] :door-face-active-secs 0.0
+                 :game-time 184.0 :debug? false :perf-stats nil :weapon :shotgun
+                 :weapon-name (get spec :name) :palette (get spec :palette)
+                 :mag 4 :mag-size (get spec :mag-size) :ammo-reserve 12 :reload-cooldown 0.0
+                 :reload-duration (get spec :reload-duration) :empty-click-secs 0.0
+                 :berserk-secs 0.0 :invuln-secs 0.0 :backpack? false :backpack-level 0
+                 :difficulty :normal :god? false :help? false :game-time-s 184.0 :held-keys #{}
+                 :door-lock nil :secrets-total 2 :secrets-found 0 :locked-door-bump-secs 0.0
+                 :locked-door-bump-colour nil :owned-weapons #{:pistol :shotgun :chaingun}
+                 :weapon-state {} :stamina 100.0 :max-stamina 100.0 :sprint-blocked? false
+                 :rear-warning? false :enemy :caco :save-flash-secs 0.0 :save-flash-msg nil
+                 :settings nil :settings-cursor 0 :hide-weapon? false :hide-level-label? false}]
+    {:world world :stats stats}))
+
+(def- scene (delay (build-scene)))
+
+;; --- raycast only (core/engine, no render) ---
+
+(defbench cast-120
+  {:revs 200}
+  (cast-frame (:world @scene) 120 1))
+
+(defbench cast-240
+  {:revs 100}
+  (cast-frame (:world @scene) 240 1))
+
+;; --- full frame: cast + render to the ANSI string, no terminal write ---
+;; A frame is milliseconds, so a handful of revs already amortises the
+;; clock; more would only make the run longer.
+
+(defbench frame-120x30
+  {:revs 20}
+  (let [{:keys [world stats]} @scene]
+    (frame->string world stats 120 30)))
+
+(defbench frame-180x45
+  {:revs 10}
+  (let [{:keys [world stats]} @scene]
+    (frame->string world stats 180 45)))
+
+(defbench frame-240x60
+  {:revs 10}
+  (let [{:keys [world stats]} @scene]
+    (frame->string world stats 240 60)))

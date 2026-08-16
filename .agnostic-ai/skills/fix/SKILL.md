@@ -10,6 +10,16 @@ target: claude
 
 ## Instructions
 
+0. If an edit left a form unreadable (formatter or lint dies on a file),
+   locate the unbalanced `()` / `[]` / `{}` first - it counts through the
+   lexer, so parens in strings, comments and regexes never mislead it:
+   ```bash
+   vendor/bin/phel balance src tests          # report
+   vendor/bin/phel balance --fix "$ARGUMENTS" # append the missing closers
+   ```
+   `--fix` refuses anything with more than one plausible repair (a surplus
+   closer, an unterminated string); fix those by hand.
+
 1. Auto-format every `.phel` file:
    ```bash
    composer format

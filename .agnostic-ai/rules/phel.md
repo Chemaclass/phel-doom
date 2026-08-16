@@ -48,7 +48,7 @@ comment is fine there).
 
 - `;` line comments (not `#`)
 - `;;` standalone, `;` trailing after code
-- `#| |#` multiline, `#_` to comment out a form
+- `#_` to comment out a form (`#| |#` block comments were removed in phel 0.50)
 - Default: NO comments. Add only when *why* is non-obvious (perf trick, hidden invariant, work around a Phel/PHP edge).
 
 ## Semantics
@@ -59,6 +59,32 @@ comment is fine there).
 - `for` builds sequences, `doseq` does side effects
 - CLI args: `*argv*`, not `php/$argv`
 - `*build-mode*` guard for top-level side effects (breaks `composer build`)
+
+## PHP interop (phel 0.50)
+
+- Construct with `(new \Foo arg)`, not `php/new`. `php/->` and `php/::` are
+  deprecated as source too; the Clojure-style shorthands are the spelling to
+  write. `php/aget`, `php/aset`, `php/apush`, `php/oset`, `php/ref` stay.
+- `(php/. a b c)` is native PHP concatenation and is the hot-path spelling when
+  every fragment is already a string or an int. `str` stays a runtime call
+  (plus one `val-to-str` per argument) unless every non-literal argument is
+  statically known to be a `string`. Do NOT swap `str` for `php/.` over a
+  float, bool or nil - PHP and Phel render those differently.
+
+## Type inference traps
+
+The compiler infers parameter types from the body. Comparing a parameter to an
+INT literal declares that parameter `int`, so a float caller is silently
+truncated at the signature (and a float literal is a compile error):
+
+```phel
+(defn- sign [n] (cond (php/> n 0) 1.0 ...))     ; => int $n; (sign 0.5) is 0.0
+(defn- sign [^float n] (cond (php/> n 0.0) ...)) ; => float $n
+```
+
+Compare against float literals (and tag the parameter) whenever a fractional
+value can reach it. `PHEL_WARN_DEPRECATIONS=1 vendor/bin/phel test` surfaces the
+truncation as a PHP "Implicit conversion from float ... loses precision" notice.
 
 ## Macros
 

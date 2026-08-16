@@ -4,6 +4,20 @@
 
 ## How to measure
 
+**Compare two refs with `tools/bench-ab.sh`, not two separate `composer bench` runs.** A single reading on a laptop drifts far more than most changes are worth: measured in one sitting, the same commit read 4.65 ms, 5.09 ms and 6.91 ms as the machine warmed up. Run the old ref, then the new one, and you can "measure" a 20% regression or a 10% win on code that did not change - both of those conclusions were drawn from exactly that method before this script existed.
+
+```sh
+tools/bench-ab.sh v0.17.0          # 3 pairs, the frame-120 row
+tools/bench-ab.sh main 5 frame-    # 5 pairs, every frame row
+tools/bench-ab.sh HEAD~1 5 cast    # the cast rows
+```
+
+It alternates the two refs back to back, so each pair shares a thermal state, and averages the per-pair deltas. **A consistent sign across every pair is the signal**; the script flags mixed signs as noise. The tree must be clean (it checks refs out in place and restores your branch, including on Ctrl-C).
+
+Worked example: the twenty PRs between v0.17.0 and the release after it added eight per-frame overlays (message line, attack telegraph, hint strip, HUD glyph indirection, secret-wall texture offset, attack poses). Five interleaved pairs put the whole batch at **+0.5 to +0.7% frame time, two of three rows with mixed signs** - i.e. free, within the harness's resolution.
+
+## The bench harness itself
+
 `tests/bench/frame-bench.phel` is the tracked harness: `defbench` rows (phel
 0.50's `phel.bench`) over one fixed scene, level 3 seed 1337, three enemies in
 view, minimap on. `cast-120` / `cast-240` time `cast-frame` alone;

@@ -4,6 +4,7 @@
   (:require phel-doom.io.render.hud :refer [pause-menu-string settings-menu-string])
   (:require phel-doom.core.settings :refer [default-settings page-fields])
   (:require phel-doom.io.render.screens :refer [intermission-rows])
+  (:require phel-doom.io.render.main :refer [floor-mip-size wall-mip-size wall-tex-mips floor-tex-mips])
   (:require phel-doom.core.settings :refer [pause-menu-index-of])
   (:require phel.string :as str))
 
@@ -287,3 +288,38 @@
     (is (str/contains? (settings-menu-string 80 16 default-settings cur "esc back")
                        (:label (get page-fields cur)))
         (str "cursor " cur " visible at vh 16"))))
+
+;; ---------------------------------------------------------------------
+;; Texture filter levels (#462). Walls choose by projected height in
+;; SUB-rows, the floor by perpendicular distance - both pinned at 64
+;; when the filter is off, which is what keeps the default frame
+;; byte-identical.
+;; ---------------------------------------------------------------------
+
+(deftest test-filter-off-always-samples-the-native-texture
+  (foreach [rows [1 8 40 400]]
+    (is (= 64 (wall-mip-size false rows))))
+  (foreach [d [0.5 4.0 30.0]]
+    (is (= 64 (floor-mip-size false d)))))
+
+(deftest test-a-wall-drops-levels-as-it-shrinks
+  (is (= 64 (wall-mip-size true 40)) "a near wall keeps native detail")
+  (is (= 32 (wall-mip-size true 20)))
+  (is (= 16 (wall-mip-size true 8)))
+  (is (= 8  (wall-mip-size true 2)) "a distant sliver takes the smallest level"))
+
+(deftest test-the-floor-drops-levels-with-distance
+  ;; Near rows MAGNIFY the texture (one texel over several cells), so
+  ;; they must keep native - a smaller level would only blur them.
+  (is (= 64 (floor-mip-size true 1.0)))
+  (is (= 64 (floor-mip-size true 2.9)))
+  (is (= 32 (floor-mip-size true 3.0)))
+  (is (= 16 (floor-mip-size true 6.0)))
+  (is (= 8  (floor-mip-size true 24.0))))
+
+(deftest test-every-level-has-a-baked-array
+  (foreach [sz [64 32 16 8]]
+    (is (some? (get wall-tex-mips sz)) (str "wall " sz))
+    (is (some? (get floor-tex-mips sz)) (str "floor " sz))
+    (is (= (php/* sz sz) (php/count (get wall-tex-mips sz)))
+        (str "wall " sz " is " sz "x" sz))))

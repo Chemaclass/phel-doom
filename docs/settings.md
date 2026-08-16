@@ -8,6 +8,8 @@ Player options across audio, gameplay defaults, input, accessibility, and perfor
 - `src/io/settings.phel` (io): `load-settings` / `save-settings!`. Bad files never block startup (returns defaults). Difficulty is stored as string, keyword-ised on load.
 - `commands/play.phel`: wires page into start menu + in-game overlay, applies volumes to `io/sound` + `io/music`.
 
+The page groups its fields under section headers (Audio, Video, Play, Controls, Access) and shows a one-line hint for whichever field the cursor is on (issue #468). Both come from the same `page-fields` table that drives navigation and rendering, so a new field cannot ship without a section and a hint - a test asserts it. On a terminal too short for seventeen fields the LIST scrolls around the cursor rather than the box growing past the screen; the selected field is always on screen.
+
 ## Fields
 
 | Field | Type | Range | Effect |

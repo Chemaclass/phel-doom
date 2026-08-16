@@ -1,7 +1,8 @@
 (ns phel-doom-tests.io.render-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.io.render :refer [direction-char project-enemy enemy-front-visible-at? reload-reminder-visible? help-menu-rows])
-  (:require phel-doom.io.render.hud :refer [pause-menu-string])
+  (:require phel-doom.io.render.hud :refer [pause-menu-string settings-menu-string])
+  (:require phel-doom.core.settings :refer [default-settings page-fields])
   (:require phel-doom.io.render.screens :refer [intermission-rows])
   (:require phel-doom.core.settings :refer [pause-menu-index-of])
   (:require phel.string :as str))
@@ -244,3 +245,45 @@
 
 (deftest test-intermission-card-says-how-to-continue
   (is (str/contains? (card 1 "imps" 5 0 0 30) "press any key")))
+
+;; ---------------------------------------------------------------------
+;; Settings page (#468). Seventeen fields read as one undifferentiated
+;; list, and nothing on screen said what any of them did.
+;; ---------------------------------------------------------------------
+
+(defn- settings-rows [vh cursor]
+  (php/preg_match_all "/\\x1b\\[\\d+;\\d+H/"
+                      (settings-menu-string 80 vh default-settings cursor "esc back")))
+
+(deftest test-every-field-carries-a-section-and-a-hint
+  ;; Sourced from the same table that drives the page, so a new field
+  ;; cannot ship without either.
+  (foreach [f page-fields]
+    (is (php/> (php/strlen (or (:section f) "")) 0) (str (name (:key f)) " has a section"))
+    (is (php/> (php/strlen (or (:hint f) "")) 0)    (str (name (:key f)) " has a hint"))))
+
+(deftest test-the-page-shows-the-hint-for-the-selected-field
+  (let [out (settings-menu-string 80 40 default-settings 0 "esc back")]
+    (is (str/contains? out (:hint (first page-fields)))))
+  (let [out (settings-menu-string 80 40 default-settings 3 "esc back")]
+    (is (str/contains? out (:hint (get page-fields 3))))))
+
+(deftest test-the-page-groups-fields-under-headers
+  (let [out (settings-menu-string 80 40 default-settings 0 "esc back")]
+    (is (str/contains? out "AUDIO"))
+    (is (str/contains? out "VIDEO"))))
+
+(deftest test-the-list-scrolls-instead-of-outgrowing-the-terminal
+  ;; Every height and cursor position must fit: the box is centred, so
+  ;; overflowing means painting off both ends of the screen.
+  (foreach [vh [40 30 24 20 16 12]]
+    (foreach [cur [0 8 16]]
+      (is (php/<= (settings-rows vh cur) vh)
+          (str "vh " vh " cursor " cur)))))
+
+(deftest test-the-selected-field-is-always-on-screen
+  ;; Scrolling is pointless if the cursor can leave the window.
+  (foreach [cur [0 5 16]]
+    (is (str/contains? (settings-menu-string 80 16 default-settings cur "esc back")
+                       (:label (get page-fields cur)))
+        (str "cursor " cur " visible at vh 16"))))

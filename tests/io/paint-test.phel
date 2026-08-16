@@ -312,3 +312,32 @@
   (let [out (telegraph-out [winding-up])]
     (is (not (str/contains? out "\e[5m")) "no terminal blink attribute")
     (is (= out (telegraph-out [winding-up])))))
+
+;; ---------------------------------------------------------------------
+;; Hostile reticle (#458). Since #243 a shot only lands when the
+;; crosshair is on the drawn sprite, so aiming at the floor or the sky
+;; misses - and the miss read as lag, because nothing said "yes, this
+;; one" before the trigger.
+;; ---------------------------------------------------------------------
+
+(defn- crosshair-att [stats]
+  (php/implode "" (paint-crosshair (buf-mk) stats 80 24 "")))
+
+(deftest test-reticle-turns-red-on-a-target
+  (is (str/contains? (crosshair-att {:hostile? true}) "\e[91;1m"))
+  (is (str/contains? (crosshair-att {:hostile? true}) "+")))
+
+(deftest test-reticle-is-white-with-nothing-in-front
+  (is (str/contains? (crosshair-att {:hostile? false}) "\e[97;1m"))
+  (is (str/contains? (crosshair-att {}) "\e[97;1m") "absent reads as no target"))
+
+(deftest test-hit-marker-outranks-the-hostile-tint
+  ;; A kill / wound / muzzle flash is newer information than "aimed at".
+  (is (str/contains? (crosshair-att {:hostile? true :hit-fx {:ttl 0.2 :kill? true}}) "✗"))
+  (is (str/contains? (crosshair-att {:hostile? true :hit-fx {:ttl 0.2}}) "×"))
+  (is (str/contains? (crosshair-att {:hostile? true :fire-anim 0.05}) "\e[93;1m")))
+
+(deftest test-hostile-reticle-does-not-blink
+  (let [out (crosshair-att {:hostile? true})]
+    (is (= out (crosshair-att {:hostile? true})))
+    (is (not (str/contains? out "\e[5m")))))

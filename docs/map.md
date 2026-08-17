@@ -69,6 +69,12 @@ Scatters `n` random 1×1-2×2 wall blobs into a grid's interior for varied room 
 
 Drops exactly ONE exit door at a random wall cell reachable from the spawn `(sx, sy)`, so every level (hand-authored or procgen) gets a different exit the player must find. Floods the floor reachable from spawn, then turns a random wall touching that floor into a door - **any** wall, an interior pillar or a border edge, so the way out can be anywhere the player can reach (never pinned to the screen sides). Seeded via `rng` (same seed produces the same door). `build-world` then applies the level's `:door-lock` via `lock-the-door`.
 
+### Cost
+
+Both passes flood the floor and then scan every cell, and both used to read the grid through `cell`, which is two persistent-vector lookups plus two nil checks per access. Converting the grid once into a PHP-native mirror (`grid->php`) and keying the seen-set by the flat index `y*w + x` instead of an `"x:y"` string cut `place-exit` on a 64x40 grid from **57.9 ms to 18.1 ms** and `scatter-walls` from **58.1 ms to 18.4 ms**; a whole level build went from 42.7 ms to 19.3 ms. Generation is unchanged - the flood consumes no rng and the scan order is the same, so all 210 worlds (10 levels x 7 seeds x 3 difficulties) hash identically before and after.
+
+The flat key is only collision-free in bounds: `(-1, y)` and `(w-1, y-1)` share an index, where the string key could not. Every lookup outside the flood is bounds-guarded for that reason, and the flood itself only writes cells the grid reports as floor.
+
 ## Player spawn
 
 ```phel

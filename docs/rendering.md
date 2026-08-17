@@ -244,9 +244,13 @@ When the game-loop's startup calibration finds full detail too slow for a smooth
 - **Sprites keep their detail.** `enemy-sprite-quad` returns the raw 2x2 texel quad and the emitter spreads it over the real 2x2 block; transparent texels fall back to the base pair per quadrant.
 - **Emission.** The upper row streams into `parts`; the lower row accumulates in a per-row buffer appended after the upper row's newline. Runs of identical cells coalesce with a continuation glyph that matches the cell - a bare `▀` for half-block cells (the SGR fg/bg persists across characters) or a space for BG cells. Composite glyph cells (doors, edges, pickups) are pushed literally twice so glyphs survive the doubling. Text/HUD overlays (crosshair, compass, weapon sprite, minimap) keep full-resolution coordinates; the scene-coordinate painters (`paint-door-face`, `paint-face-overlay`) take a pixel-scale factor instead.
 
-## Responsive help panel
+## Responsive menus
 
-H/ESC info menu width-adaptive: max 44 chars, min 36. Drops CONTROLS section first, then COMPASS HINT on squeeze.
+H/ESC info menu width-adaptive: max 44 chars, min 36.
+
+Height-adaptive too. Every block is droppable, and they are added greedily in page order - which is also priority order, so RUN and PLAYER (the reason you open it mid-fight) survive longest and CONTROLS, the biggest block, goes first. Under 26 rows the blank spacer rows go as well: the never-droppable part of the menu used to be 28 rows, four more than an 80x24 terminal, and a terminal clamps writes past its last line onto that line rather than clipping them, so the tail of the WEAPONS table and the closing border all landed on row 24 on top of each other. The pause menu sheds its spacers the same way under 14 rows (14 rows full, 9 without them).
+
+`centred-box-string` is the backstop under all of them: a row vector taller than the viewport is truncated to fit, keeping the closing row, so no menu can paint off screen even if its own shedding is wrong. `tests/io/screen-golden-test.phel` pins each screen's bytes and asserts the row count never exceeds the viewport height.
 
 ## Hostile reticle (issue #458)
 

@@ -47,6 +47,7 @@ Each is a `composer` script wired into `composer ci`, and each ships its own fix
 | `check-layers.sh` | a require points the wrong way across `io/` -> `glue/` -> `core/` |
 | `check-cycles.php` | two phel-doom namespaces require each other, directly or through an alias |
 | `check-unused.php` | a top-level definition under `src/` is referenced nowhere in `src/`, `tests/` or `tools/` |
+| `check-docs.php` | a doc links to a missing file or heading, or names a path or composer script that is not there |
 | `check-deprecations.sh` | the suite raises a compiler deprecation or a float-truncation notice |
 
 `check-cycles` and `check-unused` share `lib/phel-source.php`, which blanks `;` comments, `#_` discards and string bodies while keeping offsets and newlines, so neither can be fooled by a name that appears only in prose - and a fix to that parser reaches both.

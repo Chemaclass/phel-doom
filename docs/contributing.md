@@ -32,7 +32,7 @@ composer check-layers # io/ -> glue/ -> core/ direction holds
 composer check-cycles # no require cycles (+ the guard's own fixtures)
 composer check-unused # no src/ definition that nothing references (+ fixtures)
 composer check-docs   # every doc link, anchor and path claim resolves (+ fixtures)
-composer check-deprecations # suite again with every deprecation channel on
+composer check-deprecations # the suite with every deprecation channel on (+ the guard's own fixtures)
 composer build        # compile to out/main.php
 composer ci           # full pre-push gate
 composer repl         # REPL
@@ -52,7 +52,7 @@ CI runs `composer ci` on PHP 8.5. PHP 8.4 works locally but isn't CI-tested.
 
 The compile it needs is a workaround for [phel-lang#3222](https://github.com/phel-lang/phel-lang/issues/3222): the cache key ignores the warn-deprecations flag, so a warm shared cache reports nothing and `phel test` has no `--no-cache`. It used to get its compile by deleting the shared cache, which meant a full cold recompile on every run - 25.4s of a 41s gate, paid even by a one-line doc change. It now keeps its own cache directory instead (`PHEL_CACHE_DIR`), so only what changed recompiles: **11.2s warm**, and the gate is about 27s.
 
-Two things keep that honest. The directory name carries a hash of `composer.lock` and `phel-config.php`, so a compiler upgrade or an optimisation-level change starts a fresh cache rather than trusting yesterday's output. And a run that finds something deletes the cache before exiting - otherwise the offending file is cached with its warning already emitted and the next run is green with nothing fixed, a gate you could pass by running it twice. Failure costs the next run a cold compile, which is the right price. CI is unaffected: a fresh runner has no such directory and compiles everything.
+Two things keep that honest. The directory name carries a hash of `composer.lock` and `phel-config.php`, so a compiler upgrade or an optimisation-level change starts a fresh cache rather than trusting yesterday's output. And a run that finds something deletes the cache before exiting - otherwise the offending file is cached with its warning already emitted and the next run is green with nothing fixed, a gate you could pass by running it twice. Failure costs the next run a cold compile, which is the right price. CI is unaffected: a fresh runner has no such directory and compiles everything. The cache handling has its own fixtures (`tools/check-deprecations-test.sh`, stubbing `phel test` so a 25-second suite does not end up inside a fixture): a clean run keeps the cache, a deprecation / a test failure / an empty run / an interrupt each drop it, a lockfile or `phel-config.php` change starts a new one, and stale ones are pruned.
 
 `check-deprecations` re-runs the suite under `PHEL_WARN_DEPRECATIONS=1` and fails
 on any notice. It exists for the quiet half: phel 0.50 infers a parameter's type

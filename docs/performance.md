@@ -385,6 +385,14 @@ Grid-line-to-grid-line march via Wolfenstein DDA: precompute step direction and 
 
 Rule for future march changes: any per-step cost added unconditionally shows up on EVERY frame of EVERY level; gate it or inline it for free.
 
+## Memory
+
+The renderer is built out of lazy memos - the half-block cell cache, the truecolor cell cache, the BG cell cache, the per-width offset tables, the gradient bundles. Each trades memory for speed, and each is a per-frame leak if its key can keep taking new values: nothing fails, the game just grows until a long session dies on the memory limit.
+
+Measured with the player walking and turning so distances (and so fog levels and colour pairs) keep changing: **flat at 1130 frames in both 256-colour and truecolor modes**. Baseline is ~63 MB of baked tables, and peak render scales gently with the viewport - 63.5 MB at 120x30, 67.6 MB at 400x100 - so a default 128M `memory_limit` has room.
+
+`tests/io/render-memory-test.phel` keeps it that way: 400 moving frames after a 30-frame warmup, with a 256 KB budget (~25x the noise measured). It catches a leak of ~640 bytes a frame, far below any real one.
+
 ## Evaluated and shelved
 
 ### Three ways of making the wall sample cheaper (all under the noise floor)

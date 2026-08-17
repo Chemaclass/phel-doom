@@ -311,7 +311,7 @@
       nil)))
 
 (defn- grid->php
-  "PHP-native copy of `grid`, one php-array per row.
+  "PHP-native FLAT copy of `grid`, indexed `y*w + x`.
 
    `cell` reads a persistent vector of vectors: two structural lookups
    and two nil checks per access. The flood and the scans below touch
@@ -320,10 +320,15 @@
    was most of a level build."
   [grid]
   (let [h   (count grid)
+        w   (count (first grid))
         out (php/array)]
     (loop [y 0]
       (when (php/< y h)
-        (php/aset out y (to-php-array (get grid y)))
+        (let [row (get grid y)]
+          (loop [x 0]
+            (when (php/< x w)
+              (php/aset out (php/+ (php/* y w) x) (get row x))
+              (recur (php/+ x 1)))))
         (recur (php/+ y 1))))
     out))
 
@@ -342,20 +347,35 @@
         h    (count grid)
         w    (count (first grid))
         seen (php/array)
+        dirs (php/array 1 0 -1 0 0 1 0 -1)
         q    (php/array (php/array sx sy))]
     (php/aset seen (php/+ (php/* sy w) sx) true)
+    ;; Neighbour offsets as a flat php-array of int pairs, not the Phel
+    ;; literal `[[1 0] [-1 0] [0 1] [0 -1]]`: that vector is rebuilt on
+    ;; every dequeue and each `(get d 0)` is a persistent-vector lookup,
+    ;; measured at ~3us - eight of them per cell, which was most of this
+    ;; function's time.
+    ;;
+    ;; NOT factored into a `visit!` closure, however tempting: a php-array
+    ;; captured by a closure is captured BY VALUE, so the writes would land
+    ;; on a copy, the queue would never grow, and the flood would return
+    ;; just its start cell. It does that silently and looks 10x faster.
     (loop [i 0]
       (when (php/< i (php/count q))
-        (let [c (php/aget q i) cx (php/aget c 0) cy (php/aget c 1)]
-          (foreach [d [[1 0] [-1 0] [0 1] [0 -1]]]
-            (let [nx (php/+ cx (get d 0))
-                  ny (php/+ cy (get d 1))]
-              (when (and (php/>= nx 0) (php/< nx w) (php/>= ny 0) (php/< ny h))
-                (let [k (php/+ (php/* ny w) nx)]
-                  (when (and (php/=== cell-floor (php/aget (php/aget g ny) nx))
-                             (php/=== nil (php/aget seen k)))
-                    (php/aset seen k true)
-                    (php/array_push q (php/array nx ny))))))))
+        (let [c  (php/aget q i)
+              cx (php/aget c 0)
+              cy (php/aget c 1)]
+          (loop [j 0]
+            (when (php/< j 4)
+              (let [nx (php/+ cx (php/aget dirs (php/* 2 j)))
+                    ny (php/+ cy (php/aget dirs (php/+ (php/* 2 j) 1)))]
+                (when (and (php/>= nx 0) (php/< nx w) (php/>= ny 0) (php/< ny h))
+                  (let [k (php/+ (php/* ny w) nx)]
+                    (when (and (php/=== cell-floor (php/aget g k))
+                               (php/=== nil (php/aget seen k)))
+                      (php/aset seen k true)
+                      (php/array_push q (php/array nx ny))))))
+              (recur (php/+ j 1)))))
         (recur (php/+ i 1))))
     seen))
 
@@ -390,7 +410,7 @@
         (when (php/< y h)
           (loop [x 0]
             (when (php/< x w)
-              (when (and (php/=== cell-wall (php/aget (php/aget g y) x))
+              (when (and (php/=== cell-wall (php/aget g (php/+ (php/* y w) x)))
                          (or (reached? (php/+ x 1) y) (reached? (php/- x 1) y)
                              (reached? x (php/+ y 1)) (reached? x (php/- y 1))))
                 (php/array_push cands (php/array x y)))
@@ -410,19 +430,57 @@
                (map (fn [_] cell-floor) (range 0 (- w 2)))
                [cell-wall])))
 
-(defn- place-block [grid w h x y bw bh]
-  (loop [yy 0 g grid]
-    (if (>= yy bh)
-      g
-      (recur (+ yy 1)
-             (loop [xx 0 gg g]
-               (if (>= xx bw)
-                 gg
-                 (let [px (+ x xx)
-                       py (+ y yy)]
-                   (if (and (< px (- w 1)) (< py (- h 1)) (> px 0) (> py 0))
-                     (recur (+ xx 1) (assoc-in gg [py px] cell-wall))
-                     (recur (+ xx 1) gg)))))))))
+(defn- php->grid
+  "Persistent grid from a flat php-native mirror - inverse of `grid->php`."
+  [pg w h]
+  (let [rows (php/array)]
+    (loop [y 0]
+      (when (php/< y h)
+        (let [row (php/array)]
+          (loop [x 0]
+            (when (php/< x w)
+              (php/array_push row (php/aget pg (php/+ (php/* y w) x)))
+              (recur (php/+ x 1))))
+          (php/array_push rows (vec row)))
+        (recur (php/+ y 1))))
+    (vec rows)))
+
+(defn- scatter-blobs
+  "Flat php mirror of `grid` with `n` random 1x1-2x2 wall blobs written
+   into its interior, clipped so the border is never overwritten.
+
+   The whole loop lives in ONE function on purpose. This used to
+   `assoc-in` a persistent vector of vectors once per blob cell, copying
+   the row and the grid spine each time - ~83us a cell, and a level
+   scatters 42 blobs - but a php-array cannot be mutated across a call
+   boundary: PHP passes arrays BY VALUE, so a `place-block!` helper would
+   write to a copy and the caller would get its grid back unchanged. It
+   fails silently and looks fast. The mirror is therefore a local of this
+   function, written in statement position, and handed back finished.
+
+   Draw order and count are unchanged, so the blobs land exactly where
+   they did before."
+  [grid w h n]
+  (let [pg (grid->php grid)]
+    (loop [i 0]
+      (when (php/< i n)
+        (let [x  (+ 2 (rng/int! (php/max 1 (- w 5))))
+              y  (+ 2 (rng/int! (php/max 1 (- h 5))))
+              bw (+ 1 (rng/int! 2))
+              bh (+ 1 (rng/int! 2))]
+          (loop [yy 0]
+            (when (php/< yy bh)
+              (loop [xx 0]
+                (when (php/< xx bw)
+                  (let [px (php/+ x xx)
+                        py (php/+ y yy)]
+                    (when (and (php/< px (php/- w 1)) (php/< py (php/- h 1))
+                               (php/> px 0) (php/> py 0))
+                      (php/aset pg (php/+ (php/* py w) px) cell-wall)))
+                  (recur (php/+ xx 1))))
+              (recur (php/+ yy 1)))))
+        (recur (php/+ i 1))))
+    pg))
 
 (defn random-grid
   "Build a w×h grid with a solid border and `n-blocks` random 1×1–2×2
@@ -432,16 +490,9 @@
   (let [base (vec (concat
                    [(border-row w)]
                    (map (fn [_] (interior-row w)) (range 0 (- h 2)))
-                   [(border-row w)]))]
-    (loop [grid base i 0]
-      (if (>= i n-blocks)
-        grid
-        (recur (place-block grid w h
-                            (+ 2 (rng/int! (- w 5)))
-                            (+ 2 (rng/int! (- h 5)))
-                            (+ 1 (rng/int! 2))
-                            (+ 1 (rng/int! 2)))
-               (+ i 1))))))
+                   [(border-row w)]))
+        pg   (scatter-blobs base w h n-blocks)]
+    (php->grid pg w h)))
 
 (defn- seal-pockets
   "Flood the floor reachable from (sx, sy); any floor cell NOT reached gets
@@ -464,7 +515,7 @@
                  (if (php/>= x w)
                    gg
                    (recur (php/+ x 1)
-                          (if (and (php/=== cell-floor (php/aget (php/aget pg y) x))
+                          (if (and (php/=== cell-floor (php/aget pg (php/+ (php/* y w) x)))
                                    (php/=== nil (php/aget seen (php/+ (php/* y w) x))))
                             (assoc-in gg [y x] cell-wall)
                             gg)))))))))
@@ -477,20 +528,13 @@
    stranding a keycard / exit. Seeded via `rng`; one level-build call, not a
    hot path."
   [grid [sx sy] n]
-  (let [w     (count (first grid))
-        h     (count grid)
-        spx   (php/intval sx)
-        spy   (php/intval sy)
-        blobs (loop [g grid i 0]
-                (if (php/>= i n)
-                  g
-                  (recur (place-block g w h
-                                      (+ 2 (rng/int! (php/max 1 (- w 5))))
-                                      (+ 2 (rng/int! (php/max 1 (- h 5))))
-                                      (+ 1 (rng/int! 2))
-                                      (+ 1 (rng/int! 2)))
-                         (+ i 1))))]
-    (seal-pockets (assoc-in blobs [spy spx] cell-floor) spx spy)))
+  (let [w   (count (first grid))
+        h   (count grid)
+        spx (php/intval sx)
+        spy (php/intval sy)
+        pg  (scatter-blobs grid w h n)
+        _   (php/aset pg (php/+ (php/* spy w) spx) cell-floor)]
+    (seal-pockets (php->grid pg w h) spx spy)))
 
 (defn random-spawn
   "Return [x y] floats at the centre of a random open cell. The

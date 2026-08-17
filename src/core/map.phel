@@ -310,22 +310,52 @@
       lock
       nil)))
 
+(defn- grid->php
+  "PHP-native copy of `grid`, one php-array per row.
+
+   `cell` reads a persistent vector of vectors: two structural lookups
+   and two nil checks per access. The flood and the scans below touch
+   every cell four or five times, so one conversion pays for itself many
+   times over - place-exit alone measured 57.9 ms on a 64x40 grid, which
+   was most of a level build."
+  [grid]
+  (let [h   (count grid)
+        out (php/array)]
+    (loop [y 0]
+      (when (php/< y h)
+        (php/aset out y (to-php-array (get grid y)))
+        (recur (php/+ y 1))))
+    out))
+
 (defn- flood-reachable
-  "Seen-set (php-array keyed \"x:y\") of every `cell-floor` reachable from
-   (sx, sy) by 4-way BFS. The mutable queue + set stay local, so callers
-   stay pure. Consumes no rng."
+  "Seen-set of every `cell-floor` reachable from (sx, sy) by 4-way BFS,
+   as a php-array keyed by the flat index `y*w + x`. The mutable queue +
+   set stay local, so callers stay pure. Consumes no rng.
+
+   Flat int keys, not \"x:y\" strings: the string built one throwaway
+   concatenation per neighbour test. They are only collision-free
+   IN BOUNDS - (-1, y) and (w-1, y-1) share an index - so every caller
+   guards its lookups, and this BFS only ever writes cells the grid
+   itself reports as floor."
   [grid sx sy]
-  (let [seen (php/array)
+  (let [g    (grid->php grid)
+        h    (count grid)
+        w    (count (first grid))
+        seen (php/array)
         q    (php/array (php/array sx sy))]
-    (php/aset seen (str sx ":" sy) true)
+    (php/aset seen (php/+ (php/* sy w) sx) true)
     (loop [i 0]
       (when (php/< i (php/count q))
         (let [c (php/aget q i) cx (php/aget c 0) cy (php/aget c 1)]
           (foreach [d [[1 0] [-1 0] [0 1] [0 -1]]]
-            (let [nx (php/+ cx (get d 0)) ny (php/+ cy (get d 1)) k (str nx ":" ny)]
-              (when (and (= cell-floor (cell grid nx ny)) (php/=== nil (php/aget seen k)))
-                (php/aset seen k true)
-                (php/array_push q (php/array nx ny))))))
+            (let [nx (php/+ cx (get d 0))
+                  ny (php/+ cy (get d 1))]
+              (when (and (php/>= nx 0) (php/< nx w) (php/>= ny 0) (php/< ny h))
+                (let [k (php/+ (php/* ny w) nx)]
+                  (when (and (php/=== cell-floor (php/aget (php/aget g ny) nx))
+                             (php/=== nil (php/aget seen k)))
+                    (php/aset seen k true)
+                    (php/array_push q (php/array nx ny))))))))
         (recur (php/+ i 1))))
     seen))
 
@@ -342,16 +372,25 @@
   [grid [sx sy]]
   (let [h    (count grid)
         w    (count (first grid))
+        g    (grid->php grid)
         seen (flood-reachable grid (php/intval sx) (php/intval sy))]
     ;; Any wall touching the reachable floor is a candidate - border edge or
     ;; interior pillar alike - so the exit can land anywhere accessible.
-    (let [reached? (fn [x y] (php/=== true (php/aget seen (str x ":" y))))
+    ;; The bounds test is what makes the flat key safe: without it (-1, y)
+    ;; would read the last cell of the row above and report a phantom
+    ;; neighbour. Scan order is unchanged, so the candidate list - and the
+    ;; rng draw that picks from it - is byte-identical to the string-keyed
+    ;; version.
+    (let [reached? (fn [x y]
+                     (if (and (php/>= x 0) (php/< x w) (php/>= y 0) (php/< y h))
+                       (php/=== true (php/aget seen (php/+ (php/* y w) x)))
+                       false))
           cands    (php/array)]
       (loop [y 0]
         (when (php/< y h)
           (loop [x 0]
             (when (php/< x w)
-              (when (and (= cell-wall (cell grid x y))
+              (when (and (php/=== cell-wall (php/aget (php/aget g y) x))
                          (or (reached? (php/+ x 1) y) (reached? (php/- x 1) y)
                              (reached? x (php/+ y 1)) (reached? x (php/- y 1))))
                 (php/array_push cands (php/array x y)))
@@ -412,7 +451,11 @@
   [grid sx sy]
   (let [w    (count (first grid))
         h    (count grid)
+        pg   (grid->php grid)
         seen (flood-reachable grid sx sy)]
+    ;; Reads come from the php mirror, writes still go to the persistent
+    ;; grid: only unreachable floor is rewritten, so the mirror stays
+    ;; correct for every cell this loop still has to look at.
     (loop [y 0 g grid]
       (if (php/>= y h)
         g
@@ -421,8 +464,8 @@
                  (if (php/>= x w)
                    gg
                    (recur (php/+ x 1)
-                          (if (and (= cell-floor (cell gg x y))
-                                   (php/=== nil (php/aget seen (str x ":" y))))
+                          (if (and (php/=== cell-floor (php/aget (php/aget pg y) x))
+                                   (php/=== nil (php/aget seen (php/+ (php/* y w) x))))
                             (assoc-in gg [y x] cell-wall)
                             gg)))))))))
 

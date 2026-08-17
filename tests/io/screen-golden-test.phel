@@ -1,0 +1,109 @@
+(ns phel-doom-tests.io.screen-golden-test
+  (:require phel.test :refer [deftest is])
+  (:require phel.string :as str)
+  (:require phel-doom.core.settings :refer [default-settings page-fields])
+  (:require phel-doom.io.render.hud :refer [help-menu-string pause-menu-string settings-menu-string])
+  (:require phel-doom.io.render.screens :refer [render-start-menu render-settings!
+                                                render-death-screen render-victory-screen
+                                                render-intermission-screen]))
+
+;; ---------------------------------------------------------------------
+;; Golden hashes for the full-screen MENUS.
+;;
+;; render-cache-test and overlay-golden-test pin the 3D frame; nothing
+;; pinned a menu, even though every screen here was rewritten in the last
+;; batch. The settings page in particular now scrolls its field list and
+;; injects section headers (#468), which is arithmetic that only
+;; misbehaves at particular heights and cursor positions - exactly the
+;; case nobody re-checks by hand.
+;;
+;; The hashes catch "something moved". The property tests below say WHAT,
+;; and survive a deliberate re-bake: a new field or a reworded hint moves
+;; every hash, but must never push the box off the terminal.
+;;
+;; When a hash moves, look at the screen before re-baking it - see
+;; docs/contributing.md for the tools/frame-shot.sh recipe.
+;; ---------------------------------------------------------------------
+
+(defn- captured
+  "The render-* screens print rather than return, so capture stdout."
+  [f]
+  (php/ob_start)
+  (f)
+  (php/ob_get_clean))
+
+(def- scores {:best-kills 42 :best-level 7 :fastest-victory-s 930})
+
+(def- summary {:accuracy 61 :secrets-found 3 :secrets-total 5
+               :damage-taken 12 :kills-by-weapon {:shotgun 9 :pistol 4}
+               :grade "B"})
+
+(deftest test-start-menu-pinned
+  (is (= "d60feee3d6d538d3a202afdf4377d378"
+         (php/md5 (captured (fn [] (render-start-menu 120 30 nil))))))
+  ;; The terminal caveat line is optional, and has to actually land.
+  (is (= "bebc06bc3f4287fa50f25b248f04cbad"
+         (php/md5 (captured (fn [] (render-start-menu 120 30 "iTerm2")))))))
+
+(deftest test-settings-screen-pinned
+  (is (= "7ba7f153da2209dd8b9ade8c0b44f78b"
+         (php/md5 (captured (fn [] (render-settings! 120 30 default-settings 0)))))))
+
+(deftest test-end-screens-pinned
+  (is (= "a0d1f8523cdb23a59fa8ae2d3d68629d"
+         (php/md5 (captured (fn [] (render-death-screen 120 30 42 930 7 "cyberdemons" scores summary))))))
+  (is (= "30ae12a45aab16ca6b1c12523539ad2e"
+         (php/md5 (captured (fn [] (render-victory-screen 120 30 42 930 10 "the final" scores summary))))))
+  (is (= "569aab96825945b8515cc6b68ed99bce"
+         (php/md5 (captured (fn [] (render-intermission-screen 120 30 3 "cacodemons" 12 1 2 754)))))))
+
+(deftest test-in-game-overlays-pinned
+  (is (= "e88719a9bb22852c15763442ef4e4984"
+         (php/md5 (pause-menu-string 120 30 0 nil))))
+  (is (= "b3965f59dfb80e84d368841fc7df2d92"
+         (php/md5 (settings-menu-string 120 30 default-settings 0 "esc back"))))
+  (is (= "493fd8f7a62450b77902fbef570be6b3"
+         (php/md5 (help-menu-string 120 30 {})))))
+
+;; --- properties that outlive any re-bake ------------------------------
+
+(defn- rows-painted
+  "How many absolute cursor moves the string emits - one per row for
+   every box in here."
+  [s]
+  (php/preg_match_all "/\e\\[\\d+;\\d+H/" s))
+
+(deftest test-the-settings-list-never-outgrows-the-terminal
+  ;; #468: the box is vertically centred, so overflow paints off BOTH
+  ;; ends and the top rows are simply gone.
+  (foreach [vh [40 30 24 20 16 12]]
+    (foreach [cur [0 8 17]]
+      (let [n (rows-painted (settings-menu-string 80 vh default-settings cur "esc back"))]
+        (is (php/<= n vh) (str "settings vh " vh " cursor " cur " painted " n " rows"))))))
+
+(deftest test-the-selected-field-is-always-in-the-scroll-window
+  ;; A cursor that scrolls off screen is worse than no scrolling: the
+  ;; keys still work, on a field you cannot see.
+  (foreach [vh [24 16 12]]
+    (foreach [cur [0 5 11 17]]
+      (is (str/contains? (settings-menu-string 80 vh default-settings cur "esc back")
+                         (:label (get page-fields cur)))
+          (str "cursor " cur " visible at vh " vh)))))
+
+(deftest test-the-pause-and-help-menus-fit-short-terminals
+  (foreach [vh [40 24 16 12]]
+    (is (php/<= (rows-painted (pause-menu-string 80 vh 0 nil)) vh)
+        (str "pause at vh " vh))
+    (is (php/<= (rows-painted (help-menu-string 80 vh {})) vh)
+        (str "help at vh " vh))))
+
+(deftest test-a-screen-washes-every-row
+  ;; Each screen paints its own background; a gap shows the 3D frame or
+  ;; the shell through it.
+  (foreach [[label f] [["start"    (fn [] (render-start-menu 80 24 nil))]
+                       ["settings" (fn [] (render-settings! 80 24 default-settings 0))]
+                       ["death"    (fn [] (render-death-screen 80 24 1 10 1 "imps" scores summary))]
+                       ["victory"  (fn [] (render-victory-screen 80 24 1 10 1 "imps" scores summary))]]]
+    (let [out (captured f)]
+      (foreach [r (range 1 25)]
+        (is (str/contains? out (str "\e[" r ";1H")) (str label " washes row " r))))))

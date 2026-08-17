@@ -498,103 +498,121 @@
                         (if (php/=== (count chunks) 0)
                           "\e[2;90m(none)\e[22;40;97m"
                           (php/implode "  " (to-php-array chunks))))
-        ;; Sections built separately so the height-adaptive splice
-        ;; below can drop optional blocks (COMPASS HINT, CONTROLS)
-        ;; when vh can't fit the full menu.
-        core-rows     (php/array_merge
-                       (to-php-array
-                        [(str "┌" bar "┐")
-                         blnk
-                         (str "│\e[1;96m" (help-pad (str "        " (hud-glyph (boolean (get stats :ascii-glyphs?)) :info)
-                                                           "  INFO  (H or ESC to close)") w) "\e[40;97m│")
-                         blnk
-                         (str "├" bar "┤")
-                         blnk
-                         (sec "RUN")
-                         (bord (str "  level:  " level-n "  " level-name))
-                         (bord (str "  kills:  " kills "   streak x" streak))
-                         (bord (str "  time:   " (format-duration time-s)))
-                         (bord (str "  diff:   " (php/ltrim (php/strval difficulty) ":")))
-                         blnk
-                         (sec "PLAYER")
-                         (bord (str "  health: " (php/min lives cap-l) "/" cap-l " hp"))
-                         (bord (str "  armor:  " armor))
-                       ;; Literal prefixes are "  keys:   " / "  buffs:  "
-                       ;; — both 10 visible cols. Pad = w - (10 + visible
-                       ;; len of the coloured value).
-                         (str "│\e[97m  keys:   " keys-str
-                              (help-pad "" (php/max 0 (php/- w (php/+ 10 (length-without-sgr keys-str)))))
-                              "│")
-                         (str "│\e[97m  buffs:  " buffs-str
-                              (help-pad "" (php/max 0 (php/- w (php/+ 10 (length-without-sgr buffs-str)))))
-                              "│")
-                         blnk
-                         (sec "WEAPONS  ( > = active )")])
-                       (to-php-array weapon-rows))
-        compass-rows  (to-php-array
-                       [blnk
-                        (sec "COMPASS HINT")
-                        (bord "  Top E S W N strip tints the letter")
-                        (bord "  pointing at your next quest target:")
-                        (bord "    \e[38;5;214;1morange\e[40;97m = exit door")
-                        (bord "    \e[94;1mblue\e[40;97m / \e[91;1mred\e[40;97m / \e[93;1myellow\e[40;97m = keycard")
-                        (bord "  Use it to navigate without the 2D map.")])
-        controls-rows (to-php-array
-                       [blnk
-                        (sec "CONTROLS")
-                        (bord "  w / s         move forward / back")
-                        (bord "  a / d         strafe left / right")
-                        (bord "  SHIFT / x     sprint")
-                        (bord "  ← →           turn left / right")
-                        (bord "  ↑ ↓           look up / down")
-                        (bord "  e             about-face (snap 180)")
-                        (bord "  space / click fire   (mouse turns)")
-                        (bord "  f             action (open secret walls)")
-                        (bord "  r             reload")
-                        (bord "  1 .. 7        switch weapon slot")
-                        (bord "  [ / ] wheel   cycle weapons")
-                        (bord "  m             toggle minimap")
-                        (bord "  n             toggle sound")
-                        (bord "  F3            debug overlay")
-                        (bord "  p             pause + settings")
-                        (bord "  F5 / F9       quick save / load")
-                        (bord "  h / ESC       close this menu")
-                        (bord "  q             quit")])
-        closer-rows   (to-php-array [blnk (str "└" bar "┘")])
-        ;; Greedy fit: always include core + closer, then add compass
-        ;; and controls only if they fit inside `vh - 2` (leave 1-row
-        ;; gutter top/bottom). On a tall terminal the menu looks
-        ;; identical to before; on a short one CONTROLS drops first
-        ;; (largest), then COMPASS HINT.
-        budget        (php/max 0 (php/- vh 2))
-        base-count    (php/+ (php/count core-rows) (php/count closer-rows))
-        with-compass  (if (php/<= (php/+ base-count (php/count compass-rows)) budget)
-                        (php/array_merge core-rows compass-rows)
-                        core-rows)
-        with-ctrls    (if (php/<= (php/+ (php/count with-compass)
-                                         (php/count controls-rows)
-                                         (php/count closer-rows))
-                                  budget)
-                        (php/array_merge with-compass controls-rows)
-                        with-compass)
-        rows          (vec (php/array_merge with-ctrls closer-rows))]
-    rows))
+        ;; Sections built separately so the height-adaptive splice below
+        ;; can drop whole blocks when vh can't fit the full menu.
+        ;;
+        ;; `tight?` drops the blank spacer rows as well, because the
+        ;; blocks alone were not enough: the part of this menu that was
+        ;; never droppable ran to 28 rows, four more than an 80x24
+        ;; terminal - the default nearly everywhere - and the overflow
+        ;; does not simply vanish. A terminal clamps every write past its
+        ;; last line onto that line, so the tail of the WEAPONS table and
+        ;; the closing border all landed on row 24, on top of each other.
+        tight?        (php/< vh 26)
+        sep           (if tight? [] [blnk])
+        header-rows   (vec (concat
+                            [(str "┌" bar "┐")]
+                            sep
+                            [(str "│\e[1;96m" (help-pad (str "        " (hud-glyph (boolean (get stats :ascii-glyphs?)) :info)
+                                                               "  INFO  (H or ESC to close)") w) "\e[40;97m│")]
+                            sep
+                            [(str "├" bar "┤")]
+                            sep))
+        run-rows      [(sec "RUN")
+                       (bord (str "  level:  " level-n "  " level-name))
+                       (bord (str "  kills:  " kills "   streak x" streak))
+                       (bord (str "  time:   " (format-duration time-s)))
+                       (bord (str "  diff:   " (php/ltrim (php/strval difficulty) ":")))]
+        player-rows   (vec (concat
+                            sep
+                            [(sec "PLAYER")
+                             (bord (str "  health: " (php/min lives cap-l) "/" cap-l " hp"))
+                             (bord (str "  armor:  " armor))
+                             ;; Literal prefixes are "  keys:   " / "  buffs:  "
+                             ;; — both 10 visible cols. Pad = w - (10 + visible
+                             ;; len of the coloured value).
+                             (str "│\e[97m  keys:   " keys-str
+                                  (help-pad "" (php/max 0 (php/- w (php/+ 10 (length-without-sgr keys-str)))))
+                                  "│")
+                             (str "│\e[97m  buffs:  " buffs-str
+                                  (help-pad "" (php/max 0 (php/- w (php/+ 10 (length-without-sgr buffs-str)))))
+                                  "│")]))
+        weapons-rows  (vec (concat sep [(sec "WEAPONS  ( > = active )")] weapon-rows))
+        compass-rows  (vec (concat
+                            sep
+                            [(sec "COMPASS HINT")
+                             (bord "  Top E S W N strip tints the letter")
+                             (bord "  pointing at your next quest target:")
+                             (bord "    \e[38;5;214;1morange\e[40;97m = exit door")
+                             (bord "    \e[94;1mblue\e[40;97m / \e[91;1mred\e[40;97m / \e[93;1myellow\e[40;97m = keycard")
+                             (bord "  Use it to navigate without the 2D map.")]))
+        controls-rows (vec (concat
+                            sep
+                            [(sec "CONTROLS")
+                             (bord "  w / s         move forward / back")
+                             (bord "  a / d         strafe left / right")
+                             (bord "  SHIFT / x     sprint")
+                             (bord "  ← →           turn left / right")
+                             (bord "  ↑ ↓           look up / down")
+                             (bord "  e             about-face (snap 180)")
+                             (bord "  space / click fire   (mouse turns)")
+                             (bord "  f             action (open secret walls)")
+                             (bord "  r             reload")
+                             (bord "  1 .. 7        switch weapon slot")
+                             (bord "  [ / ] wheel   cycle weapons")
+                             (bord "  m             toggle minimap")
+                             (bord "  n             toggle sound")
+                             (bord "  F3            debug overlay")
+                             (bord "  p             pause + settings")
+                             (bord "  F5 / F9       quick save / load")
+                             (bord "  h / ESC       close this menu")
+                             (bord "  q             quit")]))
+        closer-rows   (vec (concat sep [(str "└" bar "┘")]))
+        ;; Greedy fit, in page order - which is also priority order. The
+        ;; RUN and PLAYER lines are why you open this mid-fight; CONTROLS
+        ;; is the biggest block and the one a returning player needs
+        ;; least, so it goes first. Leave a 1-row gutter top and bottom.
+        ;; On a tall terminal every block fits and the menu is unchanged.
+        budget        (php/max 1 (php/- vh 2))
+        fit           (fn [acc rs]
+                        (if (php/<= (php/+ (count acc) (count rs) (count closer-rows)) budget)
+                          (vec (concat acc rs))
+                          acc))]
+    (vec (concat (-> header-rows
+                     (fit run-rows)
+                     (fit player-rows)
+                     (fit weapons-rows)
+                     (fit compass-rows)
+                     (fit controls-rows))
+                 closer-rows))))
 
 (defn- centred-box-string
   "Position `rows` (each already `w` interior columns plus its borders)
    with absolute cursor moves, centred in the `vw` x `vh` viewport.
    Shared tail of every full-screen menu overlay."
   [vw vh w rows]
-  (let [n    (count rows)
-        col0 (php/max 1 (php/- (php/+ (php/intdiv vw 2) 1)
-                               (php/intdiv (php/+ w 2) 2)))
-        row0 (php/max 1 (php/intdiv (php/max 1 (php/- vh n)) 2))]
+  (let [all    (vec rows)
+        n0     (count all)
+        ;; Backstop under every menu. A box taller than the viewport does
+        ;; not clip politely: the terminal clamps each write past the last
+        ;; line onto that line, so the overflow rows overwrite each other
+        ;; and take the bottom border with them. Menus shed their own
+        ;; optional sections first (see help-menu-rows); this guarantees
+        ;; no future one can paint off the screen, and keeps the closing
+        ;; row so the box still reads as a box.
+        fitted (if (php/<= n0 vh)
+                 all
+                 (conj (vec (take (php/max 0 (php/- vh 1)) all)) (get all (php/- n0 1))))
+        n      (count fitted)
+        col0   (php/max 1 (php/- (php/+ (php/intdiv vw 2) 1)
+                                 (php/intdiv (php/+ w 2) 2)))
+        row0   (php/max 1 (php/intdiv (php/max 1 (php/- vh n)) 2))]
     (loop [i 0 acc ""]
       (if (php/>= i n)
         acc
         (recur (php/+ i 1)
                (str acc "\e[" (php/+ row0 i) ";" col0 "H\e[40;97m"
-                    (get rows i) "\e[0m"))))))
+                    (get fitted i) "\e[0m"))))))
 
 (defn help-menu-string
   "Position the help/info menu rows (built by `help-menu-rows`) with
@@ -689,10 +707,16 @@
   (let [w         settings-inner-width
         bar       (php/str_repeat "─" w)
         blnk      (str "│" (pause-pad "" w) "│")
-        rows-head [(str "┌" bar "┐")
-                   blnk
-                   (str "│\e[1;93m" (pause-pad "                 PAUSED" w) "\e[40;97m│")
-                   blnk]
+        ;; The full box is 14 rows. Below that the spacers go, which
+        ;; brings it to 9 and keeps every option reachable - a menu you
+        ;; navigate blind because its rows landed off screen is worse
+        ;; than a cramped one.
+        sep       (if (php/< vh 14) [] [blnk])
+        rows-head (vec (concat
+                        [(str "┌" bar "┐")]
+                        sep
+                        [(str "│\e[1;93m" (pause-pad "                 PAUSED" w) "\e[40;97m│")]
+                        sep))
         rows-opts (vec (map-indexed
                         (fn [i kw]
                           (pause-menu-row (if (= kw confirm)
@@ -700,12 +724,13 @@
                                             (php/ucfirst (name kw)))
                                           (php/=== i cursor) w))
                         pause-menu-options))
-        rows-foot [blnk
-                   (str "├" bar "┤")
-                   blnk
-                   (str "│\e[2;97m" (pause-pad "  ↑↓ move   enter/space select   q quit" w) "\e[22;40;97m│")
-                   blnk
-                   (str "└" bar "┘")]
+        rows-foot (vec (concat
+                        sep
+                        [(str "├" bar "┤")]
+                        sep
+                        [(str "│\e[2;97m" (pause-pad "  ↑↓ move   enter/space select   q quit" w) "\e[22;40;97m│")]
+                        sep
+                        [(str "└" bar "┘")]))
         rows      (vec (concat rows-head rows-opts rows-foot))]
     (centred-box-string vw vh w rows)))
 

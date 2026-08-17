@@ -16,10 +16,28 @@
 #      "Type inference traps".
 #
 # Class 1 is raised while a namespace COMPILES, so a warm compile cache hides
-# it: `composer test` right before this step (as `composer ci` runs it) leaves
-# every namespace cached, and a `php/new` probe then passes clean. The cache
-# is cleared first so the whole tree recompiles under the flag. `phel test`
-# has no --no-cache, and the cache key does not include the flag.
+# it: `composer test` leaves every namespace cached, and a `php/new` probe then
+# passes clean. `phel test` has no --no-cache and the cache key does not include
+# the flag (phel-lang#3222), so this step needs a compile it controls.
+#
+# It used to get one by deleting the shared cache, which cost a full cold
+# recompile every single run: 25.4s of a 41s gate, 62% of it, paid on every
+# commit including the ones that changed one line of a doc. Instead it keeps its
+# OWN cache directory (PHEL_CACHE_DIR), so only what actually changed since the
+# last run recompiles - 11.2s instead of 25.4s - while a fresh clone and CI,
+# which have no such directory, still compile everything.
+#
+# Two things make that safe:
+#
+#   1. The directory name carries a hash of composer.lock and phel-config.php.
+#      A phel upgrade can deprecate a form that compiled clean yesterday, and an
+#      optimisation-level change alters what is generated, so either one starts
+#      a new cache rather than trusting the old one.
+#   2. A run that FINDS something deletes the cache before exiting. Without
+#      that, the offending file is now cached with its warning already emitted,
+#      so the very next run is green with nothing fixed - a gate you can pass by
+#      running it twice, which is worse than no gate. Failure costs the next run
+#      a cold compile; that is the correct price.
 #
 # This is also the gate's ONLY suite run. `composer ci` used to run
 # `composer test` first and then this: the same 3800 tests twice, 12s warm
@@ -33,23 +51,47 @@ set -uo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root" || exit 2
-cache="$root/.phel/cache"   # phel-config default `cache-dir`; `vendor/bin/phel config` prints it
+
+# Toolchain fingerprint: composer.lock pins the compiler, phel-config.php sets
+# the optimisation level. Either changing means yesterday's compile output is
+# not evidence about today's.
+key="$(cat composer.lock phel-config.php 2>/dev/null | md5 2>/dev/null || cat composer.lock phel-config.php 2>/dev/null | md5sum | cut -d' ' -f1)"
+key="${key:0:12}"
+cache="$root/.phel/cache-deprecations-$key"
+
+# Never rm outside the project's own .phel/, whatever the key expands to.
 case "$cache" in
-  "$root"/.phel/*) ;;
-  *) echo "check-deprecations: refusing to clear '$cache' (not under $root/.phel)"; exit 2 ;;
+  "$root"/.phel/cache-deprecations-?*) ;;
+  *) echo "check-deprecations: refusing to use '$cache' (not under $root/.phel)"; exit 2 ;;
 esac
-echo "check-deprecations: clearing compile cache $cache"
-rm -rf "$cache"
+
+# Drop caches from a previous toolchain so they do not accumulate.
+for old in "$root"/.phel/cache-deprecations-*; do
+  [ -d "$old" ] || continue
+  [ "$old" = "$cache" ] && continue
+  rm -rf "$old"
+done
+
+if [ -d "$cache" ]; then
+  echo "check-deprecations: reusing compile cache $cache (only changed files recompile)"
+else
+  echo "check-deprecations: cold compile into $cache"
+fi
 
 log=$(mktemp "${TMPDIR:-/tmp}/phel-doom-deprecations.XXXXXX")
 trap 'rm -f "$log"' EXIT
 
-PHEL_WARN_DEPRECATIONS=1 PHEL_DOOM_SILENT=1 vendor/bin/phel test >"$log" 2>&1
+# Delete the cache so the next run recompiles from scratch. Called on every
+# non-success path: a cached warning is emitted once and never again.
+drop_cache() { rm -rf "$cache"; }
+
+PHEL_CACHE_DIR="$cache" PHEL_WARN_DEPRECATIONS=1 PHEL_DOOM_SILENT=1 vendor/bin/phel test >"$log" 2>&1
 status=$?
 
 if ! grep -qE '^Total: [0-9]+' "$log"; then
   echo "check-deprecations: the suite produced no result line - it did not run."
   tail -20 "$log"
+  drop_cache
   exit 2
 fi
 
@@ -63,6 +105,7 @@ if [ "$status" -ne 0 ]; then
   echo
   echo "Full output: $log (copied to /tmp/phel-doom-ci-failure.log)"
   cp "$log" /tmp/phel-doom-ci-failure.log 2>/dev/null
+  drop_cache
   exit "$status"
 fi
 
@@ -72,6 +115,10 @@ if grep -inE 'deprecat' "$log"; then
   echo "  - a superseded interop form: rewrite it (php/new -> (new \\Foo ...))."
   echo "  - 'loses precision': a float reached an int-inferred parameter and was"
   echo "    TRUNCATED, not rejected. Treat it as a wrong-answer bug, not a warning."
+  echo
+  echo "The compile cache has been dropped, so the next run recompiles and will"
+  echo "report this again until it is fixed - running it twice cannot clear it."
+  drop_cache
   exit 1
 fi
 

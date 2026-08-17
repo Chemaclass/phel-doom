@@ -50,7 +50,9 @@ CI runs `composer ci` on PHP 8.5. PHP 8.4 works locally but isn't CI-tested.
 
 `check-deprecations` is the gate's ONLY suite run. `composer ci` used to run `composer test` and then this - the same ~3900 tests twice, 12s warm plus 28s cold - so the warm pass was pure duplication and the gate spent 40 of its 50 seconds running one test suite two ways. `composer test` on its own is untouched and stays the fast way to run tests while working; a plain test failure inside the gate now prints the failing test names, and copies the full log to `/tmp/phel-doom-ci-failure.log`.
 
-The cold recompile it needs is a workaround for [phel-lang#3222](https://github.com/phel-lang/phel-lang/issues/3222) (the compile cache key ignores the warn-deprecations flag, so a warm cache reports nothing). If that lands, the cache clear can go and this step drops back to about 12s.
+The compile it needs is a workaround for [phel-lang#3222](https://github.com/phel-lang/phel-lang/issues/3222): the cache key ignores the warn-deprecations flag, so a warm shared cache reports nothing and `phel test` has no `--no-cache`. It used to get its compile by deleting the shared cache, which meant a full cold recompile on every run - 25.4s of a 41s gate, paid even by a one-line doc change. It now keeps its own cache directory instead (`PHEL_CACHE_DIR`), so only what changed recompiles: **11.2s warm**, and the gate is about 27s.
+
+Two things keep that honest. The directory name carries a hash of `composer.lock` and `phel-config.php`, so a compiler upgrade or an optimisation-level change starts a fresh cache rather than trusting yesterday's output. And a run that finds something deletes the cache before exiting - otherwise the offending file is cached with its warning already emitted and the next run is green with nothing fixed, a gate you could pass by running it twice. Failure costs the next run a cold compile, which is the right price. CI is unaffected: a fresh runner has no such directory and compiles everything.
 
 `check-deprecations` re-runs the suite under `PHEL_WARN_DEPRECATIONS=1` and fails
 on any notice. It exists for the quiet half: phel 0.50 infers a parameter's type

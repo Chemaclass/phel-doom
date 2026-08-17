@@ -21,7 +21,7 @@ Same idea, same syntax:
 | `->` first-arg, `->>` last-arg threading | also `some->`, `cond->` |
 | `for` (builds a seq) vs `doseq` (side effects) | don't use `for` for `println` loops |
 | Keywords, maps `{:k v}`, vectors `[...]`, sets | first-class |
-| `defrecord` / `defprotocol` / `defmulti` | exist; game mostly uses plain maps + keywords ([RULES](../.agents/RULES.md)) |
+| `defrecord` / `defprotocol` / `defmulti` | exist; game mostly uses plain maps + keywords (see the Phel language rules written by `vendor/bin/phel agent-install claude --with-docs`) |
 | Only `false` / `nil` are falsy | same as Clojure |
 
 What bites:
@@ -70,4 +70,4 @@ Traps:
 
 ## Then
 
-Reading path in [docs/README.md](README.md): architecture → game-loop → raycaster + rendering → contributing. Syntax cheatsheet: [`.agents/quick-syntax.md`](../.agents/quick-syntax.md). Look up any fn: `composer repl` then `(doc <fn>)`.
+Reading path in [docs/README.md](README.md): architecture → game-loop → raycaster + rendering → contributing. Syntax cheatsheet: run `vendor/bin/phel agent-install claude --with-docs` and read the quick-syntax page it writes (generated, so not in the repo). Look up any fn: `composer repl` then `(doc <fn>)`.

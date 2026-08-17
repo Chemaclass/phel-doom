@@ -116,8 +116,12 @@ if [ "$status" -ne 0 ]; then
   echo
   grep -E "^(FAIL|Error|Failed asserting|Total|Passed|Failed)" "$log" | head -40
   echo
-  echo "Full output: $log (copied to /tmp/phel-doom-ci-failure.log)"
-  cp "$log" /tmp/phel-doom-ci-failure.log 2>/dev/null
+  # Overridable so the fixtures do not clobber a real failure log with a
+  # stubbed one - which they did, and which makes the copy useless exactly
+  # when someone reaches for it.
+  failure_log="${PHEL_DOOM_CI_LOG:-/tmp/phel-doom-ci-failure.log}"
+  echo "Full output: $log (copied to $failure_log)"
+  cp "$log" "$failure_log" 2>/dev/null
   drop_cache
   exit "$status"
 fi

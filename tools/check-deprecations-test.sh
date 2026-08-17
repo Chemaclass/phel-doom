@@ -26,6 +26,7 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/phel-doom-dep.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/tools" "$WORK/vendor/bin" "$WORK/.phel"
 cd "$WORK" || exit 2
+export PHEL_DOOM_CI_LOG="$WORK/ci-failure.log"
 cp "$GUARD" tools/check-deprecations.sh
 printf '{"packages":[{"name":"phel-lang/phel-lang","version":"0.50.0"}]}' > composer.lock
 printf '<?php return 1;' > phel-config.php

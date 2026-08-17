@@ -2,6 +2,7 @@
   (:require phel.test :refer [deftest is])
   (:require phel.string :as str)
   (:require phel-doom.core.settings :refer [default-settings page-fields])
+  (:require phel-doom.core.version :refer [version])
   (:require phel-doom.io.render.hud :refer [help-menu-string pause-menu-string settings-menu-string])
   (:require phel-doom.io.render.screens :refer [render-start-menu render-settings!
                                                 render-death-screen render-victory-screen
@@ -25,12 +26,23 @@
 ;; docs/contributing.md for the tools/frame-shot.sh recipe.
 ;; ---------------------------------------------------------------------
 
+(defn- norm
+  "Blank the version out of a screen before hashing it.
+
+   The start menu prints the running version, so without this every
+   release breaks these goldens - which is exactly what happened: cutting
+   0.18.0 failed the pre-commit gate on `test-start-menu-pinned`, with
+   nothing wrong but the number. A golden that fails on release is a
+   golden that gets re-baked without being read."
+  [s]
+  (php/str_replace version "X.Y.Z" s))
+
 (defn- captured
   "The render-* screens print rather than return, so capture stdout."
   [f]
   (php/ob_start)
   (f)
-  (php/ob_get_clean))
+  (norm (php/ob_get_clean)))
 
 (def- scores {:best-kills 42 :best-level 7 :fastest-victory-s 930})
 
@@ -39,10 +51,10 @@
                :grade "B"})
 
 (deftest test-start-menu-pinned
-  (is (= "d60feee3d6d538d3a202afdf4377d378"
+  (is (= "463c53f1e37cbeeb02d2d64ee744c173"
          (php/md5 (captured (fn [] (render-start-menu 120 30 nil))))))
   ;; The terminal caveat line is optional, and has to actually land.
-  (is (= "bebc06bc3f4287fa50f25b248f04cbad"
+  (is (= "6301ae9236210df7e6934f3c1e49ced3"
          (php/md5 (captured (fn [] (render-start-menu 120 30 "iTerm2")))))))
 
 (deftest test-settings-screen-pinned
@@ -59,11 +71,11 @@
 
 (deftest test-in-game-overlays-pinned
   (is (= "e88719a9bb22852c15763442ef4e4984"
-         (php/md5 (pause-menu-string 120 30 0 nil))))
+         (php/md5 (norm (pause-menu-string 120 30 0 nil)))))
   (is (= "b3965f59dfb80e84d368841fc7df2d92"
-         (php/md5 (settings-menu-string 120 30 default-settings 0 "esc back"))))
+         (php/md5 (norm (settings-menu-string 120 30 default-settings 0 "esc back")))))
   (is (= "493fd8f7a62450b77902fbef570be6b3"
-         (php/md5 (help-menu-string 120 30 {})))))
+         (php/md5 (norm (help-menu-string 120 30 {}))))))
 
 ;; --- properties that outlive any re-bake ------------------------------
 

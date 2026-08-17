@@ -215,6 +215,28 @@ Caveats:
 - `opcache.validate_timestamps=0` disables source-file stat checks. Set to `1` during dev.
 - The repo-root Dockerfile does NOT configure OPcache or JIT; enable both per host if you are benchmarking in it.
 
+## What a Phel operation costs
+
+Measured with 200k-iteration loops (the empty loop is ~150 ns and is subtracted):
+
+| | cost |
+|---|---|
+| `php/aget` on a nested php array | ~4 ns |
+| `(get row x)` on a persistent vector | ~600 ns |
+| reading a module-level `def` | ~320 ns |
+| `php/===` against a literal | free (folded) |
+| `=` (generic equality) | ~850 ns |
+| `(cell grid x y)` | 1.6 us |
+| `(wall? grid x y)` | 2.1 us (was 5.9) |
+
+Two of those are surprising enough to be worth stating outright.
+
+**A module-level `def` is not a constant.** Every read compiles to `\Phel::getDefinition("phel_doom.core.map", "cell-wall")` - a registry lookup by two strings. Four of them in `wall?` cost more than reading the grid did. Hoisting a constant into a `let` outside a loop is worth doing; inside a per-call predicate there is nowhere to hoist to, which is why `wall?` compares against literals with `test-wall-literals-match-the-constants` pinning them.
+
+**`=` and `<` dispatch on type.** On values known to be ints, `php/===` and `php/<` are free by comparison. This is the same lesson as the `:pgrid` mirror, one level down: the persistent, generic version of every operation is 100x to 1000x the native one, and the hot paths have to opt out of all of it.
+
+None of this makes a dramatic difference to a frame on its own - the predicate swap above is worth ~1.5% of a threaded frame, because a quiet frame only makes about ten such calls. It matters where the calls are counted in thousands, which is where every large win in this file has come from.
+
 ## Direct PHP ops in the hot loop
 
 Unspecialised Phel dispatch through the runtime. Hot loops use `php/+`, `php/<`, `php/aget` for direct PHP operations: `$a + $b`, `$a < $b`, `$arr[$k]`. No dispatch, no method call.

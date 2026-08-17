@@ -107,29 +107,51 @@
   "Read map cell at integer (x, y). Out-of-bounds reads return cell-wall
    so the raycaster never escapes off the map."
   [grid x y]
-  (if (or (< x 0) (< y 0))
+  ;; php ops, not Phel's generic `<` / `or` / `nil?`. Cell values are ints
+  ;; and this is the primitive every grid predicate is built on: the
+  ;; generic versions dispatch on type per call, which measured 2.7us
+  ;; against 1.4us here. The two `get`s are the persistent-vector reads
+  ;; that remain (~600ns each); callers on a hot path read the php mirror
+  ;; instead - see `:pgrid` in state.phel.
+  (if (or (php/< x 0) (php/< y 0))
     cell-wall
     (let [row (get grid y)]
-      (if (nil? row)
+      (if (php/=== nil row)
         cell-wall
-        (or (get row x) cell-wall)))))
+        (let [c (get row x)]
+          (if (php/=== nil c) cell-wall c))))))
 
 (defn ^:pure wall?
   "True when (x, y) blocks player movement. Solid walls, unrevealed
    secrets, AND switch cells (either state) qualify; doors are
    passable triggers."
   [grid x y]
+  ;; Two deliberate uglinesses, both measured, on what is the hottest
+  ;; predicate in the codebase - called per enemy and per projectile
+  ;; every frame:
+  ;;
+  ;;   `php/===` rather than `=`, because these are int comparisons and
+  ;;   Phel's generic equality dispatches on type per call;
+  ;;
+  ;;   the cell codes as LITERALS rather than the named constants,
+  ;;   because every module-level `def` read compiles to a
+  ;;   `\Phel::getDefinition(ns, name)` registry lookup - ~320ns each,
+  ;;   and four of them cost more than reading the grid.
+  ;;
+  ;; 5.9us -> 1.7us together. `test-wall-literals-match-the-constants`
+  ;; in map-test fails if any of these codes is ever renumbered, so the
+  ;; literals cannot drift away from the names they stand for.
   (let [c (cell grid x y)]
-    (or (= cell-wall c)
-        (= cell-secret c)
-        (= cell-switch-off c)
-        (= cell-switch-on c))))
+    (or (php/=== 1 c)      ; cell-wall
+        (php/=== 6 c)      ; cell-secret
+        (php/=== 7 c)      ; cell-switch-off
+        (php/=== 8 c))))   ; cell-switch-on
 
 (defn secret?
   "True when (x, y) holds an unrevealed secret wall. Used by
    `reveal-secret-ahead` to spot the player's bump target."
   [grid x y]
-  (= cell-secret (cell grid x y)))
+  (php/=== cell-secret (cell grid x y)))
 
 (defn switch?
   "True when (x, y) holds a switch cell (either ON or OFF). Used by
@@ -166,12 +188,12 @@
   [grid held-keys x y]
   (let [c (cell grid x y)]
     (cond
-      (= cell-wall c)            false
-      (= cell-secret c)          false
-      (= cell-switch-off c)      false
-      (= cell-switch-on c)       false
-      (contains? lock-colours c) (contains? (or held-keys #{}) (get lock-colours c))
-      :else                      true)))
+      (php/=== cell-wall c)       false
+      (php/=== cell-secret c)     false
+      (php/=== cell-switch-off c) false
+      (php/=== cell-switch-on c)  false
+      (contains? lock-colours c)  (contains? (or held-keys #{}) (get lock-colours c))
+      :else                       true)))
 
 (defn find-door-cell
   "Scan `grid` for the first door cell (any variant: unlocked or any

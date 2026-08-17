@@ -20,8 +20,13 @@
 #      `=== "1"`, so both flags read as off, the run measures the DEFAULT frame,
 #      and the number looks plausible. That produced a phantom "disabling two
 #      features is 68% slower than disabling one" before this script existed.
-#      Flags are passed as an explicit prefix per config, and the self-check
-#      below proves both arrive.
+#
+#      `set -- $vars` does not fix it - zsh does not split there either
+#      (`zsh -c 'vars="A=1 B=1"; set -- $vars; echo $#'` prints 1 where bash
+#      prints 2). `eval` does, because it re-parses the string, and the config
+#      strings here are literals in this file. run_with() is the one place that
+#      applies them, and the self-check runs through it - a check that tests a
+#      path the script does not use is decoration.
 #
 # Usage:
 #   tools/bench-flags.sh [passes] [filter]
@@ -43,10 +48,21 @@ configs=(
   "texture filter on (mips)|PHEL_DOOM_TEXMIP=1"
 )
 
-# Self-check: prove a two-variable prefix really arrives as two variables. If
-# this shell mangles it, every number below would be measuring the default
-# frame while claiming otherwise.
-probe="$(PHEL_DOOM_FLAT_WALLS=1 PHEL_DOOM_FLAT_FLOOR=1 \
+# Apply a config's assignments in a subshell, then run a command under them.
+run_with() { # run_with "A=1 B=1" cmd...
+  vars="$1"
+  shift
+  (
+    [ -n "$vars" ] && eval "export $vars"
+    "$@"
+  )
+}
+
+# Self-check: prove a two-variable config really arrives as two variables,
+# through the same run_with() the measurements use. If this shell mangles it,
+# every number below would be measuring the default frame while claiming
+# otherwise.
+probe="$(run_with 'PHEL_DOOM_FLAT_WALLS=1 PHEL_DOOM_FLAT_FLOOR=1' \
   php -r 'echo getenv("PHEL_DOOM_FLAT_WALLS"), ",", getenv("PHEL_DOOM_FLAT_FLOOR");')"
 if [ "$probe" != "1,1" ]; then
   echo "bench-flags: this shell mangles the env prefix (got '$probe', want '1,1')."
@@ -74,15 +90,7 @@ for p in $(seq 1 "$passes"); do
   for cfg in "${configs[@]}"; do
     name="${cfg%%|*}"
     vars="${cfg#*|}"
-    if [ -z "$vars" ]; then
-      us="$(bench_us)"
-    else
-      # One prefix, expanded by the shell as assignments - never through `env`
-      # with an interpolated string. `set -- $vars` splits on IFS in bash AND
-      # zsh, unlike a bare `$vars` expansion.
-      # shellcheck disable=SC2086
-      us="$(set -- $vars; export "$@"; bench_us)"
-    fi
+    us="$(run_with "$vars" bench_us)"
     [ -z "$us" ] && { echo "bench-flags: filter '$filter' matched no benchmark."; exit 2; }
     results="${results}${p}|${name}|${us}"$'\n'
   done

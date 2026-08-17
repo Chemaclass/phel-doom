@@ -508,7 +508,12 @@
         ;; does not simply vanish. A terminal clamps every write past its
         ;; last line onto that line, so the tail of the WEAPONS table and
         ;; the closing border all landed on row 24, on top of each other.
-        tight?        (php/< vh 26)
+        ;;
+        ;; The threshold is the height at which the spacious layout fits
+        ;; whole (28 rows plus a gutter): anywhere below it, the spacers
+        ;; are what costs you the WEAPONS table, and the compact layout
+        ;; shows the whole panel in 22 rows.
+        tight?        (php/< vh 30)
         sep           (if tight? [] [blnk])
         header-rows   (vec (concat
                             [(str "┌" bar "┐")]
@@ -574,17 +579,19 @@
         ;; least, so it goes first. Leave a 1-row gutter top and bottom.
         ;; On a tall terminal every block fits and the menu is unchanged.
         budget        (php/max 1 (php/- vh 2))
-        fit           (fn [acc rs]
-                        (if (php/<= (php/+ (count acc) (count rs) (count closer-rows)) budget)
-                          (vec (concat acc rs))
-                          acc))]
-    (vec (concat (-> header-rows
-                     (fit run-rows)
-                     (fit player-rows)
-                     (fit weapons-rows)
-                     (fit compass-rows)
-                     (fit controls-rows))
-                 closer-rows))))
+        blocks        [run-rows player-rows weapons-rows compass-rows controls-rows]
+        ;; Stop at the first block that does not fit rather than skipping
+        ;; it and squeezing a smaller one in behind: COMPASS HINT showing
+        ;; up where the WEAPONS table did not fit reads as the table
+        ;; having gone missing, not as the menu adapting.
+        body          (loop [i 0 acc header-rows]
+                        (if (php/>= i (count blocks))
+                          acc
+                          (let [rs (get blocks i)]
+                            (if (php/<= (php/+ (count acc) (count rs) (count closer-rows)) budget)
+                              (recur (php/+ i 1) (vec (concat acc rs)))
+                              acc))))]
+    (vec (concat body closer-rows))))
 
 (defn- centred-box-string
   "Position `rows` (each already `w` interior columns plus its borders)

@@ -91,11 +91,31 @@
           (str "cursor " cur " visible at vh " vh)))))
 
 (deftest test-the-pause-and-help-menus-fit-short-terminals
-  (foreach [vh [40 24 16 12]]
+  ;; 26..29 is the band where the spacious layout no longer fits but the
+  ;; compact one does; 8 and 3 are past what either menu can shed, so
+  ;; they exercise the truncation backstop in centred-box-string.
+  (foreach [vh [40 30 29 28 26 24 16 12 8 3]]
     (is (php/<= (rows-painted (pause-menu-string 80 vh 0 nil)) vh)
         (str "pause at vh " vh))
     (is (php/<= (rows-painted (help-menu-string 80 vh {})) vh)
         (str "help at vh " vh))))
+
+(deftest test-a-shorter-terminal-never-shows-more-of-the-help-menu
+  ;; Shedding must be monotonic in vh. It was not: at 26..29 rows the
+  ;; menu dropped the WEAPONS table that a 25-row terminal still showed,
+  ;; and at 28..29 it spent the space on COMPASS HINT instead - which
+  ;; reads as the weapons table having gone missing.
+  (let [sections ["RUN" "PLAYER" "WEAPONS" "COMPASS" "CONTROLS"]
+        shown    (fn [vh] (let [s (help-menu-string 80 vh {})]
+                            (count (filter (fn [k] (str/contains? s k)) sections))))]
+    (foreach [vh (range 12 61)]
+      (is (php/>= (shown (php/+ vh 1)) (shown vh))
+          (str "vh " vh " shows " (shown vh) ", vh " (php/+ vh 1) " shows " (shown (php/+ vh 1)))))
+    ;; And the status block a player opens the menu FOR is never the
+    ;; thing that gets dropped while a lower-priority one survives.
+    (foreach [vh [24 26 28 30 40]]
+      (is (str/contains? (help-menu-string 80 vh {}) "WEAPONS")
+          (str "weapons table at vh " vh)))))
 
 (deftest test-a-screen-washes-every-row
   ;; Each screen paints its own background; a gap shows the 3D frame or

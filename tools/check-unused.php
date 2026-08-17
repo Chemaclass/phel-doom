@@ -23,7 +23,11 @@ declare(strict_types=1);
 //     phase predicates are referenced only from tests/, which is a legitimate
 //     shape (a fixture, or a parser whose only caller today is its own test).
 //     Run with --report to list them for review.
-//   - private `defn-`. Phel's own linter already flags an unused private.
+// Private `defn-` / `def-` are INCLUDED. The header used to say the linter
+// already flagged those; it does not - `composer lint` passes clean on both an
+// unused `def-` and an unused `defn-`, checked directly. The gap was not
+// theoretical: #516 orphaned a private `bfs-steps` and neither this guard nor
+// the linter said a word.
 //
 // Known limit: references are resolved by NAME, not by namespace. Two files
 // defining `reset!` share one verdict, so one of them can be dead while the
@@ -82,7 +86,7 @@ function topLevelDefs(string $dir): array
     foreach (phelFiles($dir) as $path) {
         $code = stripNonCode((string) file_get_contents($path));
         foreach (explode("\n", $code) as $i => $line) {
-            if (!preg_match('/^\((def|defn|defmacro|defstruct)\s+(?:\^\S+\s+)*([^\s()\[\]{}]+)/', $line, $m)) {
+            if (!preg_match('/^\((def-|defn-|def|defn|defmacro|defstruct)\s+(?:\^\S+\s+)*([^\s()\[\]{}]+)/', $line, $m)) {
                 continue;
             }
             [, $kind, $name] = $m;

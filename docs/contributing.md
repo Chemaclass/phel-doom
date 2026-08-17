@@ -29,6 +29,7 @@ composer format-all   # include the generated data files (rarely needed)
 composer lint         # static analysis
 composer check-layers # io/ -> glue/ -> core/ direction holds
 composer check-cycles # no require cycles (+ the guard's own fixtures)
+composer check-unused # no src/ definition that nothing references (+ fixtures)
 composer check-deprecations # suite again with every deprecation channel on
 composer build        # compile to out/main.php
 composer ci           # full pre-push gate
@@ -39,6 +40,8 @@ composer doctor       # env diagnostics
 CI runs `composer ci` on PHP 8.5. PHP 8.4 works locally but isn't CI-tested.
 
 `format` / `format-check` go through `tools/format-sources.sh`, which formats every hand-written `.phel` file and skips the four generated ones (`enemy_sprites_data`, `weapon_sprites_data`, `wall_texture_data`, `sound_data`). `phel format` is quadratic in the number of elements inside a single collection literal ([phel-lang#3218](https://github.com/phel-lang/phel-lang/issues/3218)), and each baked asset file is one enormous literal: `enemy_sprites_data.phel` alone took 94.7s of a 124s check, which was 70% of the whole pre-commit gate. Skipping them takes the check to 4.8s and the gate from 173s to 50s. Those files are written by `tools/bake-*.phel` and never by hand, so formatting them was pure cost. The script fails loudly if one is renamed, so the skip list cannot silently stop matching. `composer format-all` still runs the formatter over everything.
+
+`check-unused` fails on a top-level `def` / `defn` / `defmacro` / `defstruct` under `src/` that nothing anywhere - `src/`, `tests/` or `tools/` - references as code. It exists for one specific rot: `secret-tex-offset` was a real constant with a real docstring explaining the secret-wall cue, then the texture mips landed and the call site started deriving the shift from the live mip size. The feature kept working, the constant went dead, and its docstring kept describing behaviour that now lived somewhere else - which reads as current, so it is worse than no comment. Nothing else catches that: the linter is per-form, tests only exercise what is reachable, and the build compiles dead code as happily as live code. Definitions referenced only from `tests/` (fixtures, parsers whose only caller today is their own test) are legitimate and listed by `php tools/check-unused.php --report` rather than failed. It shares its Phel source scanner with `check-cycles` (`tools/lib/phel-source.php`), so a name that survives only in a docstring, a `;` comment or a `#_` form is still dead.
 
 `check-deprecations` is the gate's ONLY suite run. `composer ci` used to run `composer test` and then this - the same ~3900 tests twice, 12s warm plus 28s cold - so the warm pass was pure duplication and the gate spent 40 of its 50 seconds running one test suite two ways. `composer test` on its own is untouched and stays the fast way to run tests while working; a plain test failure inside the gate now prints the failing test names, and copies the full log to `/tmp/phel-doom-ci-failure.log`.
 

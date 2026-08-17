@@ -1,0 +1,98 @@
+;; Costs of the Phel primitives the hot paths are built on.
+;;
+;; Three passes over this codebase in a row ended at the same place: the
+;; persistent, generic version of an operation costs 100x to 1000x the native
+;; one, and every large win came from opting out of it. The numbers behind that
+;; lived only in docs/performance.md, where they cannot notice when they stop
+;; being true.
+;;
+;; What these rows are for:
+;;
+;;   a compiler upgrade that makes one of them WORSE shows up as a regression
+;;   against the stored baseline, instead of quietly costing a few percent of
+;;   every frame;
+;;
+;;   a compiler upgrade that makes one BETTER is permission to delete the ugly
+;;   workaround it justified. `wall?` compares against integer literals and the
+;;   per-frame code chains its `assoc`s; both are traded readability for speed,
+;;   and both should be reverted the moment these rows say they are free.
+;;
+;; Every row is deliberately tiny, so what it measures is the operation and not
+;; the loop around it. Read them against each other, never as absolutes - the
+;; machine, and `revs`, set the scale.
+(ns phel-doom-tests.bench.phel-costs-bench
+  (:require phel.bench :refer [defbench])
+  (:require phel-doom.core.map :refer [cell wall? default-grid cell-wall]))
+
+;; A map the size of an enemy record, which is what the per-frame writes
+;; actually run against. NOT a string docstring: `def-` stores one AS the
+;; value (unlike `def`), which turns every row below into an assoc on a
+;; string and fails at run time, not compile time.
+(def- m12 {:a 1 :b 2 :c 3 :d 4 :e 5 :f 6 :g 7 :h 8 :i 9 :j 10 :x 1.0 :y 2.0})
+
+(def- kw :hunting)
+
+;; Read through a def, never as a literal: `(= 1 1)` and `(php/=== 1 1)` are
+;; both folded at compile time and measure the empty loop, which is how the
+;; first version of the equality rows below reported them as identical.
+(def- one 1)
+
+;; --- map writes ----------------------------------------------------------
+;; A multi-key assoc costs ~2.7x the same writes chained, and worsens per
+;; pair. See enemy-ai/observe, whose docstring used to claim the opposite.
+
+(defbench assoc-1-key
+  {:revs 20000}
+  (assoc m12 :x 3.0))
+
+(defbench assoc-2-keys-variadic
+  {:revs 20000}
+  (assoc m12 :x 3.0 :y 4.0))
+
+(defbench assoc-2-keys-chained
+  {:revs 20000}
+  (assoc (assoc m12 :x 3.0) :y 4.0))
+
+;; --- reads ---------------------------------------------------------------
+;; A module-level `def` is not a constant: every read is a
+;; \Phel::getDefinition(ns, name) registry lookup. A literal is folded, so a
+;; literal-vs-def row here would measure the empty loop against the real
+;; thing rather than the two reads.
+
+(defbench read-module-def
+  {:revs 20000}
+  (php/=== cell-wall one))
+
+;; No paired "read a local instead" row: `one` is itself a module def, so
+;; both sides would read the registry and the pair would report no
+;; difference - which is exactly what the first version of it did. The
+;; isolated cost of a def read (~320ns against a folded literal) is in
+;; docs/performance.md; this row exists to notice if it MOVES.
+
+;; --- equality ------------------------------------------------------------
+;; Generic `=` dispatches on type; `php/===` on ints does not. Keywords are
+;; interned, so `=` on them already hits a fast path - the gap is int-shaped.
+
+(defbench eq-generic-int
+  {:revs 20000}
+  (= one one))
+
+(defbench eq-strict-int
+  {:revs 20000}
+  (php/=== one one))
+
+(defbench case-4-way-keyword
+  {:revs 20000}
+  (case kw :dormant 1 :wander 2 :aware 3 :hunting 4 5))
+
+;; --- grid access ---------------------------------------------------------
+;; The persistent grid vs the `:pgrid` php mirror the hot paths read instead.
+;; `cell` is two persistent-vector lookups; `wall?` adds four comparisons.
+
+(defbench grid-cell
+  {:revs 20000}
+  (cell default-grid 4 3))
+
+(defbench grid-wall?
+  {:revs 20000}
+  (wall? default-grid 4 3))

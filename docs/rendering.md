@@ -156,7 +156,7 @@ Consecutive same-color cells coalesce: one escape + N spaces (terminal repeats B
 
 ## Render-scale: uniform crisp walls
 
-`render-scale` is a uniform 1 at every terminal size: one ray per output column, exact 1:1 cast, crisp walls. The pixel-doubled path does not go through it - `frame->string` passes `2` to `cast-frame` directly, casting half the rays and painting each across a 2x2 block (see [Pixel-doubling](#pixel-doubling)).
+`render-scale` is a uniform 1 at every terminal size: one ray per output column, exact 1:1 cast, crisp walls. The pixel-doubled path does not go through it - `frame->string` passes `2` to `cast-frame` directly, casting half the rays and painting each across a 2x2 block (see [Pixel-doubled mode](#pixel-doubled-mode-auto-big-screens-on-slow-machines)).
 
 ## Textured walls
 
@@ -363,7 +363,7 @@ Cells stay hidden behind `minimap-unseen` until the player visually crosses them
 
 ## Weapon viewmodel sprites (Freedoom)
 
-The first-person gun (`paint-weapon-hud`) uses baked Freedoom (BSD) viewmodels. `tools/bake-weapon-sprites.phel` decodes the Doom picture lumps from a Freedoom WAD, maps the palette to xterm-256, downsamples to a small bottom-strip height, and writes `src/io/render/weapon-sprites-data` (a per-weapon `{:w :h :px}` grid, -1 = transparent). License-clean, no binary asset in the repo; classic-DOOM weapons only (no super shotgun).
+The first-person gun (`paint-weapon-hud`) uses baked Freedoom (BSD) viewmodels. `tools/bake-weapon-sprites.phel` decodes the Doom picture lumps from a Freedoom WAD, maps the palette to xterm-256, downsamples to a small bottom-strip height, and writes `src/io/render/weapon_sprites_data.phel` (a per-weapon `{:w :h :px}` grid, -1 = transparent). License-clean, no binary asset in the repo; classic-DOOM weapons only (no super shotgun).
 
 `paint-weapon-sprite` pairs two pixel rows per half-block cell (`▀`/`▄`), bottom-anchored, reusing the reload drop + recoil kick. `weapon-row-string` keeps it cheap: fully transparent cells collapse to one cursor-forward (live floor shows through, no halo), half-lit cells back their transparent half with the row's floor colour, and a colour SGR is emitted only when it changes from the previous cell. Worst-case overlay (chaingun/BFG) is about 1.3 ms and 6 KB per frame; the env probe is memoised so there is no per-frame `getenv`.
 

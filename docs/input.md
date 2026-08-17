@@ -9,7 +9,7 @@ Raw stdin to world state.
 
 `init-input!` sequence: `stty -icanon -echo min 0 time 0` (raw mode, immediate return) + `stream_set_blocking(STDIN, false)` + ANSI setup:
 - `\e[?1049h`: alternate screen buffer
-- `\e[?25l`: hide cursor (also re-asserted every frame by `render!` so the caret can't resurface mid-session behind streaming mouse reports or after a resize - see [Aim point](#aim-point-hidden-pointer-fixed-centre-crosshair))
+- `\e[?25l`: hide cursor (also re-asserted every frame by `render!` so the caret can't resurface mid-session behind streaming mouse reports or after a resize - see [Fixed-centre crosshair](#fixed-centre-crosshair-and-delta-mouselook-issue-324))
 - `\e[?7l`: disable autowrap
 - `\e[2J\e[H`: clear + home
 - `\e[>3u`: kitty keyboard protocol opt-in (press/repeat/release events)

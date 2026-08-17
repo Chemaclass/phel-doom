@@ -43,7 +43,7 @@ Weapon-fire events play baked Freedoom (BSD) DMX reports (see "Weapon fire sound
 
 ## Weapon fire sounds (Freedoom)
 
-Each weapon-fire event prefers a baked Freedoom sound over the system map, so guns read with their real DOOM-style report. `tools/bake-weapon-sounds.phel` extracts the DMX lumps from a Freedoom WAD into `src/io/sound-data` as base64 8-bit-PCM WAVs (license-clean, no binary asset in the repo). `io/sound` decodes each to a temp WAV once (`ensure-sfx-file!`, memoised in `sfx-files`) and afplays it. Lumps: DSPISTOL (pistol + chaingun), DSSHOTGN (shotgun), DSSAWFUL (chainsaw), DSBFG (BFG), DSFIRSHT (incinerator), DSRLAUNC (rocket). All gated by `PHEL_DOOM_SILENT`, so tests never write or play.
+Each weapon-fire event prefers a baked Freedoom sound over the system map, so guns read with their real DOOM-style report. `tools/bake-weapon-sounds.phel` extracts the DMX lumps from a Freedoom WAD into `src/io/sound_data.phel` as base64 8-bit-PCM WAVs (license-clean, no binary asset in the repo). `io/sound` decodes each to a temp WAV once (`ensure-sfx-file!`, memoised in `sfx-files`) and afplays it. Lumps: DSPISTOL (pistol + chaingun), DSSHOTGN (shotgun), DSSAWFUL (chainsaw), DSBFG (BFG), DSFIRSHT (incinerator), DSRLAUNC (rocket). All gated by `PHEL_DOOM_SILENT`, so tests never write or play.
 
 ## Per-weapon fire report
 

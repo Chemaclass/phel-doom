@@ -31,6 +31,14 @@ Render still dominates, but the step is not the rounding error it was assumed to
 
 There are deliberately **two** step rows. Every bench rev starts from the same world, so a row that passes `:fire true` re-resolves a shot on every rev - the weapon cooldown never advances - and reports the firing cost as though it were a normal frame; a row that never fires misses the most expensive thing the step does. Quoting either one alone is how a 2x difference gets written down as a fact.
 
+### Inside the step
+
+The quiet frame's 0.75 ms breaks down roughly as: ~0.11 ms per alive enemy (4 enemies in the bench scene), and ~0.66 ms that runs regardless. The largest single item in that fixed part was `mark-visible-cells` at 105 us - the fog-of-war scan, which walks a Bresenham line of sight to every cell within `visit-radius` and marks what it can see.
+
+It now skips entirely when the player has not changed cell, which is most frames: **1.11 ms to 0.97 ms per frame walking, 1.05 ms to 0.92 ms standing still**, measured by threading a world through 600 frames rather than re-running one frame (see the caveat below). The cache's two inputs are the player's cell and the grid; `:visited-at` covers the first, and `state/rebuild-pgrid` - which every in-game grid mutation already goes through - clears the stamp for the second, so a secret opened next to a standing player still lights up. `tests/core/engine-test.phel` pins that hook, and fails if the clear is removed.
+
+**A caveat about the step bench rows.** Each rev starts from the same pristine world, so nothing that caches across frames ever warms there: this change is invisible to `step-120`, which reads the same before and after. That is the bench being honest about what it measures - the cost of one frame from cold - not the change failing. Per-frame caches have to be measured by threading the world, which is what the game does.
+
 ## Where the frame time goes
 
 `tools/bench-flags.sh` answers this by benchmarking the frame with each render feature switched off, interleaving the configs so a warming laptop cannot fake a result:

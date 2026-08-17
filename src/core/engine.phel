@@ -363,6 +363,43 @@
               false
               (recur x' y' err'))))))))
 
+(defn- mark-cells-now
+  "The scan itself - see `mark-visible-cells`, which decides whether it
+   needs doing at all."
+  [world pgrid width height visited full-map? ^int px ^int py ^int mark-key]
+  (if full-map?
+    (do (loop [y 0]
+          (when (php/< y height)
+            (loop [x 0]
+              (when (php/< x width)
+                (php/aset visited (php/+ (php/* y width) x) 1)
+                (recur (php/+ x 1))))
+            (recur (php/+ y 1))))
+        (assoc world :visited visited :visited-at mark-key))
+    (let [r       visit-radius
+          r-sq    (php/* r r)
+          y-start (php/max 0 (php/- py r))
+          y-end   (php/min (php/- height 1) (php/+ py r))
+          x-start (php/max 0 (php/- px r))
+          x-end   (php/min (php/- width 1)  (php/+ px r))]
+        ;; Always mark the player's own cell - LOS test would test it
+        ;; against itself and the player's cell could be wall-free
+        ;; without ever flipping visited otherwise on the first frame.
+      (php/aset visited (php/+ (php/* py width) px) 1)
+      (loop [y y-start]
+        (when (php/<= y y-end)
+          (loop [x x-start]
+            (when (php/<= x x-end)
+              (let [dx (php/- x px)
+                    dy (php/- y py)
+                    d2 (php/+ (php/* dx dx) (php/* dy dy))]
+                (when (php/<= d2 r-sq)
+                  (when (los-clear? pgrid px py x y)
+                    (php/aset visited (php/+ (php/* y width) x) 1))))
+              (recur (php/+ x 1))))
+          (recur (php/+ y 1))))
+      (assoc world :visited visited :visited-at mark-key))))
+
 (defn mark-visible-cells
   "Stamp every cell within `visit-radius` of the player AND with a
    clear line of sight as visited on the world's `:visited` PHP array.
@@ -385,39 +422,22 @@
         visited   (or (:visited world) (php/array))
         full-map? (boolean (:full-map? world))
         px        (php/intval (:x (:player world)))
-        py        (php/intval (:y (:player world)))]
-    (if full-map?
-      (do (loop [y 0]
-            (when (php/< y height)
-              (loop [x 0]
-                (when (php/< x width)
-                  (php/aset visited (php/+ (php/* y width) x) 1)
-                  (recur (php/+ x 1))))
-              (recur (php/+ y 1))))
-          (assoc world :visited visited))
-      (let [r       visit-radius
-            r-sq    (php/* r r)
-            y-start (php/max 0 (php/- py r))
-            y-end   (php/min (php/- height 1) (php/+ py r))
-            x-start (php/max 0 (php/- px r))
-            x-end   (php/min (php/- width 1)  (php/+ px r))]
-        ;; Always mark the player's own cell - LOS test would test it
-        ;; against itself and the player's cell could be wall-free
-        ;; without ever flipping visited otherwise on the first frame.
-        (php/aset visited (php/+ (php/* py width) px) 1)
-        (loop [y y-start]
-          (when (php/<= y y-end)
-            (loop [x x-start]
-              (when (php/<= x x-end)
-                (let [dx (php/- x px)
-                      dy (php/- y py)
-                      d2 (php/+ (php/* dx dx) (php/* dy dy))]
-                  (when (php/<= d2 r-sq)
-                    (when (los-clear? pgrid px py x y)
-                      (php/aset visited (php/+ (php/* y width) x) 1))))
-                (recur (php/+ x 1))))
-            (recur (php/+ y 1))))
-        (assoc world :visited visited)))))
+        py        (php/intval (:y (:player world)))
+        ;; What the scan depends on: the player's CELL, and whether the
+        ;; whole map is revealed. Standing still - or walking within one
+        ;; cell, which is most frames - re-derives an identical answer,
+        ;; and this is the biggest unconditional cost in the step phase
+        ;; (105us of a 657us quiet frame). `:visited-at` remembers the
+        ;; cell the current marks were computed from.
+        ;;
+        ;; The grid is the other input, and it does change: revealing a
+        ;; secret or throwing a switch can open a sightline from where
+        ;; the player is already standing. Both go through
+        ;; `state/rebuild-pgrid`, which clears this stamp.
+        mark-key  (if full-map? -1 (php/+ (php/* py width) px))]
+    (if (php/=== mark-key (:visited-at world))
+      world
+      (mark-cells-now world pgrid width height visited full-map? px py mark-key))))
 
 (defn ^:pure visited?
   "True when (x, y) has been marked seen on the world's `:visited`

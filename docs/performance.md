@@ -228,10 +228,15 @@ Measured with 200k-iteration loops (the empty loop is ~150 ns and is subtracted)
 | `=` (generic equality) | ~850 ns |
 | `(cell grid x y)` | 1.6 us |
 | `(wall? grid x y)` | 2.1 us (was 5.9) |
+| `(assoc m :a 1)` on a 12-key map | ~0.9 us |
+| `(assoc m :a 1 :b 2)` on a 12-key map | ~5.0 us |
+| `(assoc (assoc m :a 1) :b 2)` | ~1.9 us |
 
 Two of those are surprising enough to be worth stating outright.
 
 **A module-level `def` is not a constant.** Every read compiles to `\Phel::getDefinition("phel_doom.core.map", "cell-wall")` - a registry lookup by two strings. Four of them in `wall?` cost more than reading the grid did. Hoisting a constant into a `let` outside a loop is worth doing; inside a per-call predicate there is nowhere to hoist to, which is why `wall?` compares against literals with `test-wall-literals-match-the-constants` pinning them.
+
+**A multi-key `assoc` is slower than chaining single-key ones.** Not slightly - on a 12-key map, two keys cost 5.0 us against 1.9 us chained, three keys 8.2 us against 2.9 us. The variadic path does something per extra pair that a plain write does not. Worth stating because the intuition runs the other way: `observe` in `enemy_ai.phel` carried a docstring explicitly claiming the single multi-key write was the cheap version. The per-frame call sites are chained now, worth ~1.5% of a frame with 16 enemies, measured interleaved.
 
 **`=` and `<` dispatch on type.** On values known to be ints, `php/===` and `php/<` are free by comparison. This is the same lesson as the `:pgrid` mirror, one level down: the persistent, generic version of every operation is 100x to 1000x the native one, and the hot paths have to opt out of all of it.
 

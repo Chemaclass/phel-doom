@@ -1,0 +1,65 @@
+(ns phel-doom-tests.io.render-memory-test
+  (:require phel.test :refer [deftest is])
+  (:require phel-doom-tests.io.render-fixtures :refer [world stats])
+  (:require phel-doom.io.render.main :refer [frame->string]))
+
+;; ---------------------------------------------------------------------
+;; The renderer is built out of lazy memos - the half-block cell cache,
+;; the truecolor cell cache, the BG cell cache, the per-width offset
+;; tables, the gradient bundles. Each one trades memory for speed, and
+;; each one is a per-frame leak if its key can keep taking new values:
+;; nothing fails, the game just grows until a long session dies on the
+;; memory limit, which no test and no short play would ever show.
+;;
+;; This walks the player so distances - and therefore fog levels and
+;; colour pairs - keep changing, then asserts the heap stops growing
+;; once the caches are warm. Measured flat at 1130 frames in both
+;; colour modes; the budget below is ~25x the noise seen there.
+;; ---------------------------------------------------------------------
+
+(def- warm-frames 30)
+(def- measured-frames 400)
+
+;; PHP's allocator moves in chunks, so a byte-exact assertion would be
+;; flaky. 256 KB over 400 frames still catches a leak of ~640 bytes a
+;; frame, which is far smaller than any real one (a single cached cell
+;; string is ~20 bytes, an unbounded key set adds thousands per frame).
+(def- growth-budget-bytes 262144)
+
+(defn- moving-world
+  "The fixture player, walked and turned, so no two frames sample the
+   same distances. A stationary probe would warm one set of keys and
+   prove nothing."
+  [i]
+  (let [p (:player world)]
+    (assoc world :player
+           (assoc p
+                  :x   (php/+ 11.5 (php/* 0.37 (php/sin (php/* i 0.11))))
+                  :y   (php/+ 13.5 (php/* 0.37 (php/cos (php/* i 0.07))))
+                  :dir (php/+ 5.847 (php/* i 0.013))))))
+
+;; If you change this test, check it can still FAIL: retain each frame in a
+;; TOP-LEVEL php-array and confirm it trips (8.2 MB over 400 frames when tried).
+;; Retaining into a `let`-bound php-array proves nothing - writes to one in
+;; binding-value position land on an IIFE copy and vanish, so the probe leaks
+;; nothing and the test passes for the wrong reason. That happened here first.
+
+(deftest test-the-render-caches-stop-growing
+  (dofor [i :range [0 warm-frames]]
+    (frame->string (moving-world i) stats 60 20))
+  (let [before (php/memory_get_usage)
+        _      (dofor [i :range [warm-frames (php/+ warm-frames measured-frames)]]
+                 (frame->string (moving-world i) stats 60 20))
+        after  (php/memory_get_usage)
+        grew   (php/- after before)]
+    (is (php/< grew growth-budget-bytes)
+        (str "heap grew " grew " bytes over " measured-frames
+             " moving frames (budget " growth-budget-bytes
+             "). A render memo is keyed by something unbounded."))))
+
+(deftest test-the-probe-actually-varies-the-frame
+  ;; Without this, a bug that froze the scene would make the test above
+  ;; pass by rendering the same cached frame 400 times.
+  (let [a (frame->string (moving-world 5) stats 60 20)
+        b (frame->string (moving-world 50) stats 60 20)]
+    (is (not (= (php/md5 a) (php/md5 b))) "the walk changes the frame")))

@@ -16,6 +16,21 @@ It alternates the two refs back to back, so each pair shares a thermal state, an
 
 Worked example: the twenty PRs between v0.17.0 and the release after it added eight per-frame overlays (message line, attack telegraph, hint strip, HUD glyph indirection, secret-wall texture offset, attack poses). Five interleaved pairs put the whole batch at **+0.5 to +0.7% frame time, two of three rows with mixed signs** - i.e. free, within the harness's resolution.
 
+## The loop's three phases
+
+`input -> step -> cast -> render`. Cast and render have had rows in the bench for a long time; the step - `commands/play` `tick-world`, the pure state transition - had none, so every performance claim in this project was about the two ends of a three-part loop. At 120x30 on the reference machine:
+
+| phase | cost | share |
+|---|---|---|
+| cast (`cast-frame`) | 0.083 ms | 2% |
+| step, quiet frame (`tick-world`) | 0.75 ms | 15% |
+| step, firing frame | 1.49 ms | 26% |
+| render (`frame->string`) | 4.28 ms | 83% / 74% |
+
+Render still dominates, but the step is not the rounding error it was assumed to be: a frame in which the player is shooting spends a quarter of its budget before the renderer starts. Roughly half of that is the shot resolution itself - with no enemies in the world at all, firing still costs ~0.9 ms, which is the wall hitscan.
+
+There are deliberately **two** step rows. Every bench rev starts from the same world, so a row that passes `:fire true` re-resolves a shot on every rev - the weapon cooldown never advances - and reports the firing cost as though it were a normal frame; a row that never fires misses the most expensive thing the step does. Quoting either one alone is how a 2x difference gets written down as a fact.
+
 ## Where the frame time goes
 
 `tools/bench-flags.sh` answers this by benchmarking the frame with each render feature switched off, interleaving the configs so a warming laptop cannot fake a result:

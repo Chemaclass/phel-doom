@@ -54,6 +54,8 @@ Each is a `composer` script wired into `composer ci`, and each ships its own fix
 | `check-docs.php` | a doc links to a missing file or heading, or names a path or composer script that is not there |
 | `check-deprecations.sh` | the suite raises a compiler deprecation or a float-truncation notice |
 
+Every guard ships fixtures (`*-test.sh`) run by its own composer script. `check-deprecations` keeps a compile cache between runs, so its fixtures are about when that cache must be thrown away - a stale one there is a fail-OPEN, a green gate with a live deprecation in the tree.
+
 `check-cycles` and `check-unused` share `lib/phel-source.php`, which blanks `;` comments, `#_` discards and string bodies while keeping offsets and newlines, so neither can be fooled by a name that appears only in prose - and a fix to that parser reaches both.
 
 `php tools/check-unused.php --report` also lists the definitions referenced only from `tests/`. Those are not failures (a fixture, or a parser whose only caller today is its own test), but the list is worth a look when hunting dead weight.

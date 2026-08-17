@@ -69,6 +69,7 @@ esac
 for old in "$root"/.phel/cache-deprecations-*; do
   [ -d "$old" ] || continue
   [ "$old" = "$cache" ] && continue
+  echo "check-deprecations: pruning stale cache $old"
   rm -rf "$old"
 done
 
@@ -83,7 +84,19 @@ trap 'rm -f "$log"' EXIT
 
 # Delete the cache so the next run recompiles from scratch. Called on every
 # non-success path: a cached warning is emitted once and never again.
-drop_cache() { rm -rf "$cache"; }
+drop_cache() {
+  [ -d "$cache" ] || return 0
+  echo "check-deprecations: dropping compile cache $cache"
+  rm -rf "$cache"
+}
+
+# Ctrl-C is a non-success path too, and the worst one: the run stops after some
+# namespaces have compiled - emitting their warnings into a log nobody reads -
+# and those are now cached. Without this, an interrupted run could leave the
+# next one green with a live deprecation. Bash happens to reach the no-result
+# branch below today, which drops the cache anyway; this makes it a decision
+# rather than a signal-timing accident.
+trap 'drop_cache; exit 130' INT TERM
 
 PHEL_CACHE_DIR="$cache" PHEL_WARN_DEPRECATIONS=1 PHEL_DOOM_SILENT=1 vendor/bin/phel test >"$log" 2>&1
 status=$?

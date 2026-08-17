@@ -41,7 +41,11 @@ case "${FAKE_MODE:-ok}" in
   dep)   echo "Deprecated: Using \"php/new\" is deprecated"; echo "Total: 10"; exit 0 ;;
   fail)  echo "FAIL some-test"; echo "Total: 10"; exit 1 ;;
   empty) echo "nothing ran"; exit 0 ;;
-  hang)  sleep 30; exit 0 ;;
+  # Alive until someone signals it. Records its PID so the fixture can reap it:
+  # signalling only the script leaves this running, and the command substitution
+  # around it then blocks until it exits - two of these turned a 12-second gate
+  # step into 72 seconds.
+  hang)  echo $$ > hang.pid; sleep 20; exit 0 ;;
 esac
 STUB
 chmod +x vendor/bin/phel
@@ -102,7 +106,9 @@ if [ "$(caches)" = "1" ]; then
     perl -e 'select(undef,undef,undef,0.2)'
   done
   kill -INT "$hangpid" $(pgrep -P "$hangpid" 2>/dev/null) 2>/dev/null
+  [ -f hang.pid ] && kill -TERM "$(cat hang.pid)" 2>/dev/null
   wait "$hangpid" 2>/dev/null
+  rm -f hang.pid
   if [ "$(caches)" = "0" ]; then
     pass=$((pass + 1))
   else
@@ -129,8 +135,9 @@ if [ "$(caches)" = "1" ]; then
     perl -e 'select(undef,undef,undef,0.2)'
   done
   kill -TERM "$termpid" 2>/dev/null
+  [ -f hang.pid ] && kill -TERM "$(cat hang.pid)" 2>/dev/null
   wait "$termpid" 2>/dev/null
-  pkill -P "$termpid" 2>/dev/null
+  rm -f hang.pid
   if [ "$(caches)" = "0" ]; then
     pass=$((pass + 1))
   else

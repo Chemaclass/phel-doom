@@ -9,6 +9,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-08-17
+
 ### Added
 
 - Monsters and the world have voices, on every OS (#460). Only the seven weapon reports were baked from Freedoom; everything else fell through to macOS-only system sounds, so on Linux and BSD a hit, a kill, a pickup, a reload and a door were all the terminal BELL, and no monster made any sound at all. 29 more Freedoom sounds: a per-type wake growl when a monster notices you (the first warning of an ambush, which used to be taking the hit), the fireball leaving a caster, per-type death cries, monster and player pain, and distinct cues for loot, a weapon, a powerup, a door, a refused door and a switch. Volume now reaches `paplay` and `play` as well as `afplay`, so the SFX and Music sliders work off macOS. Costs 610 KB of phar; cold start unchanged.
@@ -513,7 +515,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `cast + render` under 5 ms per frame at 120×30.
 - Flat PHP arrays on hot paths; `:tag` types for OPcache JIT tracing.
 
-[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/Chemaclass/phel-doom/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/Chemaclass/phel-doom/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/Chemaclass/phel-doom/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/Chemaclass/phel-doom/compare/v0.14.0...v0.15.0

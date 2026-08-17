@@ -178,5 +178,76 @@ cat > tests/a-test.phel <<'EOF'
 EOF
 check "a def referenced only from tools/" clean
 
+# `defstruct point` also defines `point?`, so a struct reached only through
+# its predicate is live - the exact false positive these fixtures exist to
+# stop, since the fix for it is to delete a struct that is in use.
+cat > src/a.phel <<'EOF'
+(ns app.a)
+(defstruct point [x y])
+(defn entry [v] (point? v))
+EOF
+cat > tests/a-test.phel <<'EOF'
+(ns app.a-test (:require app.a :refer [entry]))
+(entry 1)
+EOF
+check "a struct used only through its generated predicate" clean
+
+# ^:pure and ^:private sit between the form and the name. Reading the meta as
+# the name and giving up hid 30 real definitions, and the count printed at the
+# end was quietly 30 short.
+cat > src/a.phel <<'EOF'
+(ns app.a)
+(defn ^:pure orphan [x] x)
+(defn entry [] 1)
+EOF
+cat > tests/a-test.phel <<'EOF'
+(ns app.a-test (:require app.a :refer [entry]))
+(entry)
+EOF
+check "a metadata-tagged def nothing references" dead
+
+cat > src/a.phel <<'EOF'
+(ns app.a)
+(defn ^:pure twice [x] (php/* 2 x))
+(defn entry [x] (twice x))
+EOF
+cat > tests/a-test.phel <<'EOF'
+(ns app.a-test (:require app.a :refer [entry]))
+(entry 2)
+EOF
+check "a metadata-tagged def that is used" clean
+
+# A facade re-export defines the name a second time. Keeping only one site let
+# the two mask each other: each defining line read as a use of the other, so
+# neither could ever be flagged.
+cat > src/a.phel <<'EOF'
+(ns app.a)
+(defn deep-thing [] 1)
+EOF
+cat > src/facade.phel <<'EOF'
+(ns app.facade (:require app.a :as a))
+(def deep-thing a/deep-thing)
+EOF
+cat > tests/a-test.phel <<'EOF'
+(ns app.a-test (:require app.a))
+EOF
+check "a name defined twice, used by neither" dead
+rm -f src/facade.phel
+
+cat > src/a.phel <<'EOF'
+(ns app.a)
+(defn deep-thing [] 1)
+EOF
+cat > src/facade.phel <<'EOF'
+(ns app.facade (:require app.a :as a))
+(def deep-thing a/deep-thing)
+EOF
+cat > tests/a-test.phel <<'EOF'
+(ns app.a-test (:require app.facade :refer [deep-thing]))
+(deep-thing)
+EOF
+check "a name defined twice and actually used" clean
+rm -f src/facade.phel
+
 echo "check-unused fixtures: $pass passed, $fail failed."
 [ "$fail" -eq 0 ] || exit 1

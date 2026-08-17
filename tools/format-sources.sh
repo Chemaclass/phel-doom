@@ -51,4 +51,74 @@ for g in "${generated[@]}"; do
   [ -f "$g" ] || { echo "format-sources: generated file '$g' not found; update the list in $0"; exit 2; }
 done
 
-exec vendor/bin/phel format "$@" "${files[@]}"
+# --------------------------------------------------------------------------
+# Check mode only: skip files that already passed, unchanged, under this same
+# formatter.
+#
+# `format-check` is a yes/no question asked on every commit about ~90 files,
+# nearly all of which the commit did not touch: 5.3s of a 28s gate spent
+# re-deciding that a file nobody edited is still formatted. The formatter has
+# no incremental mode, so the memory lives here - a list of "this exact content
+# passed" hashes, keyed by composer.lock so a formatter upgrade (which can
+# change what "formatted" means) starts an empty one.
+#
+# It only ever SKIPS work that would have passed: an entry is written after a
+# clean run, and any edit changes the file's hash and puts it back in the list.
+# Write mode never consults it - re-running the formatter over a formatted file
+# is idempotent and cheap, and a cache that could suppress a WRITE would be a
+# way to leave a file unformatted.
+# --------------------------------------------------------------------------
+
+is_check=0
+for a in "$@"; do
+  [ "$a" = "--dry-run" ] && is_check=1
+done
+
+hash_of() { md5 -q "$1" 2>/dev/null || md5sum "$1" | cut -d' ' -f1; }
+
+if [ "$is_check" -eq 0 ]; then
+  exec vendor/bin/phel format "$@" "${files[@]}"
+fi
+
+key="$(md5 -q composer.lock 2>/dev/null || md5sum composer.lock | cut -d' ' -f1)"
+cache=".phel/format-ok-${key:0:12}.txt"
+mkdir -p .phel
+
+# One cache per formatter version; the others are dead weight.
+for old in .phel/format-ok-*.txt; do
+  [ -f "$old" ] || continue
+  [ "$old" = "$cache" ] && continue
+  echo "format-sources: pruning stale cache $old"
+  rm -f "$old"
+done
+
+stale=()
+for f in "${files[@]}"; do
+  h="$(hash_of "$f")"
+  if [ -f "$cache" ] && grep -qxF "$h  $f" "$cache"; then
+    continue
+  fi
+  stale+=("$f")
+done
+
+skipped=$(( ${#files[@]} - ${#stale[@]} ))
+
+if [ "${#stale[@]}" -eq 0 ]; then
+  echo "format-sources: ${#files[@]} files, all unchanged since they last passed."
+  exit 0
+fi
+
+echo "format-sources: checking ${#stale[@]} of ${#files[@]} files ($skipped unchanged since they last passed)."
+vendor/bin/phel format "$@" "${stale[@]}"
+status=$?
+[ "$status" -ne 0 ] && exit "$status"
+
+# Record only what just passed, and only after it passed.
+tmp="$(mktemp "${TMPDIR:-/tmp}/phel-doom-fmt.XXXXXX")"
+[ -f "$cache" ] && cat "$cache" > "$tmp"
+for f in "${stale[@]}"; do
+  echo "$(hash_of "$f")  $f" >> "$tmp"
+done
+sort -u "$tmp" > "$cache"
+rm -f "$tmp"
+exit 0

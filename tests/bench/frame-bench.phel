@@ -20,6 +20,7 @@
 ;; deftest here - the suite discovers zero tests and moves on.
 (ns phel-doom-tests.bench.frame-bench
   (:require phel.bench :refer [defbench])
+  (:require phel-doom.commands.play :refer [tick-world])
   (:require phel-doom.core.rng :as rng)
   (:require phel-doom.core.level :refer [build-world])
   (:require phel-doom.core.enemy :refer [new-enemy])
@@ -87,6 +88,31 @@
 (defbench cast-240
   {:revs 100}
   (cast-frame (:world @scene) 240 1))
+
+;; --- one pure state transition (commands/play tick-world) ---
+;; The loop is input -> step -> cast -> render, and the middle phase had
+;; no row here at all: every perf claim in this project was about the two
+;; ends of it. It is not small - a quiet frame is ~1.1 ms against a
+;; ~4.2 ms render at 120x30.
+;;
+;; TWO rows, because one would mislead either way. Every call starts from
+;; the same world, so a bench that passes `:fire true` re-resolves a shot
+;; on every single rev - the cooldown never advances - and reports 2.4 ms
+;; as if that were a normal frame. A bench that never fires misses the
+;; most expensive thing the step does. Walking is in both: physics,
+;; pickups, enemy AI and the timers all run either way.
+
+(defbench step-120
+  {:revs 200}
+  (tick-world (:world @scene) "w" 0.016
+              {:fire false :toggle-map false :toggle-pause false
+               :toggle-sound false :about-face false}))
+
+(defbench step-fire-120
+  {:revs 200}
+  (tick-world (:world @scene) "w" 0.016
+              {:fire true :toggle-map false :toggle-pause false
+               :toggle-sound false :about-face false}))
 
 ;; --- full frame: cast + render to the ANSI string, no terminal write ---
 ;; A frame is milliseconds, so a handful of revs already amortises the

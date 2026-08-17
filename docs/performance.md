@@ -16,6 +16,29 @@ It alternates the two refs back to back, so each pair shares a thermal state, an
 
 Worked example: the twenty PRs between v0.17.0 and the release after it added eight per-frame overlays (message line, attack telegraph, hint strip, HUD glyph indirection, secret-wall texture offset, attack poses). Five interleaved pairs put the whole batch at **+0.5 to +0.7% frame time, two of three rows with mixed signs** - i.e. free, within the harness's resolution.
 
+## Where the frame time goes
+
+`tools/bench-flags.sh` answers this by benchmarking the frame with each render feature switched off, interleaving the configs so a warming laptop cannot fake a result:
+
+```sh
+tools/bench-flags.sh            # 2 passes, the frame-120 row
+tools/bench-flags.sh 3 frame-240
+```
+
+At 120x30 on the reference machine, with the cast at ~0.1 ms against a ~5.8 ms frame (so render is ~98% of it):
+
+| Feature removed | frame | share |
+|---|---|---|
+| baseline | 5.75 ms | - |
+| wall texture (`PHEL_DOOM_FLAT_WALLS=1`) | 3.39 ms | 41% |
+| floor cast (`PHEL_DOOM_FLAT_FLOOR=1`) | 4.79 ms | 17% |
+| sub-pixel sampling (`PHEL_DOOM_NO_SUBPIXEL=1`) | 4.87 ms | 15% |
+| texture filter ON (`PHEL_DOOM_TEXMIP=1`) | 5.80 ms | -1% |
+
+The shares overlap and do not sum: the floor flag is subsumed by the wall flag (there is no point casting a floor texture with textures off), and sub-pixel sampling is what makes texture sampling expensive in the first place. What the table is for is ranking: **the wall texture is the single biggest line in the frame**, so a 10% win there beats deleting the floor cast outright, and any optimisation aimed elsewhere is competing for a fifth of the budget at best.
+
+One trap the script exists to prevent. Setting the flags by hand with `env $vars cmd` is silently wrong in zsh, which does not word-split an unquoted variable: `env "A=1 B=1" cmd` sets ONE variable named `A` to the string `"1 B=1"`. Every flag here is checked with `=== "1"`, so both read as off, the run measures the DEFAULT frame, and the number looks entirely plausible. That produced a phantom "disabling two features is 68% slower than disabling one" - which reads like a branch-selection bug in the renderer and is nothing of the sort. The script passes each config as a real assignment prefix and refuses to run if a self-check shows the shell mangling it.
+
 ## The bench harness itself
 
 `tests/bench/frame-bench.phel` is the tracked harness: `defbench` rows (phel

@@ -38,6 +38,10 @@ composer test   # data files load + game logic still green
 
 Then smoke-test visually with the `/play` skill.
 
+## Benchmarking
+
+`bench-ab.sh` compares two git refs; `bench-flags.sh` compares render features within one ref, by measuring the frame with each switched off. Both interleave their configs, because a single reading drifts more than most changes are worth. See [performance.md](../docs/performance.md) for the current split - the wall texture is ~40% of the frame.
+
 ## Build guards
 
 Each is a `composer` script wired into `composer ci`, and each ships its own fixtures (`*-test.sh`) because a guard that is quietly wrong is worse than no guard.

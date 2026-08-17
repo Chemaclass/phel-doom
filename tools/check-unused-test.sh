@@ -249,5 +249,32 @@ EOF
 check "a name defined twice and actually used" clean
 rm -f src/facade.phel
 
+# Privates count. `composer lint` passes clean on an unused `def-` AND an
+# unused `defn-` (checked directly), so if this guard skips them nothing at
+# all covers them - which is how #516 left a dead `bfs-steps` behind.
+cat > src/a.phel <<'EOF'
+(ns app.a)
+(def- orphan-const 1)
+(defn- orphan-helper [x] x)
+(defn entry [] 1)
+EOF
+cat > tests/a-test.phel <<'EOF'
+(ns app.a-test (:require app.a :refer [entry]))
+(entry)
+EOF
+check "an unused private def and defn" dead
+
+cat > src/a.phel <<'EOF'
+(ns app.a)
+(def- step 2)
+(defn- twice [x] (php/* step x))
+(defn entry [x] (twice x))
+EOF
+cat > tests/a-test.phel <<'EOF'
+(ns app.a-test (:require app.a :refer [entry]))
+(entry 3)
+EOF
+check "privates used only inside their own file" clean
+
 echo "check-unused fixtures: $pass passed, $fail failed."
 [ "$fail" -eq 0 ] || exit 1

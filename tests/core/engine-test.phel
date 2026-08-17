@@ -1,7 +1,7 @@
 (ns phel-doom-tests.core.engine-test
   (:require phel.test :refer [deftest is])
   (:require phel-doom.core.map    :refer [default-grid])
-  (:require phel-doom.core.state  :refer [new-world new-player])
+  (:require phel-doom.core.state  :refer [new-world new-player rebuild-pgrid])
   (:require phel-doom.core.engine :refer [cast-ray cast-frame mark-visible-cells max-depth visited? visit-radius fov-proj-dist fov-clamp-width fov-max-deg proj-dist]))
 
 (def pgrid (to-php-array (map to-php-array default-grid)))
@@ -300,3 +300,38 @@
   ;; without adding visible map; smaller would clip the player's
   ;; visible footprint.
   (is (= 8 visit-radius)))
+
+;; ---------------------------------------------------------------------
+;; mark-visible-cells skips its scan while the player stays in the same
+;; cell, which is most frames - it was 105us of a 657us step. The cache
+;; is only sound while its two inputs are covered: the player's cell,
+;; and the grid. The second one is the subtle half, because revealing a
+;; secret or throwing a switch can open a sightline from the cell the
+;; player is already standing in, and that must not be swallowed.
+;; ---------------------------------------------------------------------
+
+(deftest test-visibility-scan-stamps-the-cell-it-marked-from
+  (let [w  (mark-visible-cells (new-world default-grid (new-player 3.5 3.5 0.0)))]
+    (is (some? (:visited-at w)) "the scan records which cell it ran for")))
+
+(deftest test-visibility-scan-skips-an-unmoved-player
+  ;; Same cell, moved within it: the marks cannot change, so the world
+  ;; comes back untouched rather than re-derived.
+  (let [w0 (mark-visible-cells (new-world default-grid (new-player 3.2 3.2 0.0)))
+        w1 (update w0 :player (fn [p] (assoc p :x 3.8 :y 3.8)))
+        w2 (mark-visible-cells w1)]
+    (is (= (:visited-at w1) (:visited-at w2)) "stamp unchanged inside one cell")))
+
+(deftest test-visibility-scan-re-runs-after-the-player-changes-cell
+  (let [w0 (mark-visible-cells (new-world default-grid (new-player 3.5 3.5 0.0)))
+        w1 (mark-visible-cells (update w0 :player (fn [p] (assoc p :x 4.5))))]
+    (is (not (= (:visited-at w0) (:visited-at w1))) "a new cell re-marks")))
+
+(deftest test-rebuild-pgrid-clears-the-visibility-stamp
+  ;; The invalidation hook. Every in-game grid mutation (secret reveal,
+  ;; switch throw) goes through rebuild-pgrid; if it stopped clearing
+  ;; this, a wall opened next to a standing player would stay unlit on
+  ;; the minimap until they walked to another cell.
+  (let [w0 (mark-visible-cells (new-world default-grid (new-player 3.5 3.5 0.0)))]
+    (is (some? (:visited-at w0)) "stamped first")
+    (is (nil? (:visited-at (rebuild-pgrid w0))) "rebuild-pgrid drops the stamp")))

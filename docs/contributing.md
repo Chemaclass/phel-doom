@@ -23,6 +23,7 @@ composer bench        # frame/cast benchmarks (tests/bench, phel bench)
 composer bench-store  # write .phel/bench-baseline.json (run on main)
 composer bench-ref    # compare against it, fail past +10% (same machine)
 tools/bench-ab.sh <ref> [pairs] [filter]  # interleaved A/B vs another ref (the reliable one)
+tools/bench-flags.sh [passes] [filter]    # where frame time goes, by render feature
 composer format       # auto-format hand-written .phel files
 composer format-check # dry-run, fails CI on drift
 composer format-all   # include the generated data files (rarely needed)

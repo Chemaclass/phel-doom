@@ -45,6 +45,7 @@ configs=(
   "flat walls (no wall texture)|PHEL_DOOM_FLAT_WALLS=1"
   "flat floor (no floor cast)|PHEL_DOOM_FLAT_FLOOR=1"
   "no sub-pixel (one colour per cell)|PHEL_DOOM_NO_SUBPIXEL=1"
+  "fast walls (1 texel per interior cell)|PHEL_DOOM_FLAT_WALLTEX=1"
   "texture filter on (mips)|PHEL_DOOM_TEXMIP=1"
 )
 

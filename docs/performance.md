@@ -37,6 +37,18 @@ At 120x30 on the reference machine, with the cast at ~0.1 ms against a ~5.8 ms f
 
 The shares overlap and do not sum: the floor flag is subsumed by the wall flag (there is no point casting a floor texture with textures off), and sub-pixel sampling is what makes texture sampling expensive in the first place. What the table is for is ranking: **the wall texture is the single biggest line in the frame**, so a 10% win there beats deleting the floor cast outright, and any optimisation aimed elsewhere is competing for a fifth of the budget at best.
 
+### Inside the 41%
+
+The wall texture is the biggest line, so it is worth knowing what it is made of. Splitting it further, same method:
+
+| | frame | vs baseline |
+|---|---|---|
+| baseline | 5.50 ms | - |
+| fast walls, 1 texel per interior cell (`PHEL_DOOM_FLAT_WALLTEX=1`) | 5.00 ms | -9% |
+| no wall texture at all (`PHEL_DOOM_FLAT_WALLS=1`) | 3.24 ms | -41% |
+
+Halving the interior sampling buys 9 of the 41 points. The other 32 are not arithmetic at all - they are the machinery the textured path needs and the flat path skips: the per-column `tex-u` / `tex-level` / `tex-sz` / `tex-px` buffers, the seam and silhouette branches, and the per-cell branch dispatch that chooses between them. Anyone attacking this line should attack the structure, not the sample math; three separate attempts at the sample math are recorded below, all under the harness's resolution.
+
 One trap the script exists to prevent. Setting the flags by hand with `env $vars cmd` is silently wrong in zsh, which does not word-split an unquoted variable: `env "A=1 B=1" cmd` sets ONE variable named `A` to the string `"1 B=1"`. Every flag here is checked with `=== "1"`, so both read as off, the run measures the DEFAULT frame, and the number looks entirely plausible. That produced a phantom "disabling two features is 68% slower than disabling one" - which reads like a branch-selection bug in the renderer and is nothing of the sort. The script passes each config as a real assignment prefix and refuses to run if a self-check shows the shell mangling it.
 
 ## The bench harness itself
@@ -374,6 +386,17 @@ Grid-line-to-grid-line march via Wolfenstein DDA: precompute step direction and 
 Rule for future march changes: any per-step cost added unconditionally shows up on EVERY frame of EVERY level; gate it or inline it for free.
 
 ## Evaluated and shelved
+
+### Three ways of making the wall sample cheaper (all under the noise floor)
+
+Measured after the flag attribution above identified the wall texture as 41% of the frame. None of them shipped; the numbers are here so the next pass does not re-derive them.
+
+**Inlining the `halfblock` memo.** Each textured cell resolves its two-colour ▀ through a function call that is one array fetch after warmup. Replacing the call with an inline fetch plus a miss fallback (a macro, since the cache is private) removes a PHP function call per cell. Measured directly - 2M iterations of each shape - the call costs 40.3 ns and the inline fetch 21.7 ns, so the saving is 18.6 ns per cell, **0.067 ms per frame at 120x30, or 1.2%**. The bench's own rstdev is ±4%. Not worth reaching into another namespace's private cache for a result the harness cannot see.
+
+**Hoisting the per-column fade table out of the cell loop.** Already tried before this pass and recorded as under 1% / net-negative; the same conclusion, unchanged.
+
+**Emitting only the changed half of each SGR pair.** A frame at 120x30 is 45,680 bytes across 2,213 escape sequences. Of the 1,618 that set both foreground and background, 601 (37%) leave one half exactly as the previous cell had it, and 10 are fully redundant: **5,595 bytes, 12.2% of the frame, is re-stating colour the terminal already has**. It is real, and it is the wrong trade. The renderer's speed comes from cells being *pre-baked strings* keyed by their colour pair (`half-cell-cache`); emitting a partial sequence means the cached string cannot be used verbatim, so every cell would need the previously-emitted fg/bg compared against its own - CPU spent, in a frame that is 98% CPU, to save bytes on a path that is not the bottleneck. Worth revisiting only if the terminal itself becomes the constraint (a slow SSH link, say), where the trade reverses.
+
 
 ### Sprite occlusion z-buffer (issue #4)
 

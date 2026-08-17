@@ -390,3 +390,32 @@
             [1 1 1]]
         g' (seed-secrets g 2)]
     (is (= cell-secret (get-in g' [2 1])) "vertical divider converted")))
+
+;; ---------------------------------------------------------------------
+;; `wall?` compares against the cell codes as LITERALS, because reading a
+;; module-level `def` compiles to a `\Phel::getDefinition(ns, name)`
+;; registry lookup - about 320ns each, and four of them cost more than
+;; reading the grid. It is the hottest predicate in the codebase (per
+;; enemy and per projectile, every frame) and the swap took it from
+;; 5.9us to 2.1us.
+;;
+;; The cost of that trick is a pair of numbers in one function that no
+;; longer say what they mean. This is the test that makes it safe:
+;; renumber any of these codes and it fails, naming the function that
+;; has to change with it.
+;; ---------------------------------------------------------------------
+
+(deftest test-wall-literals-match-the-constants
+  (is (= 1 cell-wall)       "wall? hard-codes 1 for cell-wall")
+  (is (= 6 cell-secret)     "wall? hard-codes 6 for cell-secret")
+  (is (= 7 cell-switch-off) "wall? hard-codes 7 for cell-switch-off")
+  (is (= 8 cell-switch-on)  "wall? hard-codes 8 for cell-switch-on"))
+
+(deftest test-wall-agrees-with-the-named-constants
+  ;; The behavioural half: whatever the numbers are, `wall?` must say
+  ;; true for exactly the blocking codes and false for the rest.
+  (let [row (fn [c] [[cell-wall c cell-wall]])]
+    (foreach [c [cell-wall cell-secret cell-switch-off cell-switch-on]]
+      (is (true? (wall? (row c) 1 0)) (str "blocks code " c)))
+    (foreach [c [cell-floor cell-door]]
+      (is (false? (wall? (row c) 1 0)) (str "passes code " c)))))

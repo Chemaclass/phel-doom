@@ -130,6 +130,47 @@ if (is_file('composer.json')) {
     $composerScripts = array_keys($json['scripts'] ?? []);
 }
 
+// What the repo actually SHIPS. A path that exists in one working tree but is
+// gitignored - `.claude/rules/`, generated from `.agnostic-ai/rules/` - is a
+// broken reference for everyone who clones, and a guard that only stats the
+// filesystem passes locally and fails in CI. That is exactly how this check
+// escaped: `docs/game-loop.md` linked into `.claude/rules/`, which is present
+// here and absent there.
+$tracked = null;
+exec('git ls-files 2>/dev/null', $lsFiles, $lsStatus);
+if ($lsStatus === 0 && $lsFiles !== []) {
+    $tracked = array_fill_keys($lsFiles, true);
+}
+
+$trackedDirs = null;
+if ($tracked !== null) {
+    // `git ls-files` lists files, but docs legitimately name directories
+    // (`src/io/render/`), so index every prefix as well.
+    $trackedDirs = [];
+    foreach (array_keys($tracked) as $f) {
+        $parts = explode('/', $f);
+        array_pop($parts);
+        $acc = '';
+        foreach ($parts as $part) {
+            $acc = $acc === '' ? $part : $acc . '/' . $part;
+            $trackedDirs[$acc] = true;
+        }
+    }
+}
+
+$exists = static function (string $path) use ($tracked, $trackedDirs): bool {
+    // Only a leading `./` is decoration. `ltrim($path, './')` also eats the
+    // dot of `.agnostic-ai/`, which reported every tracked rule file as
+    // missing - the guard's own first false positive.
+    $norm = str_starts_with($path, './') ? substr($path, 2) : $path;
+    $norm = rtrim($norm, '/');
+    if ($tracked === null) {
+        return file_exists($path);
+    }
+
+    return isset($tracked[$norm]) || isset($trackedDirs[$norm]);
+};
+
 $anchorCache = [];
 $problems = [];
 
@@ -155,8 +196,8 @@ foreach ($docs as $doc) {
                 [$file, $fragment] = explode('#', $target, 2);
             }
             $path = $file === '' ? $doc : realpathish($dir . '/' . $file);
-            if ($file !== '' && !is_file($path)) {
-                $problems[] = sprintf('%s:%d  link to a file that does not exist: %s', $doc, $i + 1, $target);
+            if ($file !== '' && !$exists($path)) {
+                $problems[] = sprintf('%s:%d  link to a file the repo does not track: %s', $doc, $i + 1, $target);
                 continue;
             }
             if ($fragment === null || $fragment === '' || !str_ends_with($path, '.md')) {
@@ -188,10 +229,10 @@ foreach ($docs as $doc) {
             if (str_contains($tok, '...')) {
                 continue;
             }
-            if (preg_match('#^(src|tests|tools|build|local|\.github|docs)/[\w./-]+$#', $tok) === 1
-                && !file_exists($tok)
+            if (preg_match('#^(src|tests|tools|build|local|\.github|\.agnostic-ai|\.claude|\.agents|docs)/[\w./-]+$#', $tok) === 1
+                && !$exists($tok)
             ) {
-                $problems[] = sprintf('%s:%d  no such path: %s', $doc, $i + 1, $tok);
+                $problems[] = sprintf('%s:%d  path the repo does not track: %s', $doc, $i + 1, $tok);
             }
         }
     }
@@ -223,6 +264,9 @@ if ($problems !== []) {
     fwrite(STDERR, "\nFix the doc, or the thing it names. docs/ is part of this codebase:\n");
     fwrite(STDERR, "a reference that goes nowhere costs the next reader more than no\n");
     fwrite(STDERR, "reference at all, because they trust it first.\n");
+    fwrite(STDERR, "\nPaths are checked against `git ls-files`, so a file that exists only\n");
+    fwrite(STDERR, "in your working tree still counts as missing - it is missing for\n");
+    fwrite(STDERR, "everyone who clones.\n");
     exit(1);
 }
 

@@ -149,5 +149,41 @@ It checks any backticked repo path (`src/...`, `tools/...`) against the tree.
 EOF
 check "an elided path used as a pattern in prose" clean
 
+# --- git-tracking cases -----------------------------------------------------
+#
+# The checks above run outside a git repo, where the guard falls back to the
+# filesystem. Inside one it asks `git ls-files` instead, because a file that
+# exists only in YOUR working tree is missing for everyone who clones - which
+# is how a link into the gitignored `.claude/rules/` passed locally and failed
+# in CI, in the very commit that added this guard.
+
+git init -q . 2>/dev/null
+git add composer.json src/io/real.phel 2>/dev/null
+
+cat > docs/a.md <<'EOF'
+# A
+The source is `src/io/real.phel`.
+EOF
+git add docs/a.md 2>/dev/null
+check "a tracked path, inside a git repo" clean
+
+printf 'ignored/
+' > .gitignore
+mkdir -p ignored && touch ignored/generated.md
+git add .gitignore 2>/dev/null
+cat > docs/a.md <<'EOF'
+# A
+See [the generated page](../ignored/generated.md).
+EOF
+git add docs/a.md 2>/dev/null
+check "a link to a gitignored file that exists locally" broken
+
+cat > docs/a.md <<'EOF'
+# A
+Renderers live in `src/io/`.
+EOF
+git add docs/a.md 2>/dev/null
+check "a directory, which git ls-files does not list" clean
+
 echo "check-docs fixtures: $pass passed, $fail failed."
 [ "$fail" -eq 0 ] || exit 1

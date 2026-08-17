@@ -25,6 +25,12 @@ declare(strict_types=1);
 //     Run with --report to list them for review.
 //   - private `defn-`. Phel's own linter already flags an unused private.
 //
+// Known limit: references are resolved by NAME, not by namespace. Two files
+// defining `reset!` share one verdict, so one of them can be dead while the
+// other keeps the pair green. Namespace-accurate resolution means following
+// every `:as` / `:refer` in every ns form, which is a different tool; the
+// facade re-export case that actually occurs here is handled explicitly.
+//
 // Usage: php tools/check-unused.php [--report]
 // Exit 1 with the offending file:line when something is dead.
 
@@ -53,12 +59,22 @@ function phelFiles(string $dir): array
 
 /**
  * Top-level `(def ...)` / `(defn ...)` / `(defmacro ...)` / `(defstruct ...)`
- * names, keyed by name => [file, line, kind].
+ * definitions, as name => list of [file, line, kind].
  *
  * Column 0 only: a nested def inside a `let` is not a namespace export, and a
  * `(def ...)` mentioned mid-line is prose or a macro body.
  *
- * @return array<string, array{string, int, string}>
+ * Metadata is skipped rather than the definition: `(defn ^:pure foo ...)` is
+ * still a definition of `foo`, and ~30 of them carry the inliner's `^:pure`
+ * tag. Reading the meta token as the name and giving up hid every one of them
+ * from the guard - and the count it printed.
+ *
+ * A name can appear more than once: `render.phel` re-exports the sub-namespace
+ * API (`(def render! render/render!)`), so the facade and the implementation
+ * both define it. Keeping only the last would let the two mask each other
+ * forever, since each one's defining line reads as a reference to the other.
+ *
+ * @return array<string, list<array{string, int, string}>>
  */
 function topLevelDefs(string $dir): array
 {
@@ -66,14 +82,11 @@ function topLevelDefs(string $dir): array
     foreach (phelFiles($dir) as $path) {
         $code = stripNonCode((string) file_get_contents($path));
         foreach (explode("\n", $code) as $i => $line) {
-            if (!preg_match('/^\((def|defn|defmacro|defstruct)\s+([^\s()\[\]{}]+)/', $line, $m)) {
+            if (!preg_match('/^\((def|defn|defmacro|defstruct)\s+(?:\^\S+\s+)*([^\s()\[\]{}]+)/', $line, $m)) {
                 continue;
             }
             [, $kind, $name] = $m;
-            if (str_starts_with($name, '^')) {
-                continue; // metadata sits before the name; next token is it
-            }
-            $defs[$name] = [$path, $i + 1, $kind];
+            $defs[$name][] = [$path, $i + 1, $kind];
         }
     }
 
@@ -106,9 +119,20 @@ function symbolsIn(string $line): array
 }
 
 /**
- * Count references to each name, ignoring each name's own defining line.
+ * Is this def line a bare re-export of the same name from another namespace,
+ * as `src/io/render.phel` does for the whole sub-namespace API?
+ */
+function isReexport(string $line, string $name): bool
+{
+    $q = preg_quote($name, '/');
+
+    return preg_match('/^\(def\s+(?:\^\S+\s+)*' . $q . '\s+[^\s()\[\]{}]+\/' . $q . '\s*\)\s*$/u', $line) === 1;
+}
+
+/**
+ * Count references to each name, ignoring the lines that define it.
  *
- * @param  array<string, array{string, int, string}>  $defs
+ * @param  array<string, list<array{string, int, string}>>  $defs
  * @return array<string, list<string>>  name => files that reference it
  */
 function referenceFiles(array $defs, array $dirs): array
@@ -119,13 +143,16 @@ function referenceFiles(array $defs, array $dirs): array
     // pass over the same text.
     $counts = [];      // file => [symbol => count]
     $defLineHits = []; // file => [line => [symbol => count]]
+    $defLineText = []; // file => [line => source line]
     foreach ($dirs as $dir) {
         foreach (phelFiles($dir) as $path) {
             $lines = explode("\n", stripNonCode((string) file_get_contents($path)));
             $wanted = [];
-            foreach ($defs as [$dp, $dl]) {
-                if ($dp === $path) {
-                    $wanted[$dl] = true;
+            foreach ($defs as $sites) {
+                foreach ($sites as [$dp, $dl]) {
+                    if ($dp === $path) {
+                        $wanted[$dl] = true;
+                    }
                 }
             }
             $counts[$path] = [];
@@ -136,23 +163,47 @@ function referenceFiles(array $defs, array $dirs): array
                 }
                 if (isset($wanted[$i + 1])) {
                     $defLineHits[$path][$i + 1] = $syms;
+                    $defLineText[$path][$i + 1] = $line;
                 }
             }
         }
     }
 
     $found = [];
-    foreach ($defs as $name => [$defPath, $defLine]) {
+    foreach ($defs as $name => $sites) {
+        // `(defstruct point [x y])` also defines `point?`, so a struct whose
+        // only use is its predicate is live. Fields are read with keywords, so
+        // there are no generated accessor names to track.
+        $aliases = [];
+        foreach ($sites as [, , $kind]) {
+            if ($kind === 'defstruct') {
+                $aliases[] = $name . '?';
+            }
+        }
         $files = [];
         foreach ($counts as $path => $syms) {
             $hits = $syms[$name] ?? 0;
-            if ($path === $defPath) {
-                // Discount the definition itself, and ONLY it. Discounting the
+            foreach ($aliases as $alias) {
+                $hits += $syms[$alias] ?? 0;
+            }
+            foreach ($sites as [$defPath, $defLine]) {
+                if ($defPath !== $path) {
+                    continue;
+                }
+                // Discount each definition itself, and ONLY it. Discounting the
                 // whole line would drop the references that share it
                 // (`(defn entry [x] (if (alive? x) ...))`), and discounting
                 // every def line in the file would drop most references in a
                 // module the size of render/main.phel.
-                $hits -= min(1, $defLineHits[$path][$defLine][$name] ?? 0);
+                //
+                // A facade re-export (`(def render! render/render!)`) is the
+                // exception: it mentions the name twice, and the qualified half
+                // is not a use of the API - it IS the API being forwarded. Left
+                // counted, a re-exported name could never be flagged, because
+                // each of its two definitions read as a use of the other.
+                $onLine = $defLineHits[$path][$defLine][$name] ?? 0;
+                $line = $defLineText[$path][$defLine] ?? '';
+                $hits -= isReexport($line, $name) ? $onLine : min(1, $onLine);
             }
             if ($hits > 0) {
                 $files[] = $path;
@@ -176,32 +227,45 @@ $refs = referenceFiles($defs, SCAN_REFS_IN);
 
 $dead = [];
 $testOnly = [];
-foreach ($defs as $name => [$path, $line, $kind]) {
+foreach ($defs as $name => $sites) {
     $files = $refs[$name];
     if ($files === []) {
-        $dead[$name] = [$path, $line, $kind];
+        $dead[$name] = $sites;
     } elseif (array_filter($files, static fn (string $f): bool => !str_starts_with($f, 'tests/')) === []) {
-        $testOnly[$name] = [$path, $line, $kind];
+        $testOnly[$name] = $sites;
     }
+}
+
+$total = array_sum(array_map(count(...), $defs));
+
+/** @param array<string, list<array{string, int, string}>> $group */
+function listSites(array $group, string $indent): string
+{
+    $out = '';
+    foreach ($group as $name => $sites) {
+        foreach ($sites as [$path, $line, $kind]) {
+            $out .= sprintf("%s%s:%d  (%s) %s\n", $indent, $path, $line, $kind, $name);
+        }
+    }
+
+    return $out;
 }
 
 if ($report) {
-    printf("check-unused: %d definitions in %s/\n", count($defs), SCAN_DEFS_IN);
+    printf("check-unused: %d definitions in %s/\n", $total, SCAN_DEFS_IN);
     printf("  referenced only from tests/ (%d, not an error):\n", count($testOnly));
-    foreach ($testOnly as $name => [$path, $line, $kind]) {
-        printf("    %s:%d  (%s) %s\n", $path, $line, $kind, $name);
-    }
+    print listSites($testOnly, '    ');
 }
 
 if ($dead !== []) {
-    fwrite(STDERR, sprintf("check-unused: %d definition(s) referenced nowhere:\n", count($dead)));
-    foreach ($dead as $name => [$path, $line, $kind]) {
-        fwrite(STDERR, sprintf("  %s:%d  (%s) %s\n", $path, $line, $kind, $name));
-    }
+    fwrite(STDERR, sprintf("check-unused: %d name(s) referenced nowhere:\n", count($dead)));
+    fwrite(STDERR, listSites($dead, '  '));
     fwrite(STDERR, "\nDelete it, or reference it. If it is a constant a refactor stopped\n");
     fwrite(STDERR, "using, its docstring is now describing behaviour that lives elsewhere.\n");
+    fwrite(STDERR, "A name listed twice is defined twice (a facade re-export); both\n");
+    fwrite(STDERR, "sites are dead, since neither counts as a use of the other.\n");
     exit(1);
 }
 
-printf("check-unused: %d definitions, none dead (%d test-only).\n", count($defs), count($testOnly));
+printf("check-unused: %d definitions, none dead (%d test-only).\n", $total, count($testOnly));
 exit(0);

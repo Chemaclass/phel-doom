@@ -38,6 +38,21 @@ composer test   # data files load + game logic still green
 
 Then smoke-test visually with the `/play` skill.
 
+## Build guards
+
+Each is a `composer` script wired into `composer ci`, and each ships its own fixtures (`*-test.sh`) because a guard that is quietly wrong is worse than no guard.
+
+| Guard | Fails when |
+|-------|-----------|
+| `check-layers.sh` | a require points the wrong way across `io/` -> `glue/` -> `core/` |
+| `check-cycles.php` | two phel-doom namespaces require each other, directly or through an alias |
+| `check-unused.php` | a top-level definition under `src/` is referenced nowhere in `src/`, `tests/` or `tools/` |
+| `check-deprecations.sh` | the suite raises a compiler deprecation or a float-truncation notice |
+
+`check-cycles` and `check-unused` share `lib/phel-source.php`, which blanks `;` comments, `#_` discards and string bodies while keeping offsets and newlines, so neither can be fooled by a name that appears only in prose - and a fix to that parser reaches both.
+
+`php tools/check-unused.php --report` also lists the definitions referenced only from `tests/`. Those are not failures (a fixture, or a parser whose only caller today is its own test), but the list is worth a look when hunting dead weight.
+
 ## Release
 
 `release.sh` cuts a phel-doom release: validate semver and preflight, move the `## [Unreleased]` CHANGELOG block into a dated version section, build a self-contained `phel-doom.phar`, smoke-test it, commit, tag `vX.Y.Z`, push branch and tag.

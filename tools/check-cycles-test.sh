@@ -10,12 +10,15 @@
 # Run: bash tools/check-cycles-test.sh   (wired into `composer check-cycles`)
 set -uo pipefail
 
-GUARD="$(cd "$(dirname "$0")" && pwd)/check-cycles.php"
+TOOLS="$(cd "$(dirname "$0")" && pwd)"
+GUARD="$TOOLS/check-cycles.php"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/src"
 cd "$WORK" || exit 2
 cp "$GUARD" ./check-cycles.php
+mkdir -p lib
+cp "$TOOLS/lib/phel-source.php" ./lib/phel-source.php
 
 pass=0
 fail=0

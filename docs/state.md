@@ -101,16 +101,16 @@ After `build-world` from `core/level.phel` stamps level metadata, the world also
 
 ## :grid vs :pgrid
 
-`:grid` is a Phel persistent vector of vectors; great for pure updates via `assoc-in`. `:pgrid` is a PHP-native `array(array(...))` mirror used by raycaster + minimap hot loops to avoid Phel's polymorphic collection dispatch. Created together by `new-world`:
+`:grid` is a Phel persistent vector of vectors, good for pure updates via `assoc-in`. `:pgrid` is a PHP-native `array(array(...))` mirror, read by the raycaster and minimap hot loops to dodge Phel's polymorphic collection dispatch. `new-world` creates both:
 
 ```phel
 :grid  grid
 :pgrid (to-array (map to-array grid))
 ```
 
-On grid mutation (door turning into floor, etc.) **both** must update. See `pickup-hearts` in `core/pickups.phel` and door logic in `commands/play.phel`. `rebuild-pgrid` is called after any grid edit to keep the PHP mirror in sync.
+On grid mutation (a door turning into floor) **both** must update. See `pickup-hearts` in `core/pickups.phel` and the door logic in `commands/play.phel`. `rebuild-pgrid` runs after any grid edit to keep the PHP mirror in sync.
 
-`:light-grid` (#418) is a third grid-derived array in the same family: a PHP array keyed `(y*width + x)` of per-cell shade biases from `core/light/build-light-grid`, read one-per-column by the wall shader when the `:light` setting is on. It is derived by BOTH `new-world` and `rebuild-pgrid` (so a revealed secret / toggled switch re-lights correctly) and, like `:pgrid`, is dropped by `world->savestring` and re-derived on load - never serialized.
+`:light-grid` (#418) is a third grid-derived array in that family: a PHP array keyed `(y*width + x)` of per-cell shade biases from `core/light/build-light-grid`, read one-per-column by the wall shader when the `:light` setting is on. BOTH `new-world` and `rebuild-pgrid` derive it, so a revealed secret or toggled switch re-lights correctly. Like `:pgrid` it is never serialized: `world->savestring` drops it, load re-derives it.
 
 ## The player
 
@@ -121,7 +121,7 @@ On grid mutation (door turning into floor, etc.) **both** must update. See `pick
  :pitch   <float look up/down fraction in [-1, 1], 0 = level>}
 ```
 
-`new-player x y angle` creates the player at a world position and facing angle. `move-player` does delta translation (no collision); `turn-player` does delta angle. `change-pitch` updates camera look. Collision is handled at `physics/try-move`: a destination cell blocks the move only when it is a wall or a locked door the player lacks the key for; any open floor cell is walkable.
+`new-player x y angle` places the player at a world position and facing angle. `move-player` does delta translation (no collision), `turn-player` delta angle, `change-pitch` camera look. Collision lives in `physics/try-move`: a cell blocks only when it is a wall, or a locked door the player lacks the key for. Any open floor cell is walkable.
 
 ## Movement counters (`:moves`)
 
@@ -139,17 +139,17 @@ Nine time-limited counters drive directional motion, look up/down, and sprint in
  :pitch-down   <float>     ; ↓ arrow
 ```
 
-Each input byte from `glue/controls.phel` refreshes the matching counter to its hold-secs value. Each frame `core/physics.phel` consumes whatever is non-zero (scaled by `dt`) and decays every counter by `dt` seconds (clamped at 0.0), so a hold survives the same wall-clock duration at any frame rate. Counter hits 0 = direction stops.
+Each input byte from `glue/controls.phel` refreshes the matching counter to its hold-secs value. Every frame `core/physics.phel` consumes whatever is non-zero (scaled by `dt`), then decays every counter by `dt` seconds (clamped at 0.0). A hold lasts the same wall-clock time at any frame rate. Counter hits 0 = direction stops.
 
-`:sprint` is intent only - the actual speed boost is gated by `:stamina > 0` AND `not :sprint-blocked?`. See `physics.phel`'s `tick-stamina` + `sprinting?`.
+`:sprint` is intent only. The speed boost is gated by `:stamina > 0` AND `not :sprint-blocked?`. See `physics.phel`'s `tick-stamina` + `sprinting?`.
 
-Hold-secs size is the only "feel" knob: shorter = snappier stop, longer = smoother sustained-hold (bridges OS auto-repeat gaps). Current: `move-hold-secs=0.30` (~300ms), `turn-hold-secs=0.05` / `pitch-hold-secs=0.05` / `sprint-hold-secs=0.05` (~50ms) - all frame-rate independent, defined in `glue/controls.phel`.
+Hold-secs is the only "feel" knob: shorter = snappier stop, longer = smoother sustained hold (it bridges OS auto-repeat gaps). Current: `move-hold-secs=0.30` (~300ms), `turn-hold-secs=0.05` / `pitch-hold-secs=0.05` / `sprint-hold-secs=0.05` (~50ms). All frame-rate independent, defined in `glue/controls.phel`.
 
 ## Lives (half-heart HP pool)
 
-`:lives` is an HP pool capped by `max-lives` (10), drawn as 5 hearts of 2 HP each, so a hit can cost half a heart. New worlds start at `max-lives` (full). Heart pickups heal a whole heart (`gain-life` adds 2, clamped). Damage decrements via `take-damage` (contact) / `hit-player-at` (bolt) in `core/combat.phel`, by the attacker's `enemy-hit-damage` (1 light / 2 heavy + caster / 3 boss); armor absorbs a whole hit regardless of size. Soulsphere pushes the pool over the cap toward `soulsphere-cap` (14), decaying back down over time.
+`:lives` is an HP pool capped by `max-lives` (10), drawn as 5 hearts of 2 HP each, so a hit can cost half a heart. New worlds start at `max-lives`. Heart pickups heal a whole heart (`gain-life` adds 2, clamped). `take-damage` (contact) and `hit-player-at` (bolt) in `core/combat.phel` subtract the attacker's `enemy-hit-damage` (1 light / 2 heavy + caster / 3 boss). Armor absorbs a whole hit whatever its size. Soulsphere pushes the pool past the cap toward `soulsphere-cap` (14), decaying back down over time.
 
-HUD draws 5 heart slots from the pool: `♥` full, `◖` half, `·` empty (over-cap soul HP shows as extra full hearts). Sized from `:max-lives` in the stats map so the cap can change without touching the renderer.
+HUD draws 5 heart slots from the pool: `♥` full, `◖` half, `·` empty (over-cap soul HP shows as extra full hearts). Sized from `:max-lives` in the stats map, so the cap can change without touching the renderer.
 
 ## Timers
 
@@ -168,8 +168,8 @@ Float-seconds countdowns on the world, decayed by `decay-timers` in `core/combat
 
 ### `:game-time` - the pause-aware clock
 
-`advance-game-time` adds `dt` to `:game-time` on every non-paused frame; on a paused frame `tick-world` returns early so the value is left untouched. Render samples this clock for every blink/pulse (door, behind warning, jam, pickup throb, enemy face/body cycle, screen-shake) so pressing `p` freezes every visual animation that was driven by the wall clock before. Resume picks up exactly where the freeze caught it.
+`advance-game-time` adds `dt` to `:game-time` on every non-paused frame. A paused frame returns early from `tick-world`, leaving the value put. Render samples this clock for every blink and pulse (door, behind warning, jam, pickup throb, enemy face/body cycle, screen-shake), so `p` freezes every animation the wall clock used to drive. Resume picks up where the freeze caught it.
 
 ## Flat world design
 
-Every level is flat: the floor is a single plane (z = 0) and the ceiling a full-height plane (z = 1). Construction stays simple (one `new-world` call), updates lightweight (`assoc`/`update`), and tests literal (`(is (= expected (tick-world ...)))`). Trade-off: no compiler help on key names, so `frame-stats` centralizes all reads to catch typos.
+Every level is flat: the floor a single plane (z = 0), the ceiling a full-height plane (z = 1). Construction stays simple (one `new-world` call), updates lightweight (`assoc`/`update`), tests literal (`(is (= expected (tick-world ...)))`). Trade-off: no compiler help on key names, so `frame-stats` centralizes every read to catch typos.

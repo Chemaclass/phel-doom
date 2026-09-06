@@ -11,8 +11,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Changed
 
-- Runs on Phel 0.51, which makes the frame cheaper without touching game code: `step` 27% faster, `step-fire` 26%, `frame-120x30` 13%, `frame-180x45` 11%, `cast` 9%, `frame-240x60` 9%. The wins are all in the language runtime, not here: fixed arities on hot core functions, every map construction path promoted at the same size, non-dynamic globals read straight from the registry, and `-O2` now inlining calls in return position. Measured with `composer bench-ref` against a 0.50 baseline captured on the same machine, two cold runs agreeing within 1%.
-- Map destructuring is written binding-first, `{local :key}`, the same order as Clojure, and `to-php-array` is now `to-array`. Both are 0.51 spellings for what the code already did; the old ones still compile but are deprecated upstream and `composer check-deprecations` rejects them. No behaviour change.
+- Runs on Phel 0.51. The frame got cheaper with no game-code change: `step` 27% faster, `step-fire` 26%, `frame-120x30` 13%, `frame-180x45` 11%, `cast` 9%, `frame-240x60` 9%. Every win is in the language runtime: fixed arities on hot core functions, map construction promoted at every size, non-dynamic globals read straight from the registry, `-O2` inlining calls in return position. Measured with `composer bench-ref` against a 0.50 baseline on the same machine. Two cold runs agreed within 1%.
+- Map destructuring is binding-first, `{local :key}`, the same order as Clojure. `to-php-array` is now `to-array`. Both are the 0.51 spellings for what the code already did. The old ones still compile, but `composer check-deprecations` rejects them. No behaviour change.
 
 ## [0.18.0] - 2026-08-17
 

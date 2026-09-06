@@ -29,7 +29,7 @@ Or `composer install && composer play`.
 
 ### No local PHP? Run in Docker
 
-PHP 8.5 CLI + Composer + deps in an image; `docker` is the only prerequisite.
+PHP 8.5 CLI + Composer + deps in an image. `docker` is the only prerequisite.
 
 ```bash
 make docker-build      # build image
@@ -39,7 +39,7 @@ make docker-shell      # bash inside container
 make docker-clean      # remove image
 ```
 
-Override tag: `DOCKER_IMG=mytag make docker-build`. Host PHP is the inner loop; Docker adds ~1s startup.
+Override tag: `DOCKER_IMG=mytag make docker-build`. Host PHP is the inner loop. Docker adds ~1s startup.
 
 </details>
 

@@ -25,7 +25,7 @@ Every cell is one of these ints. Constants exported so no module uses raw `0/1/2
 {3 :blue  4 :red  5 :boss  9 :yellow}
 ```
 
-`:boss` is a synthetic "colour" - no physical keycard spawns for it; the kw is granted automatically by combat when the boss dies on a `:door-lock :boss` level.
+`:boss` is a synthetic "colour". No keycard spawns for it. Combat grants the kw when the boss dies on a `:door-lock :boss` level.
 
 ## Lookup helpers
 
@@ -39,7 +39,7 @@ Every cell is one of these ints. Constants exported so no module uses raw `0/1/2
 (passable? grid keys x y) ; true if player can walk into (x,y) given held keys
 ```
 
-`wall?` / `passable?` use the same lock colour resolution, so the player can't walk through locked doors but the raycaster still blocks rays on them (stay visually solid until traversed).
+`wall?` / `passable?` share the lock-colour resolution. The player can't cross a locked door, and rays still stop on it, so it stays visually solid until traversed.
 
 ## Random map generation
 
@@ -59,7 +59,7 @@ Every cell is one of these ints. Constants exported so no module uses raw `0/1/2
 (scatter-walls grid [sx sy] n)
 ```
 
-Scatters `n` random 1×1-2×2 wall blobs into a grid's interior for varied room layouts, then `seal-pockets` walls off any floor the blobs cut off from spawn, so the playable area stays ONE connected region (pickups, enemies and the exit are never stranded; the spawn cell is kept clear). Seeded via `rng`. `build-world` applies it to hand-authored rooms (procgen already gets blobs from `random-grid`); a level that pins `:switches` keeps its authored geometry untouched.
+Scatters `n` random 1×1-2×2 wall blobs into a grid's interior for varied room layouts. `seal-pockets` then walls off floor the blobs cut off from spawn, so the playable area stays ONE connected region: pickups, enemies and the exit are never stranded, and the spawn cell stays clear. Seeded via `rng`. `build-world` applies it to hand-authored rooms; procgen already gets blobs from `random-grid`. A level that pins `:switches` keeps its authored geometry.
 
 ## Exit placement
 
@@ -67,15 +67,15 @@ Scatters `n` random 1×1-2×2 wall blobs into a grid's interior for varied room 
 (place-exit grid [sx sy])
 ```
 
-Drops exactly ONE exit door at a random wall cell reachable from the spawn `(sx, sy)`, so every level (hand-authored or procgen) gets a different exit the player must find. Floods the floor reachable from spawn, then turns a random wall touching that floor into a door - **any** wall, an interior pillar or a border edge, so the way out can be anywhere the player can reach (never pinned to the screen sides). Seeded via `rng` (same seed produces the same door). `build-world` then applies the level's `:door-lock` via `lock-the-door`.
+Drops exactly ONE exit door at a random wall cell reachable from the spawn `(sx, sy)`, so every level, hand-authored or procgen, gets a different exit to find. Floods the floor reachable from spawn, then turns a random wall touching that floor into a door. **Any** wall, an interior pillar or a border edge, so the way out can be anywhere the player can reach, never pinned to the screen sides. Seeded via `rng`: same seed, same door. `build-world` then applies the level's `:door-lock` via `lock-the-door`.
 
 ### Cost
 
-Both passes flood the floor and then scan every cell, and both used to read the grid through `cell`, which is two persistent-vector lookups plus two nil checks per access. Three changes, measured on a 64x40 grid: read through a flat PHP-native mirror (`grid->php`, indexed `y*w + x`) instead of `cell`; key the seen-set by that same flat index rather than a freshly built `"x:y"` string; and take the four neighbour offsets from a flat int array rather than the literal `[[1 0] [-1 0] [0 1] [0 -1]]`, which is rebuilt per dequeue and read with two persistent lookups per direction. Writing the wall blobs into the mirror rather than `assoc-in`-ing a persistent grid per cell (~83 us each) finished it. `place-exit` went **57.9 ms to 8.4 ms**, `scatter-walls` **58.1 ms to 10.1 ms**, and a whole level build 42.7 ms to 13.9 ms. Generation is unchanged - the flood consumes no rng and the scan order is the same, so all 210 worlds (10 levels x 7 seeds x 3 difficulties) hash identically before and after.
+Both passes flood the floor, then scan every cell. Both used to read the grid through `cell`: two persistent-vector lookups plus two nil checks per access. Three changes, measured on a 64x40 grid. Read a flat PHP-native mirror (`grid->php`, indexed `y*w + x`) instead of `cell`. Key the seen-set by that flat index, not a fresh `"x:y"` string. Take the four neighbour offsets from a flat int array, not the literal `[[1 0] [-1 0] [0 1] [0 -1]]`, rebuilt per dequeue at two persistent lookups per direction. Writing the wall blobs into the mirror, not `assoc-in` on a persistent grid per cell (~83 us each), finished it. `place-exit` went **57.9 ms to 8.4 ms**, `scatter-walls` **58.1 ms to 10.1 ms**, a whole level build 42.7 ms to 13.9 ms. Generation is unchanged: the flood draws no rng, the scan order is the same, and all 210 worlds (10 levels x 7 seeds x 3 difficulties) hash identically before and after.
 
-PHP arrays are value types, and that shapes the code more than the algorithm does. A php-array captured by a closure is captured BY VALUE, and one passed to a function is passed BY VALUE - so a `visit!` helper inside the flood, or a `place-block!` taking the mirror as an argument, writes to a copy and the caller sees nothing. Both failed silently, and the flood version looked **10x faster** because it was returning after its first cell. Every mutation therefore lives in the same function as the array it mutates, in statement position.
+PHP arrays are value types, and that shapes the code more than the algorithm does. A php-array is captured BY VALUE by a closure, and passed BY VALUE to a function. So a `visit!` helper inside the flood, or a `place-block!` taking the mirror as an argument, writes to a copy and the caller sees nothing. Both failed silently, and the flood version looked **10x faster** because it returned after its first cell. Every mutation now lives in the same function as the array it mutates, in statement position.
 
-The flat key is only collision-free in bounds: `(-1, y)` and `(w-1, y-1)` share an index, where the string key could not. Every lookup outside the flood is bounds-guarded for that reason, and the flood itself only writes cells the grid reports as floor.
+The flat key is collision-free only in bounds: `(-1, y)` and `(w-1, y-1)` share an index, where the string key could not. So every lookup outside the flood is bounds-guarded, and the flood writes only cells the grid reports as floor.
 
 ## Player spawn
 
@@ -89,7 +89,7 @@ Retries until a floor cell is found. Bordered grid always has at least one.
 
 Sources: hand-authored (`:layout` char `S`) or procgen-seeded (divider walls in random grids).
 
-**Divider wall**: 1-cell-thick interior wall with floor on both horizontal OR vertical sides. `seed-secrets grid n` converts up to `n` of them to `cell-secret` via deterministic top-left scan. `build-world` skips locked levels to prevent shortcut bypassing keycard doors. Default: 2 per level.
+**Divider wall**: 1-cell-thick interior wall with floor on both horizontal OR vertical sides. `seed-secrets grid n` converts up to `n` of them to `cell-secret` via deterministic top-left scan. `build-world` skips locked levels so a secret can't bypass a keycard door. Default: 2 per level.
 
 API:
 ```phel
@@ -99,7 +99,7 @@ API:
 (seed-secrets grid n)     ; convert divider walls to cell-secret
 ```
 
-Visual cue: none (DOOM-style). Discovery by bumping. `F`-press near a secret calls `reveal-secret` and drops reward stash (ammo box + armor shard + rotating trophy) via `level/place-secret-reward`. World tracks `:secrets-total` (count) + `:secrets-found` (bumps); debug HUD: `secrets X/Y`.
+Visual cue: none (DOOM-style). Discovery by bumping. `F`-press near a secret calls `reveal-secret` and drops a reward stash (ammo box + armor shard + rotating trophy) via `level/place-secret-reward`. World tracks `:secrets-total` (count) + `:secrets-found` (bumps). Debug HUD: `secrets X/Y`.
 
 ## Switches
 

@@ -19,16 +19,16 @@
 
 ## Catalog
 
-L1: single-type procgen tutorial (imps only). L2-L8: hand-authored flat chambers, each seeded with random interior walls (`:walls` count) so the room disposition varies every run. L9: mixed-monster procgen (melee secondary salted per level). L10: hand-authored boss arena with secrets + switches (designed - no random walls, since switch targets are hand-placed).
+L1: single-type procgen tutorial (imps only). L2-L8: hand-authored flat chambers, each seeded with random interior walls (`:walls` count) so the room layout varies every run. L9: mixed-monster procgen (melee secondary salted per level). L10: hand-authored boss arena with secrets + switches (no random walls, since switch targets are hand-placed).
 
-Non-locked procgen levels seed up to 2 secret passages (see [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4) and hand-authored layouts (L2, L3, L4, L5, L6, L7, L8, L10) skip seeding to prevent keycard bypass and keep the authored geometry explicit.
+Non-locked procgen levels seed up to 2 secret passages (see [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4) and hand-authored layouts (L2-L8, L10) skip seeding. That blocks keycard bypass and keeps the authored geometry explicit.
 
-Each level also carries a `:theme` keyword (#417) that tints its floor
+Each level also carries a `:theme` keyword (#417). It tints the floor
 gradient at load time (grey / steel / moss / clay / rust / hell), so
 episodes read as distinct places at zero hot-path cost. Unknown or
-missing themes fall back to the neutral `:base` grey. The theme keyword
-lives in `core/level.phel` (pure data); `io/render/palette.phel`
-resolves it to a floor gradient base code via `theme-floor-code`.
+missing themes fall back to neutral `:base` grey. The keyword lives in
+`core/level.phel` (pure data). `io/render/palette.phel` resolves it to
+a floor gradient base code via `theme-floor-code`.
 
 ```phel
 (def levels
@@ -52,7 +52,7 @@ resolves it to a floor gradient base code via `theme-floor-code`.
    ...])
 ```
 
-Chase speed climbs monotonically L1-L9 (`0.8 1.0 1.2 1.4 1.6 1.7 1.8 1.9 2.0`); L10 eases to `1.6` (single-boss arena). L2-L9 mix a melee secondary into the headline type to prevent single-type monotony; L1 stays pure imps as a tutorial. L6-L7 each carry one caster (caco/baron) to maintain ranged pressure. Every enemy gets a depth-scaled `:aggression` cooldown multiplier (see [monsters.md](monsters.md)). Mixed specs omitting `:lives` inherit catalog HP.
+Chase speed climbs monotonically L1-L9 (`0.8 1.0 1.2 1.4 1.6 1.7 1.8 1.9 2.0`). L10 eases to `1.6` for the single-boss arena. L2-L9 mix a melee secondary into the headline type, so no level is one enemy on repeat. L1 stays pure imps as a tutorial. L6-L7 each carry one caster (caco/baron) for ranged pressure. Every enemy gets a depth-scaled `:aggression` cooldown multiplier (see [monsters.md](monsters.md)). Mixed specs without `:lives` inherit catalog HP.
 
 Required fields:
 
@@ -95,7 +95,7 @@ When `:enemies` is a vector, each spec spawns its own count + HP and the enemy c
 | `S` | secret wall (press F to reveal) |
 | `T` | switch (toggles target cells via `:switches` config) |
 
-`:layout` supplies GEOMETRY + spawn (+ secrets / switches) only; it authors neither the interior walls nor the exit. `map/scatter-walls` seeds `:walls` random interior wall blobs into each hand-authored room (skipped on `:switches` levels) and seals any cut-off pocket so the floor stays connected; `map/place-exit` then drops exactly one exit door at a random reachable wall - interior pillar or border edge - on EVERY level, and `lock-the-door` applies the `:door-lock`. So the room disposition AND the way out are randomised per run, and finding the exit is part of the game. Enemy spawn still applies.
+`:layout` supplies GEOMETRY + spawn (+ secrets / switches) only. It authors neither the interior walls nor the exit. `map/scatter-walls` seeds `:walls` random interior wall blobs into each hand-authored room (skipped on `:switches` levels), then seals any cut-off pocket so the floor stays connected. `map/place-exit` drops exactly one exit door at a random reachable wall, interior pillar or border edge, on EVERY level. `lock-the-door` applies the `:door-lock`. So room layout AND the way out are randomised per run: finding the exit is part of the game. Enemy spawn still applies.
 
 Switches: `:switches [{:at [cx cy] :targets [[tx ty] ...]}]`. F near `:at` flips targets wall↔floor.
 
@@ -120,7 +120,7 @@ Per build: grid (hand-authored or random), player spawn + angle, enemies from mi
 - Heart: only if `lives < max-lives`.
 - Armor (50%), berserk (1/8), invuln (1/12), soulsphere (1/10), backpack (L2+, 1/5).
 - 3 armor shards per level.
-- Keycard if locked (not `:boss`). Weapon drops: every weapon whose debut level has passed and the player does not own, most recent debut first, capped at 2 per level. Debuts: shotgun (L2), chaingun (L3), chainsaw (L4), rocket (L5), incinerator (L6), BFG (L7). The level's own debut weapon is by definition the most recent, so the cap never drops it; the rest of the rule covers a player who arrives with an empty rack (`--level=N`, or a retry) and would otherwise find nothing on the floor.
+- Keycard if locked (not `:boss`). Weapon drops: every weapon whose debut level has passed and the player does not own, most recent debut first, capped at 2 per level. Debuts: shotgun (L2), chaingun (L3), chainsaw (L4), rocket (L5), incinerator (L6), BFG (L7). The level's own debut weapon is always the most recent, so the cap never drops it. The rest covers a player who arrives with an empty rack (`--level=N`, or a retry) and would otherwise find nothing on the floor.
 - Ammo boxes: `max(2, ceil(total_hp / 8))` where `total_hp = sum(count * lives)`.
 
 Stamps: `:enemy` (primary type fallback), `:level-name`, `:difficulty`, `:intro-secs` (1.5s).
@@ -144,4 +144,4 @@ build-world 3 5     → L3 cacodemons, no heart
 
 ## Replay with same seed
 
-`run-levels` captures `(php/mt_rand)` before each `build-world` and reuses on capital `R` from an end screen. All randomness (grid, spawn, doors, enemies) draws from the same PRNG, so sequences are deterministic.
+`run-levels` captures `(php/mt_rand)` before each `build-world` and reuses it on capital `R` from an end screen. All randomness (grid, spawn, doors, enemies) draws from the same PRNG, so sequences are deterministic.

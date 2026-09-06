@@ -1,11 +1,11 @@
 # Coming from Clojure or PHP
 
-Phel is a Lisp that **compiles to PHP**. If you know either language, most of phel-doom is already familiar. This maps what carries over and what bites. Read it first, then [architecture.md](architecture.md).
+Phel is a Lisp that **compiles to PHP**. If you know either language, most of phel-doom is already familiar. This page maps what carries over and what bites. Read it first, then [architecture.md](architecture.md).
 
 ## 60-second model
 
 - **It's a Lisp.** S-expressions, immutable maps/vectors/keywords, `let` / `loop` / `recur`, `->` / `->>`, `defn` / `defn-`.
-- **It compiles to PHP.** Each `src/<ns>.phel` becomes `out/<ns>.php` (kebab ns → underscore path: `phel-doom.core.state` → `out/phel_doom/core/state.php`). `out/` is gitignored; `composer build` regenerates it. You can read it.
+- **It compiles to PHP.** Each `src/<ns>.phel` becomes `out/<ns>.php` (kebab ns → underscore path: `phel-doom.core.state` → `out/phel_doom/core/state.php`). `out/` is gitignored. `composer build` regenerates it. You can read it.
 - **Layered by purity.** `core/` pure, `glue/` pure wiring, `io/` effects. See [architecture.md](architecture.md).
 
 Conventions: kebab-case names, `defn-` private, `?` = predicate (`door?`), `!` = side effect (`render!`).
@@ -26,7 +26,7 @@ Same idea, same syntax:
 
 What bites:
 
-- **Destructure pair order is reversed.** Phel `{:key local}`; Clojure is `{local :key}`. `{:keys [x y]}` works the same in both. Clojure order throws `Cannot destructure Phel\Lang\Keyword`.
+- **Destructure pair order matches Clojure** since Phel 0.51: `{local :key}`. `{:keys [x y]}` works the same in both. The old key-first order (`{:key local}`) is deprecated.
 - **`def-` takes no docstring slot.** A string becomes the value. `defn-` is fine. ([contributing.md](contributing.md#phel-gotchas))
 - **`recur` re-binds loop names, not a `let`-shadow of them.** Destructure into a *different* name. ([contributing.md](contributing.md#phel-gotchas))
 - **Phel vectors are slow in hot loops** (polymorphic `get`). Render uses php-arrays via `buf-*` macros. ([contributing.md](contributing.md#phel-gotchas))
@@ -34,7 +34,7 @@ What bites:
 
 ## Coming from PHP
 
-Phel compiles *to* PHP, so the runtime is yours. A fn becomes an `__invoke` class; data becomes Phel objects:
+Phel compiles *to* PHP, so the runtime is yours. A fn becomes an `__invoke` class. Data becomes Phel objects:
 
 ```phel
 (defn new-player [x y angle]
@@ -58,16 +58,16 @@ So `{:k v}` is a `\Phel\Lang\PersistentMap`, `:k` is a `\Phel\Lang\Keyword`, **n
 | Raw array read / write | `(php/aget arr i)` / `(php/aset arr i v)` |
 | PHP assoc array literal | `#php {"k" "v"}` |
 | Convert PHP array → Phel | `(vec arr)` / `(php-array-to-map arr)` |
-| Convert Phel → PHP array | `(to-php-array v)` |
+| Convert Phel → PHP array | `(to-array v)` |
 
 Traps:
 
 - **`0`, `""`, `[]` are truthy.** Only `false` and `nil` are falsy. The opposite of PHP.
-- **PHP arrays are pass-by-value across fn boundaries**: mutating a passed `php/array` changes a copy. Build-and-return, or keep the loop inline. ([contributing.md](contributing.md#phel-gotchas))
+- **PHP arrays are pass-by-value across fn boundaries.** Mutating a passed `php/array` changes a copy. Build-and-return, or keep the loop inline. ([contributing.md](contributing.md#phel-gotchas))
 - **CLI args:** `*argv*`, not `php/$argv` (null under Phel).
 - **Top-level side effects break `phel build`** (top level runs at compile time). Guard with `(when-not *build-mode* ...)`.
 - **Hot loops drop to raw `php/*`** (`php/+`, `php/<`, `php/===`) to skip Phel's numeric dispatch. Everywhere else uses `+`, `<`, `=`. ([contributing.md](contributing.md#phel-gotchas))
 
 ## Then
 
-Reading path in [docs/README.md](README.md): architecture → game-loop → raycaster + rendering → contributing. Syntax cheatsheet: run `vendor/bin/phel agent-install claude --with-docs` and read the quick-syntax page it writes (generated, so not in the repo). Look up any fn: `composer repl` then `(doc <fn>)`.
+Reading path in [docs/README.md](README.md): architecture → game-loop → raycaster + rendering → contributing. Syntax cheatsheet: run `vendor/bin/phel agent-install claude --with-docs` and read the quick-syntax page it writes (generated, not in the repo). Look up any fn: `composer repl` then `(doc <fn>)`.

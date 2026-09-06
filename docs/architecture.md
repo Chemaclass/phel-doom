@@ -1,6 +1,6 @@
 # Architecture
 
-Pure `core/` (deterministic logic) → composition `glue/` (pure wiring) → effects `io/` (terminal/disk/audio). CLI entrypoint in `commands/` and `main.phel`.
+Pure `core/` (deterministic logic) → `glue/` (pure wiring) → `io/` (terminal/disk/audio effects). CLI entrypoint in `commands/` and `main.phel`.
 
 ```
 src/
@@ -49,7 +49,7 @@ src/
 - `io/` - effects, may require `core/` + `glue/`.
 - `commands/play.phel` - top-level orchestrator. Composes all three.
 
-Tests only import from `core/` so no terminal, disk, or audio mocking needed. Enforceable via `(:require ...)` inspection.
+Tests import from `core/` only, so no terminal, disk, or audio mocking. Enforceable via `(:require ...)` inspection.
 
 ## Data flow per frame
 
@@ -88,7 +88,7 @@ Tests only import from `core/` so no terminal, disk, or audio mocking needed. En
               └───────────────────────────────┘
 ```
 
-See [game-loop.md](game-loop.md) for the full tick-world step table. Game-loop: read input -> pure tick-world -> render. Two IO boundaries only: drain stdin, flush stdout.
+See [game-loop.md](game-loop.md) for the full tick-world step table. The loop is read input -> pure tick-world -> render. Two IO boundaries only: drain stdin, flush stdout.
 
 ## Why this layout
 

@@ -6,8 +6,8 @@
 - Half-block sub-pixel floor/walls/sky: `▀` cells with independent top/bottom colours give 2x vertical resolution (smaller pixels, no colour loss), memoized so CPU cost is ~+2% (`PHEL_DOOM_NO_SUBPIXEL=1` for the one-colour-per-cell path)
 - Sub-5ms `frame->string` at 180x40 (2ms at 80x24, 3ms at 120x30)
 - Uniform ~120fps target + crisp 1:1 walls at every terminal size (no big-screen 30fps / chunky-scale degradation)
-- Auto-calibrated pixel detail, always full screen: measures the machine at startup and pixel-doubles the scene (2x2 blocks, ~4x cheaper, same FOV/framing) when full detail can't hold a smooth framerate - but only on big screens (cell area beyond 200x45); smaller terminals always keep full detail. Recalibrates on resize. `--max-cols=0` forces full detail, `--max-cols=N` insets to N columns
-- `proj-dist` decoupled from viewport width - resize widens FOV, not zoom - FOV clamps at 100° on wide terminals so they gain horizontal resolution, not edge fisheye
+- Auto-calibrated pixel detail, always full screen: startup measures the machine. When full detail can't hold a smooth framerate it pixel-doubles the scene (2x2 blocks, ~4x cheaper, same FOV/framing), but only on big screens (cell area beyond 200x45). Smaller terminals always keep full detail. Recalibrates on resize. `--max-cols=0` forces full detail, `--max-cols=N` insets to N columns
+- `proj-dist` decoupled from viewport width: resize widens FOV, not zoom. FOV clamps at 100° on wide terminals, so they gain horizontal resolution instead of edge fisheye
 - Half-block sub-cell shading on wall edges; brick glyphs (4% of cells)
 - 5-stage death animation: flash -> slump -> collapse -> blood mid -> blood dim
 - Responsive help panel, collapses on tight screens
@@ -18,7 +18,7 @@ See [rendering.md](rendering.md), [raycaster.md](raycaster.md), [performance.md]
 ## Levels + map
 
 - 10 levels: L1 pure imps (tutorial), L2-L9 hand-authored or mixed-type with a headline monster + secondaries, L10 hand-authored boss arena (cyber 50 HP + 2 imps, cap 1 alive)
-- Per-level floor theme: each level's `:theme` tints the floor gradient (grey / steel / moss / clay / rust / hell) so episodes read as distinct places. Walls + sky stay shared grayscale.
+- Per-level floor theme: `:theme` tints the floor gradient (grey / steel / moss / clay / rust / hell), so episodes read as distinct places. Walls + sky stay shared grayscale.
 - Pickups: hearts (heal one full heart; pool is 5 hearts / 10 HP), armor (cap 5, absorbs one whole hit), armor shards (+1 over-cap to 10), soulsphere (over-cap to 14 HP, decays), ammo boxes, berserk (18s 2x dmg), invuln (10s immune), stacking backpack (L2+, reserve tier per pickup)
 - Keycards: L4 blue, L5 red, L7 yellow. Locked door pulses on bump without key. L10 boss door unlocks via synthetic :boss keycard after cyber kill. Compass tints facing letter in lock color.
 - Secrets: up to 2 per procgen level (L10 has hand-authored pair). Bump with F to reveal ammo + shard + rotating powerup. Skipped on locked levels.
@@ -46,17 +46,17 @@ See [level-system.md](level-system.md), [map.md](map.md).
   - 5: BFG (10 + 6 splash, 1.2s cd, mag 1, plasma AoE 3-cell, rare L7)
   - 6: incinerator (1 fire dmg, 0.06s cd, mag 40, auto-fire; fire-resist mobs take 0, L6)
   - 7: rocket launcher (4 + 3 splash r2.0, 0.9s cd, mag 1, single-action, ballistic AoE, L5)
-- Pistol + chaingun + chainsaw auto-spray while held. Shotgun + BFG + rocket single-action. The pistol round pierces every enemy in line. Mag/reserve persist across switches, auto-switch on first pickup.
+- Pistol + chaingun + chainsaw auto-spray while held. Shotgun + BFG + rocket single-action. Mag/reserve persist across switches, auto-switch on first pickup.
 - Kill-loot skips pistol when other weapons owned, biases shotgun/chaingun. Level boxes refill active weapon.
-- Half-heart health: 10 HP drawn as 5 hearts (2 HP each), starting full. Hits cost by attacker type - 1 (half heart) for light melee, 2 (full heart) for heavy bruisers + casters, 3 for the cyberdemon boss. 1s i-frame, 4-way directional red hurt band, knockback on contact. Armor absorbs a whole hit.
+- Half-heart health: 10 HP drawn as 5 hearts (2 HP each), starting full. Hits cost by attacker type: 1 (half heart) for light melee, 2 (full heart) for heavy bruisers + casters, 3 for the cyberdemon boss. 1s i-frame, 4-way directional red hurt band, knockback on contact. Armor absorbs a whole hit.
 
 See [monsters.md](monsters.md), [combat.md](combat.md).
 
 ## HUD + screens
 
 - Top-left strip: hearts + armor + GOD badge (dev). Row 2: level/monster count, kills, weapon, ammo, backpack tier, stamina bar, keycard, difficulty tag.
-- Compass top-center: facing letter yellow; a quest-target letter tints toward the objective - the un-picked keycard (lock colour) on a locked level, or the exit door (orange) once the key is in hand / on a plain level.
-- Objective subtitle on the level-intro splash: `FIND THE <COLOUR> KEY` on locked levels, `KILL THE BOSS TO ESCAPE` on the boss arena, `FIND THE EXIT` (orange, matching the compass arrow) on plain levels - so every level states its goal.
+- Compass top-center: facing letter yellow. A quest-target letter tints toward the objective: the un-picked keycard (lock colour) on a locked level, or the exit door (orange) once the key is in hand or on a plain level.
+- Objective subtitle on the level-intro splash: `FIND THE <COLOUR> KEY` on locked levels, `KILL THE BOSS TO ESCAPE` on the boss arena, `FIND THE EXIT` (orange, matching the compass arrow) on plain levels. Every level states its goal.
 - Minimap (m toggle, default OFF): top-right, auto-scales <= 1/3 width on narrow terminals. Perf mode caps 40 cols.
 - F3 debug: frame-ms, cast/render split, bytes, RLE, mem, pos, angle, fps (off by default, zero overhead when off).
 - Ammo cues: pulsing `! LOW AMMO N !` when <= 3 rounds; dry-fire `CLICK` prompt.
@@ -70,7 +70,7 @@ See [monsters.md](monsters.md), [combat.md](combat.md).
 
 Triggered on life drop or enemy proximity:
 
-- Heartbeat (last 2 hearts, <=4 HP): steady dim-red edge vignette + low thump every 0.90s, accelerating to 0.55s in the last heart. (The edge no longer throbs - calm 3D view; the thump audio still pulses.)
+- Heartbeat (last 2 hearts, <=4 HP): steady dim-red edge vignette + low thump every 0.90s, accelerating to 0.55s in the last heart. The edge no longer throbs (calm 3D view); the thump audio still pulses.
 - Sudden silence (enemy 1.5 units): all sfx muted 400ms.
 - Wall haze (last 3 hearts, <=6 HP): wall shades darken as health drops, doors stay bright (nav cue).
 - Blood drops (last 3 hearts, <=6 HP): random red trails from ceiling.
@@ -81,7 +81,7 @@ The decorative lights-flicker, the jump-scare face flash, and the blinking door-
 ## Accessibility
 
 - High contrast (Settings toggle, default off): un-dims the dim/grey HUD elements (compass non-facing letters, empty heart pips, healthy ammo reserve) to bold white so the HUD reads on washed-out / low-quality terminals. Pure overlay branch, no frame-speed cost.
-- Calm 3D view (default for everyone): the gameplay view carries no decorative blinks or strobes. The lights-flicker overlay, the jump-scare face flash and the blinking door-eye are removed entirely (decoration, no info); the low-health heartbeat edge, the berserk border, the low-ammo / behind-you / reload HUD labels, the powerup banners, the JAMMED chip and the low-health hearts strip are held steady (info kept, on/off pulse dropped); doors and aggro heads stay steady-bright. There is no `\e[5` terminal hardware-blink anywhere in the renderer. Essential single-shot feedback (directional hit-vignette, kill flash, CLICK prompt, crosshair hit-marker) and the gentle interactive-pickup glow are kept. Pure overlay branch, no frame-speed cost. See [rendering.md](rendering.md#calm-3d-view-no-decorative-blinks).
+- Calm 3D view (default for everyone): the gameplay view carries no decorative blinks or strobes. Removed entirely (decoration, no info): the lights-flicker overlay, the jump-scare face flash, the blinking door-eye. Held steady (info kept, on/off pulse dropped): the low-health heartbeat edge, the berserk border, the low-ammo / behind-you / reload HUD labels, the powerup banners, the JAMMED chip, the low-health hearts strip. Doors and aggro heads stay steady-bright. No `\e[5` terminal hardware-blink anywhere in the renderer. Kept: the essential single-shot feedback (directional hit-vignette, kill flash, CLICK prompt, crosshair hit-marker) and the gentle interactive-pickup glow. Pure overlay branch, no frame-speed cost. See [rendering.md](rendering.md#calm-3d-view-no-decorative-blinks).
 
 ## Audio
 
@@ -113,6 +113,6 @@ See [demo.md](demo.md), [input.md](input.md).
 
 - **WAD parser**: header + lump directory + VERTEXES/LINEDEFS. Toy reader, not yet wired to render. See [wad-parser.md](wad-parser.md).
 - **Keyboard**: kitty protocol (instant release: kitty, WezTerm, Ghostty, Alacritty >=0.13, iTerm2 >=3.5) or hold-frame fallback (Terminal.app, GNOME Terminal, xterm).
-- **Mouse look (#246)**: Classic FPS-style mouselook in the terminal via xterm SGR mouse reports - move the pointer to turn the camera (yaw) and look up/down (pitch), left-click to fire (held = auto-fire). The fixed-centre crosshair is the gun's aim point; mouse edges sustain the turn when the pointer hits the terminal border. On by default, toggled by the **Mouse** setting; turn speed scales with **Sensitivity** (50% = neutral 1.0x). Purely additive - the keyboard path is untouched. See [input.md](input.md#mouse-look-issue-246).
-- **Look up/down + vertical-aware aim (#243)**: camera pitch (arrow keys or mouse) shears the horizon as a pure render offset, and hitscan is gated on the crosshair landing on the enemy's drawn sprite, so aiming at the floor or sky misses. Pitch-0 renders byte-for-byte like no pitch. See [input.md](input.md#look-updown-pitch), [combat.md](combat.md), [raycaster.md](raycaster.md#look-updown-pitch-horizon-shear).
+- **Mouse look (#246)**: FPS-style mouselook in the terminal via xterm SGR mouse reports. Move the pointer to turn the camera (yaw) and look up/down (pitch), left-click to fire (held = auto-fire). The fixed-centre crosshair is the gun's aim point. Mouse edges sustain the turn when the pointer hits the terminal border. On by default, toggled by the **Mouse** setting. Turn speed scales with **Sensitivity** (50% = neutral 1.0x). Additive only: the keyboard path is untouched. See [input.md](input.md#mouse-look-issue-246).
+- **Look up/down + vertical-aware aim (#243)**: camera pitch (arrow keys or mouse) shears the horizon as a pure render offset. Hitscan is gated on the crosshair landing on the enemy's drawn sprite, so aiming at the floor or sky misses. Pitch-0 renders byte-for-byte like no pitch. See [input.md](input.md#look-updown-pitch), [combat.md](combat.md), [raycaster.md](raycaster.md#look-updown-pitch-horizon-shear).
 - **Sprint**: SHIFT+WASD or x for 1.6x speed. Drains 100-unit stamina at 30/s; regen 20/s after 0.5s cooldown. At empty, locked until recover to 20. HUD bar: amber <33%, red at 0.

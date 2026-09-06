@@ -1,6 +1,6 @@
 # Player guide
 
-Full controls, pickups, weapons, and CLI flags. The README has the short version.
+Full controls, pickups, weapons, CLI flags. The README has the short version.
 
 ## Controls
 
@@ -26,11 +26,11 @@ Full controls, pickups, weapons, and CLI flags. The README has the short version
 | `[` / `]` / wheel | Previous / next owned weapon |
 | `q` | Quit (opens the pause menu on Quit; press again to confirm) |
 
-Walk into doors to advance. Top-center compass tints the cardinal (E/S/W/N) toward target. Orange = exit. Blue/red = keycard needed.
+Walk into doors to advance. The top-center compass tints the cardinal (E/S/W/N) toward target. Orange = exit. Blue/red = keycard needed.
 
-Mouselook (turn + look up/down, left-click fire) is **on by default**; flip it with the **Mouse** toggle on the Settings page (`p` or `s`), and tune turn speed with **Sensitivity** (50% = neutral 1.0x). The mouse is purely additive: every keyboard binding works the same with the mouse on or off. See [settings.md](settings.md#fields) and [input.md](input.md#mouse-look-issue-246).
+Mouselook (turn + look up/down, left-click fire) is **on by default**. Flip it with the **Mouse** toggle on the Settings page (`p` or `s`). Tune turn speed with **Sensitivity** (50% = neutral 1.0x). The mouse is additive: every keyboard binding works the same with it on or off. See [settings.md](settings.md#fields) and [input.md](input.md#mouse-look-issue-246).
 
-Look up/down (arrow keys or the mouse) tilts the camera and drives aim: a shot has to land on the enemy's drawn sprite, so aiming at the floor or sky misses (issue #243). See [combat.md](combat.md) and [game-loop.md](game-loop.md).
+Look up/down (arrow keys or the mouse) tilts the camera and drives aim. A shot has to land on the enemy's drawn sprite, so aiming at the floor or sky misses (issue #243). See [combat.md](combat.md) and [game-loop.md](game-loop.md).
 
 Terminal quirks (kitty, tmux): [input.md](input.md).
 
@@ -43,7 +43,7 @@ Terminal quirks (kitty, tmux): [input.md](input.md).
 - **ammo box**: plus N to active weapon reserve
 - **berserk**: full heal plus 18s melee surge (chainsaw 6x, guns 2x)
 - **invuln**: 10s damage immunity
-- **backpack**: increases reserve cap by one base (stacks 3 times)
+- **backpack**: raises reserve cap by one base (stacks 3 times)
 - **keycard**: blue unlocks L4 exit, red unlocks L5, yellow unlocks L7. L10 boss-locked
 
 ## Weapons
@@ -64,7 +64,7 @@ Hold `space` for auto-fire on pistol/chaingun/chainsaw/incinerator. Shotgun, BFG
 
 ## End screen (rank + summary)
 
-Death and victory both show a run summary: cumulative kills + time, **accuracy %** (connecting trigger pulls / total pulls), **secrets** found/total, and a letter **rank** S/A/B/C/D from `0.7*accuracy + 0.3*secrets`. The rank is colour-coded (gold S down to dim D). Persisted bests show below it. See [scores.md](scores.md) for the exact grade formula and the "what counts as a hit" rule (pierce / cone / AoE).
+Death and victory both show a run summary: cumulative kills + time, **accuracy %** (connecting trigger pulls / total pulls), **secrets** found/total, and a letter **rank** S/A/B/C/D from `0.7*accuracy + 0.3*secrets`. The rank is colour-coded, gold S down to dim D. Persisted bests show below it. See [scores.md](scores.md) for the exact grade formula and the "what counts as a hit" rule (pierce / cone / AoE).
 
 ## CLI flags
 
@@ -73,5 +73,5 @@ Death and victory both show a run summary: cumulative kills + time, **accuracy %
 - `--god` (`-g`) - invincible
 - `--armory` (`-a`) - start with all weapons
 - `--full-map` (`-f`) - reveal map
-- `--max-cols=N` - cap render width to N columns on a wider terminal; the surplus becomes a blank inset border. Unset fills the terminal and auto-picks the pixel detail for a smooth framerate (pixel-doubling only ever engages on big screens beyond 200x45 cells); 0 forces full terminal at full detail
+- `--max-cols=N` - cap render width to N columns on a wider terminal. The surplus becomes a blank inset border. Unset fills the terminal and auto-picks pixel detail for a smooth framerate (pixel-doubling only ever engages on big screens beyond 200x45 cells). 0 forces full terminal at full detail
 - `--max-rows=N` - cap render height to N rows on a taller terminal (same unset/0 semantics)

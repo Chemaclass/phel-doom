@@ -16,13 +16,13 @@ Phel types map to JSON arrays:
 ## Dropped fields
 
 - `:pgrid`: PHP-array mirror of `:grid` (rebuilt on load)
-- `:light-grid`: per-cell room-light bias derived from `:grid` (#418; rebuilt on load by `rebuild-pgrid`). Serializing it would round-trip a PHP array back as a Phel vector and break the per-column `php/aget` in render.
+- `:light-grid`: per-cell room-light bias derived from `:grid` (#418, rebuilt on load by `rebuild-pgrid`). Serializing it would round-trip a PHP array back as a Phel vector and break the per-column `php/aget` in render.
 - `:visited`: fog-of-war map (reset empty, re-revealed as player moves)
 
 ## Versioning
 
-`world->savestring` wraps encoded world in `{"version": N, "world": ...}`. `savestring->world` refuses version mismatch or malformed JSON, returns nil (HUD shows `NO SAVE` cue). Bump `save-version` on incompatible world changes.
+`world->savestring` wraps the encoded world in `{"version": N, "world": ...}`. `savestring->world` refuses a version mismatch or malformed JSON and returns nil (HUD cue: `NO SAVE`). Bump `save-version` on incompatible world changes.
 
 ## Slots
 
-Slots 1-9 valid. File IO in game loop (never in pure `tick-world`). HUD cues: `SAVED` / `LOADED` / `NO SAVE`.
+Slots 1-9 valid. File IO in the game loop, never pure `tick-world`. HUD cues: `SAVED` / `LOADED` / `NO SAVE`.

@@ -4,7 +4,7 @@
 
 ## Seeded RNG
 
-Replaced `php/random_int` + `php/mt_rand` with single Park-Miller LCG (seeded module atom). Every gameplay draw (level gen, enemy spawn/wander, loot, blood, angles) flows through it. Result: **seed + input stream fully determine the run** - re-seed + same inputs = world matches frame for frame. Fixes `R` (restart same map) which previously re-seeded `mt_rand` but map-gen ignored it.
+Replaced `php/random_int` + `php/mt_rand` with a single Park-Miller LCG (seeded module atom). Every gameplay draw (level gen, enemy spawn/wander, loot, blood, angles) flows through it. Result: **seed + input stream fully determine the run**. Re-seed, same inputs, same world frame for frame. Fixes `R` (restart same map), which previously re-seeded `mt_rand` while map-gen ignored it.
 
 ## Format
 
@@ -20,4 +20,4 @@ Demo = seed + per-frame `[key-bytes, dt-ms]` stream:
 `--record=FILE`: each frame appends live `[keys, ms]` and passes it through; on exit writes file.
 `--demo=FILE`: loads seed + frames, re-runs `game-loop` with recorded inputs, skips start menu.
 
-Seam is `resolve-frame!` (`phel-doom.io.demo`) called from the play loop: `:off` (live), `:record` (tap live), `:replay` (substituted). File IO in loop, never pure `tick-world`. When replay exhausts frames, returns `{:end? true}` and loop quits.
+Seam is `resolve-frame!` (`phel-doom.io.demo`), called from the play loop: `:off` (live), `:record` (tap live), `:replay` (substituted). File IO in loop, never pure `tick-world`. Replay out of frames returns `{:end? true}` and the loop quits.

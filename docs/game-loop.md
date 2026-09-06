@@ -6,9 +6,9 @@ IO shell + pure per-frame transition. `src/commands/play.phel`.
 
 Four lifecycle layers:
 
-1. **`run-play`**: setup / start-menu / run-levels / cleanup. Only function with terminal restore responsibility, and it discharges it in a `finally` so a throw mid-run cannot leave the terminal in raw mode.
-2. **`show-start-menu!`**: polling loop until player starts or quits. Redraws each frame so terminal resize works.
-3. **`run-levels`**: level loop carrying lives + kills + time. On death/victory, writes score + shows end screen. `r` restarts with fresh seed; `R` replays same seed.
+1. **`run-play`**: setup / start-menu / run-levels / cleanup. Owns terminal restore, discharged in a `finally` so a throw mid-run cannot leave the terminal in raw mode.
+2. **`show-start-menu!`**: polls until the player starts or quits. Redraws each frame so resize works.
+3. **`run-levels`**: level loop carrying lives + kills + time. On death/victory, writes score + shows end screen. `r` restarts with a fresh seed; `R` replays the same seed.
 4. **`game-loop world0`**: one level. Per-frame: render / drain input / tick-world / decide (continue / death / door / quit).
 
 ## game-loop
@@ -42,7 +42,7 @@ Four lifecycle layers:
                                                [rows cols])))))))
 ```
 
-1. Capture terminal size; clear buffer on resize. `term-size` forks + execs `stty size`, so the real loop does NOT call it every frame: a `poll-frame` counter is threaded through the recur and `term-size` is sampled only when `(poll-size? poll-frame)` is true (frame 0, then every `resize-poll-frames` = 12 frames). Between samples the last `[rows cols]` is reused. The first frame is always eager so initial sizing is never delayed; `redraw-if-resized` + the auto-calibration tolerate a resize being noticed up to ~12 frames late (~100ms at the game loop's 120fps cap; the menu/end-screen loops run at ~60fps, so their resize latency is ~200ms - fine for static screens). The simplified snippet above omits this throttle for clarity. Throttled at all four size-polling loops: the game loop, the end screens (`end-loop`), the settings sub-loop (`settings-screen!`), and the start menu (`show-start-menu!`).
+1. Capture terminal size; clear buffer on resize. `term-size` forks + execs `stty size`, so the real loop does NOT call it every frame. A `poll-frame` counter threads through the recur; `term-size` samples only when `(poll-size? poll-frame)` holds (frame 0, then every `resize-poll-frames` = 12 frames), reusing the last `[rows cols]` between samples. Frame 0 is eager, so initial sizing is never delayed. `redraw-if-resized` + auto-calibration tolerate a resize noticed up to ~12 frames late (~100ms at the loop's 120fps cap; the menu/end-screen loops run at ~60fps, so ~200ms there, fine for static screens). The snippet above omits this throttle for clarity. All four size-polling loops throttle: game loop, end screens (`end-loop`), settings sub-loop (`settings-screen!`), start menu (`show-start-menu!`).
 2. Render frame via `draw-frame` + `render!` (io/render.phel); adaptive-sleep yields per frame budget.
 3. Drain input: `drain-keys` reads up to `drain-bytes` (512) bytes non-blocking. Held keys send multiple bytes per frame.
 4. Compute dt + edges: `ms-since` for wall-clock; `rising-edges` diffs key snapshots for one-shots.
@@ -51,14 +51,14 @@ Four lifecycle layers:
 
 ## tick-world
 
-Pure one-frame state machine. Returns `world'` (same type). Called identically from both the game-loop and unit tests.
+Pure one-frame state machine. Returns `world'` (same type). Called identically from the game-loop and unit tests.
 
 Three early-exit paths:
 1. If paused, return unchanged.
 2. If hit-stop timer > 0, decay it and return.
 3. Otherwise: full linear pipeline (input → physics → pickups → enemies → projectiles → combat → decay).
 
-The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself; the game-loop drains `:sfx` after tick and emits via `io/sound`, keeping tick pure.
+The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself. The game-loop drains it after tick and emits via `io/sound`, keeping tick pure.
 
 | Step group | What | Module |
 |---|---|---|
@@ -83,18 +83,18 @@ The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself; the g
 
 ## Physics
 
-`apply-physics` translates and returns the updated player position; collision and the locked-door bump cue both resolve inside `physics/try-move`. A destination cell blocks the move only when it is a wall or a locked door the player lacks the key for; any open floor cell is walkable. See [state.md](state.md) for the field contract.
+`apply-physics` translates and returns the updated player position; collision and the locked-door bump cue both resolve inside `physics/try-move`. A cell blocks the move only when it is a wall or a locked door the player lacks the key for; any open floor cell is walkable. See [state.md](state.md) for the field contract.
 
-`apply-physics` also advances the head-bob walk cycle (#411): it measures the actual ground distance covered this frame and adds it (scaled by `bob-phase-per-unit`) to the world's `:bob-phase`, wrapped into `[0, 2*pi)`. Zero distance (standing still, or shoved against a wall) settles `:bob-phase` back to exactly 0.0, so a resting frame renders byte-identical. Amplitude is a render-only concern (the View bob setting via `projection/bob-rows`); physics only tracks the phase.
+`apply-physics` also advances the head-bob walk cycle (#411). It measures the ground distance covered this frame and adds it, scaled by `bob-phase-per-unit`, to `:bob-phase`, wrapped into `[0, 2*pi)`. Zero distance (standing still, or shoved against a wall) settles `:bob-phase` back to exactly 0.0, so a resting frame renders byte-identical. Amplitude is render-only (the View bob setting via `projection/bob-rows`); physics tracks only the phase.
 
 ## Frame timing + adaptive FPS
 
-- **120 fps target** (8.333 ms) at every terminal size, via `core/perf.phel`. The old big-screen 30fps cap was removed - it was an artificial ceiling (see `docs/performance.md`).
-- `target-frame-us` returns a uniform 8333 µs. Render time is the real bottleneck on big screens; `adaptive-sleep!` fills the remainder of the budget and floors at `min-yield-us`, so framerate degrades smoothly toward render-native instead of snapping to 30fps.
-- The live `term-size` is clamped through `cap-dims` (`core/perf.phel`) before render, applying the `--max-cols` / `--max-rows` caps. A manual cap shrinks the render area and leaves the surplus terminal as a blank inset border (the full-screen clear on resize keeps it clean). Caps only shrink, never grow past the real terminal.
-- **Auto-calibrated pixel scale** (default when neither `--max-cols` nor `--max-rows` is set; `opt-int` returns `-1` for unset so the loop can tell "auto" from an explicit `0` = fill). The render always fills the whole terminal in auto mode; what calibration picks is the DETAIL. The loop renders at full detail for the first `auto-cal-frames` frames (covered by the intro splash), tracks the min measured render-ms, then `auto-pixel-scale` locks pixel scale 1 (full detail) or 2 (pixel-doubled: the scene renders at half resolution and each scene cell paints a 2x2 block, ~4x cheaper, same framing/FOV - see `docs/performance.md`). Pixel scale 2 is only ever picked on a big screen (cell area beyond 200x45, `perf/big-screen?`); a terminal at or below that size keeps full detail regardless of the measured cost - detail wins over framerate there. `next-cal` holds the calibration state; `draw-frame` passes the choice to the renderer as the `:px2?` stats flag. The render-ms measured here is the *real* per-frame cost (frame->string + the terminal write), so the choice targets actual smoothness, not just CPU. Recalibrates when `term-size` changes. An explicit `--max-cols` / `--max-rows` opts out (full detail at the player's size).
+- **120 fps target** (8.333 ms) at every terminal size, via `core/perf.phel`. The old big-screen 30fps cap was removed as an artificial ceiling (see `docs/performance.md`).
+- `target-frame-us` returns a uniform 8333 µs. Render time is the real bottleneck on big screens; `adaptive-sleep!` fills the rest of the budget and floors at `min-yield-us`, so framerate degrades smoothly toward render-native instead of snapping to 30fps.
+- `cap-dims` (`core/perf.phel`) clamps the live `term-size` before render, applying `--max-cols` / `--max-rows`. A manual cap shrinks the render area and leaves the surplus terminal as a blank inset border (the full-screen clear on resize keeps it clean). Caps only shrink, never grow past the real terminal.
+- **Auto-calibrated pixel scale** (default when neither `--max-cols` nor `--max-rows` is set; `opt-int` returns `-1` for unset, so the loop tells "auto" from an explicit `0` = fill). Auto mode always fills the whole terminal; calibration picks the DETAIL. The loop renders full detail for the first `auto-cal-frames` frames (covered by the intro splash), tracks the min measured render-ms, then `auto-pixel-scale` locks pixel scale 1 (full detail) or 2 (pixel-doubled: the scene renders at half resolution, each scene cell paints a 2x2 block, ~4x cheaper, same framing/FOV - see `docs/performance.md`). Scale 2 is only ever picked on a big screen (cell area beyond 200x45, `perf/big-screen?`); at or below that, detail wins over framerate whatever the measured cost. `next-cal` holds the calibration state; `draw-frame` passes the choice to the renderer as the `:px2?` stats flag. The measured render-ms is the *real* per-frame cost (frame->string + the terminal write), so the choice targets actual smoothness, not just CPU. Recalibrates when `term-size` changes. An explicit `--max-cols` / `--max-rows` opts out (full detail at the player's size).
 - `ms-since` computes wall-clock delta. Args tagged `^float` so Phel doesn't infer `int` from `* 1000` and trigger PHP 8.4+ implicit-conversion deprecation on microtime values.
-- `dt` is elapsed-seconds float used by physics, AI, decay. Same dt across sub-steps keeps simulation consistent inside a frame. The raw frame ms is clamped through `clamp-frame-ms` (cap `max-frame-ms` = 100ms, a ~10fps floor) before becoming dt (#278), so one stalled frame can't feed a hundreds-of-ms dt into the un-swept physics tick (which would tunnel the player through a 1-thick wall / locked door) or drain every feel timer a full step at once. Real frames (16-50ms) are well under the cap, so live tick / FPS / golden frames are unaffected.
+- `dt` is the elapsed-seconds float for physics, AI, decay. One dt across sub-steps keeps a frame's simulation consistent. `clamp-frame-ms` caps the raw frame ms at `max-frame-ms` = 100ms, a ~10fps floor, before it becomes dt (#278). One stalled frame then cannot feed a hundreds-of-ms dt into the un-swept physics tick, which would tunnel the player through a 1-thick wall or locked door, nor drain every feel timer a full step at once. Real frames (16-50ms) sit well under the cap, so live tick / FPS / golden frames are unaffected.
 
 ## Per-level result kinds
 
@@ -111,15 +111,15 @@ The pipeline enqueues effects (sfx, hits) into `:sfx` on the world itself; the g
 
 Two beats the run used to skip.
 
-**Death** cut straight to the YOU DIED box, so the blow that ended the run was never seen. `death-beat!` holds the killing frame for 0.6s first, then drains whatever was typed during it, so a panicked keypress cannot select something on the screen that follows.
+**Death** cut straight to the YOU DIED box, so the blow that ended the run was never seen. `death-beat!` holds the killing frame 0.6s first, then drains whatever was typed during it, so a panicked keypress cannot select something on the screen that follows.
 
-**Level exits** jumped straight into the next level, so the per-level numbers `run-stat-fields` already tracked were only ever shown once the whole run was over. `intermission-loop` shows a card with the level just cleared, its kills, its secrets and its time; any key continues, `q` and Ctrl-C still quit.
+**Level exits** jumped straight into the next level, so the per-level numbers `run-stat-fields` already tracked showed only once the run was over. `intermission-loop` shows a card with the level just cleared, its kills, its secrets and its time. Any key continues; `q` and Ctrl-C still quit.
 
 Both are skipped under `--demo` replay: nothing is watching, and waiting for input would desync a recorded run.
 
 ## Quitting and restarting (issue #454)
 
-`q` in a live run does not quit: it opens the pause menu with the cursor on Quit and drops the movement hold counters, so the confirmation is the second `q` (or Enter on that row). The H / ESC info panel freezes the world too but is not a confirm surface - it has no Quit row - so `q` there closes it and opens the menu the same way. `quit-confirmed?` is the single gate: pause page yes, help panel no. The start menu and the end screens run their own loops and still quit on one `q`, and Ctrl-C still quits from anywhere.
+`q` in a live run does not quit. It opens the pause menu with the cursor on Quit and drops the movement hold counters, so the second `q` (or Enter on that row) is the confirmation. The H / ESC info panel freezes the world too but is no confirm surface, having no Quit row, so `q` there closes it and opens the menu the same way. `quit-confirmed?` is the single gate: pause page yes, help panel no. The start menu and the end screens run their own loops and still quit on one `q`. Ctrl-C still quits from anywhere.
 
 Restart on the pause menu asks twice for the same reason: the first select arms it (the row reads `Restart?  enter again`), a second select fires, moving the cursor disarms. The armed flag never leaves the session - resume, re-pause and quick-saves all clear it.
 
@@ -127,13 +127,13 @@ Losing terminal focus (`\e[?1004h`, see [input.md](input.md#focus-tracking-issue
 
 ## Resize: SIGWINCH, not polling (issue #459)
 
-The loops sampled `term-size` every 12th frame, and each sample forks `stty size` (~5ms) to answer a question whose answer changes about once a session. `install-resize-handler!` traps SIGWINCH and raises a flag; the game loop asks `resized?` at the same frame checkpoint it already asks `interrupted?`, and `sample-size?` then forks only on the signal (plus frame 0, so initial sizing is never delayed). The menu and end-screen loops do not read the flag, so they keep the frame-count `poll-size?` cadence and their resize latency is unchanged - a menu is static and a resize is a human-timescale event. Delivery is synchronous like SIGINT / SIGTERM - never asynchronously mid-render, per [io-boundaries](../.agnostic-ai/rules/io-boundaries.md). A build without ext-pcntl keeps the frame-count poll as its only mechanism.
+The loops sampled `term-size` every 12th frame, and each sample forks `stty size` (~5ms) to answer a question that changes about once a session. `install-resize-handler!` traps SIGWINCH and raises a flag. The game loop asks `resized?` at the frame checkpoint where it already asks `interrupted?`, and `sample-size?` forks only on the signal (plus frame 0, so initial sizing is never delayed). The menu and end-screen loops do not read the flag, so they keep the frame-count `poll-size?` cadence at unchanged resize latency: a menu is static and a resize is a human-timescale event. Delivery is synchronous like SIGINT / SIGTERM, never asynchronously mid-render, per [io-boundaries](../.agnostic-ai/rules/io-boundaries.md). Without ext-pcntl the frame-count poll is the only mechanism.
 
 ## Restart modes
 
 - `r` (restart, fresh): new PRNG seed, new level sequence.
 - `R` (replay, same): reuse the captured seed, replay identical levels.
 
-Both restart the level you died on, and both carry the loadout back: owned weapons, backpack stack, and the gun in hand (`retry-loadout`). It is the rack you ENTERED the level with, not the one you died holding: weapon-pickup cells are drawn from the run PRNG before the ammo boxes, so rebuilding with a weapon grabbed during the fatal attempt would shift every later spawn and `R` would no longer replay an identical level. A weapon you picked up on that attempt is back on the floor where it was. Ammo does not carry - mags and reserves come back fresh from `build-world`. Kills, time and lives reset, so a retry is a fresh attempt at the level rather than a checkpoint.
+Both restart the level you died on and carry the loadout back: owned weapons, backpack stack, gun in hand (`retry-loadout`). It is the rack you ENTERED the level with, not the one you died holding. Weapon-pickup cells are drawn from the run PRNG before the ammo boxes, so rebuilding with a weapon grabbed during the fatal attempt would shift every later spawn, and `R` would no longer replay an identical level. A weapon picked up on that attempt is back on the floor where it was. Ammo does not carry: mags and reserves come back fresh from `build-world`. Kills, time and lives reset, so a retry is a fresh attempt, not a checkpoint.
 
 Lets the player practice a tough spawn or die-on level. See [input.md](input.md) for key flow and [rendering.md](rendering.md) for render pipeline.

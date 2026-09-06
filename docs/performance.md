@@ -298,7 +298,7 @@ The distance-fog LUTs (`tex-fade-table`, `build-themed-gradient(-codes)`) bake a
 Phel vectors are slow for indexed reads in tight loops. `new-world` builds a PHP-array twin:
 
 ```phel
-:pgrid (to-php-array (map to-php-array grid))
+:pgrid (to-array (map to-array grid))
 ```
 
 Raycaster and minimap use `:pgrid` via direct subscript. Both `:grid` and `:pgrid` update together on cell changes.

@@ -26,7 +26,7 @@ Same idea, same syntax:
 
 What bites:
 
-- **Destructure pair order is reversed.** Phel `{:key local}`; Clojure is `{local :key}`. `{:keys [x y]}` works the same in both. Clojure order throws `Cannot destructure Phel\Lang\Keyword`.
+- **Destructure pair order matches Clojure** since Phel 0.51: `{local :key}`. `{:keys [x y]}` works the same in both. The old key-first order (`{:key local}`) is deprecated.
 - **`def-` takes no docstring slot.** A string becomes the value. `defn-` is fine. ([contributing.md](contributing.md#phel-gotchas))
 - **`recur` re-binds loop names, not a `let`-shadow of them.** Destructure into a *different* name. ([contributing.md](contributing.md#phel-gotchas))
 - **Phel vectors are slow in hot loops** (polymorphic `get`). Render uses php-arrays via `buf-*` macros. ([contributing.md](contributing.md#phel-gotchas))
@@ -58,7 +58,7 @@ So `{:k v}` is a `\Phel\Lang\PersistentMap`, `:k` is a `\Phel\Lang\Keyword`, **n
 | Raw array read / write | `(php/aget arr i)` / `(php/aset arr i v)` |
 | PHP assoc array literal | `#php {"k" "v"}` |
 | Convert PHP array → Phel | `(vec arr)` / `(php-array-to-map arr)` |
-| Convert Phel → PHP array | `(to-php-array v)` |
+| Convert Phel → PHP array | `(to-array v)` |
 
 Traps:
 

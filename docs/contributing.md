@@ -146,14 +146,14 @@ Mutating a passed array only changes the local copy. Two fixes:
 
 See `src/io/render.phel` for pattern 2 in the paint-overlay chain.
 
-### Destructure: `{:keyword local-name}` (not Clojure-style)
+### Destructure: `{local-name :keyword}` (Clojure-style)
 
 ```phel
-(let [{:foo a :bar b} {:foo 1 :bar 2}]
+(let [{a :foo b :bar} {:foo 1 :bar 2}]
   [a b])   ; => [1 2]
 ```
 
-Opposite of Clojure. `{:keys [foo bar]}` works when local name matches key. Clojure-style syntax throws `Cannot destructure Phel\Lang\Keyword`.
+Binding-first, same order as Clojure, since Phel 0.51. `{:keys [foo bar]}` works when the local name matches the key. The old key-first order (`{:foo a}`) still compiles but is deprecated and will be removed; `composer check-deprecations` flags it.
 
 ### `recur` re-binds loop names, not let-shadows of them
 

@@ -657,10 +657,11 @@
   "Distance the shot travels along the AIM direction (#324): an off-centre
    reticle steers the probe too, so the shot stops at the wall the reticle
    points at, not the one dead ahead. Centre / mouse-off aims down
-   `:angle`, identical to the pre-#324 cast."
-  [world]
+   `:angle`, identical to the pre-#324 cast. `angle` is the caller's
+   already-computed `aim-angle`, so one trigger pull runs one `atan`."
+  [world ^float angle]
   (let [p (:player world)]
-    (cast-ray (:pgrid world) (:x p) (:y p) (aim-angle world))))
+    (cast-ray (:pgrid world) (:x p) (:y p) angle)))
 
 (defn- aim-svh
   "Scene viewport height (rows) the hit gate projects against. The game
@@ -685,9 +686,10 @@
 (defn- target-in-sights?* [world]
   (let [p      (:player world)
         spec   (w-spec world)
+        angle  (aim-angle world)
         svh    (aim-svh world)
         pr     (aim-pr world svh)
-        wall-d (cast-wall-dist world)
+        wall-d (cast-wall-dist world angle)
         max-r  (or (:max-range spec) shot-max-range)
         idx    (if (:spread? spec)
                  ;; The shotgun takes the nearest enemy inside its CONE,
@@ -697,11 +699,11 @@
                  ;; but outside the cone (red, whiffs), and one 0.8 off at
                  ;; five units is outside the corridor but inside the cone
                  ;; (white, hits). Ask the rule this weapon actually fires.
-                 (spread-target-index (:enemies world) (:x p) (:y p) (aim-angle world)
+                 (spread-target-index (:enemies world) (:x p) (:y p) angle
                                       wall-d
                                       (or (:spread-half-angle spec) shotgun-spread-half-angle)
                                       max-r svh pr)
-                 (target-index (:enemies world) (:x p) (:y p) (aim-angle world)
+                 (target-index (:enemies world) (:x p) (:y p) angle
                                wall-d shot-hit-radius max-r svh pr))]
     (php/>= idx 0)))
 
@@ -739,9 +741,8 @@
     false
     (target-in-sights?* world)))
 
-(defn- resolve-shot [world]
+(defn- resolve-shot [world spec ^float angle ^float wall-d]
   (let [p         (:player world)
-        spec      (w-spec world)
         base-dmg  (or (:damage spec) 1)
         dmg-type  (:damage-type spec)
         dmg       (if (berserk? world) (php/* base-dmg (berserk-mul-for dmg-type)) base-dmg)
@@ -749,8 +750,8 @@
         svh       (aim-svh world)]
     ;; Fire along the AIM direction (#324) so the reticle column selects the
     ;; target enemy; a centred / mouse-off reticle reduces to `:angle`.
-    (shoot (:enemies world) (:x p) (:y p) (aim-angle world)
-           (cast-wall-dist world)
+    (shoot (:enemies world) (:x p) (:y p) angle
+           wall-d
            shot-hit-radius max-range dmg dmg-type
            svh (aim-pr world svh))))
 
@@ -802,7 +803,7 @@
    still ticking from the previous kill; otherwise it restarts at 1.
    When the killed enemy is the L10 boss the exit door unlocks via
    `maybe-unlock-boss-door`."
-  [world enemies-after hit-pos idx]
+  [world enemies-after hit-pos idx ^float angle]
   (let [killed?   (false? (:alive (get enemies-after idx)))
         killed-e  (get enemies-after idx)
         chain?    (pos? (or (:streak-secs world) 0.0))
@@ -814,9 +815,8 @@
         ;; loot drop stay on the death cell.
         pushed-es (if killed?
                     enemies-after
-                    (let [a     (aim-angle world)
-                          cos-a (php/cos a)
-                          sin-a (php/sin a)]
+                    (let [cos-a (php/cos angle)
+                          sin-a (php/sin angle)]
                       (push-back-enemy enemies-after (:grid world)
                                        idx cos-a sin-a
                                        shot-knockback-dist)))
@@ -896,8 +896,9 @@
    reads quieter than one in your face. On a hit the target is the struck
    enemy; on a MISS (`hit?` false) there is no enemy, so the shot still
    collides with a WALL and the report attenuates by that wall distance
-   (`cast-wall-dist`) — a near wall reads loud, a far wall or an open
-   level drops toward the floor. Either way the volume tells you how close
+   (`wall-d`, the probe the fire path already cast) — a near wall reads
+   loud, a far wall or an open level drops toward the floor. Either way
+   the volume tells you how close
    the thing the shot hit is. Every volume here is later multiplied by the
    player's global SFX scalar in io/sound, so it stays relative to the SFX
    max set in options.
@@ -909,8 +910,8 @@
    On a kill, layer the kill cue ON TOP of the fire report at the same
    distance volume so a kill keeps its punch. Wounds ride on the fire
    sound plus the floating HP digit + blood splatter — no separate thud."
-  [out src hit? killed? hit-pos]
-  (let [fire-sfx (or (:fire-sfx (w-spec src)) :shoot)]
+  [out src spec ^float wall-d hit? killed? hit-pos]
+  (let [fire-sfx (or (:fire-sfx spec) :shoot)]
     (if hit?
       (let [p     (:player src)
             dx    (php/- (:x hit-pos) (:x p))
@@ -930,9 +931,7 @@
       ;; MISS: no enemy struck, but the shot still collides with a wall.
       ;; Attenuate by that wall distance so a near wall reads loud and a
       ;; far wall / open level reads quiet, matching the enemy-hit path.
-      ;; cast-wall-dist re-probes the aim ray (cheap, off the per-frame
-      ;; path) and reproduces the same wall-d the fire path used.
-      (push-sfx out fire-sfx (distance-volume (cast-wall-dist src))))))
+      (push-sfx out fire-sfx (distance-volume wall-d)))))
 
 (defn can-fire?
   "True when the active weapon is ready: cooldown elapsed, not jammed,
@@ -942,13 +941,15 @@
    sees they need to press R.
 
    Weapons flagged `:no-ammo?` (chainsaw) skip the mag check entirely
-   so the saw fires as long as the cooldown is up."
-  [world]
-  (let [no-ammo? (boolean (:no-ammo? (w-spec world)))]
-    (and (php/<= (or (:fire-cooldown world) 0.0) 0.0)
-         (php/<= (or (:jam-secs world) 0.0) 0.0)
-         (php/<= (or (:reload-cooldown world) 0.0) 0.0)
-         (or no-ammo? (pos? (or (:mag world) 0))))))
+   so the saw fires as long as the cooldown is up. Callers that already
+   hold the active weapon's spec pass it in rather than looking it up
+   again."
+  ([world] (can-fire? world (w-spec world)))
+  ([world spec]
+   (and (php/<= (or (:fire-cooldown world) 0.0) 0.0)
+        (php/<= (or (:jam-secs world) 0.0) 0.0)
+        (php/<= (or (:reload-cooldown world) 0.0) 0.0)
+        (or (boolean (:no-ammo? spec)) (pos? (or (:mag world) 0))))))
 
 (defn apply-heat
   "After a shot lands, bump heat + arm the per-weapon fire-cooldown,
@@ -961,22 +962,23 @@
 
    Weapons flagged `:no-ammo?` (chainsaw) skip the mag drain so the
    saw can run indefinitely; the cooldown still arms so the per-tick
-   rhythm is honoured."
-  [world]
-  (let [sp        (w-spec world)
-        overheat? (boolean (:overheats? sp))
-        no-ammo?  (boolean (:no-ammo? sp))
-        heat'     (if overheat?
-                    (php/+ (or (:heat world) 0.0) heat-per-shot)
-                    0.0)
-        jam?      (and overheat? (php/>= heat' 1.0))
-        mag-now   (or (:mag world) (:mag-size sp))
-        mag'      (if no-ammo? mag-now (php/max 0 (php/- mag-now 1)))]
-    (assoc world
-           :fire-cooldown (:fire-cooldown sp)
-           :heat          (if jam? 0.0 heat')
-           :jam-secs      (if jam? jam-seconds (or (:jam-secs world) 0.0))
-           :mag           mag')))
+   rhythm is honoured. Callers that already hold the active weapon's
+   spec pass it in rather than looking it up again."
+  ([world] (apply-heat world (w-spec world)))
+  ([world spec]
+   (let [overheat? (boolean (:overheats? spec))
+         no-ammo?  (boolean (:no-ammo? spec))
+         heat'     (if overheat?
+                     (php/+ (or (:heat world) 0.0) heat-per-shot)
+                     0.0)
+         jam?      (and overheat? (php/>= heat' 1.0))
+         mag-now   (or (:mag world) (:mag-size spec))
+         mag'      (if no-ammo? mag-now (php/max 0 (php/- mag-now 1)))]
+     (-> world
+         (assoc :fire-cooldown (:fire-cooldown spec))
+         (assoc :heat (if jam? 0.0 heat'))
+         (assoc :jam-secs (if jam? jam-seconds (or (:jam-secs world) 0.0)))
+         (assoc :mag mag')))))
 
 (defn reloading?
   "True when the player COULD reload the active weapon right now.
@@ -1028,14 +1030,14 @@
                           (some (fn [e] (and (= (:type e) :cyber)
                                              (false? (:alive e))))
                                 woken))
-        scored       (let [s (assoc world
-                                    :enemies     woken
-                                    :kills       (php/+ (or (:kills world) 0) killed)
-                                    :streak      (if killed?
-                                                   (php/+ (if chain? (or (:streak world) 0) 0) killed)
-                                                   (or (:streak world) 0))
-                                    :streak-secs (if killed? streak-window-seconds
-                                                     (or (:streak-secs world) 0.0)))]
+        scored       (let [s (-> world
+                                 (assoc :enemies woken)
+                                 (assoc :kills (php/+ (or (:kills world) 0) killed))
+                                 (assoc :streak (if killed?
+                                                  (php/+ (if chain? (or (:streak world) 0) 0) killed)
+                                                  (or (:streak world) 0)))
+                                 (assoc :streak-secs (if killed? streak-window-seconds
+                                                         (or (:streak-secs world) 0.0))))]
                        (if killed? (bump-weapon-kills s killed) s))
         unlocked     (if boss-killed?
                        (assoc scored :held-keys (conj (or (:held-keys scored) #{}) :boss))
@@ -1050,16 +1052,14 @@
    chains the streak, unlocks the boss door if a cyber died in the
    blast, arms hit-stop, and (like every shot) wakes the room by noise.
    No per-enemy loot drops: the blast is its own reward (issue #58)."
-  [world]
+  [world spec ^float angle ^float wall-d]
   (let [p                       (:player world)
-        spec                    (w-spec world)
         radius                  (:splash-radius spec)
         base                    (or (:splash-damage spec) 1)
         dtype                   (:damage-type spec)
         dmg                     (if (berserk? world) (php/* base (berserk-mul-for dtype)) base)
         max-r                   (or (:max-range spec) shot-max-range)
-        wall-d                  (cast-wall-dist world)
-        [ix iy]                 (beam-impact (:enemies world) (:x p) (:y p) (aim-angle world)
+        [ix iy]                 (beam-impact (:enemies world) (:x p) (:y p) angle
                                              wall-d shot-hit-radius max-r)
         [es' killed]            (splash (:enemies world) ix iy radius dmg dtype)
         woken                   (noise-wake es' (:grid world) (:x p) (:y p))
@@ -1088,8 +1088,9 @@
                                          (when killed? (corpse-type-at woken hit-pos)))]
                    ;; bfg has no wound-only signal, so a kill is the hit
                    ;; proxy for the marker too (no marker on a whiff).
-                   (if killed? (stamp-hit-fx bw true) bw)))
-     world killed? killed? hit-pos)))
+                   (if killed? (stamp-hit-fx bw true) bw))
+                 spec)
+     world spec wall-d killed? killed? hit-pos)))
 
 (defn- finish-multikill
   "Shared tail for the multi-target hitscans (`pierce-fire`,
@@ -1099,7 +1100,7 @@
    cyber died, size hit-stop per the meatiest kill, splat blood on the
    primary, drain the mag, and queue sfx. No per-enemy loot (mirrors the
    splash path)."
-  [world enemies-after killed hit-pos tough]
+  [world spec ^float wall-d enemies-after killed hit-pos tough]
   (let [p        (:player world)
         woken    (noise-wake enemies-after (:grid world) (:x p) (:y p))
         hit?     (some? hit-pos)
@@ -1118,36 +1119,34 @@
                     (push-blood-fx based hit-pos
                                    (when killed? (corpse-type-at enemies-after hit-pos)))
                     killed?)
-                   based))
-     world hit? killed? (or hit-pos {:x (:x p) :y (:y p)}))))
+                   based)
+                 spec)
+     world spec wall-d hit? killed? (or hit-pos {:x (:x p) :y (:y p)}))))
 
 (defn- pierce-fire
   "Resolve a piercing shot (weapons flagged `:pierce?`, the pistol). The
    round damages every enemy in the line instead of stopping at the
    nearest, so a row of lined-up enemies takes one hit each — the
    pistol's niche over the higher-DPS chaingun."
-  [world]
+  [world spec ^float angle ^float wall-d]
   (let [p                          (:player world)
-        spec                       (w-spec world)
         base                       (or (:damage spec) 1)
         dtype                      (:damage-type spec)
         dmg                        (if (berserk? world) (php/* base (berserk-mul-for dtype)) base)
         max-r                      (or (:max-range spec) shot-max-range)
-        wall-d                     (cast-wall-dist world)
         svh                        (aim-svh world)
-        [es' killed hit-pos tough] (pierce (:enemies world) (:x p) (:y p) (aim-angle world)
+        [es' killed hit-pos tough] (pierce (:enemies world) (:x p) (:y p) angle
                                            wall-d shot-hit-radius max-r dmg dtype
                                            svh (aim-pr world svh))]
-    (finish-multikill world es' killed hit-pos tough)))
+    (finish-multikill world spec wall-d es' killed hit-pos tough)))
 
 (defn- spread-fire
   "Resolve a spread shot (weapons flagged `:spread?`, the shotgun). The
    nearest enemy in the cone takes full damage; up to `:spread-targets`-1
    others in the cone are grazed for the smaller `:graze-damage` — a
    multi-target crowd hit that justifies the slow cadence (#125)."
-  [world]
+  [world spec ^float angle ^float wall-d]
   (let [p                          (:player world)
-        spec                       (w-spec world)
         base                       (or (:damage spec) 1)
         dtype                      (:damage-type spec)
         mul                        (if (berserk? world) (berserk-mul-for dtype) 1)
@@ -1157,28 +1156,28 @@
         targets                    (or (:spread-targets spec) 3)
         half                       (or (:spread-half-angle spec) shotgun-spread-half-angle)
         max-r                      (or (:max-range spec) shot-max-range)
-        wall-d                     (cast-wall-dist world)
         svh                        (aim-svh world)
-        [es' killed hit-pos tough] (spread-shoot (:enemies world) (:x p) (:y p) (aim-angle world)
+        [es' killed hit-pos tough] (spread-shoot (:enemies world) (:x p) (:y p) angle
                                                  wall-d half max-r prim graze targets dtype
                                                  svh (aim-pr world svh))]
-    (finish-multikill world es' killed hit-pos tough)))
+    (finish-multikill world spec wall-d es' killed hit-pos tough)))
 
 (defn- single-hitscan-fire
   "Single-target hitscan path (chaingun / chainsaw / incinerator): scan
    the one nearest enemy on the player's facing, wake the room, and route
    to on-shot-hit / on-shot-miss."
-  [world]
-  (let [[enemies' hit? hit-pos idx] (resolve-shot world)
+  [world spec ^float angle ^float wall-d]
+  (let [[enemies' hit? hit-pos idx] (resolve-shot world spec angle wall-d)
         p                           (:player world)
         woken                       (noise-wake enemies' (:grid world) (:x p) (:y p))
         killed?                     (and hit?
                                          (false? (:alive (get woken idx))))]
     (enqueue-shot-sfx
      (apply-heat (if hit?
-                   (on-shot-hit world woken hit-pos idx)
-                   (on-shot-miss (assoc world :enemies woken))))
-     world hit? killed? hit-pos)))
+                   (on-shot-hit world woken hit-pos idx angle)
+                   (on-shot-miss (assoc world :enemies woken)))
+                 spec)
+     world spec wall-d hit? killed? hit-pos)))
 
 (defn fire-shot
   "Resolve one trigger pull end-to-end. Weapons with `:splash-radius`
@@ -1187,18 +1186,25 @@
    everything else is a single-target hitscan. After the shot, run a
    flood-fill sound-wake from the player's cell so dormant enemies in the
    same room hear it and switch to :aware. Doors block the BFS so the
-   wake stays local — same per-sector noise rule DOOM uses."
-  [world]
-  ;; Accuracy (issue #202): every trigger pull that reaches fire-shot
-  ;; counts as one shot fired, regardless of weapon or whether it lands.
-  ;; :shots-hit is bumped per connecting pull inside stamp-hit-fx.
-  (update
-   (cond
-     (:splash-radius (w-spec world)) (bfg-fire world)
-     (:pierce? (w-spec world))       (pierce-fire world)
-     (:spread? (w-spec world))       (spread-fire world)
-     :else                           (single-hitscan-fire world))
-   :shots-fired (fn [n] (php/+ (or n 0) 1))))
+   wake stays local — same per-sector noise rule DOOM uses.
+
+   The weapon spec, the aim angle and the wall probe are resolved once
+   here and threaded into whichever path fires: every path needs all
+   three, and the angle carries an `atan` and the probe a full DDA ray."
+  ([world] (fire-shot world (w-spec world)))
+  ([world spec]
+   ;; Accuracy (issue #202): every trigger pull that reaches fire-shot
+   ;; counts as one shot fired, regardless of weapon or whether it lands.
+   ;; :shots-hit is bumped per connecting pull inside stamp-hit-fx.
+   (let [angle  (aim-angle world)
+         wall-d (cast-wall-dist world angle)]
+     (update
+      (cond
+        (:splash-radius spec) (bfg-fire world spec angle wall-d)
+        (:pierce? spec)       (pierce-fire world spec angle wall-d)
+        (:spread? spec)       (spread-fire world spec angle wall-d)
+        :else                 (single-hitscan-fire world spec angle wall-d))
+      :shots-fired (fn [n] (php/+ (or n 0) 1))))))
 
 (defn- empty-trigger-pull
   "Trigger pulled while mag = 0 AND no cooldown / jam in the way. Arm
@@ -1228,19 +1234,20 @@
    :example "(tick-shooting world true false) ; trigger rising-edge this frame"}
   ([world fire?] (tick-shooting world fire? false))
   ([w fire-edge? fire-held?]
-   (let [auto?        (boolean (:auto-fire? (weapon-spec w)))
+   (let [spec         (weapon-spec w)
+         auto?        (boolean (:auto-fire? spec))
          ;; No weapon in hand (`:hide-weapon?`): swallow the trigger so
          ;; there's no shot, no dry-fire click, no muzzle flash.
          should-fire? (and (not (:hide-weapon? w))
                            (or fire-edge? (and auto? fire-held?)))]
      (cond
-       (not should-fire?) w
-       (can-fire? w)      (fire-shot w)
+       (not should-fire?)  w
+       (can-fire? w spec)  (fire-shot w spec)
        (and (zero? (or (:mag w) 0))
             (php/<= (or (:fire-cooldown w) 0.0) 0.0)
             (php/<= (or (:jam-secs w) 0.0) 0.0)
             (php/<= (or (:reload-cooldown w) 0.0) 0.0)) (empty-trigger-pull w)
-       :else              w))))
+       :else               w))))
 
 (defn tick-armory
   "Dev cheat: when `:armory?` is set, refill every weapon's mag to

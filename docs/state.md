@@ -153,7 +153,7 @@ HUD draws 5 heart slots from the pool: `♥` full, `◖` half, `·` empty (over-
 
 ## Timers
 
-Float-seconds countdowns on the world, decayed by `decay-timers` in `core/combat.phel`:
+Float-seconds countdowns on the world, decayed by `decay-timers` in `core/combat.phel`. A timer that is absent or already at 0.0 is left alone rather than rewritten, so a quiet frame writes only the timers that are running (see `combat/decay-key`); `state/assoc-changed` applies the same rule to the latches and phases the other tickers write.
 
 | Timer | Set by | Drives |
 |---|---|---|

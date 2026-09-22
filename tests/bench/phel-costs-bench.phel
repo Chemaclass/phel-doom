@@ -96,3 +96,44 @@
 (defbench grid-wall?
   {:revs 20000}
   (wall? default-grid 4 3))
+
+;; --- map reads through a tagged param --------------------------------------
+;; Since phel 0.50 a local tagged as the persistent map interface lowers
+;; `(:k m)` to `$m->find($k)` and skips Keyword::__invoke's type dispatch.
+;; The per-frame world/enemy params carry the tag for this reason; these two
+;; rows are the gap it buys, and say when the untagged read catches up.
+
+(defn- five-reads-untagged [m]
+  (php/+ (:a m) (:b m) (:c m) (:d m) (:e m)))
+
+(defn- five-reads-tagged [^Phel.Lang.Collections.Map.PersistentMapInterface m]
+  (php/+ (:a m) (:b m) (:c m) (:d m) (:e m)))
+
+(defbench kw-reads-untagged
+  {:revs 20000}
+  (five-reads-untagged m12))
+
+(defbench kw-reads-tagged
+  {:revs 20000}
+  (five-reads-tagged m12))
+
+;; --- write shapes the step relies on ----------------------------------------
+;; A transient does not rescue a batch of writes on a hash-sized map: the
+;; per-call assoc! dispatch costs more than the path copy it saves. And a
+;; write of the value already stored still copies the path, which is why the
+;; tickers compare first (state/assoc-changed). Read the two same-value rows
+;; together: on this 12-key map the guard is a wash (~0.65 vs ~0.60 us), on
+;; the 90-key world it wins (1.12 vs 1.38 us). The deeper the trie, the more
+;; the skipped copy is worth.
+
+(defbench assoc-3-keys-transient
+  {:revs 20000}
+  (persistent! (assoc! (assoc! (assoc! (transient m12) :x 3.0) :y 4.0) :a 2)))
+
+(defbench assoc-same-value
+  {:revs 20000}
+  (assoc m12 :x 1.0))
+
+(defbench assoc-same-value-guarded
+  {:revs 20000}
+  (if (php/=== 1.0 (get m12 :x)) m12 (assoc m12 :x 1.0)))

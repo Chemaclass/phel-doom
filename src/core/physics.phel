@@ -160,19 +160,15 @@
   (php/- (contribution moves :pitch-up   pitch-speed dt)
          (contribution moves :pitch-down pitch-speed dt)))
 
-(defn- ^:pure longitudinal-delta [world ^float dt]
-  (let [moves (:moves world)
-        sf    (sprint-factor world)
-        wf    (weapon-movement-factor world)]
-    (php/* sf wf
+(defn- ^:pure longitudinal-delta [world ^float dt ^float speed-factor]
+  (let [moves (:moves world)]
+    (php/* speed-factor
            (php/- (contribution moves :fwd  move-speed dt)
                   (contribution moves :back move-speed dt)))))
 
-(defn- ^:pure lateral-delta [world ^float dt]
-  (let [moves (:moves world)
-        sf    (sprint-factor world)
-        wf    (weapon-movement-factor world)]
-    (php/* sf wf
+(defn- ^:pure lateral-delta [world ^float dt ^float speed-factor]
+  (let [moves (:moves world)]
+    (php/* speed-factor
            (php/- (contribution moves :strafe-right strafe-speed dt)
                   (contribution moves :strafe-left  strafe-speed dt)))))
 
@@ -248,7 +244,9 @@
            (php/fmod (php/+ (or (:bob-phase world) 0.0)
                             (php/* dist bob-phase-per-unit))
                      (php/* 2.0 php/M_PI)))
-    (assoc world :bob-phase 0.0)))
+    (if (php/=== 0.0 (:bob-phase world))
+      world
+      (assoc world :bob-phase 0.0))))
 
 (defn apply-physics
   "Per-frame: rotate, shear the look up/down pitch, then translate using
@@ -258,12 +256,14 @@
    x not-blocked yields a 1.6x boost. Pitch is a pure camera shear (no
    effect on translation), clamped by `clamp-pitch`."
   [world ^float dt]
-  (let [moves   (:moves world)
-        turned  (apply-rotation world (turn-delta moves dt))
-        pitched (apply-pitch turned (pitch-delta moves dt))
-        walked  (apply-translation pitched
-                                   (longitudinal-delta pitched dt)
-                                   (lateral-delta pitched dt))]
+  (let [moves               (:moves world)
+        turned              (apply-rotation world (turn-delta moves dt))
+        pitched             (apply-pitch turned (pitch-delta moves dt))
+        ^float speed-factor (php/* (sprint-factor pitched)
+                                   (weapon-movement-factor pitched))
+        walked              (apply-translation pitched
+                                               (longitudinal-delta pitched dt speed-factor)
+                                               (lateral-delta pitched dt speed-factor))]
     (advance-bob-phase (decay-move-counters walked dt)
                        (moved-dist pitched walked))))
 

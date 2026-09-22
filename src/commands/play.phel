@@ -467,6 +467,16 @@
    finishes (the gun goes hot again)."
   0.30)
 
+(defn- ^:pure decay-hud-timer
+  "Tick one HUD cue timer down by dt, leaving a stopped or absent one untouched."
+  [world k ^float dt]
+  (let [v (get world k)]
+    (if v
+      (if (php/> v 0.0)
+        (assoc world k (php/max 0.0 (php/- v dt)))
+        world)
+      world)))
+
 (defn tick-world
   "Pure one-frame state transition. `keys` is the drained input string,
    `dt` is seconds since the previous tick, `edges` is the rising-edge
@@ -533,15 +543,16 @@
             ;; First-run hints (#467) retire as soon as the player has
             ;; shown they can move, turn and shoot. `:moves` carries the
             ;; live hold counters, so this reads what they just did.
+            held (:moves w1am)
             w1ah (note-hint-progress
                   w1am
-                  (php/> (php/+ (php/+ (or (get-in w1am [:moves :fwd]) 0.0)
-                                       (or (get-in w1am [:moves :back]) 0.0))
-                                (php/+ (or (get-in w1am [:moves :strafe-left]) 0.0)
-                                       (or (get-in w1am [:moves :strafe-right]) 0.0)))
+                  (php/> (php/+ (php/+ (or (:fwd held) 0.0)
+                                       (or (:back held) 0.0))
+                                (php/+ (or (:strafe-left held) 0.0)
+                                       (or (:strafe-right held) 0.0)))
                          0.0)
-                  (php/> (php/+ (or (get-in w1am [:moves :turn-left]) 0.0)
-                                (or (get-in w1am [:moves :turn-right]) 0.0))
+                  (php/> (php/+ (or (:turn-left held) 0.0)
+                                (or (:turn-right held) 0.0))
                          0.0)
                   (boolean (:fire edges)))
             w1b  (try-reveal-secret w1ah (:action edges))
@@ -592,10 +603,8 @@
             w13  (decay-soul-overcap w11 dt)
             ;; Decay the F5/F9 save/load HUD cue (set in game-loop after
             ;; the tick).
-            w13b (update w13 :save-flash-secs
-                         (fn [s] (php/max 0.0 (php/- (or s 0.0) dt))))
-            w13c (update w13b :reload-ready-secs
-                         (fn [s] (php/max 0.0 (php/- (or s 0.0) dt))))]
+            w13b (decay-hud-timer w13 :save-flash-secs dt)
+            w13c (decay-hud-timer w13b :reload-ready-secs dt)]
         (advance-game-time w13c dt)))))
 
 ;; =====================================================================
@@ -609,145 +618,146 @@
    render reads off `stats` but this fn never writes is a toggle that does
    nothing, which is how :truecolor and :quad shipped inert."
   [world fps frame-ms]
-  {:fps         fps
-   :frame-ms    frame-ms
-   :kills       (:kills world)
-   :lives       (:lives world)
-   :armor       (:armor world)
-   :max-lives   max-lives
-   :iframes     (:iframes world)
-   :shake-secs  (:shake-secs world)
-   :fire-anim   (:fire-anim world)
-   ;; Crosshair hit-marker FX (issue #201): {:kill? :ttl} or nil. Set in
-   ;; the combat step on a connecting shot, decayed each frame.
-   :hit-fx      (:hit-fx world)
-   :fire-anim-duration fire-anim-seconds
-   :intro-secs  (:intro-secs world)
-   :flash-secs  (:flash-secs world)
-   :fx          (:fx world)
-   :paused      (:paused world)
-   :level       (:level world)
-   :level-name  (:level-name world)
-   :hurt-side   (:hurt-side world)
-   :hurt-dir    (:hurt-dir world)
-   :streak      (:streak world)
-   :heat        (:heat world)
-   :jam-secs    (:jam-secs world)
-   :blood-drops (:blood-drops world)
-   :game-time   (or (:game-time world) 0.0)
-   :debug?      (:debug? world)
-   :perf-stats  (when (:debug? world) (read-perf-snapshot))
-   :weapon      (or (:weapon world) :pistol)
-   :weapon-name (or (:name (weapon-spec world)) "pistol")
-   :palette     (:palette (weapon-spec world))
-   :mag         (or (:mag world) 0)
-   :mag-size    (or (:mag-size (weapon-spec world)) 10)
-   :ammo-reserve (or (:ammo-reserve world) 0)
-   :reload-cooldown (or (:reload-cooldown world) 0.0)
-   :reload-duration (or (:reload-duration (weapon-spec world)) reload-cooldown-seconds)
-   :empty-click-secs (or (:empty-click-secs world) 0.0)
-   :berserk-secs (or (:berserk-secs world) 0.0)
-   :invuln-secs  (or (:invuln-secs world) 0.0)
-   :backpack-level  (backpack-level world)
-   :difficulty   (or (:difficulty world) :normal)
-   :god?         (boolean (:god? world))
-   :help?        (boolean (:help? world))
-   :held-keys      (or (:held-keys world) #{})
-   :door-lock      (:door-lock world)
-   :secrets-total  (or (:secrets-total world) 0)
-   :secrets-found  (or (:secrets-found world) 0)
-   :locked-door-bump-secs   (or (:locked-door-bump-secs world) 0.0)
-   :locked-door-bump-colour (:locked-door-bump-colour world)
-   :owned-weapons  (or (:owned-weapons world) #{:pistol})
-   :weapon-state   (or (:weapon-state world) {})
-   :stamina        (or (:stamina world) max-stamina)
-   :max-stamina    max-stamina
-   :sprint-blocked? (boolean (:sprint-blocked? world))
-   :rear-warning? (rear-attacker? (:enemies world)
-                                  (:x (:player world))
-                                  (:y (:player world))
-                                  (:angle (:player world)))
-   ;; Primary enemy type kw — render uses this as the fallback
-   ;; visual when a per-enemy `:type` field is missing. Mixed-monster
-   ;; rooms still stamp `:type` per enemy at spawn so the renderer
-   ;; can branch.
-   :enemy                (or (:enemy world) :imp)
-   :save-flash-secs      (or (:save-flash-secs world) 0.0)
-   :save-flash-msg       (:save-flash-msg world)
-   ;; Doom-style message line (#456): what was just picked up / revealed /
-   ;; switched to. Render gates on the timer, so the text can stay put.
-   ;; Hostile reticle (#458): does a shot fired now connect? Asked through
-   ;; the real hitscan selection so the cue can never disagree with the gun.
-   :hostile?             (target-in-sights? world)
-   :msg-text             (:msg-text world)
-   ;; First-run key hints (#467).
-   :hint-secs            (or (:hint-secs world) 0.0)
-   ;; HUD symbol set (#471): resolved once per frame, never per cell.
-   :ascii-glyphs?        (php/=== :ascii (:glyphs (:settings world)))
-   ;; Texture filter (#462): render ORs this with PHEL_DOOM_TEXMIP.
-   :texmip?              (boolean (:texmip (:settings world)))
-   :msg-secs             (or (:msg-secs world) 0.0)
-   :reload-ready-secs    (or (:reload-ready-secs world) 0.0)
-   ;; Settings page (issue #107): the pause overlay paints the box from
-   ;; these. The page IS the pause screen, so the render layer keys off
-   ;; :paused; the cursor + values ride along here.
-   :settings             (:settings world)
-   :settings-cursor      (or (:settings-cursor world) 0)
-   ;; Pause menu (#203): which pause screen is up (:menu top-level options
-   ;; vs :settings sub-page) + the menu cursor, so render can paint the
-   ;; right overlay.
-   :pause-screen         (or (:pause-screen world) :menu)
-   :pause-cursor         (or (:pause-cursor world) 0)
-   ;; Which menu row is waiting for a second Enter (#454): render paints
-   ;; that row as a question instead of its plain label.
-   :pause-confirm        (:pause-confirm world)
-   ;; Generic HUD-suppression flags (the demo showcase sets them; normal
-   ;; play leaves them nil): hide the weapon name/ammo chunk and the
-   ;; enemy-themed level label from the top game-info line.
-   :hide-weapon?         (boolean (:hide-weapon? world))
-   :hide-level-name?     (boolean (:hide-level-name? world))
-   ;; UX settings (issue #203): crosshair reticle style + always-on run
-   ;; timer in the HUD strip. Both are pure overlay reads.
-   :crosshair            (or (:crosshair (:settings world)) :cross)
-   :run-timer?           (boolean (:timer (:settings world)))
-   ;; Mouselook on flag (#246): the crosshair IS the mouse aim point (no
-   ;; visible OS pointer), so paint-crosshair forces a minimal centre dot
-   ;; even when the player set Crosshair to :off, so mouse-aiming always has
-   ;; an aim indicator.
-   :mouse                (boolean (:mouse (:settings world)))
-   ;; Movable aim crosshair (#324): the reticle cell the gun aims at, so
-   ;; render draws the `+` there. nil (mouse off / not placed) centres it.
-   :aim-col              (:aim-col world)
-   :aim-row              (:aim-row world)
-   ;; Accessibility (issue #200): high-contrast HUD un-dims the dim/grey
-   ;; HUD elements (compass, empty hearts, reserve ammo) for low-quality
-   ;; terminals.
-   :high-contrast?       (boolean (:high-contrast (:settings world)))
-   ;; Low detail (perf setting): flatten the wall AND floor interior to
-   ;; one sample per cell, trading vertical texture detail for ~11-26%
-   ;; render time + ~30-40% bytes on big screens. render reads this key.
-   :fast-walls           (boolean (:fast-walls (:settings world)))
-   ;; Sub-pixel (compat setting, #332): default ON. OFF picks the
-   ;; one-colour-per-cell render path for terminals that draw ▀ half-blocks
-   ;; with row seams (macOS Terminal.app). Default-on semantics: only an
-   ;; explicit false disables it, so a settings-less fixture stays sub-pixel.
-   :subpixel             (not (php/=== false (:subpixel (:settings world))))
-   ;; View bob (#411): the walk-cycle head-bob amplitude scalar [0, 1],
-   ;; 0 (default) = off. render adds `bob-rows` of the world's `:bob-phase`
-   ;; scaled by this to the horizon `pr`, so walls/floor/sky/enemies bob.
-   :view-bob             (view-bob-intensity (:settings world))
-   ;; Walk-cycle phase (#412): the weapon viewmodel dips + sways on this
-   ;; too, scaled by :view-bob. Settles to 0 at rest (byte-identical gun).
-   :bob-phase            (or (:bob-phase world) 0.0)
-   ;; Room lighting (#418): OFF by default. When on, render folds the
-   ;; world's derived :light-grid into the wall shade index.
-   :light                (boolean (:light (:settings world)))
-   ;; Truecolor + Quad detail: OFF by default. render ANDs each with its
-   ;; PHEL_DOOM_* env override. Both ship as options-page rows, so without
-   ;; these two projections the player can toggle them and nothing happens -
-   ;; only the env forces reached the renderer.
-   :truecolor            (boolean (:truecolor (:settings world)))
-   :quad                 (boolean (:quad (:settings world)))})
+  (let [spec (weapon-spec world)]
+    {:fps         fps
+     :frame-ms    frame-ms
+     :kills       (:kills world)
+     :lives       (:lives world)
+     :armor       (:armor world)
+     :max-lives   max-lives
+     :iframes     (:iframes world)
+     :shake-secs  (:shake-secs world)
+     :fire-anim   (:fire-anim world)
+     ;; Crosshair hit-marker FX (issue #201): {:kill? :ttl} or nil. Set in
+     ;; the combat step on a connecting shot, decayed each frame.
+     :hit-fx      (:hit-fx world)
+     :fire-anim-duration fire-anim-seconds
+     :intro-secs  (:intro-secs world)
+     :flash-secs  (:flash-secs world)
+     :fx          (:fx world)
+     :paused      (:paused world)
+     :level       (:level world)
+     :level-name  (:level-name world)
+     :hurt-side   (:hurt-side world)
+     :hurt-dir    (:hurt-dir world)
+     :streak      (:streak world)
+     :heat        (:heat world)
+     :jam-secs    (:jam-secs world)
+     :blood-drops (:blood-drops world)
+     :game-time   (or (:game-time world) 0.0)
+     :debug?      (:debug? world)
+     :perf-stats  (when (:debug? world) (read-perf-snapshot))
+     :weapon      (or (:weapon world) :pistol)
+     :weapon-name (or (:name spec) "pistol")
+     :palette     (:palette spec)
+     :mag         (or (:mag world) 0)
+     :mag-size    (or (:mag-size spec) 10)
+     :ammo-reserve (or (:ammo-reserve world) 0)
+     :reload-cooldown (or (:reload-cooldown world) 0.0)
+     :reload-duration (or (:reload-duration spec) reload-cooldown-seconds)
+     :empty-click-secs (or (:empty-click-secs world) 0.0)
+     :berserk-secs (or (:berserk-secs world) 0.0)
+     :invuln-secs  (or (:invuln-secs world) 0.0)
+     :backpack-level  (backpack-level world)
+     :difficulty   (or (:difficulty world) :normal)
+     :god?         (boolean (:god? world))
+     :help?        (boolean (:help? world))
+     :held-keys      (or (:held-keys world) #{})
+     :door-lock      (:door-lock world)
+     :secrets-total  (or (:secrets-total world) 0)
+     :secrets-found  (or (:secrets-found world) 0)
+     :locked-door-bump-secs   (or (:locked-door-bump-secs world) 0.0)
+     :locked-door-bump-colour (:locked-door-bump-colour world)
+     :owned-weapons  (or (:owned-weapons world) #{:pistol})
+     :weapon-state   (or (:weapon-state world) {})
+     :stamina        (or (:stamina world) max-stamina)
+     :max-stamina    max-stamina
+     :sprint-blocked? (boolean (:sprint-blocked? world))
+     :rear-warning? (rear-attacker? (:enemies world)
+                                    (:x (:player world))
+                                    (:y (:player world))
+                                    (:angle (:player world)))
+     ;; Primary enemy type kw — render uses this as the fallback
+     ;; visual when a per-enemy `:type` field is missing. Mixed-monster
+     ;; rooms still stamp `:type` per enemy at spawn so the renderer
+     ;; can branch.
+     :enemy                (or (:enemy world) :imp)
+     :save-flash-secs      (or (:save-flash-secs world) 0.0)
+     :save-flash-msg       (:save-flash-msg world)
+     ;; Doom-style message line (#456): what was just picked up / revealed /
+     ;; switched to. Render gates on the timer, so the text can stay put.
+     ;; Hostile reticle (#458): does a shot fired now connect? Asked through
+     ;; the real hitscan selection so the cue can never disagree with the gun.
+     :hostile?             (target-in-sights? world)
+     :msg-text             (:msg-text world)
+     ;; First-run key hints (#467).
+     :hint-secs            (or (:hint-secs world) 0.0)
+     ;; HUD symbol set (#471): resolved once per frame, never per cell.
+     :ascii-glyphs?        (php/=== :ascii (:glyphs (:settings world)))
+     ;; Texture filter (#462): render ORs this with PHEL_DOOM_TEXMIP.
+     :texmip?              (boolean (:texmip (:settings world)))
+     :msg-secs             (or (:msg-secs world) 0.0)
+     :reload-ready-secs    (or (:reload-ready-secs world) 0.0)
+     ;; Settings page (issue #107): the pause overlay paints the box from
+     ;; these. The page IS the pause screen, so the render layer keys off
+     ;; :paused; the cursor + values ride along here.
+     :settings             (:settings world)
+     :settings-cursor      (or (:settings-cursor world) 0)
+     ;; Pause menu (#203): which pause screen is up (:menu top-level options
+     ;; vs :settings sub-page) + the menu cursor, so render can paint the
+     ;; right overlay.
+     :pause-screen         (or (:pause-screen world) :menu)
+     :pause-cursor         (or (:pause-cursor world) 0)
+     ;; Which menu row is waiting for a second Enter (#454): render paints
+     ;; that row as a question instead of its plain label.
+     :pause-confirm        (:pause-confirm world)
+     ;; Generic HUD-suppression flags (the demo showcase sets them; normal
+     ;; play leaves them nil): hide the weapon name/ammo chunk and the
+     ;; enemy-themed level label from the top game-info line.
+     :hide-weapon?         (boolean (:hide-weapon? world))
+     :hide-level-name?     (boolean (:hide-level-name? world))
+     ;; UX settings (issue #203): crosshair reticle style + always-on run
+     ;; timer in the HUD strip. Both are pure overlay reads.
+     :crosshair            (or (:crosshair (:settings world)) :cross)
+     :run-timer?           (boolean (:timer (:settings world)))
+     ;; Mouselook on flag (#246): the crosshair IS the mouse aim point (no
+     ;; visible OS pointer), so paint-crosshair forces a minimal centre dot
+     ;; even when the player set Crosshair to :off, so mouse-aiming always has
+     ;; an aim indicator.
+     :mouse                (boolean (:mouse (:settings world)))
+     ;; Movable aim crosshair (#324): the reticle cell the gun aims at, so
+     ;; render draws the `+` there. nil (mouse off / not placed) centres it.
+     :aim-col              (:aim-col world)
+     :aim-row              (:aim-row world)
+     ;; Accessibility (issue #200): high-contrast HUD un-dims the dim/grey
+     ;; HUD elements (compass, empty hearts, reserve ammo) for low-quality
+     ;; terminals.
+     :high-contrast?       (boolean (:high-contrast (:settings world)))
+     ;; Low detail (perf setting): flatten the wall AND floor interior to
+     ;; one sample per cell, trading vertical texture detail for ~11-26%
+     ;; render time + ~30-40% bytes on big screens. render reads this key.
+     :fast-walls           (boolean (:fast-walls (:settings world)))
+     ;; Sub-pixel (compat setting, #332): default ON. OFF picks the
+     ;; one-colour-per-cell render path for terminals that draw ▀ half-blocks
+     ;; with row seams (macOS Terminal.app). Default-on semantics: only an
+     ;; explicit false disables it, so a settings-less fixture stays sub-pixel.
+     :subpixel             (not (php/=== false (:subpixel (:settings world))))
+     ;; View bob (#411): the walk-cycle head-bob amplitude scalar [0, 1],
+     ;; 0 (default) = off. render adds `bob-rows` of the world's `:bob-phase`
+     ;; scaled by this to the horizon `pr`, so walls/floor/sky/enemies bob.
+     :view-bob             (view-bob-intensity (:settings world))
+     ;; Walk-cycle phase (#412): the weapon viewmodel dips + sways on this
+     ;; too, scaled by :view-bob. Settles to 0 at rest (byte-identical gun).
+     :bob-phase            (or (:bob-phase world) 0.0)
+     ;; Room lighting (#418): OFF by default. When on, render folds the
+     ;; world's derived :light-grid into the wall shade index.
+     :light                (boolean (:light (:settings world)))
+     ;; Truecolor + Quad detail: OFF by default. render ANDs each with its
+     ;; PHEL_DOOM_* env override. Both ship as options-page rows, so without
+     ;; these two projections the player can toggle them and nothing happens -
+     ;; only the env forces reached the renderer.
+     :truecolor            (boolean (:truecolor (:settings world)))
+     :quad                 (boolean (:quad (:settings world)))}))
 
 (defn- ms-since
   "Whole-millisecond delta between two microtime samples. Args tagged

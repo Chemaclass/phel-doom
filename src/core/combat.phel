@@ -37,7 +37,7 @@
    and plays each event (gated on :sound-on). `tick-world` clears the
    queue at the start of every frame, so events never replay. Used by
    core/combat and by the pickup / interaction steps in commands/play."
-  [world name ^float vol]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world name ^float vol]
   (update world :sfx (fn [s] (conj (or s []) {:name name :vol vol}))))
 
 ;; =====================================================================
@@ -216,7 +216,7 @@
   "Static catalogue entry for the world's active weapon. current-weapon
    defaults an unset :weapon to :pistol, so this is non-nil for every
    valid weapon in the catalog."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (weapon-spec world))
 
 (def empty-click-seconds
@@ -259,14 +259,14 @@
    over-cap life count (e.g. from a soulsphere). Used by `pickup-berserks`
    after the pickup is consumed; isolated here so the timer + heal logic
    can be unit-tested without the IO sfx call."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (assoc world
          :berserk-secs berserk-seconds
          :lives (php/max (:lives world) max-lives)))
 
 (defn berserk?
   "True while the player's berserk timer is still ticking down."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (pos? (or (:berserk-secs world) 0.0)))
 
 (def invuln-seconds
@@ -276,7 +276,7 @@
 
 (defn invuln?
   "True while the player's invulnerability timer is still ticking."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (pos? (or (:invuln-secs world) 0.0)))
 
 (def heat-per-shot
@@ -305,7 +305,7 @@
 ;; =====================================================================
 
 (defn- ^:pure enemy-distance-sq
-  [enemy ^float px ^float py]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface enemy ^float px ^float py]
   (let [dx (php/- (:x enemy) px)
         dy (php/- (:y enemy) py)]
     (php/+ (php/* dx dx) (php/* dy dy))))
@@ -337,7 +337,7 @@
   "Tick world timer `k` down by `dt`, clamped at 0. A timer that is
    absent or already spent is left alone: on a quiet frame nearly every
    one of them is, and the skipped map writes are the whole point."
-  [world k ^float dt]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world k ^float dt]
   (let [v (get world k)]
     (if (nil? v)
       world
@@ -346,7 +346,7 @@
         (assoc world k (php/max 0.0 (php/- v dt)))))))
 
 (defn- ^:pure decay-heat
-  [world ^float dt]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float dt]
   (let [v (:heat world)]
     (if (nil? v)
       world
@@ -366,7 +366,7 @@
 (defn- ^:pure add-shake
   ;; Kick the screen-shake timer, keeping whichever is longer so a fresh
   ;; jolt never cuts an in-progress rumble short.
-  [world ^float secs]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float secs]
   (assoc world :shake-secs (php/max (or (:shake-secs world) 0.0) secs)))
 
 (defn- stamp-hit-fx
@@ -376,7 +376,7 @@
   ;; kill count), so no intra-frame stickiness is needed. This is also the
   ;; single "this shot connected" point, so it bumps the :shots-hit
   ;; accuracy counter here (issue #202).
-  [world killed?]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world killed?]
   (-> world
       (assoc :hit-fx {:kill? (boolean killed?) :ttl hit-marker-seconds})
       (update :shots-hit (fn [n] (php/+ (or n 0) 1)))))
@@ -384,7 +384,7 @@
 (defn- bump-weapon-kills
   ;; Tally `n` kills under the active weapon for the run-summary per-weapon
   ;; breakdown (issue #202). Keyed by the world's current :weapon.
-  [world ^int n]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^int n]
   (let [w   (or (:weapon world) :pistol)
         kbw (or (:kills-by-weapon world) {})]
     (assoc world :kills-by-weapon (assoc kbw w (php/+ (or (get kbw w) 0) n)))))
@@ -398,7 +398,7 @@
       (when (php/> ttl' 0.0) (assoc fx :ttl ttl')))))
 
 (defn- decay-world-fx
-  [world ^float dt]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float dt]
   (let [fx (:fx world)]
     (if (nil? fx)
       world
@@ -407,7 +407,7 @@
         (assoc world :fx (decay-fx fx dt))))))
 
 (defn- decay-world-hit-fx
-  [world ^float dt]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float dt]
   (let [fx (:hit-fx world)]
     (if (nil? fx)
       world
@@ -444,7 +444,7 @@
    run so the rest of the loop is exercised). Shared by the contact path
    (`vulnerable?`) and the projectile path (core/projectile) so the
    immunity rule lives in one place."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (or (php/> (:iframes world) 0.0)
       (invuln? world)
       (:god? world)))
@@ -511,7 +511,7 @@
    Uses try-move so walls clamp the displacement. Returns the world
    unchanged if att is nil or the player and attacker share a cell.
    Exported so the shove-away rule can be unit tested."
-  [world att]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world att]
   (if (nil? att)
     world
     (let [p   (:player world)
@@ -566,7 +566,7 @@
    the timers + hurt-side stamp onto the shoved world so render reads
    the new position next frame. Shared by the contact path
    (`take-damage`) and the projectile path (`hit-player-at`)."
-  [world att ^float vol ^int dmg]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world att ^float vol ^int dmg]
   (let [p       (:player world)
         armor   (:armor world)
         ;; HP ACTUALLY lost (clamped to the pool) feeds the run-summary
@@ -596,7 +596,7 @@
    nearest enemy. `dmg` defaults to 1 for older callers. Caller must
    gate on `player-immune?` first."
   ([w0 ^float x0 ^float y0] (hit-player-at w0 x0 y0 1))
-  ([world ^float sx ^float sy ^int dmg]
+  ([^Phel.Lang.Collections.Map.PersistentMapInterface world ^float sx ^float sy ^int dmg]
    (let [p  (:player world)
          dx (php/- sx (:x p))
          dy (php/- sy (:y p))
@@ -616,7 +616,7 @@
 (defn damage-step
   "Per-frame: decay every timer, then apply a touch hit if i-frames
    have elapsed and an enemy is in range."
-  [world ^float dt]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float dt]
   (let [w (decay-timers world dt)]
     (if (vulnerable? w) (take-damage w) w)))
 
@@ -649,7 +649,7 @@
    every hitscan / beam / cone is fired along. A mouse-off world (no
    `:aim-col`) offsets 0, so this is just `:angle` and the shot fires dead
    ahead exactly as before."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (php/+ (:angle (:player world))
          (aim-angle-offset (:aim-col world) (:scene-cols world))))
 
@@ -659,7 +659,7 @@
    points at, not the one dead ahead. Centre / mouse-off aims down
    `:angle`, identical to the pre-#324 cast. `angle` is the caller's
    already-computed `aim-angle`, so one trigger pull runs one `atan`."
-  [world ^float angle]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float angle]
   (let [p (:player world)]
     (cast-ray (:pgrid world) (:x p) (:y p) angle)))
 
@@ -669,7 +669,7 @@
    height the renderer uses, so a hitscan agrees with the drawn sprite.
    nil when absent (tests / headless callers that never set it), which
    disables the vertical gate downstream - identical to looking level."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (:scene-rows world))
 
 (defn- aim-pr
@@ -678,7 +678,7 @@
    crosshair sits `pr` rows off the sprite centre, so combat compares
    `|pr|` against `sprite-half-rows`. 0 when `svh` is nil (no scene to
    project against) or the player has no pitch - the level-aim default."
-  [world svh]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world svh]
   (if (nil? svh)
     0
     (pitch-rows (or (:pitch (:player world)) 0.0) svh)))
@@ -736,7 +736,7 @@
    `cast-ray` (against the 120+ the cast loop already marches) plus a
    walk over the same handful of enemies the renderer projects. Skipped
    entirely while paused, where there is nothing to aim at."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (if (or (:paused world) (nil? (some :alive (:enemies world))))
     false
     (target-in-sights?* world)))
@@ -759,8 +759,8 @@
   "Append a blood/death fx at `hit-pos`. On a kill the caller passes the
    dead enemy's `type-kw`, which the renderer uses to draw a collapsing
    Freedoom corpse sprite; wounds (no type) stay a blood splatter."
-  ([w hp] (push-blood-fx w hp nil))
-  ([world hit-pos type-kw]
+  ([^Phel.Lang.Collections.Map.PersistentMapInterface w hp] (push-blood-fx w hp nil))
+  ([^Phel.Lang.Collections.Map.PersistentMapInterface world hit-pos type-kw]
    (update world :fx
            (fn [fx]
              (conj (or fx [])
@@ -772,7 +772,7 @@
   "Append a cosmetic projectile (`kind` -> a sprite) flying from just
    ahead of the player toward the impact (`ix`, `iy`). Purely visual; the
    damage was already applied by the splash."
-  [world kind ix iy]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world kind ix iy]
   (let [p  (:player world)
         sx (php/+ (:x p) (php/* tracer-spawn-offset (php/cos (:angle p))))
         sy (php/+ (:y p) (php/* tracer-spawn-offset (php/sin (:angle p))))]
@@ -785,7 +785,7 @@
   "On a `:door-lock :boss` level, killing a `:cyber` enemy grants the
    synthetic `:boss` keycard so the exit door becomes passable. No
    physical card spawns for boss locks — this hook is the unlock."
-  [world killed-enemy]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world killed-enemy]
   (if (and (= (:door-lock world) :boss)
            (= (:type killed-enemy) :cyber))
     (assoc world :held-keys
@@ -803,7 +803,7 @@
    still ticking from the previous kill; otherwise it restarts at 1.
    When the killed enemy is the L10 boss the exit door unlocks via
    `maybe-unlock-boss-door`."
-  [world enemies-after hit-pos idx ^float angle]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world enemies-after hit-pos idx ^float angle]
   (let [killed?   (false? (:alive (get enemies-after idx)))
         killed-e  (get enemies-after idx)
         chain?    (pos? (or (:streak-secs world) 0.0))
@@ -910,7 +910,7 @@
    On a kill, layer the kill cue ON TOP of the fire report at the same
    distance volume so a kill keeps its punch. Wounds ride on the fire
    sound plus the floating HP digit + blood splatter — no separate thud."
-  [out src spec ^float wall-d hit? killed? hit-pos]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface out ^Phel.Lang.Collections.Map.PersistentMapInterface src spec ^float wall-d hit? killed? hit-pos]
   (let [fire-sfx (or (:fire-sfx spec) :shoot)]
     (if hit?
       (let [p     (:player src)
@@ -944,8 +944,8 @@
    so the saw fires as long as the cooldown is up. Callers that already
    hold the active weapon's spec pass it in rather than looking it up
    again."
-  ([world] (can-fire? world (w-spec world)))
-  ([world spec]
+  ([^Phel.Lang.Collections.Map.PersistentMapInterface world] (can-fire? world (w-spec world)))
+  ([^Phel.Lang.Collections.Map.PersistentMapInterface world spec]
    (and (php/<= (or (:fire-cooldown world) 0.0) 0.0)
         (php/<= (or (:jam-secs world) 0.0) 0.0)
         (php/<= (or (:reload-cooldown world) 0.0) 0.0)
@@ -964,8 +964,8 @@
    saw can run indefinitely; the cooldown still arms so the per-tick
    rhythm is honoured. Callers that already hold the active weapon's
    spec pass it in rather than looking it up again."
-  ([world] (apply-heat world (w-spec world)))
-  ([world spec]
+  ([^Phel.Lang.Collections.Map.PersistentMapInterface world] (apply-heat world (w-spec world)))
+  ([^Phel.Lang.Collections.Map.PersistentMapInterface world spec]
    (let [overheat? (boolean (:overheats? spec))
          no-ammo?  (boolean (:no-ammo? spec))
          heat'     (if overheat?
@@ -985,7 +985,7 @@
    Returns false unconditionally for `:no-ammo?` weapons (chainsaw)
    so pressing R is a silent no-op rather than firing the reload
    lockout."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (let [sp (w-spec world)]
     (and (not (boolean (:no-ammo? sp)))
          (php/<= (or (:reload-cooldown world) 0.0) 0.0)
@@ -1002,7 +1002,7 @@
      - reserve empty           (let the player keep pressing R)
    Otherwise: draw `min(needed, reserve)` rounds from `:ammo-reserve`
    into `:mag` and arm the cooldown."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (let [sp      (w-spec world)
         mag     (or (:mag world) 0)
         reserve (or (:ammo-reserve world) 0)
@@ -1023,7 +1023,7 @@
    given the woken enemies + kill count, bump :kills / :streak /
    :streak-secs, award weapon kills, and unlock the boss door if a cyber
    died. Returns [world' boss-killed?] so the caller can size hit-stop."
-  [world woken killed]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world woken killed]
   (let [killed?      (php/> killed 0)
         chain?       (pos? (or (:streak-secs world) 0.0))
         boss-killed? (and (= (:door-lock world) :boss)
@@ -1052,7 +1052,7 @@
    chains the streak, unlocks the boss door if a cyber died in the
    blast, arms hit-stop, and (like every shot) wakes the room by noise.
    No per-enemy loot drops: the blast is its own reward (issue #58)."
-  [world spec ^float angle ^float wall-d]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world spec ^float angle ^float wall-d]
   (let [p                       (:player world)
         radius                  (:splash-radius spec)
         base                    (or (:splash-damage spec) 1)
@@ -1100,7 +1100,7 @@
    cyber died, size hit-stop per the meatiest kill, splat blood on the
    primary, drain the mag, and queue sfx. No per-enemy loot (mirrors the
    splash path)."
-  [world spec ^float wall-d enemies-after killed hit-pos tough]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world spec ^float wall-d enemies-after killed hit-pos tough]
   (let [p        (:player world)
         woken    (noise-wake enemies-after (:grid world) (:x p) (:y p))
         hit?     (some? hit-pos)
@@ -1128,7 +1128,7 @@
    round damages every enemy in the line instead of stopping at the
    nearest, so a row of lined-up enemies takes one hit each — the
    pistol's niche over the higher-DPS chaingun."
-  [world spec ^float angle ^float wall-d]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world spec ^float angle ^float wall-d]
   (let [p                          (:player world)
         base                       (or (:damage spec) 1)
         dtype                      (:damage-type spec)
@@ -1145,7 +1145,7 @@
    nearest enemy in the cone takes full damage; up to `:spread-targets`-1
    others in the cone are grazed for the smaller `:graze-damage` — a
    multi-target crowd hit that justifies the slow cadence (#125)."
-  [world spec ^float angle ^float wall-d]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world spec ^float angle ^float wall-d]
   (let [p                          (:player world)
         base                       (or (:damage spec) 1)
         dtype                      (:damage-type spec)
@@ -1166,7 +1166,7 @@
   "Single-target hitscan path (chaingun / chainsaw / incinerator): scan
    the one nearest enemy on the player's facing, wake the room, and route
    to on-shot-hit / on-shot-miss."
-  [world spec ^float angle ^float wall-d]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world spec ^float angle ^float wall-d]
   (let [[enemies' hit? hit-pos idx] (resolve-shot world spec angle wall-d)
         p                           (:player world)
         woken                       (noise-wake enemies' (:grid world) (:x p) (:y p))
@@ -1191,8 +1191,8 @@
    The weapon spec, the aim angle and the wall probe are resolved once
    here and threaded into whichever path fires: every path needs all
    three, and the angle carries an `atan` and the probe a full DDA ray."
-  ([world] (fire-shot world (w-spec world)))
-  ([world spec]
+  ([^Phel.Lang.Collections.Map.PersistentMapInterface world] (fire-shot world (w-spec world)))
+  ([^Phel.Lang.Collections.Map.PersistentMapInterface world spec]
    ;; Accuracy (issue #202): every trigger pull that reaches fire-shot
    ;; counts as one shot fired, regardless of weapon or whether it lands.
    ;; :shots-hit is bumped per connecting pull inside stamp-hit-fx.
@@ -1213,7 +1213,7 @@
    pulls stay silent — the player gets visual feedback from those
    states already (jam label / fire-anim) so doubling up would be
    noisy."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (push-sfx (assoc world :empty-click-secs empty-click-seconds) :click 0.6))
 
 (defn tick-shooting
@@ -1232,8 +1232,8 @@
          (e.g. tests) that pre-date :fire-held."
    :see-also ["fire-shot" "reload" "push-sfx" "damage-step"]
    :example "(tick-shooting world true false) ; trigger rising-edge this frame"}
-  ([world fire?] (tick-shooting world fire? false))
-  ([w fire-edge? fire-held?]
+  ([^Phel.Lang.Collections.Map.PersistentMapInterface world fire?] (tick-shooting world fire? false))
+  ([^Phel.Lang.Collections.Map.PersistentMapInterface w fire-edge? fire-held?]
    (let [spec         (weapon-spec w)
          auto?        (boolean (:auto-fire? spec))
          ;; No weapon in hand (`:hide-weapon?`): swallow the trigger so
@@ -1259,7 +1259,7 @@
    A world may override the reserve count via `:armory-reserve` (e.g.
    pinned to 99 so the HUD reads a clean two digits instead of the dev
    default)."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (if (not (:armory? world))
     world
     (let [res     (or (:armory-reserve world) armory-reserve)

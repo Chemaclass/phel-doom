@@ -4,7 +4,8 @@
   (:require phel-doom.core.pickups :refer [pickup-hearts pickup-armors pickup-ammos
                                            pickup-berserks pickup-invulns pickup-soulspheres
                                            pickup-armor-shards pickup-backpacks
-                                           pickup-weapon-pickups pickup-keycards]))
+                                           pickup-weapon-pickups pickup-keycards
+                                           tick-pickups]))
 
 ;; Each pickup-* is a pure world->world step-on transform. A world with the
 ;; player standing on cell (5, 5); seed the entity there to trigger, or
@@ -173,3 +174,28 @@
 (deftest test-a-missed-pickup-says-nothing
   (is (= nil (msg-of (pickup-hearts (merge (player-at 5.0 5.0)
                                            {:hearts [{:x 7.0 :y 7.0}] :lives 4}))))))
+
+;; ---------------------------------------------------------------------
+;; tick-pickups: the one-pass frame entry the game loop calls. Resolves
+;; the player's cell once and runs every rule over it.
+;; ---------------------------------------------------------------------
+
+(deftest test-tick-pickups-applies-every-rule-on-one-cell
+  ;; Heart and ammo box share the player's cell, so a single pass has to
+  ;; consume both.
+  (let [w  (merge (player-at 5.0 5.0)
+                  {:hearts [{:x 5.0 :y 5.0}] :lives 4
+                   :ammo-boxes [{:x 5.0 :y 5.0}] :weapon :pistol
+                   :weapon-state {:pistol {:reserve 0}} :ammo-reserve 0})
+        w' (tick-pickups w)]
+    (is (= 6 (:lives w')) "the heart on the cell still heals")
+    (is (= 0 (count (:hearts w'))) "heart consumed")
+    (is (= 0 (count (:ammo-boxes w'))) "ammo box on the same cell consumed in the same pass")
+    (is (php/> (get-in w' [:weapon-state :pistol :reserve]) 0) "reserve refilled")))
+
+(deftest test-tick-pickups-noop-when-standing-on-nothing
+  (let [w (merge (player-at 5.0 5.0)
+                 {:hearts [{:x 7.0 :y 7.0}] :lives 4
+                  :ammo-boxes [{:x 8.0 :y 8.0}] :weapon :pistol
+                  :keycards [{:x 9.0 :y 9.0 :colour :red}]})]
+    (is (= w (tick-pickups w)) "an empty cell leaves the world untouched")))

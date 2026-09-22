@@ -2,6 +2,7 @@
   (:require phel-doom.core.rng :as rng)
   (:require phel-doom.core.map        :refer [random-spawn wall?])
   (:require phel-doom.core.enemies    :refer [resists? default-lives-for])
+  (:require phel-doom.core.state      :refer [assoc-changed])
   (:require phel-doom.core.engine     :refer [proj-dist])
   (:require phel-doom.core.projection :refer [sprite-half-rows wall-px])
   (:require phel-doom.core.enemy-ai   :refer [apply-pain maybe-start-attack moves? observe sees-player? start-wander target-pos tick-attack tick-pain tick-wander]))
@@ -119,17 +120,19 @@
    first cuts corners, then slides along walls, then backs out of dead
    ends, so a monster routes around obstacles instead of bumping forever."
   [grid ^float ex ^float ey ^float step ^float desired]
-  (loop [offsets chase-angle-offsets]
-    (cond
-      (empty? offsets) nil
-      :else            (let [hit (try-step grid ex ey step (php/+ desired (first offsets)))]
-                         (if hit hit (recur (rest offsets)))))))
+  (let [n (count chase-angle-offsets)]
+    (loop [i 0]
+      (if (php/>= i n)
+        nil
+        (let [hit (try-step grid ex ey step (php/+ desired (get chase-angle-offsets i)))]
+          (if hit hit (recur (php/+ i 1))))))))
 
 (defn- step-toward
   "Walk one frame of `speed` * dt toward (target-x, target-y). The enemy
    slides around obstacles via pick-step's offset cascade instead of
    bumping forever."
-  [enemy grid ^float target-x ^float target-y ^float dt ^float speed]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface enemy
+   grid ^float target-x ^float target-y ^float dt ^float speed]
   (let [ex   (:x enemy)
         ey   (:y enemy)
         dx   (php/- target-x ex)
@@ -140,7 +143,7 @@
       (let [desired (php/atan2 dy dx)
             hit     (pick-step grid ex ey (php/* speed dt) desired)]
         (if hit
-          (assoc enemy :x (first hit) :y (second hit))
+          (assoc (assoc enemy :x (first hit)) :y (second hit))
           enemy)))))
 
 (def boss-sprite-scale
@@ -312,7 +315,7 @@
    (:aware) + take a hit-flash; a lethal hit flips :alive false + arms a
    respawn timer. Returns [enemy' killed?] - no pain roll, shared by the
    multi-target hitscans splash / pierce / spread-shoot."
-  [e ^int dmg dmg-type]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface e ^int dmg dmg-type]
   (let [eff   (if (resists? (:type e) dmg-type) 0 dmg)
         lives (php/max 0 (php/- (or (:lives e) 1) eff))
         woke  (assoc e :state :aware :lives lives)]
@@ -574,7 +577,8 @@
 
    `revive?` false suspends every dead enemy's timer (boss dead on L10
    → no more respawns of boss OR minions, the run is winding down)."
-  [e grid pgrid ^float player-x ^float player-y ^float dt ^float speed all-enemies revive?]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface e
+   grid pgrid ^float player-x ^float player-y ^float dt ^float speed all-enemies revive?]
   (cond
     (:alive e)                (let [;; Per-frame AI pipeline. Order matters:
                                     ;;
@@ -623,7 +627,9 @@
                                                       wandered))
                                                   wandered)
                                     flash'      (php/max 0.0 (php/- (or (:hit-flash-secs wandered) 0.0) dt))]
-                                (assoc stepped :hit-flash-secs flash'))
+                                (if (php/=== flash' (:hit-flash-secs wandered))
+                                  stepped
+                                  (assoc stepped :hit-flash-secs flash')))
     (nil? (:respawn-after e)) e
     (not revive?)             e
     :else
@@ -719,7 +725,7 @@
      - silence-trigger-dist (1.5) → :silence-tick? one-frame flag so
        the IO layer can mute sfx briefly before the imminent strike.
    :scare-secs counts down while the wide-eyed face is held."
-  [world ^float dt]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float dt]
   (let [p              (:player world)
         cur            (min-alive-dist (:enemies world) (:x p) (:y p))
         prev           (or (:prev-min-enemy-dist world) 1.0e9)
@@ -730,10 +736,10 @@
                             (php/<= active' 0.0))
         silence-cross? (and (php/>= prev silence-trigger-dist)
                             (php/< cur silence-trigger-dist))]
-    (assoc world
-           :prev-min-enemy-dist cur
-           :scare-secs          (if scare-cross? scare-duration active')
-           :silence-tick?       silence-cross?)))
+    (-> world
+        (assoc-changed :prev-min-enemy-dist cur)
+        (assoc-changed :scare-secs (if scare-cross? scare-duration active'))
+        (assoc-changed :silence-tick? silence-cross?))))
 
 (def rear-arc-half-width
   "Angle (radians) past facing that counts as 'behind'. 3π/4 = 135°
@@ -751,12 +757,12 @@
    rear-warn-max-dist of the player. Pure: one pass; bails on first
    match. Exported so render + tests share the same rule."
   [enemies ^float px ^float py ^float pangle]
-  (let [max-d2 (php/* rear-warn-max-dist rear-warn-max-dist)]
-    (loop [es enemies]
-      (cond
-        (empty? es) false
-        :else
-        (let [e (first es)]
+  (let [max-d2 (php/* rear-warn-max-dist rear-warn-max-dist)
+        n      (count enemies)]
+    (loop [i 0]
+      (if (php/>= i n)
+        false
+        (let [e (get enemies i)]
           (if (:alive e)
             (let [dx    (php/- (:x e) px)
                   dy    (php/- (:y e) py)
@@ -766,8 +772,8 @@
               (if (and (php/<= d2 max-d2)
                        (php/>= norm rear-arc-half-width))
                 true
-                (recur (rest es))))
-            (recur (rest es))))))))
+                (recur (php/+ i 1))))
+            (recur (php/+ i 1))))))))
 
 (defn spawn-enemies
   "Place `n` enemies on random open cells of `grid`, well away from the

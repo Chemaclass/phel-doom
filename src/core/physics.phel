@@ -1,6 +1,6 @@
 (ns phel-doom.core.physics
   (:require phel-doom.core.rng :as rng)
-  (:require phel-doom.core.state   :refer [max-stamina move-player turn-player clamp-pitch])
+  (:require phel-doom.core.state   :refer [assoc-changed max-stamina move-player turn-player clamp-pitch])
   (:require phel-doom.core.map     :refer [missing-key-for passable?])
   (:require phel-doom.core.weapons :refer [weapon-spec]))
 
@@ -89,7 +89,7 @@
    paint 'NEED <COLOUR> KEY' over the 3D view, and enqueue the refused-door `:locked` cue
    deny cue on the :sfx queue. Wall bumps are silent - only the
    locked-door case is informational."
-  [world ^float dx ^float dy]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float dx ^float dy]
   (let [{:keys [grid player held-keys]} world
         nx                              (+ (:x player) dx)
         ny                              (+ (:y player) dy)
@@ -120,7 +120,7 @@
   (php/> (get moves slot) 0))
 
 (defn- ^:pure contribution
-  [moves slot ^float speed ^float dt]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface moves slot ^float speed ^float dt]
   (if (counter-on? moves slot) (php/* speed dt) 0.0))
 
 (defn- ^:pure sprinting?
@@ -160,19 +160,15 @@
   (php/- (contribution moves :pitch-up   pitch-speed dt)
          (contribution moves :pitch-down pitch-speed dt)))
 
-(defn- ^:pure longitudinal-delta [world ^float dt]
-  (let [moves (:moves world)
-        sf    (sprint-factor world)
-        wf    (weapon-movement-factor world)]
-    (php/* sf wf
+(defn- ^:pure longitudinal-delta [world ^float dt ^float speed-factor]
+  (let [moves (:moves world)]
+    (php/* speed-factor
            (php/- (contribution moves :fwd  move-speed dt)
                   (contribution moves :back move-speed dt)))))
 
-(defn- ^:pure lateral-delta [world ^float dt]
-  (let [moves (:moves world)
-        sf    (sprint-factor world)
-        wf    (weapon-movement-factor world)]
-    (php/* sf wf
+(defn- ^:pure lateral-delta [world ^float dt ^float speed-factor]
+  (let [moves (:moves world)]
+    (php/* speed-factor
            (php/- (contribution moves :strafe-right strafe-speed dt)
                   (contribution moves :strafe-left  strafe-speed dt)))))
 
@@ -242,13 +238,15 @@
    aren't going anywhere, and a resting frame renders byte-identical. A
    smooth ease-to-centre is a possible feel follow-up; the hard reset
    keeps the at-rest frame byte-identical in a single frame."
-  [world ^float dist]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float dist]
   (if (php/> dist 0.0)
     (assoc world :bob-phase
            (php/fmod (php/+ (or (:bob-phase world) 0.0)
                             (php/* dist bob-phase-per-unit))
                      (php/* 2.0 php/M_PI)))
-    (assoc world :bob-phase 0.0)))
+    (if (php/=== 0.0 (:bob-phase world))
+      world
+      (assoc world :bob-phase 0.0))))
 
 (defn apply-physics
   "Per-frame: rotate, shear the look up/down pitch, then translate using
@@ -257,13 +255,15 @@
    AND the sprint state (via sprint-factor) so sprint intent x stamina > 0
    x not-blocked yields a 1.6x boost. Pitch is a pure camera shear (no
    effect on translation), clamped by `clamp-pitch`."
-  [world ^float dt]
-  (let [moves   (:moves world)
-        turned  (apply-rotation world (turn-delta moves dt))
-        pitched (apply-pitch turned (pitch-delta moves dt))
-        walked  (apply-translation pitched
-                                   (longitudinal-delta pitched dt)
-                                   (lateral-delta pitched dt))]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float dt]
+  (let [moves               (:moves world)
+        turned              (apply-rotation world (turn-delta moves dt))
+        pitched             (apply-pitch turned (pitch-delta moves dt))
+        ^float speed-factor (php/* (sprint-factor pitched)
+                                   (weapon-movement-factor pitched))
+        walked              (apply-translation pitched
+                                               (longitudinal-delta pitched dt speed-factor)
+                                               (lateral-delta pitched dt speed-factor))]
     (advance-bob-phase (decay-move-counters walked dt)
                        (moved-dist pitched walked))))
 
@@ -277,7 +277,7 @@
      stamina-regen * dt (clamped <= max-stamina). Once stamina recovers
      past sprint-engage-threshold, clear :sprint-blocked? so the player
      can sprint again."
-  [world ^float dt]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float dt]
   (let [stam  (or (:stamina world) max-stamina)
         cd    (or (:sprint-cooldown-secs world) 0.0)
         blkd? (boolean (:sprint-blocked? world))
@@ -287,10 +287,10 @@
       (and spr? move?)
       (let [stam'  (php/max 0.0 (php/- stam (php/* stamina-drain dt)))
             empty? (php/<= stam' 0.0)]
-        (assoc world
-               :stamina               stam'
-               :sprint-blocked?       (or blkd? empty?)
-               :sprint-cooldown-secs  (if empty? sprint-cooldown-after cd)))
+        (-> world
+            (assoc-changed :stamina stam')
+            (assoc-changed :sprint-blocked? (or blkd? empty?))
+            (assoc-changed :sprint-cooldown-secs (if empty? sprint-cooldown-after cd))))
 
       :else
       (let [cd'        (php/max 0.0 (php/- cd dt))
@@ -299,10 +299,10 @@
                          (php/min max-stamina (php/+ stam (php/* stamina-regen dt)))
                          stam)
             unblocked? (and blkd? (php/>= stam' sprint-engage-threshold))]
-        (assoc world
-               :stamina               stam'
-               :sprint-cooldown-secs  cd'
-               :sprint-blocked?       (and blkd? (not unblocked?)))))))
+        (-> world
+            (assoc-changed :stamina stam')
+            (assoc-changed :sprint-cooldown-secs cd')
+            (assoc-changed :sprint-blocked? (and blkd? (not unblocked?))))))))
 
 (def blood-drop-spawn-rate
   "Expected new drops per second (Bernoulli per-frame using dt)."
@@ -347,7 +347,7 @@
    mid-frame when the player heals back above the threshold. Columns
    are stored normalised (0..1) so the render layer can scale to
    whatever vw is this frame."
-  [world ^float dt]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float dt]
   (let [drops     (or (:blood-drops world) [])
         advanced  (advance-blood-drops drops dt)
         low-life? (php/<= (or (:lives world) 0) 6)
@@ -371,12 +371,14 @@
    `:heartbeat-tick?` flips true on the frame the phase wraps so the
    IO layer can fire the thump sfx exactly once per cycle. Idle (no
    heartbeat) keeps phase at 0 and the flag at false."
-  [world ^float dt]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float dt]
   (let [interval (heartbeat-interval (:lives world))]
     (if (nil? interval)
       ;; Chained: Phel's variadic assoc costs ~2.7x two chained
       ;; single-key writes, and this runs every frame.
-      (assoc (assoc world :heartbeat-phase 0.0) :heartbeat-tick? false)
+      (-> world
+          (assoc-changed :heartbeat-phase 0.0)
+          (assoc-changed :heartbeat-tick? false))
       (let [phase (php/+ (or (:heartbeat-phase world) 0.0)
                          (php// dt interval))
             wrap? (php/>= phase 1.0)]

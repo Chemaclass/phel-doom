@@ -117,7 +117,7 @@
   ;; auto-repeat: the OS initial delay was already bridged, so it only
   ;; needs to reach the next repeat. Turn / pitch / sprint holds are
   ;; already ~50ms and stay as they were.
-  [world slot]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world slot]
   (if (and (php/=== move-hold-secs (hold-secs-for slot))
            (php/> (or (get-in world [:moves slot]) 0.0) 0.0))
     move-hold-repeat-secs
@@ -132,7 +132,7 @@
    stops the player within ~150ms instead of ~300ms.
 
    Anything else (unmapped bytes) leaves the world untouched."
-  [world byte]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world byte]
   (let [slot       (get key->slot byte)
         shift-slot (get shift-key->slot byte)]
     (cond
@@ -200,12 +200,12 @@
 
 (defn- clear-slot
   "Force a counter to 0 (immediate stop)."
-  [world slot]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world slot]
   (assoc-in world [:moves slot] 0.0))
 
 (defn- press-slot
   "Press / repeat event: set the counter to the slot's normal hold."
-  [world slot]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world slot]
   (assoc-in world [:moves slot] (hold-secs-for slot)))
 
 (def movement-slots
@@ -230,7 +230,7 @@
    a movement slot, also refresh `:sprint` so SHIFT+WASD primes the
    sprint pool (this is the kitty path of the user-picked
    `SHIFT (kitty) + x fallback` binding from issue #35)."
-  [world code event-type mods]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world code event-type mods]
   (let [slot (get ascii->slot code)]
     (cond
       (= event-type 3)
@@ -259,7 +259,7 @@
    Returns [world-after-events leftover-string]; leftover-string is
    what's left after stripping recognised CSI-u tokens so the legacy
    byte path can handle anything that wasn't a kitty event."
-  [world keys]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world keys]
   (let [matches (php/array)
         ;; Regex: ESC [ <code> ( ; mods ( : event )? )? u
         ;; - code  is digits
@@ -299,7 +299,7 @@
    sprinting (mirrors the SHIFT+WASD path in apply-kitty-events).
    Plain legacy arrows (\\e[A etc.) are untouched here and handled
    downstream by normalise-arrows. Returns [world leftover]."
-  [world keys]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world keys]
   (let [matches (php/array)
         re      "/\\x1b\\[1(?:;(\\d+)(?::(\\d+))?)?([ABCD])/"]
     (php/preg_match_all re keys matches)
@@ -368,17 +368,19 @@
    (\\e[1;m:eD with same events) → legacy normalise + single-byte
    refresh. Terminals supporting any subset of kitty fall through
    gracefully to the legacy path."
-  [world keys]
-  (let [no-mouse       (strip-focus-events (strip-mouse-reports keys))
-        [w1 leftover1] (apply-kitty-events world no-mouse)
-        [w2 leftover2] (apply-kitty-arrow-events w1 leftover1)]
-    (let [normalised (normalise-arrows leftover2)
-          n          (php/strlen normalised)]
-      (loop [i 0 w w2]
-        (if (php/>= i n)
-          w
-          (recur (php/+ i 1)
-                 (refresh-move w (php/substr normalised i 1))))))))
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world keys]
+  (if (php/=== "" keys)
+    world
+    (let [no-mouse       (strip-focus-events (strip-mouse-reports keys))
+          [w1 leftover1] (apply-kitty-events world no-mouse)
+          [w2 leftover2] (apply-kitty-arrow-events w1 leftover1)]
+      (let [normalised (normalise-arrows leftover2)
+            n          (php/strlen normalised)]
+        (loop [i 0 w w2]
+          (if (php/>= i n)
+            w
+            (recur (php/+ i 1)
+                   (refresh-move w (php/substr normalised i 1)))))))))
 
 ;; =====================================================================
 ;; § Movable aim crosshair (issue #324, was positional steering #318/#320)

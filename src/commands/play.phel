@@ -7,7 +7,7 @@
                                             initial-key-snapshot nav-deltas mouse-aim])
   (:require phel-doom.core.physics  :refer [apply-physics tick-heartbeat tick-blood-drops tick-stamina])
   (:require phel-doom.core.engine   :refer [mark-visible-cells])
-  (:require phel-doom.core.pickups :refer [pickup-hearts pickup-armors pickup-ammos pickup-berserks pickup-invulns pickup-soulspheres pickup-armor-shards pickup-backpacks pickup-weapon-pickups pickup-keycards])
+  (:require phel-doom.core.pickups :refer [tick-pickups])
   (:require phel-doom.core.combat :refer [damage-step fire-anim-seconds push-sfx reload reloading? reload-cooldown-seconds distance-volume sight-sfx-for target-in-sights? tick-armory tick-shooting])
   (:require phel-doom.core.enemy    :refer [advance tick-scare rear-attacker?])
   (:require phel-doom.core.projectile :refer [tick-projectiles tick-tracers])
@@ -152,7 +152,7 @@
 (defn- about-face
   "Snap the player's facing by π (180° turn). Triggered by the rising
    edge on the `e` key in the game loop."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (update-in world [:player :angle] (fn [a] (php/+ a php/M_PI))))
 
 (defn apply-mouse-look
@@ -164,7 +164,7 @@
    so a still pointer in the screen interior (zero yaw/pitch) is a no-op and the
    keyboard look is untouched. Pure; the game loop calls it only on an
    unpaused frame so the camera can't drift while a menu is up."
-  [world look]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world look]
   (let [yaw   (or (:yaw look) 0.0)
         pitch (or (:pitch look) 0.0)
         w1    (if (php/=== yaw 0.0) world (turn-player world yaw))]
@@ -192,7 +192,7 @@
    On a terminal without kitty release events, HOLDING `q` reaches the
    quit through key autorepeat (arm, then a fresh press edge on the next
    burst). That is deliberate: a held key is not an accident."
-  [world quit-request?]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world quit-request?]
   (and (boolean quit-request?)
        (boolean (:paused world))
        (not (:help? world))))
@@ -203,7 +203,7 @@
    Drops the movement hold counters for the same reason pausing on focus
    loss does: whatever was held when the question came up must not still
    be gliding when the player answers it."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (assoc world
          :paused        true
          :help?         false
@@ -218,7 +218,7 @@
    help / about-face) for this frame. Debug + help edges stay
    outside the paused short-circuit so F3 / H / ESC still flip
    overlays while paused."
-  [world edges]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^Phel.Lang.Collections.Map.PersistentMapInterface edges]
   (let [;; Focus loss (#454): the terminal reported the window going to
         ;; the background, so freeze the run before the player comes back
         ;; to a corpse. Already-paused worlds are left exactly as they
@@ -290,7 +290,7 @@
    left/right (or A/D) adjust the selected field. A held key ramps
    through the OS key-repeat. Volume edits take effect immediately;
    the minimap field mirrors into :show-map so the change shows at once."
-  [world keys]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world keys]
   (let [{cursor-steps :cursor value-steps :value} (nav-deltas keys)
         {:keys [cursor settings adjusted?]}
         (navigate (:settings world) (or (:settings-cursor world) 0) cursor-steps value-steps)]
@@ -306,7 +306,7 @@
    option: `:resume` unpauses here; `:settings` switches to the options
    sub-page; `:restart` / `:quit` are stamped on `:pause-action` for the
    game loop to hand back to the run lifecycle. No select = just move."
-  [world cursor-steps select?]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world cursor-steps select?]
   (let [cursor (pause-menu-move (or (:pause-cursor world) 0) cursor-steps)
         ;; Moving the cursor disarms a pending Restart (#454): the
         ;; confirmation belongs to the row it was asked on.
@@ -333,14 +333,14 @@
 (defn resumed-pause?
   "True when the pause/settings page just closed this frame (was paused,
    now isn't). The cue to persist the player's settings to disk."
-  [before after]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface before ^Phel.Lang.Collections.Map.PersistentMapInterface after]
   (and (:paused before) (not (:paused after))))
 
 (defn- persist-settings!
   "Write the world's current settings out. Called whenever the player
    leaves the pause/settings page (resume or quit) so edits are never
    lost; volumes were already applied live."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (save-settings! (:settings world)))
 
 (defn- boss-down?
@@ -348,11 +348,11 @@
    stamps `:boss` into `:held-keys` on the killing blow. Used to stop
    every remaining enemy from respawning so the player's victory lap
    to the exit door isn't ambushed by a fresh boss or revived imp."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (and (= (:door-lock world) :boss)
        (contains? (or (:held-keys world) #{}) :boss)))
 
-(defn- enemy-distance [e ^float px ^float py]
+(defn- enemy-distance [^Phel.Lang.Collections.Map.PersistentMapInterface e ^float px ^float py]
   (let [dx (php/- (:x e) px)
         dy (php/- (:y e) py)]
     (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))))
@@ -361,7 +361,7 @@
   ;; The closest enemy that went from :dormant to awake this frame, or
   ;; nil. Compares the two enemy vectors positionally - `advance` maps
   ;; over them in place, so index i is the same monster either side.
-  [before after ^float px ^float py]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface before ^Phel.Lang.Collections.Map.PersistentMapInterface after ^float px ^float py]
   (let [es0 (or (:enemies before) [])
         es1 (or (:enemies after) [])]
     (loop [i 0 best nil best-d 9999.0]
@@ -370,8 +370,8 @@
         (let [b (get es0 i)
               a (get es1 i)]
           (if (and b a
-                   (= :dormant (:state b))
-                   (not (= :dormant (:state a)))
+                   (php/=== :dormant (:state b))
+                   (php/!== :dormant (:state a))
                    (:alive a))
             (let [d (enemy-distance a px py)]
               (if (php/< d best-d)
@@ -386,7 +386,7 @@
    to the player; without it the AI falls through to the legacy
    'always chase' behaviour. Suspends respawns once the boss is down
    on L10 (see boss-down?)."
-  [world ^float dt]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float dt]
   (let [p       (:player world)
         stepped (update world :enemies advance (:grid world) (:pgrid world) (:x p) (:y p) dt
                         (or (:chase-speed world) 0.75)
@@ -402,7 +402,7 @@
 
 (defn- on-door?
   "True when the player's current cell is a door (auto-advances level)."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (let [p (:player world)]
     (door? (:grid world) (php/intval (:x p)) (php/intval (:y p)))))
 
@@ -410,7 +410,7 @@
   "Integer (x, y) of the cell the player is facing (one unit ahead
    along `:angle`). Used by F-key handlers (secret reveal, switch
    toggle) to pick the player's interact target."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (let [p (:player world)
         a (:angle p)]
     [(php/intval (php/+ (:x p) (php/cos a)))
@@ -424,7 +424,7 @@
    Plays the door sfx so the reveal is audibly distinct from a wall
    bump. No-op otherwise so other action-bound features (switches,
    etc) chain off the same edge without conflict."
-  [world action?]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world action?]
   (if (not action?)
     world
     (let [[cx cy] (cell-ahead world)]
@@ -448,7 +448,7 @@
    `:switches` entry. Plays the switch throw so the interaction is
    audible and distinct from a door. Chained AFTER `try-reveal-secret` so the two handlers
    never claim the same F-press."
-  [world action?]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world action?]
   (if (not action?)
     world
     (let [[cx cy] (cell-ahead world)]
@@ -467,6 +467,16 @@
    finishes (the gun goes hot again)."
   0.30)
 
+(defn- ^:pure decay-hud-timer
+  "Tick one HUD cue timer down by dt, leaving a stopped or absent one untouched."
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world k ^float dt]
+  (let [v (get world k)]
+    (if v
+      (if (php/> v 0.0)
+        (assoc world k (php/max 0.0 (php/- v dt)))
+        world)
+      world)))
+
 (defn tick-world
   "Pure one-frame state transition. `keys` is the drained input string,
    `dt` is seconds since the previous tick, `edges` is the rising-edge
@@ -475,7 +485,7 @@
    top-to-bottom: handle one-shots, refresh held-key counters, run
    physics, collect pickups, advance enemies, resolve a shot, decay
    timers + apply contact damage."
-  [world keys ^float dt edges]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world keys ^float dt ^Phel.Lang.Collections.Map.PersistentMapInterface edges]
   ;; Reset the per-frame sfx queue up front so events accumulate fresh
   ;; each tick. Every cue (pickups, interactions, combat) enqueues via
   ;; combat/push-sfx instead of emitting inline, keeping this transform
@@ -533,15 +543,16 @@
             ;; First-run hints (#467) retire as soon as the player has
             ;; shown they can move, turn and shoot. `:moves` carries the
             ;; live hold counters, so this reads what they just did.
+            held (:moves w1am)
             w1ah (note-hint-progress
                   w1am
-                  (php/> (php/+ (php/+ (or (get-in w1am [:moves :fwd]) 0.0)
-                                       (or (get-in w1am [:moves :back]) 0.0))
-                                (php/+ (or (get-in w1am [:moves :strafe-left]) 0.0)
-                                       (or (get-in w1am [:moves :strafe-right]) 0.0)))
+                  (php/> (php/+ (php/+ (or (:fwd held) 0.0)
+                                       (or (:back held) 0.0))
+                                (php/+ (or (:strafe-left held) 0.0)
+                                       (or (:strafe-right held) 0.0)))
                          0.0)
-                  (php/> (php/+ (or (get-in w1am [:moves :turn-left]) 0.0)
-                                (or (get-in w1am [:moves :turn-right]) 0.0))
+                  (php/> (php/+ (or (:turn-left held) 0.0)
+                                (or (:turn-right held) 0.0))
                          0.0)
                   (boolean (:fire edges)))
             w1b  (try-reveal-secret w1ah (:action edges))
@@ -556,13 +567,9 @@
             ;; from where the player actually is.
             w1c  (mark-visible-cells w1b2)
             w2   (apply-physics (tick-stamina w1c dt) dt)
-            ;; Step-on pickups, applied to w2 in order (extend the vector
-            ;; to add one; reduce not `->` per the lint note above).
-            w4g  (reduce (fn [w f] (f w)) w2
-                         [pickup-hearts pickup-armors pickup-armor-shards
-                          pickup-ammos pickup-berserks pickup-invulns
-                          pickup-soulspheres pickup-backpacks pickup-keycards
-                          pickup-weapon-pickups])
+            ;; Step-on pickups, in one pass that resolves the player's
+            ;; cell once (order + semantics live in core/pickups).
+            w4g  (tick-pickups w2)
             w5   (tick-enemies  w4g dt)
             ;; Casters that released this frame have :fire-now set;
             ;; spawn + march their bolts and resolve player impacts
@@ -596,10 +603,8 @@
             w13  (decay-soul-overcap w11 dt)
             ;; Decay the F5/F9 save/load HUD cue (set in game-loop after
             ;; the tick).
-            w13b (update w13 :save-flash-secs
-                         (fn [s] (php/max 0.0 (php/- (or s 0.0) dt))))
-            w13c (update w13b :reload-ready-secs
-                         (fn [s] (php/max 0.0 (php/- (or s 0.0) dt))))]
+            w13b (decay-hud-timer w13 :save-flash-secs dt)
+            w13c (decay-hud-timer w13b :reload-ready-secs dt)]
         (advance-game-time w13c dt)))))
 
 ;; =====================================================================
@@ -612,146 +617,147 @@
    render-facing setting is actually projected here - a settings row that
    render reads off `stats` but this fn never writes is a toggle that does
    nothing, which is how :truecolor and :quad shipped inert."
-  [world fps frame-ms]
-  {:fps         fps
-   :frame-ms    frame-ms
-   :kills       (:kills world)
-   :lives       (:lives world)
-   :armor       (:armor world)
-   :max-lives   max-lives
-   :iframes     (:iframes world)
-   :shake-secs  (:shake-secs world)
-   :fire-anim   (:fire-anim world)
-   ;; Crosshair hit-marker FX (issue #201): {:kill? :ttl} or nil. Set in
-   ;; the combat step on a connecting shot, decayed each frame.
-   :hit-fx      (:hit-fx world)
-   :fire-anim-duration fire-anim-seconds
-   :intro-secs  (:intro-secs world)
-   :flash-secs  (:flash-secs world)
-   :fx          (:fx world)
-   :paused      (:paused world)
-   :level       (:level world)
-   :level-name  (:level-name world)
-   :hurt-side   (:hurt-side world)
-   :hurt-dir    (:hurt-dir world)
-   :streak      (:streak world)
-   :heat        (:heat world)
-   :jam-secs    (:jam-secs world)
-   :blood-drops (:blood-drops world)
-   :game-time   (or (:game-time world) 0.0)
-   :debug?      (:debug? world)
-   :perf-stats  (when (:debug? world) (read-perf-snapshot))
-   :weapon      (or (:weapon world) :pistol)
-   :weapon-name (or (:name (weapon-spec world)) "pistol")
-   :palette     (:palette (weapon-spec world))
-   :mag         (or (:mag world) 0)
-   :mag-size    (or (:mag-size (weapon-spec world)) 10)
-   :ammo-reserve (or (:ammo-reserve world) 0)
-   :reload-cooldown (or (:reload-cooldown world) 0.0)
-   :reload-duration (or (:reload-duration (weapon-spec world)) reload-cooldown-seconds)
-   :empty-click-secs (or (:empty-click-secs world) 0.0)
-   :berserk-secs (or (:berserk-secs world) 0.0)
-   :invuln-secs  (or (:invuln-secs world) 0.0)
-   :backpack-level  (backpack-level world)
-   :difficulty   (or (:difficulty world) :normal)
-   :god?         (boolean (:god? world))
-   :help?        (boolean (:help? world))
-   :held-keys      (or (:held-keys world) #{})
-   :door-lock      (:door-lock world)
-   :secrets-total  (or (:secrets-total world) 0)
-   :secrets-found  (or (:secrets-found world) 0)
-   :locked-door-bump-secs   (or (:locked-door-bump-secs world) 0.0)
-   :locked-door-bump-colour (:locked-door-bump-colour world)
-   :owned-weapons  (or (:owned-weapons world) #{:pistol})
-   :weapon-state   (or (:weapon-state world) {})
-   :stamina        (or (:stamina world) max-stamina)
-   :max-stamina    max-stamina
-   :sprint-blocked? (boolean (:sprint-blocked? world))
-   :rear-warning? (rear-attacker? (:enemies world)
-                                  (:x (:player world))
-                                  (:y (:player world))
-                                  (:angle (:player world)))
-   ;; Primary enemy type kw — render uses this as the fallback
-   ;; visual when a per-enemy `:type` field is missing. Mixed-monster
-   ;; rooms still stamp `:type` per enemy at spawn so the renderer
-   ;; can branch.
-   :enemy                (or (:enemy world) :imp)
-   :save-flash-secs      (or (:save-flash-secs world) 0.0)
-   :save-flash-msg       (:save-flash-msg world)
-   ;; Doom-style message line (#456): what was just picked up / revealed /
-   ;; switched to. Render gates on the timer, so the text can stay put.
-   ;; Hostile reticle (#458): does a shot fired now connect? Asked through
-   ;; the real hitscan selection so the cue can never disagree with the gun.
-   :hostile?             (target-in-sights? world)
-   :msg-text             (:msg-text world)
-   ;; First-run key hints (#467).
-   :hint-secs            (or (:hint-secs world) 0.0)
-   ;; HUD symbol set (#471): resolved once per frame, never per cell.
-   :ascii-glyphs?        (php/=== :ascii (:glyphs (:settings world)))
-   ;; Texture filter (#462): render ORs this with PHEL_DOOM_TEXMIP.
-   :texmip?              (boolean (:texmip (:settings world)))
-   :msg-secs             (or (:msg-secs world) 0.0)
-   :reload-ready-secs    (or (:reload-ready-secs world) 0.0)
-   ;; Settings page (issue #107): the pause overlay paints the box from
-   ;; these. The page IS the pause screen, so the render layer keys off
-   ;; :paused; the cursor + values ride along here.
-   :settings             (:settings world)
-   :settings-cursor      (or (:settings-cursor world) 0)
-   ;; Pause menu (#203): which pause screen is up (:menu top-level options
-   ;; vs :settings sub-page) + the menu cursor, so render can paint the
-   ;; right overlay.
-   :pause-screen         (or (:pause-screen world) :menu)
-   :pause-cursor         (or (:pause-cursor world) 0)
-   ;; Which menu row is waiting for a second Enter (#454): render paints
-   ;; that row as a question instead of its plain label.
-   :pause-confirm        (:pause-confirm world)
-   ;; Generic HUD-suppression flags (the demo showcase sets them; normal
-   ;; play leaves them nil): hide the weapon name/ammo chunk and the
-   ;; enemy-themed level label from the top game-info line.
-   :hide-weapon?         (boolean (:hide-weapon? world))
-   :hide-level-name?     (boolean (:hide-level-name? world))
-   ;; UX settings (issue #203): crosshair reticle style + always-on run
-   ;; timer in the HUD strip. Both are pure overlay reads.
-   :crosshair            (or (:crosshair (:settings world)) :cross)
-   :run-timer?           (boolean (:timer (:settings world)))
-   ;; Mouselook on flag (#246): the crosshair IS the mouse aim point (no
-   ;; visible OS pointer), so paint-crosshair forces a minimal centre dot
-   ;; even when the player set Crosshair to :off, so mouse-aiming always has
-   ;; an aim indicator.
-   :mouse                (boolean (:mouse (:settings world)))
-   ;; Movable aim crosshair (#324): the reticle cell the gun aims at, so
-   ;; render draws the `+` there. nil (mouse off / not placed) centres it.
-   :aim-col              (:aim-col world)
-   :aim-row              (:aim-row world)
-   ;; Accessibility (issue #200): high-contrast HUD un-dims the dim/grey
-   ;; HUD elements (compass, empty hearts, reserve ammo) for low-quality
-   ;; terminals.
-   :high-contrast?       (boolean (:high-contrast (:settings world)))
-   ;; Low detail (perf setting): flatten the wall AND floor interior to
-   ;; one sample per cell, trading vertical texture detail for ~11-26%
-   ;; render time + ~30-40% bytes on big screens. render reads this key.
-   :fast-walls           (boolean (:fast-walls (:settings world)))
-   ;; Sub-pixel (compat setting, #332): default ON. OFF picks the
-   ;; one-colour-per-cell render path for terminals that draw ▀ half-blocks
-   ;; with row seams (macOS Terminal.app). Default-on semantics: only an
-   ;; explicit false disables it, so a settings-less fixture stays sub-pixel.
-   :subpixel             (not (php/=== false (:subpixel (:settings world))))
-   ;; View bob (#411): the walk-cycle head-bob amplitude scalar [0, 1],
-   ;; 0 (default) = off. render adds `bob-rows` of the world's `:bob-phase`
-   ;; scaled by this to the horizon `pr`, so walls/floor/sky/enemies bob.
-   :view-bob             (view-bob-intensity (:settings world))
-   ;; Walk-cycle phase (#412): the weapon viewmodel dips + sways on this
-   ;; too, scaled by :view-bob. Settles to 0 at rest (byte-identical gun).
-   :bob-phase            (or (:bob-phase world) 0.0)
-   ;; Room lighting (#418): OFF by default. When on, render folds the
-   ;; world's derived :light-grid into the wall shade index.
-   :light                (boolean (:light (:settings world)))
-   ;; Truecolor + Quad detail: OFF by default. render ANDs each with its
-   ;; PHEL_DOOM_* env override. Both ship as options-page rows, so without
-   ;; these two projections the player can toggle them and nothing happens -
-   ;; only the env forces reached the renderer.
-   :truecolor            (boolean (:truecolor (:settings world)))
-   :quad                 (boolean (:quad (:settings world)))})
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world fps frame-ms]
+  (let [spec (weapon-spec world)]
+    {:fps         fps
+     :frame-ms    frame-ms
+     :kills       (:kills world)
+     :lives       (:lives world)
+     :armor       (:armor world)
+     :max-lives   max-lives
+     :iframes     (:iframes world)
+     :shake-secs  (:shake-secs world)
+     :fire-anim   (:fire-anim world)
+     ;; Crosshair hit-marker FX (issue #201): {:kill? :ttl} or nil. Set in
+     ;; the combat step on a connecting shot, decayed each frame.
+     :hit-fx      (:hit-fx world)
+     :fire-anim-duration fire-anim-seconds
+     :intro-secs  (:intro-secs world)
+     :flash-secs  (:flash-secs world)
+     :fx          (:fx world)
+     :paused      (:paused world)
+     :level       (:level world)
+     :level-name  (:level-name world)
+     :hurt-side   (:hurt-side world)
+     :hurt-dir    (:hurt-dir world)
+     :streak      (:streak world)
+     :heat        (:heat world)
+     :jam-secs    (:jam-secs world)
+     :blood-drops (:blood-drops world)
+     :game-time   (or (:game-time world) 0.0)
+     :debug?      (:debug? world)
+     :perf-stats  (when (:debug? world) (read-perf-snapshot))
+     :weapon      (or (:weapon world) :pistol)
+     :weapon-name (or (:name spec) "pistol")
+     :palette     (:palette spec)
+     :mag         (or (:mag world) 0)
+     :mag-size    (or (:mag-size spec) 10)
+     :ammo-reserve (or (:ammo-reserve world) 0)
+     :reload-cooldown (or (:reload-cooldown world) 0.0)
+     :reload-duration (or (:reload-duration spec) reload-cooldown-seconds)
+     :empty-click-secs (or (:empty-click-secs world) 0.0)
+     :berserk-secs (or (:berserk-secs world) 0.0)
+     :invuln-secs  (or (:invuln-secs world) 0.0)
+     :backpack-level  (backpack-level world)
+     :difficulty   (or (:difficulty world) :normal)
+     :god?         (boolean (:god? world))
+     :help?        (boolean (:help? world))
+     :held-keys      (or (:held-keys world) #{})
+     :door-lock      (:door-lock world)
+     :secrets-total  (or (:secrets-total world) 0)
+     :secrets-found  (or (:secrets-found world) 0)
+     :locked-door-bump-secs   (or (:locked-door-bump-secs world) 0.0)
+     :locked-door-bump-colour (:locked-door-bump-colour world)
+     :owned-weapons  (or (:owned-weapons world) #{:pistol})
+     :weapon-state   (or (:weapon-state world) {})
+     :stamina        (or (:stamina world) max-stamina)
+     :max-stamina    max-stamina
+     :sprint-blocked? (boolean (:sprint-blocked? world))
+     :rear-warning? (rear-attacker? (:enemies world)
+                                    (:x (:player world))
+                                    (:y (:player world))
+                                    (:angle (:player world)))
+     ;; Primary enemy type kw — render uses this as the fallback
+     ;; visual when a per-enemy `:type` field is missing. Mixed-monster
+     ;; rooms still stamp `:type` per enemy at spawn so the renderer
+     ;; can branch.
+     :enemy                (or (:enemy world) :imp)
+     :save-flash-secs      (or (:save-flash-secs world) 0.0)
+     :save-flash-msg       (:save-flash-msg world)
+     ;; Doom-style message line (#456): what was just picked up / revealed /
+     ;; switched to. Render gates on the timer, so the text can stay put.
+     ;; Hostile reticle (#458): does a shot fired now connect? Asked through
+     ;; the real hitscan selection so the cue can never disagree with the gun.
+     :hostile?             (target-in-sights? world)
+     :msg-text             (:msg-text world)
+     ;; First-run key hints (#467).
+     :hint-secs            (or (:hint-secs world) 0.0)
+     ;; HUD symbol set (#471): resolved once per frame, never per cell.
+     :ascii-glyphs?        (php/=== :ascii (:glyphs (:settings world)))
+     ;; Texture filter (#462): render ORs this with PHEL_DOOM_TEXMIP.
+     :texmip?              (boolean (:texmip (:settings world)))
+     :msg-secs             (or (:msg-secs world) 0.0)
+     :reload-ready-secs    (or (:reload-ready-secs world) 0.0)
+     ;; Settings page (issue #107): the pause overlay paints the box from
+     ;; these. The page IS the pause screen, so the render layer keys off
+     ;; :paused; the cursor + values ride along here.
+     :settings             (:settings world)
+     :settings-cursor      (or (:settings-cursor world) 0)
+     ;; Pause menu (#203): which pause screen is up (:menu top-level options
+     ;; vs :settings sub-page) + the menu cursor, so render can paint the
+     ;; right overlay.
+     :pause-screen         (or (:pause-screen world) :menu)
+     :pause-cursor         (or (:pause-cursor world) 0)
+     ;; Which menu row is waiting for a second Enter (#454): render paints
+     ;; that row as a question instead of its plain label.
+     :pause-confirm        (:pause-confirm world)
+     ;; Generic HUD-suppression flags (the demo showcase sets them; normal
+     ;; play leaves them nil): hide the weapon name/ammo chunk and the
+     ;; enemy-themed level label from the top game-info line.
+     :hide-weapon?         (boolean (:hide-weapon? world))
+     :hide-level-name?     (boolean (:hide-level-name? world))
+     ;; UX settings (issue #203): crosshair reticle style + always-on run
+     ;; timer in the HUD strip. Both are pure overlay reads.
+     :crosshair            (or (:crosshair (:settings world)) :cross)
+     :run-timer?           (boolean (:timer (:settings world)))
+     ;; Mouselook on flag (#246): the crosshair IS the mouse aim point (no
+     ;; visible OS pointer), so paint-crosshair forces a minimal centre dot
+     ;; even when the player set Crosshair to :off, so mouse-aiming always has
+     ;; an aim indicator.
+     :mouse                (boolean (:mouse (:settings world)))
+     ;; Movable aim crosshair (#324): the reticle cell the gun aims at, so
+     ;; render draws the `+` there. nil (mouse off / not placed) centres it.
+     :aim-col              (:aim-col world)
+     :aim-row              (:aim-row world)
+     ;; Accessibility (issue #200): high-contrast HUD un-dims the dim/grey
+     ;; HUD elements (compass, empty hearts, reserve ammo) for low-quality
+     ;; terminals.
+     :high-contrast?       (boolean (:high-contrast (:settings world)))
+     ;; Low detail (perf setting): flatten the wall AND floor interior to
+     ;; one sample per cell, trading vertical texture detail for ~11-26%
+     ;; render time + ~30-40% bytes on big screens. render reads this key.
+     :fast-walls           (boolean (:fast-walls (:settings world)))
+     ;; Sub-pixel (compat setting, #332): default ON. OFF picks the
+     ;; one-colour-per-cell render path for terminals that draw ▀ half-blocks
+     ;; with row seams (macOS Terminal.app). Default-on semantics: only an
+     ;; explicit false disables it, so a settings-less fixture stays sub-pixel.
+     :subpixel             (not (php/=== false (:subpixel (:settings world))))
+     ;; View bob (#411): the walk-cycle head-bob amplitude scalar [0, 1],
+     ;; 0 (default) = off. render adds `bob-rows` of the world's `:bob-phase`
+     ;; scaled by this to the horizon `pr`, so walls/floor/sky/enemies bob.
+     :view-bob             (view-bob-intensity (:settings world))
+     ;; Walk-cycle phase (#412): the weapon viewmodel dips + sways on this
+     ;; too, scaled by :view-bob. Settles to 0 at rest (byte-identical gun).
+     :bob-phase            (or (:bob-phase world) 0.0)
+     ;; Room lighting (#418): OFF by default. When on, render folds the
+     ;; world's derived :light-grid into the wall shade index.
+     :light                (boolean (:light (:settings world)))
+     ;; Truecolor + Quad detail: OFF by default. render ANDs each with its
+     ;; PHEL_DOOM_* env override. Both ship as options-page rows, so without
+     ;; these two projections the player can toggle them and nothing happens -
+     ;; only the env forces reached the renderer.
+     :truecolor            (boolean (:truecolor (:settings world)))
+     :quad                 (boolean (:quad (:settings world)))}))
 
 (defn- ms-since
   "Whole-millisecond delta between two microtime samples. Args tagged
@@ -788,7 +794,7 @@
 
 ;; Per-level run-stat snapshot folded into the cumulative carry by
 ;; `merge-run-stats`: accuracy counters + secrets found/total (issue #202).
-(defn- run-stat-fields [world]
+(defn- run-stat-fields [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   {:shots-fired    (or (:shots-fired world) 0)
    :shots-hit      (or (:shots-hit world) 0)
    :secrets-found  (or (:secrets-found world) 0)
@@ -800,7 +806,7 @@
   "Terminal per-level result map for a run that has ended. `flag` is
    the kind tag (`:game-over` or `:victory`) set to true alongside the
    shared kills / level / survival-time fields + run-stat carry."
-  [flag world ^float t-start ^float now]
+  [flag ^Phel.Lang.Collections.Map.PersistentMapInterface world ^float t-start ^float now]
   (merge
    {flag        true
     :kills      (:kills world)
@@ -809,7 +815,7 @@
     :survived-s (php/intval (php/- now t-start))}
    (run-stat-fields world)))
 
-(defn- result-next-level [world ^float t-start ^float now]
+(defn- result-next-level [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float t-start ^float now]
   ;; Everything that survives the level cut goes through this map:
   ;; lives, kills, time, backpack, owned weapons, AND the active
   ;; weapon slot + per-weapon mag/reserve so reloads don't reset
@@ -843,13 +849,13 @@
      ;; Accuracy + secrets accumulate across the level cut (issue #202).
      (run-stat-fields world))))
 
-(defn- play-door-sfx [world]
+(defn- play-door-sfx [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (when (:sound-on world) (play-sfx! :door)))
 
 (defn- door-result
   "When the player steps on a door: either victory (final level) or
    the next-level result."
-  [world ^float t-start ^float now]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float t-start ^float now]
   (play-door-sfx world)
   (if (php/>= (:level world) num-levels)
     (result-end :victory world t-start now)
@@ -869,7 +875,7 @@
    short enough that a retry does not feel gated."
   600000)
 
-(defn- draw-frame [world fps frame-ms rows cols px2?]
+(defn- draw-frame [^Phel.Lang.Collections.Map.PersistentMapInterface world fps frame-ms rows cols px2?]
   (render! world (assoc (frame-stats world fps frame-ms) :px2? px2?)
            cols rows))
 
@@ -882,7 +888,7 @@
    keypress during the beat cannot select something on the screen that
    follows. Skipped under demo replay, where nothing is watching and the
    pause would only stretch the recording."
-  [world fps frame-ms rows cols px2?]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world fps frame-ms rows cols px2?]
   (when (not (demo/replaying?))
     (draw-frame world fps frame-ms rows cols px2?)
     (php/usleep death-beat-us)
@@ -932,7 +938,7 @@
   "F5 saves the current world to the quick-save slot; F9 loads it back
    (swapping the whole world). Both stamp a brief `:save-flash-*` HUD
    cue. File IO lives here in the loop, never in the pure tick."
-  [world edges]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^Phel.Lang.Collections.Map.PersistentMapInterface edges]
   (cond
     (:save edges)
     (let [ok (save-game! world quick-save-slot)]

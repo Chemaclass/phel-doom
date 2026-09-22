@@ -2,6 +2,14 @@
   (:require phel-doom.core.weapons :refer [initial-weapon-state])
   (:require phel-doom.core.light :refer [build-light-grid]))
 
+(defn assoc-changed
+  "Write `k` into `world` only when `v` differs from what is already
+   stored. Per-frame tickers call this for timers and latches that sit
+   unchanged on most frames, where the map write costs far more than the
+   comparison that skips it."
+  [world k v]
+  (if (php/=== (get world k) v) world (assoc world k v)))
+
 (defn new-player
   "Create a player record with floating-point position and angle in
    radians. `:pitch` is the look up/down shear as a normalised fraction
@@ -261,7 +269,7 @@
 
 (defn hints-cleared
   "Drop the onboarding hint strip (#467)."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (assoc world :hint-secs 0.0))
 
 (defn note-hint-progress
@@ -273,7 +281,7 @@
    Cheap by construction: returns `world` untouched the moment the strip
    is down, which is every frame after the first fifteen seconds of a
    first level."
-  [world moved? turned? fired?]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world moved? turned? fired?]
   (if (php/<= (or (:hint-secs world) 0.0) 0.0)
     world
     (let [seen (conj (or (:hints-seen world) #{})
@@ -300,13 +308,13 @@
 
    Last writer wins: two pickups in one frame show the second, which is
    also the one the player stepped on last."
-  [world text]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world text]
   (assoc world :msg-text text :msg-secs message-secs))
 
 (defn gain-life
   "Heal one full heart (2 HP), capped at max-lives. Heart pickups grant
    a whole heart so the half-heart granularity stays on the damage side."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (update world :lives (fn [l] (php/min max-lives (php/+ l 2)))))
 
 (defn backpack-level
@@ -318,7 +326,7 @@
    and no `backpack-level` and still loads today. Do not delete it without
    bumping the save version. Presence is `some?`, not truthiness - 0 is a
    real level."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (let [lvl (:backpack-level world)]
     (cond
       (some? lvl)        lvl
@@ -330,14 +338,14 @@
    `max-backpacks`). No-op once at the cap so a redundant pickup
    doesn't waste; callers gate with `at-backpack-cap?`. Used by
    `pickup-backpacks` in play.phel."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (let [lvl  (backpack-level world)
         lvl' (php/min max-backpacks (php/+ lvl 1))]
     (assoc world :backpack-level lvl')))
 
 (defn at-backpack-cap?
   "True when stacking another backpack would be a no-op."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (php/>= (backpack-level world) max-backpacks))
 
 (defn gain-armor-shard
@@ -345,7 +353,7 @@
    `max-armor`). No-op when already at cap so a wasted pickup is
    silent rather than confusing. Used by `pickup-armor-shards` in
    play.phel."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (let [armor (or (:armor world) 0)
         next  (php/min armor-shard-cap (php/+ armor 1))]
     (assoc world :armor next)))
@@ -356,7 +364,7 @@
    at the cap and a player already over-cap doesn't stack further.
    Resets the over-cap decay clock so the new lives start fresh
    regardless of when the previous sphere was picked up."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (let [lives (or (:lives world) 0)
         next  (php/min soulsphere-cap (php/+ lives max-lives))]
     (assoc world
@@ -369,7 +377,7 @@
    one over-cap life is consumed (clamped to max-lives) and the
    timer resets. Below the cap the clock is held at zero so the
    first frame after picking up a sphere always pays full duration."
-  [world ^float dt]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float dt]
   (let [lives (or (:lives world) 0)
         clock (or (:soul-decay-secs world) 0.0)]
     (if (php/<= lives max-lives)
@@ -384,20 +392,20 @@
 (defn with-enemies
   "Attach an enemies vector to the world. Kept as a separate step so
    new-world stays pure / deterministic for tests."
-  [world enemies]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world enemies]
   (assoc world :enemies enemies))
 
 (defn toggle-map
   "Flip the :show-map flag (M key) that shows / hides the top-right
    overlay minimap."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (update world :show-map not))
 
 (defn toggle-pause
   "Flip the :paused flag. While true, the game loop skips physics, AI,
    shot resolution, and i-frame decay; render still runs so the pause
    overlay stays visible."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (update world :paused not))
 
 (defn advance-game-time
@@ -405,13 +413,13 @@
    time source render uses for blinks, pulses, and walk-cycle phases
    — freezing it on pause freezes every visual animation derived
    from it (door blink, behind-warning, enemy face/body cycle, etc.)."
-  [world ^float dt]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float dt]
   (update world :game-time (fn [t] (php/+ (or t 0.0) dt))))
 
 (defn toggle-sound
   "Flip the :sound-on flag. While false, every sfx call resolves to a
    no-op."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (update world :sound-on not))
 
 (defn toggle-debug
@@ -419,12 +427,12 @@
    the renderer paints an extra HUD row with frame timing, byte count,
    RLE effectiveness, and PHP memory; when off, none of the
    instrumentation runs so the off-state pays zero overhead."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (update world :debug? not))
 
 (defn move-player
   "Translate the player by (dx, dy) — no collision check here."
-  [world dx dy]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world dx dy]
   (let [{:keys [x y]} (:player world)]
     (-> world
         (assoc-in [:player :x] (+ x dx))
@@ -432,7 +440,7 @@
 
 (defn turn-player
   "Rotate the player by dtheta radians."
-  [world dtheta]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world dtheta]
   (assoc-in world [:player :angle] (+ (:angle (:player world)) dtheta)))
 
 (defn reset-reticle
@@ -443,5 +451,5 @@
    unconditionally every frame: the crosshair is fixed dead-centre under
    #324 mouselook, so the mouse contributes the camera turn and never a
    reticle cell (see play.phel's tick, and `aim-angle-offset`)."
-  [world]
+  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
   (assoc world :aim-col nil :aim-row nil))

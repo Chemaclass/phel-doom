@@ -27,7 +27,7 @@ Worked example: the twenty PRs between v0.17.0 and the next release added eight 
 | step, firing frame | 1.49 ms | 26% |
 | render (`frame->string`) | 4.28 ms | 83% / 74% |
 
-Render still dominates, but the step is not the rounding error it was assumed to be. A firing frame spends a quarter of its budget before the renderer starts. Roughly half of that is the shot resolution. With no enemies in the world at all, firing still costs ~0.9 ms: the wall hitscan.
+Those step numbers predate the write-skipping pass below ("The step on Phel 0.51"), which cut `step-120` by 29% and `step-fire-120` by 32% against main. Render still dominates, but the step is not the rounding error it was assumed to be. A firing frame spends a quarter of its budget before the renderer starts. Roughly half of that is the shot resolution. With no enemies in the world at all, firing still costs ~0.9 ms: the wall hitscan.
 
 There are deliberately **two** step rows. Every bench rev starts from the same world, so a `:fire true` row re-resolves a shot every rev (the weapon cooldown never advances) and reports firing cost as a normal frame. A row that never fires misses the most expensive thing the step does. Quoting either alone is how a 2x difference gets written down as a fact.
 
@@ -38,6 +38,70 @@ The quiet frame's 0.75 ms splits into ~0.11 ms per alive enemy (4 in the bench s
 It now skips when the player has not changed cell, which is most frames: **1.11 ms to 0.97 ms per frame walking, 1.05 ms to 0.92 ms standing still**. Measured by threading a world through 600 frames, not re-running one (see the caveat below). The cache has two inputs: the player's cell and the grid. `:visited-at` covers the first. `state/rebuild-pgrid`, which every in-game grid mutation goes through, clears the stamp for the second, so a secret opened next to a standing player still lights up. `tests/core/engine-test.phel` pins that hook and fails if the clear is removed.
 
 **A caveat about the step bench rows.** Each rev starts from the same pristine world, so nothing that caches across frames ever warms. The change is invisible to `step-120`, which reads the same before and after. That is the bench being honest about what it measures, one frame from cold, not the change failing. Per-frame caches must be measured by threading the world, which is what the game does.
+
+## The step on Phel 0.51: writes, not reads
+
+The step phase (`tick-world`) was profiled stage by stage on the bench scene after the 0.51 upgrade. A quiet frame cost 448 us. Where it went:
+
+| stage | us | what it was doing |
+|---|---|---|
+| tick-enemies | 100 | 3 enemies, ~33 us each; LOS ray plus 6-8 map writes per enemy |
+| damage-step | 69 | 60 us of it one 20-key variadic `assoc` rewriting 17 timers at 0.0 |
+| pickups (10 rules) | 50 | ten `filterv` rebuilds per frame to find the player standing on nothing |
+| apply-physics | 50 | two `weapon-spec` lookups, two sprint checks, idle bob-phase write |
+| mark-visible-cells | 31 | 5 us on the memo hit, most frames |
+| tick-scare | 21 | 3-key variadic write every frame |
+| refresh-from-keys | 18 | five regexes over an empty drain string |
+| everything else | ~110 | toggles, six `get-in`, two closure `update`s, timers |
+
+The pattern across the table: the step reads a lot but its cost was in **writes to the world map that changed nothing**, and in variadic core calls that 0.50/0.51 left on a slow path. Each fix below is one commit on the branch, measured with `tools/bench-ab.sh HEAD~1 3 step` (three interleaved pairs, consistent sign required):
+
+| commit | step-120 | step-fire-120 |
+|---|---|---|
+| pickups probe the cell before rebuilding | -10.2% | -7.0% |
+| enemy tick skips no-op writes | noise | -2.7% |
+| timers decay only when running | -5.6% | -4.9% |
+| physics/play hoists | -13.0% | noise |
+| map-interface tags on enemy/pickup params | -3.1% | noise |
+| fire path: one spec, one aim angle, one wall ray | noise | noise at 3 pairs |
+| map-interface tags on combat/physics/play params | -14.0% | -12.1% |
+
+Whole branch against `main`, five interleaved pairs, every pair the same sign: `step-120` 435.5 us to 308.4 us (-29.1%), `step-fire-120` 713.5 us to 480.7 us (-31.8%). `frame-120x30` moved -0.5% with mixed signs, which is what a byte-identical render should read.
+
+### What a write costs on Phel 0.51
+
+Microbenched on the real 90-key world map (a hash map since 0.50 promotes at 4 entries), 20k iterations, PHP 8.4 no JIT. Read them against each other:
+
+| | cost |
+|---|---|
+| `(assoc m :k v)` | 1.25 us |
+| same, target tagged as the map interface | 0.95 us |
+| `(assoc m :k v)` when `v` is already stored | 1.38 us |
+| `(if (php/=== v (get m :k)) m (assoc m :k v))` | 1.12 us |
+| `(assoc m :a 1 :b 2 :c 3)` | 6.9 us |
+| three chained single-key `assoc` | 3.2 us |
+| three `assoc!` through a transient | 4.2 us |
+| `(assoc m :k1 1 ... :k20 20)` | 58.0 us |
+| twenty chained single-key `assoc` | 16.0 us |
+| twenty `assoc!` through a transient | 23.8 us |
+| `(update m :k (fn [v] ...))` | 3.5 us |
+| five `(:k m)` reads, untagged | 2.2 us |
+| five `(:k m)` reads, `m` tagged as the map interface | 0.95 us |
+| `(get-in m [:a :b])` | 2.2 us |
+| `(:b (:a m))` | 0.77 us |
+| `(filterv p (map f coll))`, 4 items | 14.7 us |
+| `(filterv p (mapv f coll))` | 15.2 us |
+| `(into [] (comp (map f) (filter p)) coll)` | 27.8 us |
+| `:inline` metadata on a one-line helper vs plain `defn-` | 5.6 vs 6.1 us per 5 calls |
+
+Four rules fall out of that table, and the branch applies them:
+
+1. **Skip the write when the value is already there.** `state/assoc-changed` does the compare; `combat/decay-key` does it for timers (nil or spent means no write). A quiet frame writes a handful of keys instead of forty.
+2. **Chain multi-key writes.** Variadic `assoc` is 2-4x the chained form and worsens per pair. Transients do not rescue it on a hash map: the per-call `assoc!` dispatch costs more than the path copy it saves. This is filed upstream as phel-lang #3317 and #3318; when either lands, `tests/bench/phel-costs-bench.phel` will say so and the chains can go.
+3. **Tag map params on the per-frame path.** `^Phel.Lang.Collections.Map.PersistentMapInterface world` makes every `(:k world)` in the body a `->find` call and `assoc` a `->put`. The full dotted name is the only spelling that works today (phel-lang #3319 asks for `^map`). Do not tag the one-expression `^:pure` helpers that still inline: a tagged param stops the -O2 inliner, and the inline is worth more than the lowering. Verify with `grep -c '->find(' out/phel_doom/core/<module>.php` after `composer build`, not with a millisecond.
+4. **Probe before you rebuild.** An indexed scan that exits on the first hit beats a `filterv` that allocates the answer to "was anything there". The same shape as the `:visited-at` memo one section up.
+
+Evaluated and not adopted, with the number that decided it: `:inline` metadata (8% on a tiny helper, not worth the macro-hygiene surface), `into` with a transducer (2x slower than `filterv` over a lazy `map`, phel-lang #3323), transients for batched world writes (see rule 2).
 
 ## Where the frame time goes
 

@@ -38,7 +38,7 @@
    queue at the start of every frame, so events never replay. Used by
    core/combat and by the pickup / interaction steps in commands/play."
   [^Phel.Lang.Collections.Map.PersistentMapInterface world name ^float vol]
-  (update world :sfx (fn [s] (conj (or s []) {:name name :vol vol}))))
+  (assoc world :sfx (conj (or (:sfx world) []) {:name name :vol vol})))
 
 ;; =====================================================================
 ;; § Tunables
@@ -379,7 +379,7 @@
   [^Phel.Lang.Collections.Map.PersistentMapInterface world killed?]
   (-> world
       (assoc :hit-fx {:kill? (boolean killed?) :ttl hit-marker-seconds})
-      (update :shots-hit (fn [n] (php/+ (or n 0) 1)))))
+      (assoc :shots-hit (php/+ (or (:shots-hit world) 0) 1))))
 
 (defn- bump-weapon-kills
   ;; Tally `n` kills under the active weapon for the run-summary per-weapon
@@ -761,12 +761,11 @@
    Freedoom corpse sprite; wounds (no type) stay a blood splatter."
   ([^Phel.Lang.Collections.Map.PersistentMapInterface w hp] (push-blood-fx w hp nil))
   ([^Phel.Lang.Collections.Map.PersistentMapInterface world hit-pos type-kw]
-   (update world :fx
-           (fn [fx]
-             (conj (or fx [])
-                   (if type-kw
-                     {:x (:x hit-pos) :y (:y hit-pos) :ttl corpse-ttl-seconds :type type-kw}
-                     {:x (:x hit-pos) :y (:y hit-pos) :ttl fx-ttl-seconds}))))))
+   (assoc world :fx
+          (conj (or (:fx world) [])
+                (if type-kw
+                  {:x (:x hit-pos) :y (:y hit-pos) :ttl corpse-ttl-seconds :type type-kw}
+                  {:x (:x hit-pos) :y (:y hit-pos) :ttl fx-ttl-seconds})))))
 
 (defn- spawn-shot-tracer
   "Append a cosmetic projectile (`kind` -> a sprite) flying from just
@@ -1063,7 +1062,7 @@
         [ix iy]                 (beam-impact (:enemies world) (:x p) (:y p) angle
                                              wall-d shot-hit-radius max-r)
         [es' killed]            (splash (:enemies world) ix iy radius dmg dtype)
-        woken                   (noise-wake es' (:grid world) (:x p) (:y p))
+        woken                   (noise-wake es' (:pgrid world) (:x p) (:y p))
         hit-pos                 {:x ix :y iy}
         killed?                 (php/> killed 0)
         [unlocked boss-killed?] (score-multikill world woken killed)
@@ -1103,7 +1102,7 @@
    splash path)."
   [^Phel.Lang.Collections.Map.PersistentMapInterface world spec ^float wall-d enemies-after killed hit-pos tough]
   (let [p        (:player world)
-        woken    (noise-wake enemies-after (:grid world) (:x p) (:y p))
+        woken    (noise-wake enemies-after (:pgrid world) (:x p) (:y p))
         hit?     (some? hit-pos)
         killed?  (php/> killed 0)
         unlocked (first (score-multikill world woken killed))
@@ -1170,7 +1169,7 @@
   [^Phel.Lang.Collections.Map.PersistentMapInterface world spec ^float angle ^float wall-d]
   (let [[enemies' hit? hit-pos idx] (resolve-shot world spec angle wall-d)
         p                           (:player world)
-        woken                       (noise-wake enemies' (:grid world) (:x p) (:y p))
+        woken                       (noise-wake enemies' (:pgrid world) (:x p) (:y p))
         killed?                     (and hit?
                                          (false? (:alive (get woken idx))))]
     (enqueue-shot-sfx
@@ -1198,14 +1197,13 @@
    ;; counts as one shot fired, regardless of weapon or whether it lands.
    ;; :shots-hit is bumped per connecting pull inside stamp-hit-fx.
    (let [angle  (aim-angle world)
-         wall-d (cast-wall-dist world angle)]
-     (update
-      (cond
-        (:splash-radius spec) (bfg-fire world spec angle wall-d)
-        (:pierce? spec)       (pierce-fire world spec angle wall-d)
-        (:spread? spec)       (spread-fire world spec angle wall-d)
-        :else                 (single-hitscan-fire world spec angle wall-d))
-      :shots-fired (fn [n] (php/+ (or n 0) 1))))))
+         wall-d (cast-wall-dist world angle)
+         fired  (cond
+                  (:splash-radius spec) (bfg-fire world spec angle wall-d)
+                  (:pierce? spec)       (pierce-fire world spec angle wall-d)
+                  (:spread? spec)       (spread-fire world spec angle wall-d)
+                  :else                 (single-hitscan-fire world spec angle wall-d))]
+     (assoc fired :shots-fired (php/+ (or (:shots-fired fired) 0) 1)))))
 
 (defn- empty-trigger-pull
   "Trigger pulled while mag = 0 AND no cooldown / jam in the way. Arm

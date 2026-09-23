@@ -202,9 +202,11 @@
 ;; noise-wake: player fire flood-fills through floor cells. Dormant
 ;; enemies inside the reachable set switch to :aware; doors + walls
 ;; block, so the wake stays in the same sector as the player.
-;; noise-wake uses VECTOR grids (Phel persistent vectors of vectors)
-;; via map/cell, not the PHP-array pgrid the LOS path needs.
+;; noise-wake reads the php grid mirror, like the LOS path; the fixtures
+;; below stay vectors for readability and convert through `pgrid-of`.
 ;; ---------------------------------------------------------------------
+
+(defn- pgrid-of [grid] (to-array (map to-array grid)))
 
 (def open-room
   ;; 8x8 open chamber, walls on the edges only.
@@ -246,7 +248,7 @@
   ;; with `:lkp` stamped at the fire origin. Doesn't go straight to
   ;; :aware: sound is a breadcrumb, not visual confirmation.
   (let [es  [(assoc {:x 3.5 :y 3.5 :alive true} :state :dormant)]
-        es' (noise-wake es open-room 2.5 2.5)
+        es' (noise-wake es (pgrid-of open-room) 2.5 2.5)
         e   (first es')]
     (is (= :hunting (:state e)))
     (is (= 2.5 (:x (:lkp e))))
@@ -256,13 +258,13 @@
   ;; Wall column at x=4. Player on the left, imp on the right →
   ;; BFS can't cross, imp stays dormant.
   (let [es  [(assoc {:x 5.5 :y 3.5 :alive true} :state :dormant)]
-        es' (noise-wake es split-by-wall 2.5 3.5)]
+        es' (noise-wake es (pgrid-of split-by-wall) 2.5 3.5)]
     (is (= :dormant (:state (first es'))))))
 
 (deftest test-noise-wake-keeps-dormant-behind-door
   ;; Door column at x=4. Doors block sound too — sector isolation.
   (let [es  [(assoc {:x 5.5 :y 3.5 :alive true} :state :dormant)]
-        es' (noise-wake es split-by-door 2.5 3.5)]
+        es' (noise-wake es (pgrid-of split-by-door) 2.5 3.5)]
     (is (= :dormant (:state (first es'))))))
 
 (deftest test-noise-wake-leaves-dead-enemies-untouched
@@ -271,7 +273,7 @@
   ;; the respawn path reads :max-lives + :respawn-after to revive.
   (let [es  [{:x 5.5 :y 5.5 :alive false :respawn-after 2.0
               :max-lives 3 :state :aware}]
-        es' (noise-wake es open-room 2.5 2.5)
+        es' (noise-wake es (pgrid-of open-room) 2.5 2.5)
         e   (first es')]
     (is (= false (:alive e)))
     (is (= 2.0 (:respawn-after e)))
@@ -280,7 +282,7 @@
 (deftest test-noise-wake-leaves-aware-enemies-aware
   ;; Sticky :aware doesn't downgrade just because the BFS visits.
   (let [es  [(assoc {:x 5.5 :y 5.5 :alive true} :state :aware)]
-        es' (noise-wake es open-room 2.5 2.5)]
+        es' (noise-wake es (pgrid-of open-room) 2.5 2.5)]
     (is (= :aware (:state (first es'))))))
 
 (deftest test-noise-wake-multiple-enemies
@@ -289,7 +291,7 @@
   (let [near (assoc {:x 5.5 :y 3.5 :alive true} :state :dormant)
         far  (assoc {:x 5.5 :y 3.5 :alive true} :state :dormant)
         es   [near far]
-        es'  (noise-wake es split-by-wall 2.5 3.5)]
+        es'  (noise-wake es (pgrid-of split-by-wall) 2.5 3.5)]
     ;; Both enemies started behind the wall in this fixture — neither
     ;; reachable. Pin the dormant-still expectation; the wake-via-LOS
     ;; case is covered by observe tests upstream.
@@ -641,7 +643,7 @@
   ;; declared in the noise-wake section above.
   (let [w   (assoc {:x 3.5 :y 3.5 :alive true :wander-angle 0.0}
                    :state :wander)
-        es' (noise-wake [w] open-room 2.5 2.5)
+        es' (noise-wake [w] (pgrid-of open-room) 2.5 2.5)
         e   (first es')]
     (is (= :hunting (:state e)))
     (is (= 2.5 (:x (:lkp e))))))

@@ -27,7 +27,7 @@ Worked example: the twenty PRs between v0.17.0 and the next release added eight 
 | step, firing frame | 1.49 ms | 26% |
 | render (`frame->string`) | 4.28 ms | 83% / 74% |
 
-Those step numbers predate the write-skipping pass below ("The step on Phel 0.51"), which cut `step-120` by 29% and `step-fire-120` by 32% against main. Render still dominates, but the step is not the rounding error it was assumed to be. A firing frame spends a quarter of its budget before the renderer starts. Roughly half of that is the shot resolution. With no enemies in the world at all, firing still costs ~0.9 ms: the wall hitscan.
+Those step numbers predate the write-skipping pass below ("The step on Phel 0.51"), which cut `step-120` by 29% and `step-fire-120` by 32% against main. Render still dominates, but the step is not the rounding error it was assumed to be. A firing frame spends a quarter of its budget before the renderer starts. Roughly half of that is the shot resolution. That split also put ~0.9 ms of firing in the wall hitscan with no enemies in the world. It no longer holds: the fire path casts one ray, and "The firing frame" below measures it at 5.5 us.
 
 There are deliberately **two** step rows. Every bench rev starts from the same world, so a `:fire true` row re-resolves a shot every rev (the weapon cooldown never advances) and reports firing cost as a normal frame. A row that never fires misses the most expensive thing the step does. Quoting either alone is how a 2x difference gets written down as a fact.
 
@@ -102,6 +102,35 @@ Four rules fall out of that table, and the branch applies them:
 4. **Probe before you rebuild.** An indexed scan that exits on the first hit beats a `filterv` that allocates the answer to "was anything there". The same shape as the `:visited-at` memo one section up.
 
 Evaluated and not adopted, with the number that decided it: `:inline` metadata (8% on a tiny helper, not worth the macro-hygiene surface), `into` with a transducer (2x slower than `filterv` over a lazy `map`, phel-lang #3323), transients for batched world writes (see rule 2).
+
+## The firing frame (issue #527)
+
+Same method as the step pass: each stage of a shotgun blast called on its own on the bench scene (one kill, one graze), minimum over 800 calls. The machine was under load (load average 5-24), so `bench-ab.sh` means swung by up to 78% and the minimum is the number that held. Before is main after #531, after is this branch:
+
+| stage | before (us) | after (us) | what it was doing |
+|---|---|---|---|
+| `fire-shot` | 251 | 191 | the whole trigger pull |
+| `spread-shoot` | 82 | 54 | the cone scan plus two `damage-enemy` calls |
+| `damage-enemy` | 26 | 13.5 | two variadic `assoc`s (13.6 us) and `resists?` through `get-in` + `or #{}` (7.7 us) |
+| `noise-wake` | 32 | 16 | its BFS read the persistent grid through `map/cell`: 21 us, 6.5 us on `:pgrid` |
+| `enqueue-shot-sfx` | 40 | 36 | three `push-sfx`, each a closure `update` |
+| `score-multikill` | 17 | 17 | four writes plus the per-weapon kill tally |
+| `push-blood-fx` | 10 | 8.3 | closure `update` of `:fx` |
+| `corpse-type-at` | 9 | 9 | runs twice per kill; three enemies at Phel's per-lookup cost |
+| `apply-heat` | 7.5 | 7.5 | unchanged, see below |
+| aim angle + wall ray | 5.4 | 5.5 | one DDA ray |
+| `damage-step`, extra after a shot | 20 | 20 | the timers a shot starts |
+
+`enqueue-shot-sfx` was 73 us before #531: the death-cry lookup walked the ~90 world keys looking for an enemy, and never found one, so no kill played its cry.
+
+Whole firing step, `tick-world` minimum over 1000 calls, five interleaved pairs against main with the five changed files swapped in place: **-7.2% (-5.4 to -9.0%), every pair the same sign**. The quiet step moved -1.3 to +1.4%, mixed signs: unchanged, as it should be, since only the fire path changed.
+
+Two measurements worth keeping:
+
+- **A closure `update` loses to an `assoc` of the computed value.** A counter bump is 3.1 us as `(update m :k (fn [n] ...))` and 2.2 us as `(assoc m :k (php/+ (or (:k m) 0) 1))`. `push-sfx` went from 6.7 to 6.1 us the same way.
+- **`assoc-changed` is not free.** In `apply-heat`, skipping the two writes that never change on most guns (`:heat` 0.0, `:jam-secs`) measured 1-2 us slower than rewriting them: the helper call and its untagged `get` cost more than the path copy it saves. The write-skipping rule pays where it skips a whole decay or rebuild, not a single same-value write.
+
+With no enemies in the world a firing step costs ~90 us more than a quiet one, and `fire-shot` itself 66 us.
 
 ## Where the frame time goes
 

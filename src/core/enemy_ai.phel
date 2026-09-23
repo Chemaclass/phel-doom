@@ -1,7 +1,7 @@
 (ns phel-doom.core.enemy-ai
   (:require phel-doom.core.rng :as rng)
   (:require phel-doom.core.engine :refer [cast-ray max-depth])
-  (:require phel-doom.core.map    :refer [cell cell-floor]))
+  (:require phel-doom.core.map    :refer [cell-floor]))
 
 ;; ---------------------------------------------------------------------
 ;; Enemy AI state machine.
@@ -74,10 +74,6 @@
    than the radius itself."
   3)
 
-;; 4-connected BFS neighbour offsets. Lifted out of `bfs-cells`'s inner
-;; loop so the vector isn't re-allocated on every queue iteration.
-;; Private (`def-` takes no docstring slot, so this note lives here):
-;; only `bfs-cells` in this ns uses it.
 (def pain-stagger-secs
   "Seconds a freshly-painted enemy stays frozen. ~0.3s reads as a
    visible flinch on screen without making the enemy a soft target for
@@ -506,13 +502,14 @@
 (defn- bfs-cells
   "Pure flood-fill from `(ix0, iy0)` through `cell-floor` neighbours
    only (4-connected, no diagonals — room shape, not a square). Stops
-   when distance exceeds `radius`. Returns a Phel set of [x y]
-   tuples reachable through floor.
+   when distance exceeds `radius`. Reads the php grid mirror
+   (`:pgrid`). Returns a php-array marking each reachable floor cell
+   true under its flat index `y*w + x`.
 
    Walls and ALL door variants block: doors carrying lock colours
    make rooms acoustically isolated by default, which is the
    point — one shot wakes the cells you're standing in."
-  [grid ^int ix0 ^int iy0 ^int radius]
+  [pgrid ^int ix0 ^int iy0 ^int radius]
   ;; php-native throughout, and measurably so: the Phel version kept
   ;; `visited` as a set of [x y] VECTORS (a persistent-vector hash per
   ;; membership test), rebuilt the queue with `(into (vec (rest q)) ...)`
@@ -522,10 +519,10 @@
   ;;
   ;; The seen-set is keyed by the flat index `y*w + x`. That is only
   ;; collision-free in bounds, so the neighbour test is bounds-guarded;
-  ;; `cell` would report out-of-bounds as wall anyway, but the key would
+  ;; an out-of-bounds read is not floor anyway, but the key would
   ;; already have aliased a real cell by then.
-  (let [w     (count (first grid))
-        h     (count grid)
+  (let [h     (php/count pgrid)
+        w     (php/count (php/aget pgrid 0))
         seen  (php/array)
         queue (php/array (php/array ix0 iy0 0))
         dirs  (php/array 1 0 -1 0 0 1 0 -1)]
@@ -544,7 +541,7 @@
                   (when (and (php/>= nx 0) (php/< nx w) (php/>= ny 0) (php/< ny h))
                     (let [k (php/+ (php/* ny w) nx)]
                       (when (and (php/=== nil (php/aget seen k))
-                                 (php/=== cell-floor (cell grid nx ny)))
+                                 (php/=== cell-floor (php/aget (php/aget pgrid ny) nx)))
                         (php/aset seen k true)
                         (php/array_push queue (php/array nx ny (php/+ d 1)))))))
                 (recur (php/+ j 1))))))
@@ -572,16 +569,17 @@
    whose integer cell sits inside that visited set hears the shot
    and switches into the hunt — `:state :hunting`, `:lkp` set to
    the fire origin. Dead / aware enemies pass through unchanged
-   (respawn timers + 'already engaged' state survive).
+   (respawn timers + 'already engaged' state survive). `pgrid` is the
+   world's php grid mirror (`:pgrid`).
 
    Cheap because doors block: the fill rarely escapes the current
    room. Caller should fire this once per shot (rising edge of the
    fire button), not every frame the trigger is held — see
    combat/fire-shot for the wiring."
-  [enemies grid ^float ox ^float oy]
-  (let [w       (count (first grid))
-        h       (count grid)
-        visited (bfs-cells grid (php/intval ox) (php/intval oy) noise-wake-radius)]
+  [enemies pgrid ^float ox ^float oy]
+  (let [h       (php/count pgrid)
+        w       (php/count (php/aget pgrid 0))
+        visited (bfs-cells pgrid (php/intval ox) (php/intval oy) noise-wake-radius)]
     (mapv (fn [e]
             (let [ex (php/intval (:x e))
                   ey (php/intval (:y e))]

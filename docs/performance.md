@@ -136,6 +136,14 @@ The biggest line in the frame is worth breaking down. Same method:
 
 Halving the interior sampling buys 9 of the 41 points. The other 32 are not arithmetic. They are machinery the textured path needs and the flat path skips: the per-column `tex-u` / `tex-level` / `tex-sz` / `tex-px` buffers, the seam and silhouette branches, and the per-cell branch dispatch between them. Attack the structure, not the sample math. Three attempts at the sample math are recorded below, all under the harness's resolution.
 
+### The wall band, column by column (issue #526)
+
+`emit-scene-px1` walks rows, then columns, because RLE and the output are row-major. Every wall cell re-derived what its column already knew: the sky and floor limits, the mix flag, the glyph-zone check, four edge compares, then up to eight fetches of column constants (`ts-sub`, `bs-sub`, `tex-u`, `tex-px`, `tex-sz`, the fade row) before it sampled a texel.
+
+The emitter now runs a column pass first. For each column it resolves the kind once (glyph zone, mix, or non-mix), binds the column constants once, and loops only over that column's wall band, writing each cell into a flat `wall-cells` array keyed `row*vw+col`. The row loop keeps sky, floor, the overlays and RLE, and reads a wall cell with one `aget`. Floor stays in the row loop, since its constants are per row.
+
+Measured as the minimum over 800 frames (400 at 180x45), five interleaved pairs against main, with the machine under load (load average 10-15, which made `bench-ab.sh` means useless). Every pair had the same sign: **120x30 -6% (-0.6 to -9%), 180x45 -12.5% (-9.7 to -15.9%)**. The gain grows with the viewport because walls get taller. Byte-identical across 1344 frames: 12 render modes (default, quad, no sub-pixel, fast walls, px2, light, truecolor, texture filter, blood, flat walls, flat floor, quad + blood) × 3 positions × 8 angles × 2 sizes, with sprites and with glyph enemies. No closures in the compiled emitter, before or after. `emit-scene-px2` keeps the row-major shape; it only runs on terminals past 200x45 on slow hardware.
+
 One trap the script exists to prevent. Setting the flags by hand with `env $vars cmd` is silently wrong in zsh, which does not word-split an unquoted variable. `env "A=1 B=1" cmd` sets ONE variable named `A` to the string `"1 B=1"`. Every flag is checked with `=== "1"`, so both read as off, the run measures the DEFAULT frame, and the number looks plausible. That produced a phantom "disabling two features is 68% slower than disabling one", which reads like a renderer branch-selection bug and is nothing of the sort. The script passes each config as a real assignment prefix and refuses to run if a self-check shows the shell mangling it.
 
 ## The bench harness itself
@@ -228,7 +236,7 @@ Three follow-ups to the memo/dedup patterns above, audited together:
 
 **2. Per-column hoists in `emit-scene-px1`.** `(vw - 1)`, the quad-floor/quad-edge right-neighbour bound, is frame-constant, not per-cell, so it hoists to the same outer `let` as the existing `vh-1` hoist. The non-mix wall-texture branch's `(max 1 (- bot top))` is column-constant but was recomputed on every ROW of a wall's height. The loop is row-outer/col-inner, so a tall wall repeats that subtraction up to `vh` times per column. `compute-wall-shades` already computes the exact pre-clamp value as a local (`wall-h`, used to derive `bots`), so it now also stashes `(max 1 wall-h)` into a new per-column buffer (`:wall-h`) that the row loop reads with one `aget`.
 
-Evaluated and skipped: hoisting the `floordxs`/`floordys`/`shades-tex-u`/`shades-tex-px` per-column `buf-get` fetches themselves. They already compile to a single `php/aget` on an existing flat array, so there is no computation to save, only a fetch. The row-outer/col-inner loop leaves no per-column scope to cache them in without transposing it, which would break row-major RLE coalescing. A per-frame array rebuild to "cache" a raw array read costs more than it saves.
+The wall-side fetches were later hoisted after all, by transposing only the wall band and leaving RLE row-major. See "The wall band, column by column" below. The floor fetches still run per cell: the floor's row constants (`dpt`, `fpxt`, the fade rows) are what the row-outer loop hoists, so the floor stays there.
 
 **3. Enemy projection dedup.** `collect-enemy-projs` runs once in `frame->string`'s zone pass (`enemy-projs`), but two painters re-projected independently: `paint-face-overlay` called `collect-enemy-projs` a second time, and `paint-enemy-hp-flashes` called `project-enemy` a third time per hit-flashing enemy. Both now take the shared `enemy-projs` as a parameter instead:
 

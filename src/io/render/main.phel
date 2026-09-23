@@ -1231,6 +1231,10 @@
    render cost. Keep any new per-cell logic in statement position.
    See docs/performance.md.
 
+   Wall band cells (between a column's sky limit and floor start) are
+   resolved first in a column pass into `wall-cells`; the row loop only
+   resolves sky and floor itself.
+
    `parts` and `center-cap` are php-arrays: PHP arrays pass by value
    across fn boundaries, so this fn returns `[parts center-cap]` and
    the caller MUST rebind both from the result (see the closure
@@ -1256,13 +1260,168 @@
    ;; seam group: consumed only via the non-hygienic `seam-shade!` macro
    ;; (frame_math.phel) which captures these by name - not "unused".
    floor-code-at seam-darken-16 seam-darken-8 seam-darken-5 ftab hb]       ; seam shading (via seam-shade!) + fade tables
-  (let [cell-reg (php/array)
-        pack-reg (php/array)
+  (let [cell-reg    (php/array)
+        pack-reg    (php/array)
         ;; Frame-constant: the quad floor/edge branches read the
         ;; right-neighbour bound (col < vw-1) once per row visited, so
         ;; without this hoist the subtraction repeats up to vh times per
         ;; column. Same treatment as the vh-1 hoist above.
-        vw-1     (php/- vw 1)]
+        vw-1        (php/- vw 1)
+        ;; Wall band cells, keyed row*vw+col, filled column-major below so
+        ;; each column resolves its kind and texture constants once, not
+        ;; once per row. The row loop then reads the band with one aget.
+        wall-cells  (php/array)
+        sky-lims    (php/array)
+        floor-froms (php/array)]
+    (loop [col 0]
+      (when (php/< col vw)
+        (let [top        (buf-get tops col)
+              bot        (buf-get bots col)
+              ;; Sub-row seam mixing (see build-wall-sub-bounds): the
+              ;; sky/floor limits come from wsub only on mix columns, since
+              ;; the wsub fallbacks predate the enemy zone pass.
+              mixw?      (php/=== 1 (php/aget wsub-mix col))
+              sky-lim    (if mixw? (php/aget wsub-skylim col) top)
+              floor-from (if mixw? (php/aget wsub-floorfrom col) bot)
+              row-lo     (php/max 0 sky-lim)
+              row-hi     (php/min vh floor-from)
+              lvl        (buf-get shades-tex-level col)
+              u          (buf-get shades-tex-u col)
+              tpx        (buf-get shades-tex-px col)
+              tsz        (php/intval (buf-get shades-tex-sz col))
+              tszm1      (php/- tsz 1)
+              fade       (php/aget tex-fade-table lvl)]
+          (php/aset sky-lims col sky-lim)
+          (php/aset floor-froms col floor-from)
+          (cond
+            ;; Glyph-mode enemy zones (sprite mode skips so the real wall
+            ;; resolves behind the billboard).
+            (if sprites-on false (buf-get emask col))
+            (let [mid   (buf-get mids col)
+                  lower (buf-get lowers col)
+                  head  (buf-get eheads col)
+                  body  (buf-get ebodys col)
+                  legs  (buf-get elegss col)]
+              (loop [row row-lo]
+                (when (php/< row row-hi)
+                  (php/aset wall-cells (php/+ (php/* row vw) col)
+                            (if (php/< row mid) head (if (php/< row lower) body legs)))
+                  (recur (php/+ row 1)))))
+            ;; Mix columns sample the wall texture against the SUB-row
+            ;; bounds: interior cells take the straight two-sample path;
+            ;; the one or two boundary cells per column resolve each ▀
+            ;; sub-row as sky / wall / floor with the graduated dark seam
+            ;; accents (same mixer as the pixel-doubled emitter, sub-row
+            ;; codes via pack-reg slots 1-2).
+            mixw?
+            (let [ts-sub (php/aget wsub-top col)
+                  bs-sub (php/aget wsub-bot col)
+                  whs    (php/max 1 (php/- bs-sub ts-sub))
+                  bs-2   (php/- bs-sub 2)]
+              (loop [row row-lo]
+                (when (php/< row row-hi)
+                  (let [idx (php/+ (php/* row vw) col)
+                        s2  (php/* 2 row)
+                        s2b (php/+ s2 1)
+                        rel (php/- s2 ts-sub)]
+                    (if (if (php/> rel 0) (php/< s2b bs-2) false)
+                      ;; Wall INTERIOR. flat-walltex? paints it as one flat
+                      ;; cell from a single texel; the seam/silhouette cells
+                      ;; keep their sub-pixel resolution.
+                      (if flat-walltex?
+                        (php/aset wall-cells idx
+                                  (php/aget bg-cell-cache (php/aget fade (php/aget tpx (php/+ (php/* (php/min tszm1 (php/intdiv (php/* rel tsz) whs)) tsz) u)))))
+                        (php/aset wall-cells idx
+                                  (halfblock (php/aget fade (php/aget tpx (php/+ (php/* (php/min tszm1 (php/intdiv (php/* rel tsz) whs)) tsz) u)))
+                                             (php/aget fade (php/aget tpx (php/+ (php/* (php/min tszm1 (php/intdiv (php/* (php/+ rel 1) tsz) whs)) tsz) u))))))
+                      (if quad?
+                        ;; Quad silhouette AA: sample the wall edge at TWO
+                        ;; sub-columns (bounds lerped 0.25 toward each
+                        ;; neighbour) × the two sub-rows, tag each of the 2×2
+                        ;; as sky / wall / floor, and emit the quadrant
+                        ;; glyph. Collapses to ▀ when the edge doesn't split
+                        ;; the cell.
+                        (let [tlb  (if (php/> col 0) (php/aget wsub-top (php/- col 1)) ts-sub)
+                              trb  (if (php/< col vw-1) (php/aget wsub-top (php/+ col 1)) ts-sub)
+                              blb  (if (php/> col 0) (php/aget wsub-bot (php/- col 1)) bs-sub)
+                              brb  (if (php/< col vw-1) (php/aget wsub-bot (php/+ col 1)) bs-sub)
+                              ;; Fractional on purpose: rounding to whole
+                              ;; sub-rows would snap back to ts/bs and never
+                              ;; split the cell.
+                              ts-l (php/+ (php/* 0.75 ts-sub) (php/* 0.25 tlb))
+                              ts-r (php/+ (php/* 0.75 ts-sub) (php/* 0.25 trb))
+                              bs-l (php/+ (php/* 0.75 bs-sub) (php/* 0.25 blb))
+                              bs-r (php/+ (php/* 0.75 bs-sub) (php/* 0.25 brb))
+                              wc2  (php/aget fade (php/aget tpx (php/+ (php/* (php/min tszm1 (php/max 0 (php/intdiv (php/* rel tsz) whs))) tsz) u)))
+                              wl2  (if (php/>= s2 (php/- bs-sub 1)) (php/aget seam-darken-16 wc2)
+                                       (if (php/>= s2 bs-2) (php/aget seam-darken-8 wc2)
+                                           (if (php/=== s2 ts-sub) (php/aget seam-darken-5 wc2) wc2)))
+                              wc2b (php/aget fade (php/aget tpx (php/+ (php/* (php/min tszm1 (php/max 0 (php/intdiv (php/* (php/+ rel 1) tsz) whs))) tsz) u)))
+                              wl2b (if (php/>= s2b (php/- bs-sub 1)) (php/aget seam-darken-16 wc2b)
+                                       (if (php/>= s2b bs-2) (php/aget seam-darken-8 wc2b)
+                                           (if (php/=== s2b ts-sub) (php/aget seam-darken-5 wc2b) wc2b)))
+                              sk2  (php/aget sky-sub-codes s2)
+                              sk2b (php/aget sky-sub-codes s2b)
+                              fl2  (floor-code-at s2 col)
+                              fl2b (floor-code-at s2b col)
+                              qtl  (if (php/< s2 ts-l) sk2 (if (php/>= s2 bs-l) fl2 wl2))
+                              qtr  (if (php/< s2 ts-r) sk2 (if (php/>= s2 bs-r) fl2 wl2))
+                              qbl  (if (php/< s2b ts-l) sk2b (if (php/>= s2b bs-l) fl2b wl2b))
+                              qbr  (if (php/< s2b ts-r) sk2b (if (php/>= s2b bs-r) fl2b wl2b))]
+                          (php/aset wall-cells idx
+                                    (if (if (php/=== qtl qtr) (php/=== qbl qbr) false)
+                                      (hb qtl qbl)
+                                      (quadblock qtl qtr qbl qbr))))
+                        ;; Seam accents: graduated dark border tracing the
+                        ;; exact wall/floor + wall/sky diagonals.
+                        (do
+                          (seam-shade! 1 s2 rel)
+                          (seam-shade! 2 s2b (php/+ rel 1))
+                          (php/aset wall-cells idx
+                                    (halfblock (php/aget pack-reg 1) (php/aget pack-reg 2)))))))
+                  (recur (php/+ row 1)))))
+            ;; Non-mix columns: whole-cell edge + shadow bands, then the
+            ;; cell-bound texture sample. tex-level < 0 (boss door / blood
+            ;; column, or textures disabled) falls back to the flat shade.
+            :else
+            (let [top-edge   (buf-get shades-top-edge col)
+                  top-shadow (buf-get shades-top-shadow col)
+                  bot-edge   (buf-get shades-bot-edge col)
+                  bot-shadow (buf-get shades-bot-shadow col)
+                  flat-shade (buf-get shades-normal col)
+                  top-next   (php/+ top 1)
+                  bot-1      (php/- bot 1)
+                  bot-2      (php/- bot 2)
+                  tex-cell?  (if tex-on? (php/>= lvl 0) false)
+                  wh         (buf-get shades-wall-h col)
+                  ;; rel2 counts SUB-rows, so the stride is half the
+                  ;; texture edge (#462).
+                  thalf      (php/intdiv tsz 2)]
+              (loop [row row-lo]
+                (when (php/< row row-hi)
+                  (let [idx (php/+ (php/* row vw) col)]
+                    (cond
+                      (php/=== row top)      (php/aset wall-cells idx top-edge)
+                      (php/=== row top-next) (php/aset wall-cells idx top-shadow)
+                      (php/=== row bot-1)    (php/aset wall-cells idx bot-edge)
+                      (php/=== row bot-2)    (php/aset wall-cells idx bot-shadow)
+                      tex-cell?
+                      (if subpixel?
+                        ;; Half-block wall: two V samples down the column
+                        ;; (same U, same fog level) stacked into one ▀ cell.
+                        (let [rel2 (php/* 2 (php/- row top))
+                              tvt  (php/min tszm1 (php/intdiv (php/* rel2 thalf) wh))
+                              tvb  (php/min tszm1 (php/intdiv (php/* (php/+ rel2 1) thalf) wh))]
+                          (php/aset wall-cells idx
+                                    (halfblock (php/aget fade (php/aget tpx (php/+ (php/* tvt tsz) u)))
+                                               (php/aget fade (php/aget tpx (php/+ (php/* tvb tsz) u))))))
+                        (let [tv (php/min tszm1 (php/intdiv (php/* (php/- row top) tsz) wh))]
+                          (php/aset wall-cells idx
+                                    (php/aget bg-cell-cache (php/aget fade (php/aget tpx (php/+ (php/* tv tsz) u)))))))
+                      :else
+                      (php/aset wall-cells idx flat-shade)))
+                  (recur (php/+ row 1))))))
+          (recur (php/+ col 1)))))
     (dotimes [row vh]
       (let [;; Row-constant hoists: gradient rows, floor-cast row
                 ;; terms and the minimap column limit don't vary by
@@ -1311,35 +1470,13 @@
                                 false)]
                 (if (php/>= col mini-lim)
                   (php/aset cell-reg 0 (if in-blood? blood-sky-row sky-plain))
-                  (let [top   (buf-get tops col)
-                        bot   (buf-get bots col)
-                            ;; Sub-row seam mixing (see build-wall-sub-
-                            ;; bounds): textured, non-glyph-enemy columns
-                            ;; place the wall top/bottom at half-row
-                            ;; precision and mix sky / wall / floor codes
-                            ;; inside the boundary ▀ cells, so receding
-                            ;; wall silhouettes step in half-row diagonals
-                            ;; instead of whole-cell stairs. The sky/floor
-                            ;; limits come from wsub only on mix columns —
-                            ;; the wsub fallbacks predate the enemy zone
-                            ;; pass, so glyph-enemy columns must keep the
-                            ;; live tops/bots.
-                        mixw? (php/=== 1 (php/aget wsub-mix col))]
+                  (do
                     (cond
-                          ;; Half-block sky stacks two gradient sub-rows
-                          ;; per cell (2× vertical). Blood columns keep
-                          ;; the flat red wash.
-                      (php/< row (if mixw? (php/aget wsub-skylim col) top))
-                      (php/aset cell-reg 0 (if in-blood?
-                                             blood-sky-row
-                                             (if subpixel? sky-hb-row sky-plain)))
-                          ;; Floor: cast the ground plane and sample the
-                          ;; stone texture. Player + per-row perp-distance
-                          ;; × the column's floor basis gives the world
-                          ;; floor point; frac → texture (u, v); fog by
-                          ;; the row's floor level. Blood-band columns +
-                          ;; the flat-floor flag keep the grey gradient.
-                      (php/>= row (if mixw? (php/aget wsub-floorfrom col) bot))
+                      ;; Half-block sky stacks two gradient sub-rows per cell
+                      ;; (2× vertical). Blood columns keep the flat red wash.
+                      (php/< row (php/aget sky-lims col))
+                      (php/aset cell-reg 0 (if in-blood? blood-sky-row (if subpixel? sky-hb-row sky-plain)))
+                      (php/>= row (php/aget floor-froms col))
                       (cond
                         in-blood?
                         (php/aset cell-reg 0 blood-flr-row)
@@ -1404,153 +1541,8 @@
                                 tc (php/aget fpxc (php/+ (php/* ty fszc) tx))]
                             (php/aset cell-reg 0
                                       (paint-bg (php/aget flr-fade-cell tc))))))
-                          ;; Glyph-mode enemy zones (sprite mode skips so
-                          ;; the real wall resolves behind the billboard).
-                      (if sprites-on false (buf-get emask col))
-                      (cond
-                        (php/< row (buf-get mids col))
-                        (php/aset cell-reg 0 (buf-get eheads col))
-                        (php/< row (buf-get lowers col))
-                        (php/aset cell-reg 0 (buf-get ebodys col))
-                        :else
-                        (php/aset cell-reg 0 (buf-get elegss col)))
-                          ;; Whole-cell edge + shadow bands only on
-                          ;; non-mix columns; mix columns trace the seam
-                          ;; at sub-row precision below instead.
-                      (if mixw? false (php/=== row top))
-                      (php/aset cell-reg 0 (buf-get shades-top-edge col))
-                      (if mixw? false (php/=== row (php/+ top 1)))
-                      (php/aset cell-reg 0 (buf-get shades-top-shadow col))
-                      (if mixw? false (php/=== row (php/- bot 1)))
-                      (php/aset cell-reg 0 (buf-get shades-bot-edge col))
-                      (if mixw? false (php/=== row (php/- bot 2)))
-                      (php/aset cell-reg 0 (buf-get shades-bot-shadow col))
-                          ;; Wall body / seam cell. Mix columns sample
-                          ;; the wall texture against the SUB-row bounds:
-                          ;; interior cells take the straight two-sample
-                          ;; path; the one or two boundary cells per
-                          ;; column resolve each ▀ sub-row as sky / wall
-                          ;; / floor with the graduated dark seam accents
-                          ;; (same mixer as the pixel-doubled emitter,
-                          ;; sub-row codes via pack-reg slots 1-2).
-                          ;; Non-mix textured columns keep the cell-bound
-                          ;; sampling; tex-level < 0 (boss door / blood
-                          ;; column, or textures disabled) falls back to
-                          ;; the flat shade. Door columns sample the
-                          ;; amber door texture via the same path
-                          ;; (per-column texel array in shades-tex-px).
                       :else
-                      (if mixw?
-                        (let [ts-sub (php/aget wsub-top col)
-                              bs-sub (php/aget wsub-bot col)
-                              whs    (php/max 1 (php/- bs-sub ts-sub))
-                              u      (buf-get shades-tex-u col)
-                              tpx    (buf-get shades-tex-px col)
-                              tsz    (buf-get shades-tex-sz col)
-                              tszm1  (php/- tsz 1)
-                              fade   (php/aget tex-fade-table (buf-get shades-tex-level col))
-                              s2     (php/* 2 row)
-                              s2b    (php/+ s2 1)
-                              rel    (php/- s2 ts-sub)]
-                          (if (if (php/> rel 0) (php/< s2b (php/- bs-sub 2)) false)
-                                ;; Wall INTERIOR (fully inside the wall). flat-walltex?
-                                ;; (crisp-edge prototype) paints it as one flat cell from
-                                ;; a single texel - the seam/silhouette cells below keep
-                                ;; their sub-pixel resolution, so only the interior texture
-                                ;; loses vertical half-row detail. Default: 2-sample ▀.
-                            (if flat-walltex?
-                              (php/aset cell-reg 0
-                                        (php/aget bg-cell-cache (php/aget fade (php/aget tpx (php/+ (php/* (php/min tszm1 (php/intdiv (php/* rel tsz) whs)) tsz) u)))))
-                              (php/aset cell-reg 0
-                                        (halfblock (php/aget fade (php/aget tpx (php/+ (php/* (php/min tszm1 (php/intdiv (php/* rel tsz) whs)) tsz) u)))
-                                                   (php/aget fade (php/aget tpx (php/+ (php/* (php/min tszm1 (php/intdiv (php/* (php/+ rel 1) tsz) whs)) tsz) u))))))
-                            (if quad?
-                                  ;; Quad silhouette AA: sample the wall edge at
-                                  ;; TWO sub-columns (bounds lerped 0.25 toward
-                                  ;; each neighbour — the per-column cast has no
-                                  ;; sub-column ray) × the two sub-rows, tag each
-                                  ;; of the 2×2 as sky / wall / floor, and emit the
-                                  ;; quadrant glyph, so a receding wall edge steps
-                                  ;; in half-CELL diagonals instead of whole
-                                  ;; columns. Wall colour is column-stable (edge
-                                  ;; AA, not texture sub-detail); collapses to ▀
-                                  ;; when the edge doesn't split the cell.
-                              (let [tlb  (if (php/> col 0) (php/aget wsub-top (php/- col 1)) ts-sub)
-                                    trb  (if (php/< col vw-1) (php/aget wsub-top (php/+ col 1)) ts-sub)
-                                    blb  (if (php/> col 0) (php/aget wsub-bot (php/- col 1)) bs-sub)
-                                    brb  (if (php/< col vw-1) (php/aget wsub-bot (php/+ col 1)) bs-sub)
-                                        ;; Fractional on purpose: the half-cell
-                                        ;; edge offset is sub-integer, so rounding
-                                        ;; to whole sub-rows would snap back to
-                                        ;; ts/bs and never split the cell. Compare
-                                        ;; the integer sub-row directly against the
-                                        ;; lerped float edge so it straddles.
-                                    ts-l (php/+ (php/* 0.75 ts-sub) (php/* 0.25 tlb))
-                                    ts-r (php/+ (php/* 0.75 ts-sub) (php/* 0.25 trb))
-                                    bs-l (php/+ (php/* 0.75 bs-sub) (php/* 0.25 blb))
-                                    bs-r (php/+ (php/* 0.75 bs-sub) (php/* 0.25 brb))
-                                    wc2  (php/aget fade (php/aget tpx (php/+ (php/* (php/min tszm1 (php/max 0 (php/intdiv (php/* rel tsz) whs))) tsz) u)))
-                                    wl2  (if (php/>= s2 (php/- bs-sub 1)) (php/aget seam-darken-16 wc2)
-                                             (if (php/>= s2 (php/- bs-sub 2)) (php/aget seam-darken-8 wc2)
-                                                 (if (php/=== s2 ts-sub) (php/aget seam-darken-5 wc2) wc2)))
-                                    wc2b (php/aget fade (php/aget tpx (php/+ (php/* (php/min tszm1 (php/max 0 (php/intdiv (php/* (php/+ rel 1) tsz) whs))) tsz) u)))
-                                    wl2b (if (php/>= s2b (php/- bs-sub 1)) (php/aget seam-darken-16 wc2b)
-                                             (if (php/>= s2b (php/- bs-sub 2)) (php/aget seam-darken-8 wc2b)
-                                                 (if (php/=== s2b ts-sub) (php/aget seam-darken-5 wc2b) wc2b)))
-                                    sk2  (php/aget sky-sub-codes s2)
-                                    sk2b (php/aget sky-sub-codes s2b)
-                                    fl2  (floor-code-at s2 col)
-                                    fl2b (floor-code-at s2b col)
-                                    qtl  (if (php/< s2 ts-l) sk2 (if (php/>= s2 bs-l) fl2 wl2))
-                                    qtr  (if (php/< s2 ts-r) sk2 (if (php/>= s2 bs-r) fl2 wl2))
-                                    qbl  (if (php/< s2b ts-l) sk2b (if (php/>= s2b bs-l) fl2b wl2b))
-                                    qbr  (if (php/< s2b ts-r) sk2b (if (php/>= s2b bs-r) fl2b wl2b))]
-                                (php/aset cell-reg 0
-                                          (if (if (php/=== qtl qtr) (php/=== qbl qbr) false)
-                                            (hb qtl qbl)
-                                            (quadblock qtl qtr qbl qbr))))
-                                ;; Seam accents: graduated dark border
-                                ;; tracing the exact wall/floor + wall/sky
-                                ;; diagonals - near-black wall base
-                                ;; sub-row, dark sub-row above it, dark
-                                ;; first floor sub-row, and a lighter lip
-                                ;; at the sky seam.
-                              (do
-                                (seam-shade! 1 s2 rel)
-                                (seam-shade! 2 s2b (php/+ rel 1))
-                                (php/aset cell-reg 0
-                                          (halfblock (php/aget pack-reg 1) (php/aget pack-reg 2)))))))
-                        (let [lvl (buf-get shades-tex-level col)]
-                          (if (if tex-on? (php/>= lvl 0) false)
-                            (if subpixel?
-                                  ;; Half-block wall: two V samples down
-                                  ;; the column (same U, same fog level)
-                                  ;; stacked into one ▀ cell.
-                              (let [wh    (buf-get shades-wall-h col)
-                                    u     (buf-get shades-tex-u col)
-                                    tpx   (buf-get shades-tex-px col)
-                                    tsz   (buf-get shades-tex-sz col)
-                                    tszm1 (php/- tsz 1)
-                                    rel2  (php/* 2 (php/- row top))
-                                    ;; rel2 counts SUB-rows, so the stride
-                                    ;; is half the texture edge (#462: it
-                                    ;; was the literal 32 of 64).
-                                    thalf (php/intdiv tsz 2)
-                                    tvt   (php/min tszm1 (php/intdiv (php/* rel2 thalf) wh))
-                                    tvb   (php/min tszm1 (php/intdiv (php/* (php/+ rel2 1) thalf) wh))
-                                    fade  (php/aget tex-fade-table lvl)]
-                                (php/aset cell-reg 0
-                                          (halfblock (php/aget fade (php/aget tpx (php/+ (php/* tvt tsz) u)))
-                                                     (php/aget fade (php/aget tpx (php/+ (php/* tvb tsz) u))))))
-                              (let [wh   (buf-get shades-wall-h col)
-                                    tsz  (buf-get shades-tex-sz col)
-                                    tv   (php/min (php/- tsz 1) (php/intdiv (php/* (php/- row top) tsz) wh))
-                                    tc   (php/aget (buf-get shades-tex-px col)
-                                                   (php/+ (php/* tv tsz) (buf-get shades-tex-u col)))
-                                    fade (php/aget tex-fade-table lvl)]
-                                (php/aset cell-reg 0
-                                          (php/aget bg-cell-cache (php/aget fade tc)))))
-                            (php/aset cell-reg 0 (buf-get shades-normal col))))))
+                      (php/aset cell-reg 0 (php/aget wall-cells (php/+ rowbase col))))
                         ;; Sprite overlay: the sampled Freedoom pixel
                         ;; replaces the base cell; transparent pixels
                         ;; keep it (wall/floor shows through).

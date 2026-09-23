@@ -40,7 +40,8 @@ project enemies       -> eheads, ebodys, elegss (fade-shaded)
 project pickups       -> blood-paint overlay buffer
 project blood FX      -> blood-paint overlay buffer
 layout                -> minimap scale/position
-main row loop:        -> base frame (wall/sky/floor, enemy priority, blood overlay)
+wall band pass (px1)  -> wall-cells per column (edges, texture, glyph zones)
+main row loop:        -> base frame (sky/floor, wall-cells, enemy priority, blood overlay)
 concat via php/implode
 overlays (cursor-positioned):
   - bottom HUD tagline

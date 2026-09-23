@@ -9,6 +9,12 @@
 # Run: bash tools/check-docs-test.sh   (wired into `composer check-docs`)
 set -uo pipefail
 
+# A commit hook exports the committing repo's GIT_DIR and GIT_INDEX_FILE, as
+# absolute paths from a worktree (#523). The git fixture below must not write
+# through them into that repo.
+unset $(git rev-parse --local-env-vars)
+
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 GUARD="$(cd "$(dirname "$0")" && pwd)/check-docs.php"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/phel-doom-docs.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
@@ -36,6 +42,50 @@ check() {
   fi
   rm -f docs/*.md docs/adr/*.md README.md
 }
+
+# --- git-tracking cases -----------------------------------------------------
+#
+# The other checks run outside a git repo, where the guard falls back to the
+# filesystem. Inside one it asks `git ls-files` instead, because a file that
+# exists only in YOUR working tree is missing for everyone who clones - which
+# is how a link into the gitignored `.claude/rules/` passed locally and failed
+# in CI, in the very commit that added this guard. They run last, since they
+# turn the fixture into a repo.
+git_cases() {
+  git init -q . 2>/dev/null
+  git add composer.json src/io/real.phel 2>/dev/null
+
+  cat > docs/a.md <<'EOF'
+# A
+The source is `src/io/real.phel`.
+EOF
+  git add docs/a.md 2>/dev/null
+  check "a tracked path, inside a git repo" clean
+
+  printf 'ignored/
+' > .gitignore
+  mkdir -p ignored && touch ignored/generated.md
+  git add .gitignore 2>/dev/null
+  cat > docs/a.md <<'EOF'
+# A
+See [the generated page](../ignored/generated.md).
+EOF
+  git add docs/a.md 2>/dev/null
+  check "a link to a gitignored file that exists locally" broken
+
+  cat > docs/a.md <<'EOF'
+# A
+Renderers live in `src/io/`.
+EOF
+  git add docs/a.md 2>/dev/null
+  check "a directory, which git ls-files does not list" clean
+}
+
+if [ "${1:-}" = "--git-cases" ]; then
+  git_cases
+  [ "$fail" -eq 0 ]
+  exit
+fi
 
 # --- fail-open cases: broken claims the guard must not miss ------------------
 
@@ -149,41 +199,20 @@ It checks any backticked repo path (`src/...`, `tools/...`) against the tree.
 EOF
 check "an elided path used as a pattern in prose" clean
 
-# --- git-tracking cases -----------------------------------------------------
-#
-# The checks above run outside a git repo, where the guard falls back to the
-# filesystem. Inside one it asks `git ls-files` instead, because a file that
-# exists only in YOUR working tree is missing for everyone who clones - which
-# is how a link into the gitignored `.claude/rules/` passed locally and failed
-# in CI, in the very commit that added this guard.
+git_cases
 
-git init -q . 2>/dev/null
-git add composer.json src/io/real.phel 2>/dev/null
-
-cat > docs/a.md <<'EOF'
-# A
-The source is `src/io/real.phel`.
-EOF
-git add docs/a.md 2>/dev/null
-check "a tracked path, inside a git repo" clean
-
-printf 'ignored/
-' > .gitignore
-mkdir -p ignored && touch ignored/generated.md
-git add .gitignore 2>/dev/null
-cat > docs/a.md <<'EOF'
-# A
-See [the generated page](../ignored/generated.md).
-EOF
-git add docs/a.md 2>/dev/null
-check "a link to a gitignored file that exists locally" broken
-
-cat > docs/a.md <<'EOF'
-# A
-Renderers live in `src/io/`.
-EOF
-git add docs/a.md 2>/dev/null
-check "a directory, which git ls-files does not list" clean
+# Replay the git cases the way a hook from a worktree runs them, with GIT_DIR
+# and GIT_INDEX_FILE aimed at a canary repo: it must come out empty.
+canary="$(mktemp -d "${TMPDIR:-/tmp}/phel-doom-canary.XXXXXX")"
+trap 'rm -rf "$WORK" "$canary"' EXIT
+git init -q "$canary"
+if GIT_DIR="$canary/.git" GIT_INDEX_FILE="$canary/.git/index" bash "$SELF" --git-cases >/dev/null 2>&1 \
+  && [ -z "$(git -C "$canary" ls-files)" ]; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  echo "FAIL  the git cases, run with a hook's GIT_DIR / GIT_INDEX_FILE, wrote into that repo"
+fi
 
 echo "check-docs fixtures: $pass passed, $fail failed."
 [ "$fail" -eq 0 ] || exit 1

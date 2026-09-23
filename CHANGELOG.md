@@ -17,6 +17,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - Runs on Phel 0.51. The frame got cheaper with no game-code change: `step` 27% faster, `step-fire` 26%, `frame-120x30` 13%, `frame-180x45` 11%, `cast` 9%, `frame-240x60` 9%. Every win is in the language runtime: fixed arities on hot core functions, map construction promoted at every size, non-dynamic globals read straight from the registry, `-O2` inlining calls in return position. Measured with `composer bench-ref` against a 0.50 baseline on the same machine. Two cold runs agreed within 1%.
 - Map destructuring is binding-first, `{local :key}`, the same order as Clojure. `to-php-array` is now `to-array`. Both are the 0.51 spellings for what the code already did. The old ones still compile, but `composer check-deprecations` rejects them. No behaviour change.
 
+### Fixed
+
+- A kill plays the monster's own death cry on top of the generic kill cue. The cries shipped in #480, but the lookup searched the world from before the shot, when the monster was still alive, so no kill ever played one.
+
 ## [0.18.0] - 2026-08-17
 
 ### Added

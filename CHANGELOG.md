@@ -9,6 +9,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-09-24
+
 ### Changed
 
 - Firing is cheaper: a shotgun blast that kills costs 7% less step time, and the trigger pull itself 24% less. Damaging an enemy writes its fields one at a time instead of in variadic `assoc`s, and the resistance check reads the catalog directly. The wake flood-fill reads the php grid mirror, and the sound, blood and hit-counter writes set their value instead of running a closure `update`. No behaviour change.
@@ -528,7 +530,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `cast + render` under 5 ms per frame at 120×30.
 - Flat PHP arrays on hot paths; `:tag` types for OPcache JIT tracing.
 
-[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/Chemaclass/phel-doom/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/Chemaclass/phel-doom/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/Chemaclass/phel-doom/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/Chemaclass/phel-doom/compare/v0.15.0...v0.16.0

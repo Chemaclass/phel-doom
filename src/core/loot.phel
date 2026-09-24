@@ -1,6 +1,7 @@
 (ns phel-doom.core.loot
   (:require phel-doom.core.rng :as rng)
-  (:require phel-doom.core.state :refer [max-lives]))
+  (:require phel-doom.core.state :refer [max-lives])
+  (:require phel-doom.core.weapons :refer [weapons]))
 
 ;; Kill-loot drop economy (#351): the corpse-type lookup for blood fx
 ;; plus the roll-table that drops ammo / armor / hearts at a kill cell.
@@ -73,12 +74,15 @@
    always starts with the pistol AND its reserve refills via
    level-spawned ammo boxes, so kill-loot biases toward the scarce
    weapons (shotgun, chaingun) that the player had to hunt for on
-   the map. Pure given `roll` (uniform float in [0, 1)) so tests
-   can pin the outcome. Falls back to :pistol only when nothing
-   else is owned (fresh-run / defensive fixture)."
+   the map. `:no-ammo?` weapons (the chainsaw) are skipped: a box
+   tagged for them would refill nothing. Pure given `roll` (uniform
+   float in [0, 1)) so tests can pin the outcome. Falls back to
+   :pistol when nothing else qualifies."
   [world ^float roll]
   (let [owned     (or (:owned-weapons world) #{:pistol})
-        non-basic (vec (sort (filter (fn [kw] (php/!== kw :pistol)) owned)))
+        non-basic (vec (sort (filter (fn [kw] (and (php/!== kw :pistol)
+                                                   (not (:no-ammo? (get weapons kw)))))
+                                     owned)))
         n         (count non-basic)]
     (if (zero? n)
       :pistol

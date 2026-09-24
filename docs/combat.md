@@ -123,4 +123,4 @@ Issue #127. `arm-berserk` sets 18s on `:berserk-secs` (refresh, not stack) and h
 
 `pickup-ammos` refills the tagged weapon; untagged level boxes refill the active one.
 
-Gotcha: the chainsaw is an owned weapon with `:ammo-per-box 0` (and `0` is truthy in Phel, so nothing falls back). A chainsaw-tagged box refills nothing, so owning the chainsaw dilutes ammo drops.
+`:no-ammo?` weapons (the chainsaw) never get an ammo box: `pick-loot-weapon` skips them, and a level box picked up while holding the chainsaw feeds the pistol. `:ammo-per-box 0` alone would not do it, since `0` is truthy in Phel and nothing falls back.

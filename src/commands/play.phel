@@ -152,7 +152,7 @@
 (defn- about-face
   "Snap the player's facing by π (180° turn). Triggered by the rising
    edge on the `e` key in the game loop."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
+  [^map world]
   (update-in world [:player :angle] (fn [a] (php/+ a php/M_PI))))
 
 (defn apply-mouse-look
@@ -164,7 +164,7 @@
    so a still pointer in the screen interior (zero yaw/pitch) is a no-op and the
    keyboard look is untouched. Pure; the game loop calls it only on an
    unpaused frame so the camera can't drift while a menu is up."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world look]
+  [^map world look]
   (let [yaw   (or (:yaw look) 0.0)
         pitch (or (:pitch look) 0.0)
         w1    (if (php/=== yaw 0.0) world (turn-player world yaw))]
@@ -192,7 +192,7 @@
    On a terminal without kitty release events, HOLDING `q` reaches the
    quit through key autorepeat (arm, then a fresh press edge on the next
    burst). That is deliberate: a held key is not an accident."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world quit-request?]
+  [^map world quit-request?]
   (and (boolean quit-request?)
        (boolean (:paused world))
        (not (:help? world))))
@@ -203,7 +203,7 @@
    Drops the movement hold counters for the same reason pausing on focus
    loss does: whatever was held when the question came up must not still
    be gliding when the player answers it."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
+  [^map world]
   (assoc world
          :paused        true
          :help?         false
@@ -218,7 +218,7 @@
    help / about-face) for this frame. Debug + help edges stay
    outside the paused short-circuit so F3 / H / ESC still flip
    overlays while paused."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^Phel.Lang.Collections.Map.PersistentMapInterface edges]
+  [^map world ^map edges]
   (let [;; Focus loss (#454): the terminal reported the window going to
         ;; the background, so freeze the run before the player comes back
         ;; to a corpse. Already-paused worlds are left exactly as they
@@ -290,7 +290,7 @@
    left/right (or A/D) adjust the selected field. A held key ramps
    through the OS key-repeat. Volume edits take effect immediately;
    the minimap field mirrors into :show-map so the change shows at once."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world keys]
+  [^map world keys]
   (let [{cursor-steps :cursor value-steps :value} (nav-deltas keys)
         {:keys [cursor settings adjusted?]}
         (navigate (:settings world) (or (:settings-cursor world) 0) cursor-steps value-steps)]
@@ -306,7 +306,7 @@
    option: `:resume` unpauses here; `:settings` switches to the options
    sub-page; `:restart` / `:quit` are stamped on `:pause-action` for the
    game loop to hand back to the run lifecycle. No select = just move."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world cursor-steps select?]
+  [^map world cursor-steps select?]
   (let [cursor (pause-menu-move (or (:pause-cursor world) 0) cursor-steps)
         ;; Moving the cursor disarms a pending Restart (#454): the
         ;; confirmation belongs to the row it was asked on.
@@ -333,14 +333,14 @@
 (defn resumed-pause?
   "True when the pause/settings page just closed this frame (was paused,
    now isn't). The cue to persist the player's settings to disk."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface before ^Phel.Lang.Collections.Map.PersistentMapInterface after]
+  [^map before ^map after]
   (and (:paused before) (not (:paused after))))
 
 (defn- persist-settings!
   "Write the world's current settings out. Called whenever the player
    leaves the pause/settings page (resume or quit) so edits are never
    lost; volumes were already applied live."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
+  [^map world]
   (save-settings! (:settings world)))
 
 (defn- boss-down?
@@ -348,11 +348,11 @@
    stamps `:boss` into `:held-keys` on the killing blow. Used to stop
    every remaining enemy from respawning so the player's victory lap
    to the exit door isn't ambushed by a fresh boss or revived imp."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
+  [^map world]
   (and (= (:door-lock world) :boss)
        (contains? (or (:held-keys world) #{}) :boss)))
 
-(defn- enemy-distance [^Phel.Lang.Collections.Map.PersistentMapInterface e ^float px ^float py]
+(defn- enemy-distance [^map e ^float px ^float py]
   (let [dx (php/- (:x e) px)
         dy (php/- (:y e) py)]
     (php/sqrt (php/+ (php/* dx dx) (php/* dy dy)))))
@@ -361,7 +361,7 @@
   ;; The closest enemy that went from :dormant to awake this frame, or
   ;; nil. Compares the two enemy vectors positionally - `advance` maps
   ;; over them in place, so index i is the same monster either side.
-  [^Phel.Lang.Collections.Map.PersistentMapInterface before ^Phel.Lang.Collections.Map.PersistentMapInterface after ^float px ^float py]
+  [^map before ^map after ^float px ^float py]
   (let [es0 (or (:enemies before) [])
         es1 (or (:enemies after) [])]
     (loop [i 0 best nil best-d 9999.0]
@@ -386,7 +386,7 @@
    to the player; without it the AI falls through to the legacy
    'always chase' behaviour. Suspends respawns once the boss is down
    on L10 (see boss-down?)."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float dt]
+  [^map world ^float dt]
   (let [p       (:player world)
         stepped (update world :enemies advance (:grid world) (:pgrid world) (:x p) (:y p) dt
                         (or (:chase-speed world) 0.75)
@@ -402,7 +402,7 @@
 
 (defn- on-door?
   "True when the player's current cell is a door (auto-advances level)."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
+  [^map world]
   (let [p (:player world)]
     (door? (:grid world) (php/intval (:x p)) (php/intval (:y p)))))
 
@@ -410,7 +410,7 @@
   "Integer (x, y) of the cell the player is facing (one unit ahead
    along `:angle`). Used by F-key handlers (secret reveal, switch
    toggle) to pick the player's interact target."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world]
+  [^map world]
   (let [p (:player world)
         a (:angle p)]
     [(php/intval (php/+ (:x p) (php/cos a)))
@@ -424,7 +424,7 @@
    Plays the door sfx so the reveal is audibly distinct from a wall
    bump. No-op otherwise so other action-bound features (switches,
    etc) chain off the same edge without conflict."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world action?]
+  [^map world action?]
   (if (not action?)
     world
     (let [[cx cy] (cell-ahead world)]
@@ -448,7 +448,7 @@
    `:switches` entry. Plays the switch throw so the interaction is
    audible and distinct from a door. Chained AFTER `try-reveal-secret` so the two handlers
    never claim the same F-press."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world action?]
+  [^map world action?]
   (if (not action?)
     world
     (let [[cx cy] (cell-ahead world)]
@@ -469,7 +469,7 @@
 
 (defn- ^:pure decay-hud-timer
   "Tick one HUD cue timer down by dt, leaving a stopped or absent one untouched."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world k ^float dt]
+  [^map world k ^float dt]
   (let [v (get world k)]
     (if v
       (if (php/> v 0.0)
@@ -485,7 +485,7 @@
    top-to-bottom: handle one-shots, refresh held-key counters, run
    physics, collect pickups, advance enemies, resolve a shot, decay
    timers + apply contact damage."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world keys ^float dt ^Phel.Lang.Collections.Map.PersistentMapInterface edges]
+  [^map world keys ^float dt ^map edges]
   ;; Reset the per-frame sfx queue up front so events accumulate fresh
   ;; each tick. Every cue (pickups, interactions, combat) enqueues via
   ;; combat/push-sfx instead of emitting inline, keeping this transform
@@ -617,7 +617,7 @@
    render-facing setting is actually projected here - a settings row that
    render reads off `stats` but this fn never writes is a toggle that does
    nothing, which is how :truecolor and :quad shipped inert."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world fps frame-ms]
+  [^map world fps frame-ms]
   (let [spec (weapon-spec world)]
     {:fps         fps
      :frame-ms    frame-ms
@@ -794,7 +794,7 @@
 
 ;; Per-level run-stat snapshot folded into the cumulative carry by
 ;; `merge-run-stats`: accuracy counters + secrets found/total (issue #202).
-(defn- run-stat-fields [^Phel.Lang.Collections.Map.PersistentMapInterface world]
+(defn- run-stat-fields [^map world]
   {:shots-fired    (or (:shots-fired world) 0)
    :shots-hit      (or (:shots-hit world) 0)
    :secrets-found  (or (:secrets-found world) 0)
@@ -806,7 +806,7 @@
   "Terminal per-level result map for a run that has ended. `flag` is
    the kind tag (`:game-over` or `:victory`) set to true alongside the
    shared kills / level / survival-time fields + run-stat carry."
-  [flag ^Phel.Lang.Collections.Map.PersistentMapInterface world ^float t-start ^float now]
+  [flag ^map world ^float t-start ^float now]
   (merge
    {flag        true
     :kills      (:kills world)
@@ -815,7 +815,7 @@
     :survived-s (php/intval (php/- now t-start))}
    (run-stat-fields world)))
 
-(defn- result-next-level [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float t-start ^float now]
+(defn- result-next-level [^map world ^float t-start ^float now]
   ;; Everything that survives the level cut goes through this map:
   ;; lives, kills, time, backpack, owned weapons, AND the active
   ;; weapon slot + per-weapon mag/reserve so reloads don't reset
@@ -849,13 +849,13 @@
      ;; Accuracy + secrets accumulate across the level cut (issue #202).
      (run-stat-fields world))))
 
-(defn- play-door-sfx [^Phel.Lang.Collections.Map.PersistentMapInterface world]
+(defn- play-door-sfx [^map world]
   (when (:sound-on world) (play-sfx! :door)))
 
 (defn- door-result
   "When the player steps on a door: either victory (final level) or
    the next-level result."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^float t-start ^float now]
+  [^map world ^float t-start ^float now]
   (play-door-sfx world)
   (if (php/>= (:level world) num-levels)
     (result-end :victory world t-start now)
@@ -875,7 +875,7 @@
    short enough that a retry does not feel gated."
   600000)
 
-(defn- draw-frame [^Phel.Lang.Collections.Map.PersistentMapInterface world fps frame-ms rows cols px2?]
+(defn- draw-frame [^map world fps frame-ms rows cols px2?]
   (render! world (assoc (frame-stats world fps frame-ms) :px2? px2?)
            cols rows))
 
@@ -888,7 +888,7 @@
    keypress during the beat cannot select something on the screen that
    follows. Skipped under demo replay, where nothing is watching and the
    pause would only stretch the recording."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world fps frame-ms rows cols px2?]
+  [^map world fps frame-ms rows cols px2?]
   (when (not (demo/replaying?))
     (draw-frame world fps frame-ms rows cols px2?)
     (php/usleep death-beat-us)
@@ -938,7 +938,7 @@
   "F5 saves the current world to the quick-save slot; F9 loads it back
    (swapping the whole world). Both stamp a brief `:save-flash-*` HUD
    cue. File IO lives here in the loop, never in the pure tick."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface world ^Phel.Lang.Collections.Map.PersistentMapInterface edges]
+  [^map world ^map edges]
   (cond
     (:save edges)
     (let [ok (save-game! world quick-save-slot)]

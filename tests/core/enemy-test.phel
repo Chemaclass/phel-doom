@@ -725,6 +725,24 @@
   (let [[ix _] (beam-impact [] 1.0 5.0 0.0 6.0 0.5 12.0)]
     (is (< (php/abs (php/- ix 7.0)) 0.001) "impact at player + wall-dist")))
 
+(deftest test-beam-impact-reports-the-struck-enemy-index
+  ;; The splash weapons deal their direct :damage to this enemy.
+  (let [es [(new-enemy 8.0 5.0 1 :imp) (new-enemy 4.0 5.0 1 :imp)]]
+    (is (= 1 (get (beam-impact es 1.0 5.0 0.0 20.0 0.5 12.0) 2)) "nearest struck enemy")
+    (is (= -1 (get (beam-impact [] 1.0 5.0 0.0 6.0 0.5 12.0) 2)) "wall hit strikes nobody")))
+
+(deftest test-splash-direct-hit-takes-direct-damage-others-splash
+  ;; BFG: 10 to the enemy the beam struck, 6 to the rest of the radius.
+  (let [es      [(new-enemy 5.0 5.0 20 :baron) (new-enemy 6.0 5.0 20 :baron)]
+        [out _] (splash es 5.0 5.0 3.0 6 :plasma 0 10)]
+    (is (= 10 (:lives (get out 0))) "struck enemy takes :damage")
+    (is (= 14 (:lives (get out 1))) "bystander takes :splash-damage")))
+
+(deftest test-splash-direct-hit-respects-resistance
+  (let [es      [(new-enemy 5.0 5.0 3 :caco)]
+        [out _] (splash es 5.0 5.0 3.0 6 :fire 0 10)]
+    (is (= 3 (:lives (get out 0))) "caco shrugs off a :fire direct hit")))
+
 ;; ---------------------------------------------------------------------
 ;; pierce (#124): the pistol round hits EVERY enemy in the line, not just
 ;; the nearest like `shoot`. This is the pistol's identity vs the chaingun.

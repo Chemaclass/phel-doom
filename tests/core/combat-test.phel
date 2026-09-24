@@ -1065,6 +1065,24 @@
     (is (= 1 (:kills w1)) "rocket blast killed the cyber")
     (is (contains? (:held-keys w1) :boss) "boss exit unlocked via the splash path")))
 
+;; A splash weapon's direct hit lands its :damage on the enemy the beam
+;; struck; the rest of the radius takes :splash-damage. Two barons in a
+;; one-cell corridor: the near one is struck, the far one is 1.5 away.
+(defn- splash-pair-world [weapon]
+  (assoc (boss-world) :weapon weapon :owned-weapons #{:pistol weapon} :door-lock nil
+         :enemies [{:x 4.5 :y 1.5 :alive true :lives 20 :max-lives 20 :hit-flash-secs 0.0 :type :baron}
+                   {:x 6.0 :y 1.5 :alive true :lives 20 :max-lives 20 :hit-flash-secs 0.0 :type :baron}]))
+
+(deftest test-fire-shot-bfg-direct-hit-deals-damage-and-splash-hits-the-rest
+  (let [es (:enemies (fire-shot (splash-pair-world :bfg)))]
+    (is (= 10 (:lives (get es 0))) "struck baron: 20 - 10")
+    (is (= 14 (:lives (get es 1))) "bystander: 20 - 6")))
+
+(deftest test-fire-shot-rocket-direct-hit-deals-damage-and-splash-hits-the-rest
+  (let [es (:enemies (fire-shot (splash-pair-world :rocket)))]
+    (is (= 16 (:lives (get es 0))) "struck baron: 20 - 4")
+    (is (= 17 (:lives (get es 1))) "bystander: 20 - 3")))
+
 (deftest test-fire-shot-bfg-splash-kill-of-non-cyber-does-not-grant-boss-key
   ;; bfg-fire has its OWN :cyber type-check; the hitscan negatives exercise
   ;; finish-multikill's, not this one. A blast that kills only an imp on a

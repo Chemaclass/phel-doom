@@ -284,31 +284,32 @@
 (defn beam-impact
   "Where a hitscan beam from (px, py) along `angle` lands: the nearest
    alive enemy struck along the ray, else the wall at `wall-dist`
-   (both capped at `max-range`). Returns `[ix iy]` world point. The BFG
-   centres its `splash` on this impact. Pure projection scan — no
-   mutation (unlike `shoot`)."
+   (both capped at `max-range`). Returns `[ix iy idx]`: the world point,
+   plus the struck enemy's index (-1 on a wall hit). The splash weapons
+   centre `splash` on the point and land their direct `:damage` on
+   `idx`. Pure projection scan — no mutation (unlike `shoot`)."
   [enemies ^float px ^float py ^float angle ^float wall-dist ^float hit-radius ^float max-range]
-  (let [cos-a (php/cos angle)
-        sin-a (php/sin angle)
-        cap   (php/min wall-dist max-range)
-        pd    (loop [i 0 best cap]
-                (if (php/>= i (count enemies))
-                  best
-                  (let [e (get enemies i)]
-                    (if (not (:alive e))
-                      (recur (php/+ i 1) best)
-                      (let [dx   (php/- (:x e) px)
-                            dy   (php/- (:y e) py)
-                            proj (php/+ (php/* dx cos-a) (php/* dy sin-a))]
-                        (if (and (php/> proj 0.0) (php/< proj best))
-                          (let [perp-x (php/- dx (php/* proj cos-a))
-                                perp-y (php/- dy (php/* proj sin-a))
-                                perp2  (php/+ (php/* perp-x perp-x) (php/* perp-y perp-y))]
-                            (if (php/<= perp2 (php/* hit-radius hit-radius))
-                              (recur (php/+ i 1) proj)
-                              (recur (php/+ i 1) best)))
-                          (recur (php/+ i 1) best)))))))]
-    [(php/+ px (php/* pd cos-a)) (php/+ py (php/* pd sin-a))]))
+  (let [cos-a    (php/cos angle)
+        sin-a    (php/sin angle)
+        cap      (php/min wall-dist max-range)
+        [pd idx] (loop [i 0 best cap hit -1]
+                   (if (php/>= i (count enemies))
+                     [best hit]
+                     (let [e (get enemies i)]
+                       (if (not (:alive e))
+                         (recur (php/+ i 1) best hit)
+                         (let [dx   (php/- (:x e) px)
+                               dy   (php/- (:y e) py)
+                               proj (php/+ (php/* dx cos-a) (php/* dy sin-a))]
+                           (if (and (php/> proj 0.0) (php/< proj best))
+                             (let [perp-x (php/- dx (php/* proj cos-a))
+                                   perp-y (php/- dy (php/* proj sin-a))
+                                   perp2  (php/+ (php/* perp-x perp-x) (php/* perp-y perp-y))]
+                               (if (php/<= perp2 (php/* hit-radius hit-radius))
+                                 (recur (php/+ i 1) proj i)
+                                 (recur (php/+ i 1) best hit)))
+                             (recur (php/+ i 1) best hit)))))))]
+    [(php/+ px (php/* pd cos-a)) (php/+ py (php/* pd sin-a)) idx]))
 
 (defn- damage-enemy
   "Apply `dmg` (0 if `e` resists `dmg-type`) to one enemy. Survivors wake
@@ -329,21 +330,26 @@
    `[new-enemies killed-count]`. Enemies reduced to 0 lives flip
    `:alive false` + arm a respawn timer; survivors wake (`:aware`) and
    take a hit-flash. No pain roll — a room-clearing blast shouldn't
-   stagger-lock the survivors. Pure given the inputs (BFG, issue #58)."
-  [enemies ^float cx ^float cy ^float radius ^int damage dmg-type]
-  (let [r2 (php/* radius radius)]
-    (loop [i 0 acc [] killed 0]
-      (if (php/>= i (count enemies))
-        [acc killed]
-        (let [e   (get enemies i)
-              dx  (php/- (:x e) cx)
-              dy  (php/- (:y e) cy)
-              in? (and (:alive e)
-                       (php/<= (php/+ (php/* dx dx) (php/* dy dy)) r2))]
-          (if (not in?)
-            (recur (php/+ i 1) (conj acc e) killed)
-            (let [[e' killed-one?] (damage-enemy e damage dmg-type)]
-              (recur (php/+ i 1) (conj acc e') (if killed-one? (php/+ killed 1) killed)))))))))
+   stagger-lock the survivors. Pure given the inputs (BFG, issue #58).
+
+   The 8-arity form lands `direct-dmg` instead of `damage` on the enemy
+   at index `direct-idx`: the one the beam struck (-1 for none)."
+  ([enemies ^float cx0 ^float cy0 ^float radius0 ^int damage0 dmg-type0]
+   (splash enemies cx0 cy0 radius0 damage0 dmg-type0 -1 damage0))
+  ([enemies ^float cx ^float cy ^float radius ^int damage dmg-type ^int direct-idx ^int direct-dmg]
+   (let [r2 (php/* radius radius)]
+     (loop [i 0 acc [] killed 0]
+       (if (php/>= i (count enemies))
+         [acc killed]
+         (let [e   (get enemies i)
+               dx  (php/- (:x e) cx)
+               dy  (php/- (:y e) cy)
+               in? (and (:alive e)
+                        (php/<= (php/+ (php/* dx dx) (php/* dy dy)) r2))]
+           (if (not in?)
+             (recur (php/+ i 1) (conj acc e) killed)
+             (let [[e' killed-one?] (damage-enemy e (if (php/=== i direct-idx) direct-dmg damage) dmg-type)]
+               (recur (php/+ i 1) (conj acc e') (if killed-one? (php/+ killed 1) killed))))))))))
 
 (defn pierce
   "Piercing hitscan: damage EVERY alive enemy along the ray, not just the

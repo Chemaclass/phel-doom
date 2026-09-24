@@ -1048,20 +1048,24 @@
   "Resolve a BFG shot (any weapon with a `:splash-radius`). The beam
    lands at `beam-impact` (nearest enemy along the ray, else the wall);
    `splash` then damages every enemy within `:splash-radius` of that
-   point — a multi-kill room-clearer. Bumps `:kills` by the body count,
+   point — a multi-kill room-clearer. The struck enemy takes the direct
+   `:damage`, the rest `:splash-damage`. Bumps `:kills` by the body count,
    chains the streak, unlocks the boss door if a cyber died in the
    blast, arms hit-stop, and (like every shot) wakes the room by noise.
    No per-enemy loot drops: the blast is its own reward (issue #58)."
   [^map world spec ^float angle ^float wall-d]
   (let [p                       (:player world)
         radius                  (:splash-radius spec)
-        base                    (or (:splash-damage spec) 1)
         dtype                   (:damage-type spec)
-        dmg                     (if (berserk? world) (php/* base (berserk-mul-for dtype)) base)
+        mul                     (if (berserk? world) (berserk-mul-for dtype) 1)
+        dmg                     (php/* (or (:splash-damage spec) 1) mul)
+        ;; The enemy the beam struck takes the weapon's direct :damage;
+        ;; the rest of the radius takes :splash-damage.
+        direct                  (php/* (or (:damage spec) (:splash-damage spec) 1) mul)
         max-r                   (or (:max-range spec) shot-max-range)
-        [ix iy]                 (beam-impact (:enemies world) (:x p) (:y p) angle
+        [ix iy struck]          (beam-impact (:enemies world) (:x p) (:y p) angle
                                              wall-d shot-hit-radius max-r)
-        [es' killed]            (splash (:enemies world) ix iy radius dmg dtype)
+        [es' killed]            (splash (:enemies world) ix iy radius dmg dtype struck direct)
         woken                   (noise-wake es' (:pgrid world) (:x p) (:y p))
         hit-pos                 {:x ix :y iy}
         killed?                 (php/> killed 0)

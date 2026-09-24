@@ -15,6 +15,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Fixed
 
+- The BFG and rocket launcher land their direct hit. The enemy the beam strikes takes the weapon's damage (BFG 10, rocket 4) and the rest of the blast radius takes the splash (6, 3). Before, every enemy in the radius took only the splash, so the direct-hit number on the info screen never happened.
 - The first-run key strip on level 1 pointed at `TAB help`, but TAB is bound to nothing. It now says `H help`, the key that opens the help panel.
 
 ## [0.19.0] - 2026-09-24

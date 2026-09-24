@@ -5,7 +5,7 @@
   (:require phel-doom.core.enemy :refer [new-enemy])
   (:require phel-doom.core.loot :refer [pick-loot-weapon roll-loot-kind])
   (:require phel-doom.core.combat
-            :refer [target-in-sights? aim-angle-offset arm-berserk armory-reserve closest-attacker attacker-side attacker-octant berserk? berserk-damage-mul berserk-melee-mul berserk-mul-for berserk-seconds can-fire? apply-heat damage-step empty-click-seconds fire-anim-seconds fire-extralight fire-shot hit-damage-for hit-player-at hit-stop-for hit-stop-tough-seconds hit-stop-boss-seconds invuln? knockback mag-size muzzle-extralight-steps muzzle-flash-fraction player-immune? push-sfx reload reloading? tick-armory tick-shooting]))
+            :refer [pain-sfx-for push-pain-sfx target-in-sights? aim-angle-offset arm-berserk armory-reserve closest-attacker attacker-side attacker-octant berserk? berserk-damage-mul berserk-melee-mul berserk-mul-for berserk-seconds can-fire? apply-heat damage-step empty-click-seconds fire-anim-seconds fire-extralight fire-shot hit-damage-for hit-player-at hit-stop-for hit-stop-tough-seconds hit-stop-boss-seconds invuln? knockback mag-size muzzle-extralight-steps muzzle-flash-fraction player-immune? push-sfx reload reloading? tick-armory tick-shooting]))
 
 ;; ---------------------------------------------------------------------
 ;; closest-attacker: selection rule.
@@ -837,6 +837,35 @@
   (let [w0 (world-with-enemy-on-player 5 false)
         w1 (damage-step w0 0.016)]
     (is (= 4 (:lives w1)))))
+
+(deftest test-damage-step-contact-hit-plays-the-claw
+  ;; A melee contact hit is the monster's swing: DSCLAW over the pain grunt.
+  (let [w1 (damage-step (world-with-enemy-on-player 5 false) 0.016)]
+    (is (= 1 (count (sfx-named w1 :claw))))
+    (is (= 1 (count (sfx-named w1 :player-pain))))))
+
+(deftest test-damage-step-god-mode-plays-no-claw
+  (let [w1 (damage-step (world-with-enemy-on-player 5 true) 0.016)]
+    (is (= 0 (count (sfx-named w1 :claw))))))
+
+;; ---------------------------------------------------------------------
+;; Monster pain cry: Doom's light DSPOPAIN for imps and revenants, the
+;; heavy DSDMPAIN for the demon family.
+;; ---------------------------------------------------------------------
+
+(deftest test-pain-sfx-for-maps-light-and-heavy-families
+  (is (= :enemy-pain (pain-sfx-for :imp)))
+  (is (= :enemy-pain (pain-sfx-for :revenant)))
+  (is (= :enemy-pain-heavy (pain-sfx-for :baron)))
+  (is (= :enemy-pain-heavy (pain-sfx-for :cyber)))
+  (is (= :enemy-pain (pain-sfx-for nil)) "typeless fixture: light cry"))
+
+(deftest test-push-pain-sfx-queues-only-when-the-shot-staggered
+  (let [staggered [{:type :baron :state :pain}]
+        shrugged  [{:type :baron :state :aware}]]
+    (is (= [{:name :enemy-pain-heavy :vol 0.5}] (:sfx (push-pain-sfx {} staggered 0 0.5))))
+    (is (nil? (:sfx (push-pain-sfx {} shrugged 0 0.5))) "no flinch, no cry")
+    (is (nil? (:sfx (push-pain-sfx {} staggered -1 0.5))) "a miss strikes nobody")))
 
 (deftest test-damage-step-spares-life-in-god-mode
   ;; With :god? true the touch hit is suppressed entirely so the

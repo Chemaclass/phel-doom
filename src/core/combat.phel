@@ -611,7 +611,8 @@
         ;; should sound as quiet as the final hit that drops a far
         ;; enemy. closest-attacker already cached squared distance.
         vol (if att (distance-volume (php/sqrt (or (:d2 att) 0.0))) 1.0)]
-    (apply-hit world att vol (hit-damage-for (:type att)))))
+    ;; The monster's melee swing (DSCLAW) lands with the pain grunt.
+    (push-sfx (apply-hit world att vol (hit-damage-for (:type att))) :claw vol)))
 
 (defn damage-step
   "Per-frame: decay every timer, then apply a touch hit if i-frames
@@ -1166,6 +1167,37 @@
                                                  svh (aim-pr world svh))]
     (finish-multikill world spec wall-d es' killed hit-pos tough)))
 
+(def pain-sfx-by-type
+  "Monster pain cry by type, split as Doom does: the light DSPOPAIN for
+   imps and revenants, the heavy DSDMPAIN for the demon family. A type
+   not listed (or a typeless fixture) gets the light cry."
+  {:imp      :enemy-pain
+   :revenant :enemy-pain
+   :demon    :enemy-pain-heavy
+   :spectre  :enemy-pain-heavy
+   :pinky    :enemy-pain-heavy
+   :caco     :enemy-pain-heavy
+   :baron    :enemy-pain-heavy
+   :cyber    :enemy-pain-heavy
+   :archvile :enemy-pain-heavy
+   :mancubus :enemy-pain-heavy})
+
+(defn pain-sfx-for
+  "Pain cry for monster `type-kw`."
+  [type-kw]
+  (or (get pain-sfx-by-type type-kw) :enemy-pain))
+
+(defn push-pain-sfx
+  "Queue the pain cry when the shot at index `idx` of `enemies` staggered
+   its target. `enemy/shoot` resets a struck enemy to :aware before it
+   rolls pain, so :pain here means this shot made it flinch. -1 (a miss)
+   and a survivor that shrugged the hit off queue nothing."
+  [out enemies ^int idx ^float vol]
+  (let [e (when (php/>= idx 0) (get enemies idx))]
+    (if (and e (= :pain (:state e)))
+      (push-sfx out (pain-sfx-for (:type e)) vol)
+      out)))
+
 (defn- single-hitscan-fire
   "Single-target hitscan path (chaingun / chainsaw / incinerator): scan
    the one nearest enemy on the player's facing, wake the room, and route
@@ -1175,13 +1207,21 @@
         p                           (:player world)
         woken                       (noise-wake enemies' (:pgrid world) (:x p) (:y p))
         killed?                     (and hit?
-                                         (false? (:alive (get woken idx))))]
-    (enqueue-shot-sfx
-     (apply-heat (if hit?
-                   (on-shot-hit world woken hit-pos idx angle)
-                   (on-shot-miss (assoc world :enemies woken)))
-                 spec)
-     world spec wall-d hit? killed? hit-pos)))
+                                         (false? (:alive (get woken idx))))
+        shot                        (enqueue-shot-sfx
+                                     (apply-heat (if hit?
+                                                   (on-shot-hit world woken hit-pos idx angle)
+                                                   (on-shot-miss (assoc world :enemies woken)))
+                                                 spec)
+                                     world spec wall-d hit? killed? hit-pos)]
+    ;; A flinch cries out at the struck enemy's distance. Read `enemies'`,
+    ;; the shot's own result, before noise-wake touches any state.
+    (if hit?
+      (let [dx (php/- (:x hit-pos) (:x p))
+            dy (php/- (:y hit-pos) (:y p))]
+        (push-pain-sfx shot enemies' idx
+                       (distance-volume (php/sqrt (php/+ (php/* dx dx) (php/* dy dy))))))
+      shot)))
 
 (defn fire-shot
   "Resolve one trigger pull end-to-end. Weapons with `:splash-radius`

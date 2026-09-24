@@ -18,7 +18,7 @@ SFX volume reaches `afplay -v 0..1`, `paplay --volume=0..65536` and `play -v` (i
 
 `tools/bake-weapon-sounds.phel` extracts DMX lumps from the Freedoom IWADs (BSD) into `src/io/sound_data.phel` as base64 8-bit mono WAVs. No binary asset lives in the repo. At runtime `ensure-sfx-file!` decodes each to a temp WAV once (memoised in `sfx-files`) and plays it from there.
 
-The map (`freedoom-sfx`) covers 36 events: the seven weapon reports, per-type monster sight and death cries, the fireball launch, the melee claw, monster pain, the player's grunt, and the world cues (item, weapon, powerup, door, locked door, switch). The claw and monster-pain sounds (`:claw`, `:enemy-pain`, `:enemy-pain-heavy`) are baked but nothing enqueues them yet.
+The map (`freedoom-sfx`) covers 36 events: the seven weapon reports, per-type monster sight and death cries, the fireball launch, the melee claw, monster pain, the player's grunt, and the world cues (item, weapon, powerup, door, locked door, switch).
 
 Freedoom splits its bestiary across two IWADs. The tool falls back to the second for a lump the first lacks (revenant, archvile and mancubus live in `freedoom2.wad`), and prints any event found in neither:
 
@@ -53,7 +53,7 @@ Core code never plays sound. It enqueues `{:name :vol}` on the world's per-frame
 
 Sources:
 
-- **Combat**: the weapon's `:fire-sfx` on every shot, `:kill` plus a per-type death cry on a kill, `:click` on dry fire, `:reload`, `:player-pain`.
+- **Combat**: the weapon's `:fire-sfx` on every shot, `:kill` plus a per-type death cry on a kill, `:click` on dry fire, `:reload`, `:player-pain`. A monster's melee hit adds `:claw`. A shot that staggers a monster adds its pain cry (`pain-sfx-for`): `:enemy-pain` for imps and revenants, `:enemy-pain-heavy` for the demon family. Only the single-target weapons roll pain, so only they make monsters cry out.
 - **Enemies**: a per-type sight cry on wake, `:fireball` on launch.
 - **Pickups and world**: `:item`, `:weapon-up`, `:powerup`, `:door` (also secret reveal), `:switch`.
 - **Locked door**: `:locked` at volume 0.5, on the rising edge only, so holding into the door re-fires at the ~1.5s hint cadence. `physics/try-move` enqueues it inline instead of calling `push-sfx`, which would create a `core/combat` <-> `core/physics` require cycle.

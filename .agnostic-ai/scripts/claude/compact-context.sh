@@ -3,7 +3,7 @@
 cat <<'EOF'
 ## Context Reminder (post-compaction)
 
-**phel-doom** — terminal raycaster in pure Phel. PHP 8.4+. Composer scripts drive everything.
+**phel-doom** — terminal raycaster in pure Phel. PHP 8.5+. Composer scripts drive everything.
 
 - Layout: `src/commands/` (loop), `src/core/` (pure), `src/glue/` (wiring), `src/io/` (side effects).
 - Tests: `composer test` (all) or `vendor/bin/phel test tests/<file>` (one).

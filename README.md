@@ -6,7 +6,7 @@ DOOM-lite raycaster in your terminal. Pure [Phel](https://phel-lang.org/) (Lisp 
 
 ## Play
 
-Needs PHP >= 8.4 and a 256-color terminal.
+Needs PHP >= 8.5 and a 256-color terminal.
 
 Fastest: grab the single-file PHAR from the [latest release](https://github.com/Chemaclass/phel-doom/releases/latest) (no clone, no Composer):
 

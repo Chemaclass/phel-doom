@@ -502,7 +502,7 @@ change.
 
 ### Typed callees stopped inlining (phel-lang 0.50)
 
-phel-doom requires `phel-lang/phel-lang` `^0.50`.
+phel-doom tracks `phel-lang/phel-lang` `dev-main` (0.50 introduced the behaviour below).
 
 0.50 (#3126) stops the inliner splicing away a callee whose parameters carry a
 `:tag`, because splicing dropped the emitted parameter type and the native

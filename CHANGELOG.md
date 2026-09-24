@@ -13,6 +13,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 - Needs PHP 8.5. Runs on Phel `dev-main`, which requires 8.5 and brings value-type tags, literal `get-in` / `assoc-in` / `update-in` paths, faster multi-key `assoc` and `#[NoDiscard]` collection methods. `step` 11% faster and `step-fire` 8%, every one of five interleaved vendor-swap pairs against 0.52 agreeing. Frames read within noise over eight pairs. Map params are tagged `^map` now, which compiles to the same PHP as the full interface name.
 
+### Fixed
+
+- The first-run key strip on level 1 pointed at `TAB help`, but TAB is bound to nothing. It now says `H help`, the key that opens the help panel.
+
 ## [0.19.0] - 2026-09-24
 
 ### Changed

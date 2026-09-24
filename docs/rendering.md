@@ -293,7 +293,7 @@ It was mutation-checked: disabling the telegraph, the message line or the hint s
 
 ## First-run key hints (issue #467)
 
-One dim, steady line along the bottom of the viewport for the first fifteen seconds of level 1: `WASD move   mouse / arrows look   SPACE fire   F use   TAB help`. A first-time player landed in L1 with no reminder of the controls at all: the help panel exists but has to be discovered, and the objective splash says what to do, never how.
+One dim, steady line along the bottom of the viewport for the first fifteen seconds of level 1: `WASD move   mouse / arrows look   SPACE fire   F use   H help`. A first-time player landed in L1 with no reminder of the controls at all: the help panel exists but has to be discovered, and the objective splash says what to do, never how.
 
 L1 only, since every later level is reached by someone who already walked through a door. It retires early the moment the player has moved, turned and fired; after that it is furniture. `:hint-secs` decays with the other feel timers, and `note-hint-progress` is a no-op once the strip is down, which is every frame of the rest of the game. Suppressed under `vh` 12 and clipped to the viewport width. Quick-saves drop it: somebody loading a save is past needing it.
 

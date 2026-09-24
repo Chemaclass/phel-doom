@@ -232,7 +232,7 @@ The step phase lives on map writes. The 0.51 column is a microbench on the real 
 
 The rules, as they stand on 0.53:
 
-1. **Skip whole decays and rebuilds, not single writes.** `combat/decay-key` writes a timer only while it runs; a quiet frame writes a handful of keys instead of forty. A guard around one same-value write does not pay: `state/assoc-changed` measured 1-2 us slower than rewriting in `apply-heat` on 0.51, and on 0.53 a same-value `assoc` (0.56 us) is cheaper than the guarded form (0.68 us).
+1. **Skip whole decays and rebuilds, not single writes.** `combat/decay-key` writes a timer only while it runs; a quiet frame writes a handful of keys instead of forty. A guard around one same-value write does not pay: a compare-first helper (`state/assoc-changed`, removed) measured 1-2 us slower than rewriting in `apply-heat` on 0.51, and on 0.53 a same-value `assoc` (0.56 us) is cheaper than the guarded form (0.68 us) because it returns the map itself.
 2. **Variadic `assoc` no longer needs chaining.** On 0.51 a multi-key `assoc` was 2-4x the chained form and worsened per pair. On 0.53 the two cost the same at 3 and 20 keys, and the `assoc-2-keys-*` bench rows agree. The existing chains are harmless. Do not write new chains for speed. Transients still do not beat plain writes on a hash map.
 3. **Tag map params on the per-frame path.** `^map world` makes every `(:k world)` in the body a `->find` call and `assoc` a `->put` (phel-lang #3319). Do not tag the one-expression `^:pure` helpers that still inline: a tagged param stops the inliner, and the inline is worth more. Verify with the `->find(` count, not a millisecond.
 4. **Probe before you rebuild.** An indexed scan that exits on the first hit beats a `filterv` that allocates the answer to "was anything there".
@@ -334,7 +334,7 @@ Each entry has the number that decided it. Re-open one only if the stated condit
 - **`:inline` metadata on a one-line helper.** 5.6 vs 6.1 us per 5 calls, 8%. Not worth the macro-hygiene surface.
 - **`into` with a transducer.** 2x slower than `filterv` over a lazy `map` (phel-lang #3323).
 - **Transients for batched world writes.** Slower than plain writes on a hash map on 0.51 and on 0.53 (see the write table).
-- **`assoc-changed` around a single same-value write.** Slower than the write it skips (see rule 1 above).
+- **A compare-first guard (`assoc-changed`) around a single same-value write.** Slower than the write it skips on 0.53; removed (see rule 1 above).
 - **Decoupling view bob from the gradient memo key.** Worst case +0.28 ms; see [View bob](#view-bob-and-the-gradient-memo-issue-411).
 - **Relying on the JIT.** ~0% on the render loop (see [PHP runtime](#php-runtime-opcache--jit)).
 

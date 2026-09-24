@@ -1,6 +1,6 @@
 (ns phel-doom.core.physics
   (:require phel-doom.core.rng :as rng)
-  (:require phel-doom.core.state   :refer [assoc-changed max-stamina move-player turn-player clamp-pitch])
+  (:require phel-doom.core.state   :refer [max-stamina move-player turn-player clamp-pitch])
   (:require phel-doom.core.map     :refer [missing-key-for passable?])
   (:require phel-doom.core.weapons :refer [weapon-spec]))
 
@@ -287,10 +287,10 @@
       (and spr? move?)
       (let [stam'  (php/max 0.0 (php/- stam (php/* stamina-drain dt)))
             empty? (php/<= stam' 0.0)]
-        (-> world
-            (assoc-changed :stamina stam')
-            (assoc-changed :sprint-blocked? (or blkd? empty?))
-            (assoc-changed :sprint-cooldown-secs (if empty? sprint-cooldown-after cd))))
+        (assoc world
+               :stamina              stam'
+               :sprint-blocked?      (or blkd? empty?)
+               :sprint-cooldown-secs (if empty? sprint-cooldown-after cd)))
 
       :else
       (let [cd'        (php/max 0.0 (php/- cd dt))
@@ -299,10 +299,10 @@
                          (php/min max-stamina (php/+ stam (php/* stamina-regen dt)))
                          stam)
             unblocked? (and blkd? (php/>= stam' sprint-engage-threshold))]
-        (-> world
-            (assoc-changed :stamina stam')
-            (assoc-changed :sprint-cooldown-secs cd')
-            (assoc-changed :sprint-blocked? (and blkd? (not unblocked?))))))))
+        (assoc world
+               :stamina              stam'
+               :sprint-cooldown-secs cd'
+               :sprint-blocked?      (and blkd? (not unblocked?)))))))
 
 (def blood-drop-spawn-rate
   "Expected new drops per second (Bernoulli per-frame using dt)."
@@ -374,11 +374,9 @@
   [^map world ^float dt]
   (let [interval (heartbeat-interval (:lives world))]
     (if (nil? interval)
-      ;; Chained, from when Phel 0.51's variadic assoc cost ~2.7x two
-      ;; single-key writes. 0.53 makes both shapes cost the same.
-      (-> world
-          (assoc-changed :heartbeat-phase 0.0)
-          (assoc-changed :heartbeat-tick? false))
+      ;; Idle every frame at full health: on Phel 0.53 an assoc of the
+      ;; values already stored returns `world` itself, no copy.
+      (assoc world :heartbeat-phase 0.0 :heartbeat-tick? false)
       (let [phase (php/+ (or (:heartbeat-phase world) 0.0)
                          (php// dt interval))
             wrap? (php/>= phase 1.0)]

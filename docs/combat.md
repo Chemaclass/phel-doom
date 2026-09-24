@@ -81,13 +81,11 @@ The rule is per weapon: the shotgun asks its cone (`enemy/spread-target-index`),
 
 Specs with `:splash-radius` go through `bfg-fire`:
 
-1. `beam-impact`: the nearest alive enemy on the ray, else the wall, capped at range.
-2. `splash`: `:splash-damage` to every alive enemy within `:splash-radius`, the struck one included. Survivors wake; no pain roll.
+1. `beam-impact`: the nearest alive enemy on the ray, else the wall, capped at range. Returns the point and the struck enemy's index (-1 on a wall).
+2. `splash`: the struck enemy takes the direct `:damage`; every other alive enemy within `:splash-radius` takes `:splash-damage`. Berserk scales both. Survivors wake; no pain roll.
 3. Kills bump kills and streak and unlock the boss door. Hit-stop is 0.16s if the L10 boss died, else 0.07s on any kill. No loot.
 
-BFG: 6 damage, radius 3.0, `:plasma`. Rocket: 3 damage, radius 2.0, `:ballistic`. A cosmetic tracer flies to the impact over 0.32s. Shake is `shake-fire-secs` 0.08 on a whiff or `shake-blast-secs` 0.16 on a connecting blast, times `radius / 2`.
-
-Gotcha: both specs also carry `:damage` (BFG 10, rocket 4). Combat never reads it for splash weapons; only the info-menu weapon table shows it.
+BFG: 10 direct, 6 splash, radius 3.0, `:plasma`. Rocket: 4 direct, 3 splash, radius 2.0, `:ballistic`. A cosmetic tracer flies to the impact over 0.32s. Shake is `shake-fire-secs` 0.08 on a whiff or `shake-blast-secs` 0.16 on a connecting blast, times `radius / 2`.
 
 ## Damage resistance
 
@@ -125,4 +123,4 @@ Issue #127. `arm-berserk` sets 18s on `:berserk-secs` (refresh, not stack) and h
 
 `pickup-ammos` refills the tagged weapon; untagged level boxes refill the active one.
 
-Gotcha: the chainsaw is an owned weapon with `:ammo-per-box 0` (and `0` is truthy in Phel, so nothing falls back). A chainsaw-tagged box refills nothing, so owning the chainsaw dilutes ammo drops.
+`:no-ammo?` weapons (the chainsaw) never get an ammo box: `pick-loot-weapon` skips them, and a level box picked up while holding the chainsaw feeds the pistol. `:ammo-per-box 0` alone would not do it, since `0` is truthy in Phel and nothing falls back.

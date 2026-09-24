@@ -5,7 +5,7 @@
   (:require phel-doom.core.enemy :refer [new-enemy])
   (:require phel-doom.core.loot :refer [pick-loot-weapon roll-loot-kind])
   (:require phel-doom.core.combat
-            :refer [target-in-sights? aim-angle-offset arm-berserk armory-reserve closest-attacker attacker-side attacker-octant berserk? berserk-damage-mul berserk-melee-mul berserk-mul-for berserk-seconds can-fire? apply-heat damage-step empty-click-seconds fire-anim-seconds fire-extralight fire-shot hit-damage-for hit-player-at hit-stop-for hit-stop-tough-seconds hit-stop-boss-seconds invuln? knockback mag-size muzzle-extralight-steps muzzle-flash-fraction player-immune? push-sfx reload reloading? tick-armory tick-shooting]))
+            :refer [pain-sfx-for push-pain-sfx target-in-sights? aim-angle-offset arm-berserk armory-reserve closest-attacker attacker-side attacker-octant berserk? berserk-damage-mul berserk-melee-mul berserk-mul-for berserk-seconds can-fire? apply-heat damage-step empty-click-seconds fire-anim-seconds fire-extralight fire-shot hit-damage-for hit-player-at hit-stop-for hit-stop-tough-seconds hit-stop-boss-seconds invuln? knockback mag-size muzzle-extralight-steps muzzle-flash-fraction player-immune? push-sfx reload reloading? tick-armory tick-shooting]))
 
 ;; ---------------------------------------------------------------------
 ;; closest-attacker: selection rule.
@@ -838,6 +838,35 @@
         w1 (damage-step w0 0.016)]
     (is (= 4 (:lives w1)))))
 
+(deftest test-damage-step-contact-hit-plays-the-claw
+  ;; A melee contact hit is the monster's swing: DSCLAW over the pain grunt.
+  (let [w1 (damage-step (world-with-enemy-on-player 5 false) 0.016)]
+    (is (= 1 (count (sfx-named w1 :claw))))
+    (is (= 1 (count (sfx-named w1 :player-pain))))))
+
+(deftest test-damage-step-god-mode-plays-no-claw
+  (let [w1 (damage-step (world-with-enemy-on-player 5 true) 0.016)]
+    (is (= 0 (count (sfx-named w1 :claw))))))
+
+;; ---------------------------------------------------------------------
+;; Monster pain cry: Doom's light DSPOPAIN for imps and revenants, the
+;; heavy DSDMPAIN for the demon family.
+;; ---------------------------------------------------------------------
+
+(deftest test-pain-sfx-for-maps-light-and-heavy-families
+  (is (= :enemy-pain (pain-sfx-for :imp)))
+  (is (= :enemy-pain (pain-sfx-for :revenant)))
+  (is (= :enemy-pain-heavy (pain-sfx-for :baron)))
+  (is (= :enemy-pain-heavy (pain-sfx-for :cyber)))
+  (is (= :enemy-pain (pain-sfx-for nil)) "typeless fixture: light cry"))
+
+(deftest test-push-pain-sfx-queues-only-when-the-shot-staggered
+  (let [staggered [{:type :baron :state :pain}]
+        shrugged  [{:type :baron :state :aware}]]
+    (is (= [{:name :enemy-pain-heavy :vol 0.5}] (:sfx (push-pain-sfx {} staggered 0 0.5))))
+    (is (nil? (:sfx (push-pain-sfx {} shrugged 0 0.5))) "no flinch, no cry")
+    (is (nil? (:sfx (push-pain-sfx {} staggered -1 0.5))) "a miss strikes nobody")))
+
 (deftest test-damage-step-spares-life-in-god-mode
   ;; With :god? true the touch hit is suppressed entirely so the
   ;; player can roam every room without dying.
@@ -879,6 +908,15 @@
     (is (= :chaingun (pick-loot-weapon w 0.49)))
     (is (= :shotgun  (pick-loot-weapon w 0.5)))
     (is (= :shotgun  (pick-loot-weapon w 0.99)))))
+
+(deftest test-pick-loot-weapon-never-tags-a-no-ammo-weapon
+  ;; The chainsaw uses no ammo, so a box tagged for it refills nothing.
+  (let [saw-only {:owned-weapons #{:pistol :chainsaw}}
+        with-gun {:owned-weapons #{:pistol :chainsaw :shotgun}}]
+    (is (= :pistol (pick-loot-weapon saw-only 0.0)) "only the saw besides the pistol: pistol")
+    (is (= :pistol (pick-loot-weapon saw-only 0.99)))
+    (is (= :shotgun (pick-loot-weapon with-gun 0.0)) "the saw never takes a share of the roll")
+    (is (= :shotgun (pick-loot-weapon with-gun 0.99)))))
 
 (deftest test-pick-loot-weapon-only-shotgun-owned-skips-pistol
   ;; Mid-game on L2: player owns pistol + shotgun. Every kill-loot
@@ -1064,6 +1102,24 @@
         w1 (fire-shot w0)]
     (is (= 1 (:kills w1)) "rocket blast killed the cyber")
     (is (contains? (:held-keys w1) :boss) "boss exit unlocked via the splash path")))
+
+;; A splash weapon's direct hit lands its :damage on the enemy the beam
+;; struck; the rest of the radius takes :splash-damage. Two barons in a
+;; one-cell corridor: the near one is struck, the far one is 1.5 away.
+(defn- splash-pair-world [weapon]
+  (assoc (boss-world) :weapon weapon :owned-weapons #{:pistol weapon} :door-lock nil
+         :enemies [{:x 4.5 :y 1.5 :alive true :lives 20 :max-lives 20 :hit-flash-secs 0.0 :type :baron}
+                   {:x 6.0 :y 1.5 :alive true :lives 20 :max-lives 20 :hit-flash-secs 0.0 :type :baron}]))
+
+(deftest test-fire-shot-bfg-direct-hit-deals-damage-and-splash-hits-the-rest
+  (let [es (:enemies (fire-shot (splash-pair-world :bfg)))]
+    (is (= 10 (:lives (get es 0))) "struck baron: 20 - 10")
+    (is (= 14 (:lives (get es 1))) "bystander: 20 - 6")))
+
+(deftest test-fire-shot-rocket-direct-hit-deals-damage-and-splash-hits-the-rest
+  (let [es (:enemies (fire-shot (splash-pair-world :rocket)))]
+    (is (= 16 (:lives (get es 0))) "struck baron: 20 - 4")
+    (is (= 17 (:lives (get es 1))) "bystander: 20 - 3")))
 
 (deftest test-fire-shot-bfg-splash-kill-of-non-cyber-does-not-grant-boss-key
   ;; bfg-fire has its OWN :cyber type-check; the hitscan negatives exercise

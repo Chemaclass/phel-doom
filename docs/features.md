@@ -4,7 +4,7 @@
 - Textured stone walls: baked Freedoom flat sampled per cell by wall-hit fraction + depth fog (`PHEL_DOOM_FLAT_WALLS=1` for flat shading)
 - Textured floor: floor-casting samples the stone flat on the ground plane, distance-fogged + shadowed (`PHEL_DOOM_FLAT_FLOOR=1` for the flat gradient)
 - Half-block sub-pixel floor/walls/sky: `▀` cells with independent top/bottom colours give 2x vertical resolution (smaller pixels, no colour loss), memoized so CPU cost is ~+2% (`PHEL_DOOM_NO_SUBPIXEL=1` for the one-colour-per-cell path)
-- Sub-5ms `frame->string` at 180x40 (2ms at 80x24, 3ms at 120x30)
+- `frame->string` at ~3.7ms for 80x24, ~4.6ms for 120x30, ~6.2ms for 180x40 (see [performance.md](performance.md))
 - Uniform ~120fps target + crisp 1:1 walls at every terminal size (no big-screen 30fps / chunky-scale degradation)
 - Auto-calibrated pixel detail, always full screen: startup measures the machine. When full detail can't hold a smooth framerate it pixel-doubles the scene (2x2 blocks, ~4x cheaper, same FOV/framing), but only on big screens (cell area beyond 200x45). Smaller terminals always keep full detail. Recalibrates on resize. `--max-cols=0` forces full detail, `--max-cols=N` insets to N columns
 - `proj-dist` decoupled from viewport width: resize widens FOV, not zoom. FOV clamps at 100° on wide terminals, so they gain horizontal resolution instead of edge fisheye
@@ -21,7 +21,7 @@ See [rendering.md](rendering.md), [raycaster.md](raycaster.md), [performance.md]
 - Per-level floor theme: `:theme` tints the floor gradient (grey / steel / moss / clay / rust / hell), so episodes read as distinct places. Walls + sky stay shared grayscale.
 - Pickups: hearts (heal one full heart; pool is 5 hearts / 10 HP), armor (cap 5, absorbs one whole hit), armor shards (+1 over-cap to 10), soulsphere (over-cap to 14 HP, decays), ammo boxes, berserk (18s 2x dmg), invuln (10s immune), stacking backpack (L2+, reserve tier per pickup)
 - Keycards: L4 blue, L5 red, L7 yellow. Locked door pulses on bump without key. L10 boss door unlocks via synthetic :boss keycard after cyber kill. Compass tints facing letter in lock color.
-- Secrets: up to 2 per procgen level (L10 has hand-authored pair). Bump with F to reveal ammo + shard + rotating powerup. Skipped on locked levels.
+- Secrets: up to 2 seeded on levels with no fixed layout and no lock (L1 and L9); L10 has a hand-authored pair. Bump with F to reveal ammo + shard + rotating powerup.
 - Walk-into-door auto-advance. Pulsing minimap + bright 3D glyph.
 - Cross-level carry: lives, kills, time, weapons, active weapon, mag/reserve state, backpack, toggles. Retry/restart resets.
 

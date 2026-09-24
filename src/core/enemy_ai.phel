@@ -455,7 +455,8 @@
   (if (and (php/=== :aware (or (:state enemy) :aware))
            (in-attack-range? enemy px py)
            (attack-ready? enemy))
-    (assoc (assoc enemy :state :attacking)
+    (assoc enemy
+           :state              :attacking
            :attack-windup-secs (:windup (attack-spec-of enemy)))
     enemy))
 
@@ -474,27 +475,22 @@
       (let [w  (:attack-windup-secs enemy)
             w' (php/- w dt)]
         (if (php/<= w' 0.0)
-          ;; Chained single-key writes. On Phel 0.51 a variadic assoc cost
-          ;; ~2.9x this; dev-main compiles both shapes to the same code.
-          (assoc
-           (assoc
-            (assoc
-             (assoc enemy :state :aware)
-             :attack-windup-secs 0.0)
-             ;; Depth-scaled: deeper levels stamp a smaller
-             ;; :aggression so the cooldown between strikes shrinks.
-             ;; Windup (the telegraph) is left at the per-type value
-             ;; so the warning stays honest.
-            :attack-cooldown-secs (php/* (:cooldown (attack-spec-of enemy))
-                                         (or (:aggression enemy) 1.0)))
-           ;; Casters release a projectile on windup-expiry. The
-           ;; spawn pass (core/projectile) harvests this flag,
-           ;; aims a bolt at the player, then clears it. Melee
-           ;; enemies leave it false — their hit already landed
-           ;; via the contact test during the windup window.
-           :fire-now (caster? enemy))
-          (assoc (assoc enemy :attack-windup-secs w')
-                 :attack-cooldown-secs cd')))
+          (assoc enemy
+                 :state                :aware
+                 :attack-windup-secs   0.0
+                 ;; Depth-scaled: deeper levels stamp a smaller
+                 ;; :aggression so the cooldown between strikes shrinks.
+                 ;; Windup (the telegraph) is left at the per-type value
+                 ;; so the warning stays honest.
+                 :attack-cooldown-secs (php/* (:cooldown (attack-spec-of enemy))
+                                              (or (:aggression enemy) 1.0))
+                 ;; Casters release a projectile on windup-expiry. The
+                 ;; spawn pass (core/projectile) harvests this flag,
+                 ;; aims a bolt at the player, then clears it. Melee
+                 ;; enemies leave it false — their hit already landed
+                 ;; via the contact test during the windup window.
+                 :fire-now             (caster? enemy))
+          (assoc enemy :attack-windup-secs w' :attack-cooldown-secs cd')))
       (if (php/=== cd' cd)
         enemy
         (assoc enemy :attack-cooldown-secs cd')))))
@@ -558,8 +554,8 @@
    new information."
   [^map enemy ^float ox ^float oy]
   (case (state-of enemy)
-    :dormant (assoc (assoc enemy :state :hunting) :lkp {:x ox :y oy})
-    :wander  (assoc (assoc enemy :state :hunting) :lkp {:x ox :y oy})
+    :dormant (assoc enemy :state :hunting :lkp {:x ox :y oy})
+    :wander  (assoc enemy :state :hunting :lkp {:x ox :y oy})
     :hunting (assoc enemy :lkp {:x ox :y oy})
     enemy))
 

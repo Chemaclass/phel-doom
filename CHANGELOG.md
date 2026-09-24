@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Changed
+
+- Runs on Phel 0.53, the stable release of the `dev-main` build 0.20.0 shipped with. No game change. The per-frame tickers and the enemy and combat writes use one plain `assoc` where they used to guard or chain writes by hand to dodge costs 0.53 removed; same speed, less code.
+
 ## [0.20.0] - 2026-09-24
 
 ### Changed

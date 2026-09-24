@@ -168,7 +168,7 @@ The HUD draws 5 slots: `♥` full, `◖` half, `·` empty, with over-cap HP as e
 
 ## Timers
 
-Float-seconds countdowns, decayed by `decay-timers` in `core/combat.phel`. A timer that is absent or already 0.0 is not rewritten (`combat/decay-key`), so a quiet frame writes only running timers. `state/assoc-changed` applies the same rule to latches and phases.
+Float-seconds countdowns, decayed by `decay-timers` in `core/combat.phel`. A timer that is absent or already 0.0 is not rewritten (`combat/decay-key`), so a quiet frame writes only running timers. Latches and phases are written with a plain `assoc`: on Phel 0.53 rewriting the stored value returns the map itself.
 
 | Timer | Set by | Drives |
 |-------|--------|--------|

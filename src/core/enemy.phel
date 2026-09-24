@@ -2,7 +2,6 @@
   (:require phel-doom.core.rng :as rng)
   (:require phel-doom.core.map        :refer [random-spawn wall?])
   (:require phel-doom.core.enemies    :refer [resists? default-lives-for])
-  (:require phel-doom.core.state      :refer [assoc-changed])
   (:require phel-doom.core.engine     :refer [proj-dist])
   (:require phel-doom.core.projection :refer [sprite-half-rows wall-px])
   (:require phel-doom.core.enemy-ai   :refer [apply-pain maybe-start-attack moves? observe sees-player? start-wander target-pos tick-attack tick-pain tick-wander]))
@@ -143,7 +142,7 @@
       (let [desired (php/atan2 dy dx)
             hit     (pick-step grid ex ey (php/* speed dt) desired)]
         (if hit
-          (assoc (assoc enemy :x (first hit)) :y (second hit))
+          (assoc enemy :x (first hit) :y (second hit))
           enemy)))))
 
 (def boss-sprite-scale
@@ -319,9 +318,9 @@
   [^map e ^int dmg dmg-type]
   (let [eff   (if (resists? (:type e) dmg-type) 0 dmg)
         lives (php/max 0 (php/- (or (:lives e) 1) eff))
-        woke  (assoc (assoc e :state :aware) :lives lives)]
+        woke  (assoc e :state :aware :lives lives)]
     (if (php/<= lives 0)
-      [(assoc (assoc woke :alive false) :respawn-after (respawn-delay-for e)) true]
+      [(assoc woke :alive false :respawn-after (respawn-delay-for e)) true]
       [(assoc woke :hit-flash-secs hit-flash-seconds) false])))
 
 (defn splash
@@ -742,10 +741,10 @@
                             (php/<= active' 0.0))
         silence-cross? (and (php/>= prev silence-trigger-dist)
                             (php/< cur silence-trigger-dist))]
-    (-> world
-        (assoc-changed :prev-min-enemy-dist cur)
-        (assoc-changed :scare-secs (if scare-cross? scare-duration active'))
-        (assoc-changed :silence-tick? silence-cross?))))
+    (assoc world
+           :prev-min-enemy-dist cur
+           :scare-secs          (if scare-cross? scare-duration active')
+           :silence-tick?       silence-cross?)))
 
 (def rear-arc-half-width
   "Angle (radians) past facing that counts as 'behind'. 3π/4 = 135°

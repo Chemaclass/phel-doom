@@ -53,7 +53,7 @@ Core code never plays sound. It enqueues `{:name :vol}` on the world's per-frame
 
 Sources:
 
-- **Combat**: the weapon's `:fire-sfx` on every shot, `:kill` plus a per-type death cry on a kill, `:click` on dry fire, `:reload`, `:player-pain`. A monster's melee hit adds `:claw`. A shot that staggers a monster adds its pain cry (`pain-sfx-for`): `:enemy-pain` for imps and revenants, `:enemy-pain-heavy` for the demon family. Only the single-target weapons roll pain, so only they make monsters cry out.
+- **Combat**: the weapon's `:fire-sfx` on every shot, `:kill` plus a per-type death cry on a kill (the cry at `death-cry-gain` 0.4 of the kill volume: the Freedoom screams are mastered much hotter), `:click` on dry fire, `:reload`, `:player-pain`. A monster's melee hit adds `:claw`. A shot that staggers a monster adds its pain cry (`pain-sfx-for`): `:enemy-pain` for imps and revenants, `:enemy-pain-heavy` for the demon family. Only the single-target weapons roll pain, so only they make monsters cry out.
 - **Enemies**: a per-type sight cry on wake, `:fireball` on launch.
 - **Pickups and world**: `:item`, `:weapon-up`, `:powerup`, `:door` (also secret reveal), `:switch`.
 - **Locked door**: `:locked` at volume 0.5, on the rising edge only, so holding into the door re-fires at the ~1.5s hint cadence. `physics/try-move` enqueues it inline instead of calling `push-sfx`, which would create a `core/combat` <-> `core/physics` require cycle.

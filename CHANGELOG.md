@@ -18,6 +18,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - The BFG and rocket launcher land their direct hit. The enemy the beam strikes takes the weapon's damage (BFG 10, rocket 4) and the rest of the blast radius takes the splash (6, 3). Before, every enemy in the radius took only the splash, so the direct-hit number on the info screen never happened.
 - Owning the chainsaw no longer wastes ammo boxes. Kill loot could tag a box for the chainsaw, which uses no ammo, and a level box picked up with the chainsaw in hand filled nothing. Loot now skips it, and a level box goes to the pistol while you hold the saw.
 - Monsters cry out when they flinch, and you hear the claw when one hits you in melee. Both sounds were baked from Freedoom but never played. Imps and revenants use the light pain cry, the demon family the heavy one.
+- The death scream after a kill is quieter. It played at the full kill volume and drowned the gunfire; it now sits at 40% of it.
 - The first-run key strip on level 1 pointed at `TAB help`, but TAB is bound to nothing. It now says `H help`, the key that opens the help panel.
 
 ## [0.19.0] - 2026-09-24

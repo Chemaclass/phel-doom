@@ -42,6 +42,8 @@ tools/bench-ab.sh HEAD~1 5 cast    # the cast rows
 
 It alternates the refs back to back, so each pair shares a thermal state, and averages the per-pair deltas. **A consistent sign across every pair is the signal.** Mixed signs get flagged as noise. The tree must be clean: the script checks refs out in place and restores your branch, including on Ctrl-C.
 
+Phel 0.53 ships `phel bench --ab=<ref> --pairs=N`. Do not use it here: an A/A run (`--ab=HEAD`, identical trees) read `step-120` 7.7% slower on A in all three pairs, twice (on dev-main and on 0.53), while `tools/bench-ab.sh HEAD 3 step` reads the same A/A as noise. The likely cause is its temporary worktree, which installs its own vendor (our `composer.lock` is gitignored) and runs from a cold path.
+
 Under heavy load (load average 5-24) the means swung by up to 78%. The #526 and #527 passes used the minimum over 800-1000 calls instead, which held.
 
 ### Attribute render cost
@@ -325,6 +327,8 @@ Measured with the player walking and turning (2026-08-17): **flat at 1130 frames
 ## Tried and rejected (do not retry)
 
 Each entry has the number that decided it. Re-open one only if the stated condition changes.
+
+- **`^vector` tags on the enemy loops (Phel 0.53).** On a `^vector` local, `(count v)` compiles to `->count()` and `(nth v i)` to `->get()`, skipping the generic dispatch. Tagging `target-index`, `closest-attacker`, `rear-attacker?`, `beam-impact`, `splash`, `pierce` and the spread pair: `step-120` +1.4%, `step-fire-120` +0.2%, mixed signs over 5 pairs. A level holds a dozen or so enemies, so the loop overhead is not a cost, and the tag adds a `TypeError` if a non-vector ever arrives. Revisit if enemy counts grow by an order of magnitude.
 
 - **Inlining the `halfblock` memo call.** Saves 18.6 ns per cell (40.3 vs 21.7 ns over 2M iterations): 0.067 ms per frame at 120x30, 1.2%, under the bench's ±4% rstdev. Not worth reaching into another namespace's private cache.
 - **Hoisting the per-column fade table out of the cell loop.** Under 1% or net-negative, measured twice. Wall texture and seam micro-optimisations in general sit under the noise floor; the cost is the per-sub-row texture sample itself.

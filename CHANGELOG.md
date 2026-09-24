@@ -9,6 +9,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-09-24
+
 ### Changed
 
 - Needs PHP 8.5. Runs on Phel `dev-main`, which requires 8.5 and brings value-type tags, literal `get-in` / `assoc-in` / `update-in` paths, faster multi-key `assoc` and `#[NoDiscard]` collection methods. `step` 11% faster and `step-fire` 8%, every one of five interleaved vendor-swap pairs against 0.52 agreeing. Frames read within noise over eight pairs. Map params are tagged `^map` now, which compiles to the same PHP as the full interface name.
@@ -542,7 +544,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `cast + render` under 5 ms per frame at 120×30.
 - Flat PHP arrays on hot paths; `:tag` types for OPcache JIT tracing.
 
-[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/Chemaclass/phel-doom/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/Chemaclass/phel-doom/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/Chemaclass/phel-doom/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/Chemaclass/phel-doom/compare/v0.16.0...v0.17.0

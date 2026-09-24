@@ -28,7 +28,7 @@ Audit `docs/*.md` against the code that backs them. Fix drift.
 | `docs/combat.md` | `src/core/combat.phel` |
 | `docs/monsters.md` | `src/core/enemy.phel` |
 | `docs/map.md`, `docs/level-system.md` | `level.phel`, `map.phel` |
-| `docs/wad-parser.md` | `src/glue/wad.phel` |
+| `docs/wad-parser.md` | `src/io/wad.phel` |
 | `docs/input.md` | `controls.phel`, `input.phel` |
 | `docs/audio.md` | `sound.phel` (+ `io/audio` if present) |
 | `docs/scores.md` | `src/glue/scores.phel` |

@@ -20,7 +20,7 @@ Owns `src/core/engine.phel` and the math contract it provides to `src/io/render.
 ## Required reading
 
 - `docs/raycaster.md` — math primer for this codebase.
-- `docs/performance.md` *Measured numbers* and *NOT optimised (yet)* — hot path budget.
+- `docs/performance.md` *Measured numbers* and *Tried and rejected (do not retry)* — hot path budget.
 - `engine.phel` itself — `cast-ray`, `cast-ray-hit`, `cast-frame`.
 
 ## Contract surface

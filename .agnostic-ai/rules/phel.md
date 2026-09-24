@@ -63,8 +63,8 @@ comment is fine there).
 ## PHP interop (phel 0.50)
 
 - Construct with `(new \Foo arg)`, not `php/new`. `php/->` and `php/::` are
-  deprecated as source too; the Clojure-style shorthands are the spelling to
-  write. `php/aget`, `php/aset`, `php/apush`, `php/oset`, `php/ref` stay.
+  rejected as source (compile error); the Clojure-style shorthands are the
+  spelling to write. `php/aget`, `php/aset`, `php/apush`, `php/oset`, `php/ref` stay.
 - `(php/. a b c)` is native PHP concatenation and is the hot-path spelling when
   every fragment is already a string or an int. `str` stays a runtime call
   (plus one `val-to-str` per argument) unless every non-literal argument is
@@ -88,8 +88,8 @@ truncation as a PHP "Implicit conversion from float ... loses precision" notice.
 
 ## Per-frame maps (world, enemy, moves)
 
-- Write only what changed: `state/assoc-changed` for a value, `combat/decay-key` for a timer. A hash-map `assoc` copies the path even when the value is identical; the compare is cheaper.
-- Chain single-key `assoc`s. Variadic `(assoc m :a 1 :b 2 ...)` is 2-4x slower and scales per pair; transients are slower still on the world map (docs/performance.md, "What a write costs on Phel 0.51").
+- Skip work, not writes: `combat/decay-key` leaves an idle timer alone. On Phel dev-main an `assoc` of the value already there returns the map itself, so a compare guard around one write (`state/assoc-changed`) no longer pays (0.68 vs 0.56 us).
+- Variadic `(assoc m :a 1 :b 2 ...)` and chained single-key `assoc`s cost the same on dev-main; write whichever reads better. Transients stay slower on the world map (docs/performance.md, "What a write costs on Phel 0.51").
 - Tag map params on dispatched per-frame fns as `^map world` so `(:k world)` lowers to `->find`. Do NOT tag one-expression `^:pure` helpers that still inline: a tagged param stops the -O2 inliner. Check with `grep -c '->find(' out/phel_doom/<module>.php` after `composer build`.
 - Probe before you rebuild: an indexed `loop` that exits on the first hit beats a `filterv` whose only purpose is to learn nothing was there.
 

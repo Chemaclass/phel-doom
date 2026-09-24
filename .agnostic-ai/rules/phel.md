@@ -88,8 +88,8 @@ truncation as a PHP "Implicit conversion from float ... loses precision" notice.
 
 ## Per-frame maps (world, enemy, moves)
 
-- Skip work, not writes: `combat/decay-key` leaves an idle timer alone. On Phel dev-main an `assoc` of the value already there returns the map itself, so a compare guard around one write (`state/assoc-changed`) no longer pays (0.68 vs 0.56 us).
-- Variadic `(assoc m :a 1 :b 2 ...)` and chained single-key `assoc`s cost the same on dev-main; write whichever reads better. Transients stay slower on the world map (docs/performance.md, "What a write costs on Phel 0.51").
+- Skip work, not writes: `combat/decay-key` leaves an idle timer alone. On Phel 0.53 an `assoc` of the value already there returns the map itself, so a compare guard around one write (`state/assoc-changed`) no longer pays (0.68 vs 0.56 us).
+- Variadic `(assoc m :a 1 :b 2 ...)` and chained single-key `assoc`s cost the same on 0.53; write whichever reads better. Transients stay slower on the world map (docs/performance.md, "What a write costs on Phel 0.51").
 - Tag map params on dispatched per-frame fns as `^map world` so `(:k world)` lowers to `->find`. Do NOT tag one-expression `^:pure` helpers that still inline: a tagged param stops the -O2 inliner. Check with `grep -c '->find(' out/phel_doom/<module>.php` after `composer build`.
 - Probe before you rebuild: an indexed `loop` that exits on the first hit beats a `filterv` whose only purpose is to learn nothing was there.
 

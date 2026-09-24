@@ -59,7 +59,7 @@ Never set the flags by hand with `env $vars cmd`. zsh does not word-split an unq
 
 Some wins are invisible in milliseconds and visible in the build. Run `composer build`, then:
 
-- **Closure count.** `grep -c 'function() use(' out/phel_doom/io/render/main.php` must not grow against a same-environment main build. On phel dev-main and PHP 8.5 (2026-09-24) it reads 21 for `main.php`, 11 for `hud.php`, 0 for `core/engine.php`. The count varies by compiler version, so compare builds, not fixed numbers. None may sit inside a per-cell `while` loop.
+- **Closure count.** `grep -c 'function() use(' out/phel_doom/io/render/main.php` must not grow against a same-environment main build. On phel 0.53 and PHP 8.5 (2026-09-24) it reads 21 for `main.php`, 11 for `hud.php`, 0 for `core/engine.php`. The count varies by compiler version, so compare builds, not fixed numbers. None may sit inside a per-cell `while` loop.
 - **Map lowering.** `grep -c '->find(' out/phel_doom/core/<module>.php` confirms `^map` tags took effect.
 - **Byte identity.** A render change must keep the golden `test-frame-bytes-pinned` hashes. Their fixture has no on-screen enemy, so a change near sprites or overlays also needs an md5-per-frame sweep across modes, positions and angles.
 - **Full suite for `^:pure`.** An inliner bug once crashed only on physics, AI and projectile paths. The render hashes stayed green.
@@ -73,7 +73,7 @@ Some wins are invisible in milliseconds and visible in the build. Run `composer 
 
 ## Measured numbers
 
-`composer bench` on 2026-09-24: phel dev-main, PHP 8.5, no JIT, M-series laptop.
+`composer bench` on 2026-09-24: phel 0.53, PHP 8.5, no JIT, M-series laptop.
 
 | row | mean |
 |---|---|
@@ -191,9 +191,9 @@ The trap: never swap `str` for `php/.` over a float, a bool or nil. PHP renders 
 
 ### What a Phel operation costs
 
-Loop overhead subtracted for the 0.50 column (200k iterations, 2026-08-17). The dev-main column is the matching `composer bench` row (2026-09-24, PHP 8.5, loop overhead included). Read rows against each other, not as absolutes.
+Loop overhead subtracted for the 0.50 column (200k iterations, 2026-08-17). The 0.53 column is the matching `composer bench` row (2026-09-24, PHP 8.5, loop overhead included). Read rows against each other, not as absolutes.
 
-| | phel 0.50 | dev-main row |
+| | phel 0.50 | 0.53 row |
 |---|---|---|
 | `php/aget` on a nested php array | ~4 ns | - |
 | `(get row x)` on a persistent vector | ~600 ns | - |
@@ -205,13 +205,13 @@ Loop overhead subtracted for the 0.50 column (200k iterations, 2026-08-17). The 
 
 - **A module-level `def` is not a constant.** Every read is a registry lookup by two strings. Hoist constants into a `let` outside the loop. Inside a per-call predicate there is nowhere to hoist to, which is why `wall?` compares against literals, pinned by `test-wall-literals-match-the-constants`.
 - **`=` and `<` dispatch on type.** On values known to be ints, use `php/===` and `php/<`.
-- The persistent, generic version of an operation cost 100x to 1000x the native one on 0.50. The gap has narrowed on dev-main but still favours native ops. None of this moves a frame on its own (the `wall?` swap is ~1.5% of a threaded frame). It matters where calls are counted in thousands.
+- The persistent, generic version of an operation cost 100x to 1000x the native one on 0.50. The gap has narrowed on 0.53 but still favours native ops. None of this moves a frame on its own (the `wall?` swap is ~1.5% of a threaded frame). It matters where calls are counted in thousands.
 
 ### What a write costs on Phel 0.51
 
-The step phase lives on map writes. The 0.51 column is a microbench on the real 90-key world map (2026-09-22, PHP 8.4, no JIT, 20k iterations). The dev-main column re-measures the same shapes on a synthetic 90-key map (2026-09-24, PHP 8.5, no JIT, 20k iterations, scratch loop).
+The step phase lives on map writes. The 0.51 column is a microbench on the real 90-key world map (2026-09-22, PHP 8.4, no JIT, 20k iterations). The 0.53 column re-measures the same shapes on a synthetic 90-key map (2026-09-24, PHP 8.5, no JIT, 20k iterations, scratch loop).
 
-| | phel 0.51 | dev-main |
+| | phel 0.51 | 0.53 |
 |---|---|---|
 | `(assoc m :k v)` | 1.25 us | 1.1 us |
 | same, target tagged `^map` | 0.95 us | - |
@@ -230,13 +230,13 @@ The step phase lives on map writes. The 0.51 column is a microbench on the real 
 | `(filterv p (map f coll))`, 4 items | 14.7 us | - |
 | `(into [] (comp (map f) (filter p)) coll)` | 27.8 us | - |
 
-The rules, as they stand on dev-main:
+The rules, as they stand on 0.53:
 
-1. **Skip whole decays and rebuilds, not single writes.** `combat/decay-key` writes a timer only while it runs; a quiet frame writes a handful of keys instead of forty. A guard around one same-value write does not pay: `state/assoc-changed` measured 1-2 us slower than rewriting in `apply-heat` on 0.51, and on dev-main a same-value `assoc` (0.56 us) is cheaper than the guarded form (0.68 us).
-2. **Variadic `assoc` no longer needs chaining.** On 0.51 a multi-key `assoc` was 2-4x the chained form and worsened per pair. On dev-main the two cost the same at 3 and 20 keys, and the `assoc-2-keys-*` bench rows agree. The existing chains are harmless. Do not write new chains for speed. Transients still do not beat plain writes on a hash map.
+1. **Skip whole decays and rebuilds, not single writes.** `combat/decay-key` writes a timer only while it runs; a quiet frame writes a handful of keys instead of forty. A guard around one same-value write does not pay: `state/assoc-changed` measured 1-2 us slower than rewriting in `apply-heat` on 0.51, and on 0.53 a same-value `assoc` (0.56 us) is cheaper than the guarded form (0.68 us).
+2. **Variadic `assoc` no longer needs chaining.** On 0.51 a multi-key `assoc` was 2-4x the chained form and worsened per pair. On 0.53 the two cost the same at 3 and 20 keys, and the `assoc-2-keys-*` bench rows agree. The existing chains are harmless. Do not write new chains for speed. Transients still do not beat plain writes on a hash map.
 3. **Tag map params on the per-frame path.** `^map world` makes every `(:k world)` in the body a `->find` call and `assoc` a `->put` (phel-lang #3319). Do not tag the one-expression `^:pure` helpers that still inline: a tagged param stops the inliner, and the inline is worth more. Verify with the `->find(` count, not a millisecond.
 4. **Probe before you rebuild.** An indexed scan that exits on the first hit beats a `filterv` that allocates the answer to "was anything there".
-5. **Prefer `assoc` of a computed value over a closure `update`.** On 0.51 a counter bump was 3.1 us as `update` and 2.2 us as `(assoc m :k (php/+ (or (:k m) 0) 1))`. On dev-main they are within 5%.
+5. **Prefer `assoc` of a computed value over a closure `update`.** On 0.51 a counter bump was 3.1 us as `update` and 2.2 us as `(assoc m :k (php/+ (or (:k m) 0) 1))`. On 0.53 they are within 5%.
 
 ### Compiler call inlining (`^:pure`)
 
@@ -333,7 +333,7 @@ Each entry has the number that decided it. Re-open one only if the stated condit
 - **Differential rendering (#3).** A per-row diff saves 100% paused and 61% standing still, but costs +2% bytes while moving or turning, and needs invalidation for resize, reset, alt-screen re-entry, pause, minimap toggle and effects.
 - **`:inline` metadata on a one-line helper.** 5.6 vs 6.1 us per 5 calls, 8%. Not worth the macro-hygiene surface.
 - **`into` with a transducer.** 2x slower than `filterv` over a lazy `map` (phel-lang #3323).
-- **Transients for batched world writes.** Slower than plain writes on a hash map on 0.51 and on dev-main (see the write table).
+- **Transients for batched world writes.** Slower than plain writes on a hash map on 0.51 and on 0.53 (see the write table).
 - **`assoc-changed` around a single same-value write.** Slower than the write it skips (see rule 1 above).
 - **Decoupling view bob from the gradient memo key.** Worst case +0.28 ms; see [View bob](#view-bob-and-the-gradient-memo-issue-411).
 - **Relying on the JIT.** ~0% on the render loop (see [PHP runtime](#php-runtime-opcache--jit)).

@@ -61,7 +61,7 @@ Niches, not upgrades. Each weapon debuts on one level and is found on the map.
 | 6 | incinerator | 1 fire | 0.06s | 40 | 120 | 16 | L6 | 4-cell reach; 0 damage to fire-resistant enemies |
 | 7 | rocket | 4 direct, 3 splash, radius 2.0 | 0.9s | 1 | 30 | - | L5 | everyday area damage |
 
-Pistol, chaingun, chainsaw and incinerator auto-fire while held; the rest fire once per press. Each weapon keeps its own mag and reserve. Starting reserve (`:reserve-start`): pistol 30, shotgun 8, BFG 5, rocket 5, chaingun and incinerator 0. `--armory` stamps every reserve to 9999. The info menu shows BFG 10 and rocket 4: unused direct-hit values ([combat.md](combat.md#splash-bfg-slot-5-rocket-slot-7)). Cacodemon, baron, archvile and mancubus take 0 from the incinerator.
+Pistol, chaingun, chainsaw and incinerator auto-fire while held; the rest fire once per press. Each weapon keeps its own mag and reserve. Starting reserve (`:reserve-start`): pistol 30, shotgun 8, BFG 5, rocket 5, chaingun and incinerator 0. `--armory` stamps every reserve to 9999. The info menu's BFG 10 and rocket 4 are the direct-hit damage ([combat.md](combat.md#splash-bfg-slot-5-rocket-slot-7)). Cacodemon, baron, archvile and mancubus take 0 from the incinerator.
 
 ## End screen (rank + summary)
 

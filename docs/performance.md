@@ -98,7 +98,7 @@ Four rules fall out of that table, and the branch applies them:
 
 1. **Skip the write when the value is already there.** `state/assoc-changed` does the compare; `combat/decay-key` does it for timers (nil or spent means no write). A quiet frame writes a handful of keys instead of forty.
 2. **Chain multi-key writes.** Variadic `assoc` is 2-4x the chained form and worsens per pair. Transients do not rescue it on a hash map: the per-call `assoc!` dispatch costs more than the path copy it saves. This is filed upstream as phel-lang #3317 and #3318; when either lands, `tests/bench/phel-costs-bench.phel` will say so and the chains can go.
-3. **Tag map params on the per-frame path.** `^Phel.Lang.Collections.Map.PersistentMapInterface world` makes every `(:k world)` in the body a `->find` call and `assoc` a `->put`. The full dotted name is the only spelling that works today (phel-lang #3319 asks for `^map`). Do not tag the one-expression `^:pure` helpers that still inline: a tagged param stops the -O2 inliner, and the inline is worth more than the lowering. Verify with `grep -c '->find(' out/phel_doom/core/<module>.php` after `composer build`, not with a millisecond.
+3. **Tag map params on the per-frame path.** `^map world` makes every `(:k world)` in the body a `->find` call and `assoc` a `->put`. `^map` landed in phel-lang #3319 and compiles to the same PHP as the full `^Phel.Lang.Collections.Map.PersistentMapInterface` it replaced. Do not tag the one-expression `^:pure` helpers that still inline: a tagged param stops the -O2 inliner, and the inline is worth more than the lowering. Verify with `grep -c '->find(' out/phel_doom/core/<module>.php` after `composer build`, not with a millisecond.
 4. **Probe before you rebuild.** An indexed scan that exits on the first hit beats a `filterv` that allocates the answer to "was anything there". The same shape as the `:visited-at` memo one section up.
 
 Evaluated and not adopted, with the number that decided it: `:inline` metadata (8% on a tiny helper, not worth the macro-hygiene surface), `into` with a transducer (2x slower than `filterv` over a lazy `map`, phel-lang #3323), transients for batched world writes (see rule 2).
@@ -502,7 +502,7 @@ change.
 
 ### Typed callees stopped inlining (phel-lang 0.50)
 
-phel-doom requires `phel-lang/phel-lang` `^0.50`.
+phel-doom tracks `phel-lang/phel-lang` `dev-main` (0.50 introduced the behaviour below).
 
 0.50 (#3126) stops the inliner splicing away a callee whose parameters carry a
 `:tag`, because splicing dropped the emitted parameter type and the native

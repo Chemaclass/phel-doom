@@ -39,7 +39,7 @@ composer repl         # REPL
 composer doctor       # env diagnostics
 ```
 
-CI runs `composer ci` on PHP 8.5. PHP 8.4 works locally but isn't CI-tested.
+PHP 8.5 is the floor, locally and in CI. Phel dev-main requires it.
 
 `format` / `format-check` run `tools/format-sources.sh`: every hand-written `.phel` file, minus the four generated ones (`enemy_sprites_data`, `weapon_sprites_data`, `wall_texture_data`, `sound_data`). `phel format` is quadratic in the elements of one collection literal ([phel-lang#3218](https://github.com/phel-lang/phel-lang/issues/3218)), and each baked asset file is one enormous literal. `enemy_sprites_data.phel` alone took 94.7s of a 124s check, 70% of the pre-commit gate; skipping the four takes the check to 4.8s and the gate from 173s to 50s. `tools/bake-*.phel` writes them, never a human, so formatting them was pure cost. The script fails loudly if one is renamed, so the skip list cannot silently stop matching. `composer format-all` still formats everything.
 

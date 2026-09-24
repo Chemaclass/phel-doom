@@ -109,7 +109,7 @@
    deterministic in tests that don't otherwise care about pain. Real
    levels go through `spawn-enemies` which always stamps `:type`, so
    the production pain path is unaffected."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface enemy]
+  [^map enemy]
   (let [t (:type enemy)]
     (if (nil? t)
       0.0
@@ -127,7 +127,7 @@
 (defn attacks?
   "True when the enemy's state allows it to deal contact damage this
    tick. Pure data lookup — same shape as `moves?`."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface enemy]
+  [^map enemy]
   (boolean (get-in state-spec [(state-of enemy) :attacks?])))
 
 (defn sees-player?
@@ -189,7 +189,7 @@
      :hunting  → frozen `:lkp` (falls back to player position if missing)
      :wander   → `wander-step-dist` units ahead in `:wander-angle`
      anything else → nil (caller should not step)"
-  [^Phel.Lang.Collections.Map.PersistentMapInterface enemy ^float px ^float py]
+  [^map enemy ^float px ^float py]
   (case (state-of enemy)
     :aware   {:x px :y py}
     :hunting (or (:lkp enemy) {:x px :y py})
@@ -218,7 +218,7 @@
 
    Adding a new state means one extra `case` clause; existing call
    sites don't change."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface enemy sees?]
+  [^map enemy sees?]
   (let [s (state-of enemy)]
     (case s
       :dormant (if sees? :aware :dormant)
@@ -243,7 +243,7 @@
    proves the copy pointless. `:state` is written only on a real
    transition; `:lkp` only while LOS is clear, where the player's
    float position genuinely differs frame to frame."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface enemy pgrid ^float px ^float py]
+  [^map enemy pgrid ^float px ^float py]
   (let [sees?  (sees-player? pgrid (:x enemy) (:y enemy) px py)
         state' (next-state enemy sees?)
         moved  (if (php/!== state' (:state enemy))
@@ -267,7 +267,7 @@
    pain` decays the timer per frame and reverts the state to :aware
    on expiry; the next `observe` pass then routes it back into the
    normal LOS-driven flow."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface enemy ^float roll]
+  [^map enemy ^float roll]
   (if (php/< roll (pain-chance-of enemy))
     (assoc enemy
            :state     :pain
@@ -285,7 +285,7 @@
 
    Caller (`enemy/tick-one`) runs this BEFORE the LOS observe pass so
    a staggered enemy doesn't get its state rewritten this frame."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface enemy ^float dt]
+  [^map enemy ^float dt]
   (let [t (or (:pain-secs enemy) 0.0)]
     (cond
       (php/<= t 0.0)
@@ -320,7 +320,7 @@
    Inside `:wander`, decrements `:wander-secs`; on expiry rolls a
    fresh `:wander-angle` and resets the timer. `target-pos` then
    projects a step in the new direction next frame."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface enemy ^float dt]
+  [^map enemy ^float dt]
   (if (php/!== :wander (state-of enemy))
     enemy
     (let [t  (or (:wander-secs enemy) 0.0)
@@ -429,7 +429,7 @@
 (defn ^:pure in-attack-range?
   "True when the player is within this enemy's attack `:range`.
    Squared-distance compare — no sqrt cost."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface enemy ^float px ^float py]
+  [^map enemy ^float px ^float py]
   (let [dx (php/- px (:x enemy))
         dy (php/- py (:y enemy))
         r  (:range (attack-spec-of enemy))]
@@ -451,7 +451,7 @@
    hunter / dormant / pained / already-attacking enemy doesn't
    re-arm here (their own timers / observe loop drive them back to
    :aware first)."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface enemy ^float px ^float py]
+  [^map enemy ^float px ^float py]
   (if (and (php/=== :aware (or (:state enemy) :aware))
            (in-attack-range? enemy px py)
            (attack-ready? enemy))
@@ -466,7 +466,7 @@
    the state flips back to :aware and the per-type `:cooldown` arms
    so the enemy resumes chasing for at least one full cooldown
    window before the next telegraphed strike."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface enemy ^float dt]
+  [^map enemy ^float dt]
   (let [cd  (or (:attack-cooldown-secs enemy) 0.0)
         cd' (php/max 0.0 (php/- cd dt))]
     (if (and (php/=== :attacking (state-of enemy))
@@ -556,7 +556,7 @@
    them without them having to walk back to the original lkp. Aware
    enemies ignore noise — they already see you, the gunshot adds no
    new information."
-  [^Phel.Lang.Collections.Map.PersistentMapInterface enemy ^float ox ^float oy]
+  [^map enemy ^float ox ^float oy]
   (case (state-of enemy)
     :dormant (assoc (assoc enemy :state :hunting) :lkp {:x ox :y oy})
     :wander  (assoc (assoc enemy :state :hunting) :lkp {:x ox :y oy})

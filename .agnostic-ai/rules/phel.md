@@ -90,7 +90,7 @@ truncation as a PHP "Implicit conversion from float ... loses precision" notice.
 
 - Write only what changed: `state/assoc-changed` for a value, `combat/decay-key` for a timer. A hash-map `assoc` copies the path even when the value is identical; the compare is cheaper.
 - Chain single-key `assoc`s. Variadic `(assoc m :a 1 :b 2 ...)` is 2-4x slower and scales per pair; transients are slower still on the world map (docs/performance.md, "What a write costs on Phel 0.51").
-- Tag map params on dispatched per-frame fns as `^Phel.Lang.Collections.Map.PersistentMapInterface world` so `(:k world)` lowers to `->find`. Full dotted name only. Do NOT tag one-expression `^:pure` helpers that still inline: a tagged param stops the -O2 inliner. Check with `grep -c '->find(' out/phel_doom/<module>.php` after `composer build`.
+- Tag map params on dispatched per-frame fns as `^map world` so `(:k world)` lowers to `->find`. Do NOT tag one-expression `^:pure` helpers that still inline: a tagged param stops the -O2 inliner. Check with `grep -c '->find(' out/phel_doom/<module>.php` after `composer build`.
 - Probe before you rebuild: an indexed `loop` that exits on the first hit beats a `filterv` whose only purpose is to learn nothing was there.
 
 ## Macros

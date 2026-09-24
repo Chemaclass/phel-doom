@@ -42,7 +42,7 @@ tools/bench-ab.sh HEAD~1 5 cast    # the cast rows
 
 It alternates the refs back to back, so each pair shares a thermal state, and averages the per-pair deltas. **A consistent sign across every pair is the signal.** Mixed signs get flagged as noise. The tree must be clean: the script checks refs out in place and restores your branch, including on Ctrl-C.
 
-Phel 0.53 ships `phel bench --ab=<ref> --pairs=N`. Do not use it here: an A/A run (`--ab=HEAD`, identical trees) read `step-120` 7.7% slower on A in all three pairs, twice (on dev-main and on 0.53), while `tools/bench-ab.sh HEAD 3 step` reads the same A/A as noise. The likely cause is its temporary worktree, which installs its own vendor (our `composer.lock` is gitignored) and runs from a cold path.
+Phel 0.53 ships `phel bench --ab=<ref> --pairs=N`. Do not use it here: an A/A run (`--ab=HEAD`, identical trees) read `step-120` 7.7% slower on A in all three pairs, twice (on dev-main and on 0.53), while `tools/bench-ab.sh HEAD 3 step` reads the same A/A as noise. A committed lock (vendor reused) still read -7.4%, so the vendor is not the cause; the suspect is side A running from a fresh worktree path with a cold compile and OPcache cache ([phel-lang#3347](https://github.com/phel-lang/phel-lang/issues/3347)). Switch once that issue is closed and an A/A reads as noise.
 
 Under heavy load (load average 5-24) the means swung by up to 78%. The #526 and #527 passes used the minimum over 800-1000 calls instead, which held.
 

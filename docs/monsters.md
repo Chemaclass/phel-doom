@@ -1,155 +1,111 @@
 # Monsters
 
-- `src/core/enemies.phel` - type catalog (visuals + default HP)
-- `src/core/enemy.phel` - record + spawn + chase step (the body)
-- `src/core/enemy_ai.phel` - AI state machine, LOS, attack windows (the brain)
-- Rendering lives in `io/render` (`render/frame-math` projects sprites, `render/paint` draws faces), keyed by per-enemy `:type`.
+`src/core/enemies.phel` (catalog), `enemy.phel` (record, spawn, chase, hitscan targeting, respawn), `enemy_ai.phel` (state machine, sight, attacks, noise), `projectile.phel` (caster bolts). Rendering: [rendering.md](rendering.md#enemy-sprite-paint).
 
 ## Catalog (`enemy-types`)
 
-Ten types. Each entry carries `:name :default-lives :head-code :body-code :legs-code :body-glyph :body-glyph-alt :body-glyph-fg :face :face-alt :face-attack`. Render reads them by kw per enemy.
+Ten types. Every entry carries the `required-keys` (name, HP, head/body/legs colour codes, body glyphs, idle/alt/attack faces; pinned by tests) and an optional `:resists` set.
 
-| Kw | Name | Default HP | Head | Body | Face | Notes |
-|---|---|---|---|---|---|---|
-| `:imp`      | imp        | 1 | 196 red    | 124 red    | ●/◯ yellow      | L1 default |
-| `:demon`    | demon      | 2 | 165 magenta| 126 purple | ▼/▾ white       | L2 default |
-| `:caco`     | cacodemon  | 3 | 51  cyan   | 38  cyan   | ◉/◎ black       | L3 default |
-| `:baron`    | baron      | 4 | 46  green  | 34  green  | Λ/λ black       | L4 default |
-| `:cyber`    | cyberdemon | 5 | 240 grey   | 124 red    | ■/□ red blink   | L5 default |
-| `:spectre`  | spectre    | 3 | 117 cyan   | 67  steel  | ○/◌ white       | L6+ |
-| `:revenant` | revenant   | 4 | 255 bone   | 245 grey   | ☠/◔ black       | L6+ |
-| `:archvile` | archvile   | 5 | 208 orange | 166 amber  | ∺/≋ black       | L6+ |
-| `:mancubus` | mancubus   | 4 | 137 tan    | 94  brown  | ═/─ black       | L6+ |
-| `:pinky`    | pinky      | 2 | 213 pink   | 199 hot-pk | ≣/≡ black       | L9+ |
+| Kw | Name | HP | Head | Body | Face (idle / alt) |
+|---|---|---|---|---|---|
+| `:imp`      | imp        | 1 | 196 red     | 124 red      | ● / ◯ |
+| `:demon`    | demon      | 2 | 165 magenta | 126 purple   | ▼ / ▾ |
+| `:caco`     | cacodemon  | 3 | 51 cyan     | 38 cyan      | ◉ / ◎ |
+| `:baron`    | baron      | 4 | 46 green    | 34 green     | Λ / λ |
+| `:cyber`    | cyberdemon | 5 | 240 grey    | 124 red      | ■ / □ |
+| `:spectre`  | spectre    | 3 | 117 cyan    | 67 steel     | ○ / ◌ |
+| `:revenant` | revenant   | 4 | 255 bone    | 245 grey     | ☠ / ◔ |
+| `:archvile` | archvile   | 5 | 208 orange  | 166 amber    | ∺ / ≋ |
+| `:mancubus` | mancubus   | 4 | 137 tan     | 94 brown     | ═ / ─ |
+| `:pinky`    | pinky      | 2 | 213 pink    | 199 hot pink | ≣ / ≡ |
 
-Adding a new type: append one entry to `enemy-types` and add a level that uses it.
+Colours and faces drive the glyph renderer (`PHEL_DOOM_NO_SPRITES=1`); the default renderer draws baked Freedoom sprites. To add a type: one `enemy-types` entry, a `sprite-type-map` entry (`src/io/render/enemy_sprite.phel`), and a level that uses it.
 
-Each enemy carries `:lives`, `:max-lives`, `:type`. Shots decrement `:lives`; death flips `:alive false` and arms the respawn timer. `damage-ratio = 1 - lives/max-lives` darkens the body, so wounded enemies read as "bloodied" without a HUD bar. Wounds stamp `:hit-flash-secs 1.2` so a yellow HP digit floats above the head.
+Records carry `:type`, `:lives`, `:max-lives`. `1 - lives/max-lives` darkens the body, and a wound floats a yellow HP digit for 1.2s (`:hit-flash-secs`).
 
 ## Stats comparison
 
-Combat numbers per type. HP is the catalog `:default-lives` (a level may override). Speed = level `:chase` x the type's `enemy/type-speed-mul` (1.0 when unlisted). Range / windup / cooldown come from `enemy_ai/attack-spec` (melee) or `enemy_ai/caster-spec` (ranged); types missing from `attack-spec` use `default-attack-spec` (1.4 / 0.4 / 1.0). Cooldown shown is the level-1 value and shrinks with depth (see "Depth-scaled aggression" below). Dmg is the half-heart HP a hit costs the player (`combat/enemy-hit-damage`): the pool is 10 HP = 5 hearts of 2 HP each, so 1 = half a heart. Armor absorbs a whole hit whatever its size.
+HP: catalog default (levels may override, difficulty scales). Speed: level `:chase` x `enemy/type-speed-mul`. Range, windup, cooldown: `enemy_ai/attack-spec` or `caster-spec`, else `default-attack-spec` (1.4 / 0.4 / 1.0); cooldown shown at L1. Dmg: player HP per hit (`combat/enemy-hit-damage`, 1 = half a heart). Pain: `type-pain-chance`, else 25%.
 
-| Type | Debut | HP | Speed x | Attack | Range (u) | Windup (s) | Cooldown (s) | Bolt spd | Dmg | Resists |
-|---|---|---|---|---|---|---|---|---|---|---|
-| `:imp`      | L1    | 1 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | 1 | -      |
-| `:demon`    | L2    | 2 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | 1 | -      |
-| `:caco`     | L3    | 3 | 0.70 | ranged | 7.0 | 0.6 | 1.0 | 2.5 | 2 | fire   |
-| `:baron`    | L4    | 4 | 0.65 | ranged | 8.0 | 0.8 | 1.3 | 3.0 | 2 | fire   |
-| `:cyber`    | L5    | 5 | 0.55 | melee  | 1.8 | 0.8 | 1.8 | -   | 3 | -      |
-| `:spectre`  | L6    | 3 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | 1 | -      |
-| `:revenant` | L7    | 4 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | 1 | -      |
-| `:archvile` | L8    | 5 | 1.0  | ranged | 6.5 | 0.6 | 1.1 | 3.4 | 2 | fire   |
-| `:mancubus` | L8    | 4 | 1.0  | melee  | 1.6 | 0.5 | 1.3 | -   | 2 | fire   |
-| `:pinky`    | L9    | 2 | 1.0  | melee  | 1.4 | 0.3 | 0.8 | -   | 1 | -      |
+| Type | Debut | HP | Speed x | Attack | Range | Windup (s) | Cooldown (s) | Bolt speed | Dmg | Pain % | Resists |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `:imp`      | L1 | 1 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | 1 | 35 | - |
+| `:demon`    | L2 | 2 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | 1 | 25 | - |
+| `:caco`     | L3 | 3 | 0.70 | ranged | 7.0 | 0.6 | 1.0 | 2.5 | 2 | 25 | fire |
+| `:baron`    | L4 | 4 | 0.65 | ranged | 8.0 | 0.8 | 1.3 | 3.0 | 2 | 15 | fire |
+| `:cyber`    | L5 | 5 | 0.55 | melee  | 1.8 | 0.8 | 1.8 | -   | 3 | 5  | - |
+| `:spectre`  | L6 | 3 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | 1 | 25 | - |
+| `:revenant` | L7 | 4 | 1.0  | melee  | 1.4 | 0.4 | 1.0 | -   | 1 | 25 | - |
+| `:archvile` | L8 | 5 | 1.0  | ranged | 6.5 | 0.6 | 1.1 | 3.4 | 2 | 25 | fire |
+| `:mancubus` | L8 | 4 | 1.0  | melee  | 1.6 | 0.5 | 1.3 | -   | 2 | 18 | fire |
+| `:pinky`    | L9 | 2 | 1.0  | melee  | 1.4 | 0.3 | 0.8 | -   | 1 | 20 | - |
 
-Reading the table:
+Design intent:
 
-- **Range** is melee reach for everyone except casters (who commit from across the room). **Windup** is the freeze-frame telegraph. **Cooldown** is the gap before the next attack (smaller = more pressure).
-- **Dmg** by role: light melee (1 half-heart), heavy melee + casters (2 full hearts), cyber boss (3 = 1.5 hearts). Same damage whether melee or bolt.
-- **Casters** (caco, baron, archvile) fire projectiles. They move slower to stay fair: keep range and strafe bolts, or close for melee pressure. Bolt speed is low enough to dodge. The archvile is the escalated caster, fastest bolt (3.4) + tightest range, but its 0.6s windup matches the caco so the telegraph reads reactable.
-- Cyber is the heaviest: most HP, slowest move (0.55x), longest telegraph. The L10 boss spawns with 50 HP.
-- Pinky is the glass rusher: low HP, full speed, shortest windup + cooldown.
-- **Resists** zeroes damage of that type. Fire resistance means the incinerator (the only fire weapon) does zero to caco, baron, archvile, mancubus. The BFG's plasma is NOT resisted, so it is the answer to those four.
+- Casters move slower so a ranged threat stays fair: keep range and strafe, or close in for melee pressure. The archvile's bolt is fastest, but its 0.6s windup matches the caco's, so it stays reactable.
+- The cyber is heaviest: most HP, slowest, longest telegraph. The L10 boss has 50 HP.
+- The pinky is the glass rusher: low HP, shortest windup and cooldown.
+- Resists: see [combat.md](combat.md#damage-resistance).
 
 ### Depth-scaled aggression
 
-Cooldowns above are the L1 baseline. `build-world` stamps `:aggression` from `enemy_ai/aggression-for`: starts 1.0, drops 0.03 per level, clamps at 0.8. `tick-attack` scales cooldown by it, so enemies recover faster and attack more often deeper (L7+ = +25% attack rate). Windup stays honest at all depths. The 0.8 floor keeps the deepest levels dodgeable despite key-repeat lag.
+`enemy_ai/aggression-for` gives 1.0 on L1, minus 0.03 per level, floored at 0.8 from L8 on. `tick-attack` multiplies the cooldown by it: up to 25% more attacks deeper in. Windups never shrink, and the floor keeps deep levels dodgeable despite key-repeat lag.
 
 ## Spawning
 
-Two entry points:
-- `spawn-enemies` - single-type rooms.
-- `spawn-enemies-mixed` - multi-type. Spec shape: `{:type :count [:lives N] [:max-concurrent K]}`. Omit `:lives` and the type's catalog default applies. Each enemy carries `:type` for render lookup plus the optional `:max-concurrent` cap. `build-world` uses it for any vector-based `:enemies` field: L2-L9 mixes, and the L10 boss arena, where `{:type :cyber :count 1 :lives 50}` + `{:type :imp :count 2 :max-concurrent 1}` paints one boss + 2 minions with only 1 minion alive at once.
+`build-world` turns `:enemies` into specs `{:type :count [:lives N] [:max-concurrent K]}` and calls `spawn-enemies-mixed`, which places each on a random open cell at least 3.0 units from the player. Spawns start `:dormant`; `promote-wanderers` flips each to `:wander` with probability 0.5, so rooms have a pulse while sneaking stays viable. Nightmare stamps `:nightmare? true`.
 
 ## AI state machine
 
-Each enemy carries `:state` + optional `:lkp` (last-known player position). State gates move + contact damage:
+Each enemy carries `:state` and an optional `:lkp` (last-known player position). `state-spec` gates movement and contact damage:
 
-| State | Move | Attack | Notes |
+| State | Moves | Attacks | Meaning |
 |-------|------|--------|-------|
-| `:dormant` | no | no | Waiting for LOS / noise |
-| `:aware` | yes | yes | Has LOS to player |
-| `:hunting` | yes | no | Lost LOS, walking to `:lkp` |
-| `:pain` | no | no | Stagger flinch (0.3s) |
-| `:attacking` | no | yes | Windup before melee/bolt |
-| `:wander` | yes | no | Patrol mode, reacts to wake |
+| `:dormant`   | no  | no  | Waiting for sight or noise |
+| `:wander`    | yes | no  | Pacing: new random heading every 2s, 2 units ahead |
+| `:aware`     | yes | yes | Sees the player, chases, `:lkp` refreshes every frame |
+| `:hunting`   | yes | no  | Lost sight, walking to the frozen `:lkp` |
+| `:pain`      | no  | no  | 0.3s stagger |
+| `:attacking` | no  | yes | Frozen windup before a swing or a bolt |
 
-Test default: `:aware`. Real spawns: `:dormant` (sneaking-friendly).
+An enemy with no `:state` (unit fixtures) reads as `:aware`.
 
-**`:dormant`** - Passive until LOS, noise, or being shot triggers `:aware` or `:hunting`.
+Transitions (`next-state`, run by `observe` each frame):
 
-**`:aware`** - Chase + contact damage. `:lkp` refreshes each frame. Lose LOS → `:hunting`.
+- `:dormant` / `:wander` + sight → `:aware`.
+- `:aware` loses sight → `:hunting`.
+- `:hunting` regains sight → `:aware`; reaches `:lkp` (within 0.9 units) without sight → `:dormant`.
+- `:aware` + in range + cooldown done → `:attacking` (`maybe-start-attack`). Windup expiry → `:aware`, arms the cooldown, and raises `:fire-now` for casters.
+- A wound rolls `pain-chance-of` (table above): success → `:pain`, expiry → `:aware`. Only single-target hitscans roll it; pierce, spread and splash never stagger.
 
-**`:hunting`** - Walk to frozen `:lkp`. Lose LOS → stay. Regain LOS → `:aware`. Reach `:lkp` with no LOS → `:dormant` (give up).
-
-**`:pain`** - Hit stagger (per-type roll: imp 35%, cyber 5%). Freeze 0.3s. `tick-pain` decays; expiry → `:aware`. Heavy monsters stagger rarely; fragile ones almost always.
-
-**`:attacking`** - Telegraphed strike. Arm `:attack-windup-secs` when `:aware` + in range + cooldown done. Enemy freezes (visible) but still deals contact. Windup expiry → `:aware` + cooldown arm. Melee types use one `attack-spec`; casters use `caster-spec`.
-
-**`:wander`** - Patrol. `start-wander` rolls angle + timer. `tick-wander` refreshes angle per cycle. Wakes like `:dormant` (LOS → `:aware`, noise → `:hunting`).
-
-### Ranged casters (projectiles)
-
-Caco, baron, archvile fire projectiles on windup-release. Each has long attack range (caco 7.0, baron 8.0, archvile 6.5), dodge-able bolt speed (caco 2.5, baron 3.0, archvile 3.4 u/s), and tight cooldown (caco 1.0s, baron 1.3s, archvile 1.1s). The archvile escalates via the fastest bolt, on a 0.6s windup matching the caco. Telegraph as melee: freeze, windup, release → `:fire-now` flag. Melee types leave the flag false.
-
-Speed tuning: `type-speed-mul` scales chase by 0.7 (caco), 0.65 (baron), 0.55 (cyber). Unlisted melee types = 1.0.
-
-Projectile pipeline (runs between `tick-enemies` + `damage-step`):
-- `spawn-from-enemies`: harvest `:fire-now`, aim at player, clear flag.
-- `step`: march along velocity, drop on solid / after 4s ttl.
-- `resolve-hits`: hit player if within 0.6 units + not immune. I-frames absorb burst. Bolt + contact don't both hit one frame.
-
-Render: white-hot core on orange glow. Walls only occlude (always reads in front of caster).
-
-Casters still melee on contact (touch ignores range), so cornering is dangerous.
+Breaking contact: duck behind a wall and the hunter walks to where it last saw you, finds nothing, and sleeps.
 
 ### Wake triggers
 
-**LOS** - `observe` casts ray enemy→player. Wall blocks before player → no LOS. Ray capped at 12 units (beyond = too far to see).
+- **Sight**: `sees-player?` casts one ray from the enemy to the player. A closer wall, or a player beyond `max-depth` (12 units), means no sight.
+- **Being shot**: every damage path sets the target `:aware`.
+- **Noise**: every shot runs `noise-wake`, a 4-connected flood from the player's cell up to 3 cells over floor only (walls and every door variant block). Dormant and wandering enemies inside switch to `:hunting` toward the fire origin; hunters refresh their `:lkp`; aware enemies ignore it.
 
-**Being shot** - `shoot` stamps `:state :aware` unconditionally.
+Waking plays one per-type sight cue for the nearest waker of the frame (#460).
 
-**Noise** - `fire-shot` BFS from the player cell up to 3 cells through open floor (doors + walls block). Dormant enemies in visited cells → `:hunting` at the fire origin; hunters refresh `:lkp` to the fresher origin; aware enemies unchanged.
+### Chase
 
-### Chase + target selection
+`target-pos` picks the player (`:aware`), the `:lkp` (`:hunting`) or a point 2 units along the wander heading. `step-toward` walks there and stops at 0.6 units so enemies do not pile up. A blocked step tries 45, 90 and 135 degree offsets both ways: cut the corner, slide the wall, back out. On a flat floor this greedy heading suffices.
 
-`target-pos` picks the walk target by state: `:aware` = live player, `:hunting` = frozen `:lkp`, otherwise nil.
+### Ranged casters (projectiles)
 
-`step-toward`: heading = atan2(enemy→target), step `speed * dt` along heading, slide ±45° / ±90° / ±135° on wall collision. Stop at 0.6 units (no pile-up). Arrival at `:lkp` = 0.9 units → `:dormant`. Each candidate step checks walls only; the ground is flat, so the greedy heading suffices.
-
-### Breaking contact
-
-Player ducks around corner:
-1. `:aware` → chase, `:lkp` refreshes each frame.
-2. Duck behind wall → LOS drops, state → `:hunting`, `:lkp` freezes.
-3. Hunter walks to frozen `:lkp` while player runs.
-4. Hunter reaches `:lkp` with no LOS → `:dormant`. Escape.
+Caster windups end by raising `:fire-now`. The projectile pass runs between `tick-enemies` and `damage-step`: `spawn-from-enemies` launches one bolt per flag at the player's position, carrying the caster's hit damage; `step` drops a bolt on a wall, secret or switch (doors let it through) or after 4s; `resolve-hits` lands the first bolt within 0.6 units unless the player is immune, and its i-frames absorb the rest of the burst. Casters still hurt on contact, so cornering one is dangerous.
 
 ## Attack telegraph
 
-An enemy in `:attacking` (the frozen windup before a swing or a bolt) switches to its baked attack pose (issue #463) and carries a steady `!` above its head, in its own head colour. See [rendering.md](rendering.md#attack-telegraph-issue-457). Without it the windup was invisible in sprite mode, and dodging depends on reading it.
+An `:attacking` enemy shows its baked attack pose (#463) and a steady `!` above its head in warning amber on a dark background (#457, `telegraph-sgr`), the same for every type. Dodging depends on reading it. See [rendering.md](rendering.md#attack-telegraph-issue-457).
 
 ## Respawn
 
-Killed enemy stays in vector with `:alive false` + `:respawn-after` timer (uniform 3-6s; nightmare: 1-2s).
+A dead enemy stays in the vector with a `:respawn-after` timer: 3-6s, or 1-2s on nightmare. On expiry, `random-spawn-far-from` draws up to 8 cells at least 3.0 units away and takes the first the player cannot see (issue #455: distance alone popped monsters in mid-room). A visible fallback keeps open arenas reviving; no cell at all retries in 0.5s. The enemy returns at full HP with its type and flags.
 
-`tick-one` decays the timer. On expiry, spawn at a random cell >= 3.0 units away AND out of the player's line of sight (issue #455). Distance alone is a few cells, well inside the frustum, so monsters used to pop into existence mid-room in plain view. Up to 8 candidates are drawn and the first unseen one wins. A merely-far-enough candidate is kept as fallback, so an open arena with nowhere to hide still revives its dead. No slot found at all: bump the timer to 0.5s and retry next frame (no ambush spawn).
-
-The optional per-type `:max-concurrent` cap enforces max-alive count. Revival checks the live count; respawn waits until a sibling dies. `:type` preserved across respawn.
-
-L10 boss death: call 7-arity `advance` with `revive? false` to freeze all timers. Victory lap unbothered by fresh spawns.
+`:max-concurrent` caps how many of a type are alive (the L10 imps: 1); a capped revival retries in 0.5s. Nightmare ignores the cap. Once the L10 boss is dead, `advance` gets `revive? false` and every timer freezes.
 
 ## Rendering
 
-Column split: 3 zones (head / body+glyph / legs). Face overlays centre column at head-mid. Walls occlude.
-
-**Feet anchoring**: A sprite is anchored by its feet on the flat floor row (`round(svh/2 + 0.5*wall-px) + pr`), not centred on the horizon. The renderer stands each billboard on that row and draws the body upward by its pixel height. Grounding shadow, face glyph and floating HP digit all derive from that foot row. Combat's vertical hit gate (`enemy/vertical-hit?`, via `aim-pr` / `sprite-half-rows`) anchors on the same screen-centre crosshair (issue #243), so a shot lands on the drawn body: looking up slides the sprite down past the crosshair, looking down lifts it up, so aiming at floor or sky misses.
-
-**Distance fade**: `t = min(0.65, (dist/max-depth)²)`. RGB cube (16-231) scaled (1-t); grayscale (232-255) pulled to 232. Squared curve: close vivid, mid-range fade, 0.65 cap so a monster at max range stays at least 35% lit. The textured sprite path halves the fog in its `sfade` LUT index, `(1 - t*0.5) * 23`, so sprite texels darken ~15-30% at mid/far range instead of the full wall-fog amount. That keeps baked shading bands visible on dark-toned sprites. Wound tint (damage ratio * 0.35, also capped at 0.65) is NOT halved, so health-state readability survives.
-
-**Idle animation**: Two glyphs per type (`:face` + `:face-alt`). Sin wave 3 rad/s (~2s cycle). All of a type pulse in sync.
-
-**Aggro pulse**: Within 1.8 units (2× touch-dist), head paints SGR blink + skips fade. Steady face + pulsing head = danger cue.
-
-**Colors as integers** (`196` not `"\e[48;5;196m "`): `fade-256` needs raw codes for dynamic fade. Compose at paint time, reuse for face BG.
+Detail in [rendering.md](rendering.md#enemy-sprite-paint). What ties back here: sprites stand on the floor row the vertical hit gate uses, the cyber draws at 2x (`enemy/boss-sprite-scale`) for both, and catalog colours stay raw ints (`196`) so `fade-256` can fade them. Within 1.8 units the head paints steady at full brightness.

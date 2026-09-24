@@ -1,128 +1,78 @@
 # Map / grid
 
-`src/core/map.phel`. Grid data shape, cell semantics, random-map generation, lookup helpers.
+`src/core/map.phel`: grid shape, cell semantics, generation, lookup helpers. How levels use it: [level-system.md](level-system.md).
 
 ## Cells
 
-```phel
-(def cell-floor     0)  ; walkable empty
-(def cell-wall      1)  ; solid wall, blocks rays and player
-(def cell-door      2)  ; unlocked door: passable trigger, blocks rays only
-(def cell-door-blue 3)  ; blue-keyed door: blocks until player holds :blue keycard
-(def cell-door-red  4)  ; red-keyed door: blocks until player holds :red keycard
-(def cell-door-boss 5)  ; boss-locked door: blocks until player kills the boss (grants synthetic :boss keycard)
-(def cell-secret    6)  ; hidden passage: looks + blocks like a wall until the player reveals it with F
-(def cell-switch-off 7) ; inactive switch: blocks like a wall, F-press flips to cell-switch-on + mutates target cells
-(def cell-switch-on  8) ; activated switch: same blocking + a second F-press reverts to cell-switch-off + targets
-(def cell-door-yellow 9) ; yellow-keyed door: blocks until player holds :yellow keycard
-```
+A grid is a vector of rows of ints. Always use the named constants, never raw literals.
 
-Every cell is one of these ints. Constants exported so no module uses raw `0/1/2/3/4/5/9` literals. `(= cell-door (cell g x y))` reads as purpose.
+| Constant | Value | Blocks player | Blocks rays | Notes |
+|---|---|---|---|---|
+| `cell-floor`       | 0 | no | no | |
+| `cell-wall`        | 1 | yes | yes | |
+| `cell-door`        | 2 | no | yes | Exit: stepping in ends the level |
+| `cell-door-blue`   | 3 | until `:blue` held | yes | |
+| `cell-door-red`    | 4 | until `:red` held | yes | |
+| `cell-door-boss`   | 5 | until `:boss` held | yes | `:boss` is granted when the L10 cyber dies |
+| `cell-secret`      | 6 | yes | yes | Looks like a wall until F reveals it |
+| `cell-switch-off`  | 7 | yes | yes | F toggles it |
+| `cell-switch-on`   | 8 | yes | yes | F toggles it back |
+| `cell-door-yellow` | 9 | until `:yellow` held | yes | |
 
-`lock-colours` maps locked-door cell values to keycard keywords:
-
-```phel
-{3 :blue  4 :red  5 :boss  9 :yellow}
-```
-
-`:boss` is a synthetic "colour". No keycard spawns for it. Combat grants the kw when the boss dies on a `:door-lock :boss` level.
+`lock-colours` maps locked doors to keys (`{3 :blue 4 :red 5 :boss 9 :yellow}`); `lock-cells` is its derived inverse, so they cannot drift. `:boss` has no keycard: combat grants it on the boss kill.
 
 ## Lookup helpers
 
 ```phel
-(cell  grid x y)      ; cell value; out-of-bounds = cell-wall
-(wall? grid x y)      ; true for cell-wall, cell-secret, switches (player-collision)
-(door? grid x y)      ; true for any door variant (locked or not)
-(secret? grid x y)    ; true for unrevealed secret
-(switch? grid x y)    ; true for switch (either state)
-(switch-on? grid x y) ; true for activated switch
-(passable? grid keys x y) ; true if player can walk into (x,y) given held keys
+(cell grid x y)            ; value; out of bounds reads as cell-wall
+(wall? grid x y)           ; wall, secret or switch: blocks enemies and bolts
+(door? grid x y)           ; any door variant
+(door-lock grid x y)       ; key kw a door needs, or nil
+(passable? grid keys x y)  ; can the player step here with these held keys?
+(missing-key-for grid keys x y) ; lock kw blocking the player, or nil
+(secret? grid x y)
+(switch? grid x y)         ; either state
+(find-door-cell grid)      ; [x y] of the first door, or nil
 ```
 
-`wall?` / `passable?` share the lock-colour resolution. The player can't cross a locked door, and rays still stop on it, so it stays visually solid until traversed.
+`wall?` ignores doors, so enemies and bolts pass them. `missing-key-for` lets `physics/try-move` tell a locked-door bump (`NEED <COLOUR> KEY` + deny click) from a silent wall bump. Out of bounds reads as wall, so the raycaster never range-checks.
 
-## Random map generation
+## Generation
 
-```phel
-(random-grid w h n-blocks)
-```
+All generation draws from the seeded `rng`, so the same seed gives the same room.
 
-1. Bordered base: outer ring `cell-wall`, interior `cell-floor`.
-2. Loop `n-blocks` times: random interior `(x, y)`, random 1×1 or 2×2 block, paint cells `cell-wall`.
-3. Border preserved (never overwritten).
+- `(random-grid w h n-blocks)`: bordered room plus `n-blocks` random 1x1 or 2x2 wall blobs. The border is never overwritten. Size and obstacle density are independent knobs.
+- `(scatter-walls grid [sx sy] n)`: the same blobs on an existing grid (fixed-shell levels), then `seal-pockets` walls off any floor cut off from spawn. The floor stays one connected region, the spawn cell stays clear, and pickups, enemies and the exit are never stranded.
+- `(place-exit grid [sx sy])`: floods the floor reachable from spawn and turns one random wall touching it into `cell-door`. Any wall qualifies, an interior pillar or a border edge. `build-world` applies the lock afterwards.
+- `(random-spawn grid)`: `[x y]` at the centre of a random floor cell, retrying until one is found.
+- `(parse-layout rows)`: ASCII layout to `{:grid :spawn}`, nil without `@`. Characters: [level-system.md](level-system.md#layouts-layout).
 
-`build-world` picks `n-blocks` per level so room size and obstacle density are independent.
+### Cost lessons
 
-## Random interior walls
+Generation floods and scans the whole grid, so it works on a flat PHP-native mirror (`grid->php`, index `y*w + x`) instead of `cell` lookups. On 64x40 that took `place-exit` from 57.9 to 8.4 ms and `scatter-walls` from 58.1 to 10.1 ms, with all 210 worlds (10 levels x 7 seeds x 3 difficulties) hashing identically. The same pass keys the flood's seen-set by flat index (not a fresh `"x:y"` string), reads the four neighbour offsets from a flat int array (not a vector literal rebuilt per dequeue), and writes wall blobs into the mirror instead of `assoc-in` on the persistent grid per cell (~83 us each). A whole level build went from 42.7 to 13.9 ms.
 
-```phel
-(scatter-walls grid [sx sy] n)
-```
+Gotchas:
 
-Scatters `n` random 1×1-2×2 wall blobs into a grid's interior for varied room layouts. `seal-pockets` then walls off floor the blobs cut off from spawn, so the playable area stays ONE connected region: pickups, enemies and the exit are never stranded, and the spawn cell stays clear. Seeded via `rng`. `build-world` applies it to hand-authored rooms; procgen already gets blobs from `random-grid`. A level that pins `:switches` keeps its authored geometry.
-
-## Exit placement
-
-```phel
-(place-exit grid [sx sy])
-```
-
-Drops exactly ONE exit door at a random wall cell reachable from the spawn `(sx, sy)`, so every level, hand-authored or procgen, gets a different exit to find. Floods the floor reachable from spawn, then turns a random wall touching that floor into a door. **Any** wall, an interior pillar or a border edge, so the way out can be anywhere the player can reach, never pinned to the screen sides. Seeded via `rng`: same seed, same door. `build-world` then applies the level's `:door-lock` via `lock-the-door`.
-
-### Cost
-
-Both passes flood the floor, then scan every cell. Both used to read the grid through `cell`: two persistent-vector lookups plus two nil checks per access. Three changes, measured on a 64x40 grid. Read a flat PHP-native mirror (`grid->php`, indexed `y*w + x`) instead of `cell`. Key the seen-set by that flat index, not a fresh `"x:y"` string. Take the four neighbour offsets from a flat int array, not the literal `[[1 0] [-1 0] [0 1] [0 -1]]`, rebuilt per dequeue at two persistent lookups per direction. Writing the wall blobs into the mirror, not `assoc-in` on a persistent grid per cell (~83 us each), finished it. `place-exit` went **57.9 ms to 8.4 ms**, `scatter-walls` **58.1 ms to 10.1 ms**, a whole level build 42.7 ms to 13.9 ms. Generation is unchanged: the flood draws no rng, the scan order is the same, and all 210 worlds (10 levels x 7 seeds x 3 difficulties) hash identically before and after.
-
-PHP arrays are value types, and that shapes the code more than the algorithm does. A php-array is captured BY VALUE by a closure, and passed BY VALUE to a function. So a `visit!` helper inside the flood, or a `place-block!` taking the mirror as an argument, writes to a copy and the caller sees nothing. Both failed silently, and the flood version looked **10x faster** because it returned after its first cell. Every mutation now lives in the same function as the array it mutates, in statement position.
-
-The flat key is collision-free only in bounds: `(-1, y)` and `(w-1, y-1)` share an index, where the string key could not. So every lookup outside the flood is bounds-guarded, and the flood writes only cells the grid reports as floor.
-
-## Player spawn
-
-```phel
-(random-spawn grid)  → [x y]   floats at the centre of a random open cell
-```
-
-Retries until a floor cell is found. Bordered grid always has at least one.
+- PHP arrays pass BY VALUE into closures and functions. A `visit!` or `place-block!` helper writes to a copy and the caller sees nothing: silent, and fast-looking (the broken flood seemed 10x faster because it stopped after one cell). Mutate the array in the function that owns it, in statement position.
+- The flat key collides out of bounds: `(-1, y)` and `(w-1, y-1)` share an index. Bounds-guard every lookup, and let the flood write only cells the grid reports as floor.
 
 ## Secret walls
 
-Sources: hand-authored (`:layout` char `S`) or procgen-seeded (divider walls in random grids).
+Sources: `S` in a `:layout`, or `seed-secrets` on procgen levels (rule in [level-system.md](level-system.md#secrets)).
 
-**Divider wall**: 1-cell-thick interior wall with floor on both horizontal OR vertical sides. `seed-secrets grid n` converts up to `n` of them to `cell-secret` via deterministic top-left scan. `build-world` skips locked levels so a secret can't bypass a keycard door. Default: 2 per level.
+`(seed-secrets grid n)` converts up to `n` divider walls to `cell-secret`. A divider is a 1-cell-thick interior wall with floor on both horizontal or both vertical sides. The scan is deterministic, top-left first, skips the border, and never places two secrets side by side.
 
-API:
-```phel
-(secret? grid x y)        ; true for unrevealed secret
-(reveal-secret grid x y)  ; swap to cell-floor (no-op if not secret)
-(count-secrets grid)      ; total per-level
-(seed-secrets grid n)     ; convert divider walls to cell-secret
-```
+F with a secret in the cell directly ahead calls `reveal-secret` (swap to floor), rebuilds the ray grid, bumps `:secrets-found`, and drops a stash via `level/place-secret-reward`: an ammo box, an armor shard, and a trophy rotating soulsphere, berserk, invuln by reveal order. `:secrets-total` comes from `count-secrets` at build time.
 
-Visual cue: none (DOOM-style). Discovery by bumping. `F`-press near a secret calls `reveal-secret` and drops a reward stash (ammo box + armor shard + rotating trophy) via `level/place-secret-reward`. World tracks `:secrets-total` (count) + `:secrets-found` (bumps). Debug HUD: `secrets X/Y`.
+Visual tell (issue #469): a secret samples the wall texture half a tile out of phase with its neighbours. See [rendering.md](rendering.md#secret-wall-tell-issue-469).
 
 ## Switches
 
-Hand-authored only (`:layout` char `T`). Level config supplies targets:
+Hand-authored only (`T` in a `:layout`, L10). The level config lists targets:
 
 ```phel
-:layout    ["#..T............T..#" ...]
-:switches  [{:at [3 14]  :targets [[7 10]]}
-            {:at [16 14] :targets [[12 10]]}]
+:switches [{:at [3 14]  :targets [[7 10]]}
+           {:at [16 14] :targets [[12 10]]}]
 ```
 
-`F`-press near a switch calls `toggle-switch(grid switches x y)`:
-1. Swap switch cell `off` ↔ `on`.
-2. Flip every target cell `wall` ↔ `floor` (doors skipped).
-3. Resync raycaster's cached grid view.
-
-Minimap: dim `T` (off) / bright `T` (on).
-
-## Out-of-bounds reads
-
-```phel
-(cell [[1 1 1] [1 0 1]] 99 99)  → cell-wall
-(cell [[1 1 1] [1 0 1]] -1 0)   → cell-wall
-```
-
-Off-map = wall means the raycaster skips range checks: keeps stepping until a non-floor cell (or max-depth). One branch saved per ray step.
+F with a switch in the cell directly ahead calls `toggle-switch`: the switch flips off/on, every target flips wall/floor (doors and other cells untouched), and the ray grid is rebuilt. A switch with no matching entry flips only its own glyph. Minimap: dim `T` off, bright `T` on.

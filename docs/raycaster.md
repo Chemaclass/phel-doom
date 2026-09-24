@@ -2,133 +2,107 @@
 
 `src/core/engine.phel`. Per-column wall distances via grid-aligned DDA traversal.
 
-For each screen column, fire a ray from the player at an angle offset from facing. Walk the grid until it hits a non-floor cell. Distance sets that column's wall height (DOOM/Wolfenstein 2D ray-march, no 3D math).
+For each screen column, fire a ray from the player at an angle offset from facing. Walk the grid until the ray hits a non-floor cell. The distance sets that column's wall height (Wolfenstein-style 2D ray march, no 3D math).
 
 ## Tunables
 
-```phel
-(def max-depth 12.0)
-(def proj-dist 70.0)
-```
-
-- `max-depth`: ray stops at 12 units (beyond renders sky/floor)
-- `proj-dist`: 70 cell perspective constant (controls wall scale)
-- `fov-proj-dist`: width-aware projection distance for ray spread; clamps FOV at 100° (`fov-max-deg`) on wide terminals (see Angular offset below)
+- `max-depth` (12.0): the ray stops here. Beyond it renders sky and floor.
+- `proj-dist` (70.0): perspective constant in screen cells. Controls wall scale.
+- `fov-proj-dist`: width-aware projection distance for the ray spread. Clamps FOV at 100° (`fov-max-deg`) on wide terminals. See [Angular offset](#angular-offset-not-linear-sweep).
+- `dda-inf` (1e9): finite sentinel for an axis-aligned ray direction. Avoids PHP's `INF` edge cases.
 
 ## DDA: grid-aligned traversal
 
-Step grid-line to grid-line, not at fixed intervals. Two per-axis side-distances track the next x/y crossing. The loop advances the nearer side, lands in the next cell, updates that axis's delta by `|1/dir|`. Result: ~5-8 cell crossings per ray instead of ~35 fixed steps (see [performance.md](performance.md)).
+Step grid line to grid line, not at fixed intervals. Two per-axis side distances track the next x and y crossing. Each step advances the nearer one, lands in the next cell, and adds that axis's `|1/dir|` delta. A ray takes ~5-8 cell crossings instead of ~35 fixed steps.
 
 ```phel
-(let [dirx   (php/cos angle)
-      diry   (php/sin angle)
-      cx0    (php/intval (php/floor px))
-      cy0    (php/intval (php/floor py))
-      stepx  (if (php/< dirx 0.0) -1 1)
-      stepy  (if (php/< diry 0.0) -1 1)
+(let [stepx  (if (php/< dirx 0.0) -1 1)
       deltax (if (php/=== dirx 0.0) dda-inf (php/abs (php// 1.0 dirx)))
-      deltay (if (php/=== diry 0.0) dda-inf (php/abs (php// 1.0 diry)))
       sidex0 (if (php/< dirx 0.0)
-               (php/* (php/- px cx0) deltax)
-               (php/* (php/- (php/+ cx0 1.0) px) deltax))
-      sidey0 (if (php/< diry 0.0)
-               (php/* (php/- py cy0) deltay)
-               (php/* (php/- (php/+ cy0 1.0) py) deltay))]
-  ...)
+               (php/* x-to-lo deltax)    ; distance to the cell's low x edge
+               (php/* x-to-hi deltax))]  ; ... or high x edge
+  ...)                                   ; same for y
 ```
 
-`dda-inf` (1e9): finite sentinel for an axis-aligned ray direction. Avoids PHP's `INF` edge cases.
+The player's cell and its edge offsets are hoisted out of the per-column loop. The march runs in statement position and writes `[dist hit side hx hy]` into one reused PHP-array register, so it compiles to a plain `while` with no per-column closure (issue #345, see [performance.md](performance.md)). The map is read through `:pgrid`, a nested PHP array.
 
 ## `cast-ray`: one ray
 
-Returns raw (uncorrected) distance. `do-cast` computes the detailed tuple `[dist side hx hy]` inline:
-
-| Field | Meaning |
-|---|---|
-| `side` | 0: x-line (vertical face); 1: y-line (horizontal face) for directional shading |
-| `hx, hy` | Hit cell coords for texture variation |
+Returns the raw (uncorrected) distance only. Used by the hitscan (`combat`) and the enemy line-of-sight probe (`enemy_ai`), which only need the distance.
 
 ## `cast-frame`: all rays at once
 
 ```phel
-(defn cast-frame [world ^int width ^int scale]
-  ...returns {:dists :hits :sides :hxs :hys :wallxs :floordxs :floordys})
+(cast-frame world width scale)
+;; => {:dists :hits :sides :hxs :hys :wallxs :floordxs :floordys}
 ```
 
-Cast `width / scale` rays, return the parallel PHP arrays (one per output column).
-- `dists`: fish-eye corrected wall distance
-- `hits`: cell value at hit (0 if escaped to max-depth)
-- `sides`: 0 = vertical, 1 = horizontal (side-shading)
-- `hxs, hys`: hit cell coordinates
-- `wallxs`: wall-hit fraction in [0, 1) - the texture U coordinate (frac of world-y on a vertical face, world-x on a horizontal face, from the raw perpendicular distance)
-- `floordxs, floordys`: floor-cast basis = ray direction / cos(offset). A floor cell at per-row perpendicular distance `dperp` sits at world `player + dperp * (floordx, floordy)`, so the renderer needs no per-cell trig (two mul-adds + a frac for the texture sample)
+Casts `width / scale` rays and returns parallel PHP arrays, one entry per output column. With `scale` > 1 each sample fills `scale` neighbouring columns.
 
-## Two key details
+| Key | Meaning |
+|---|---|
+| `dists` | fish-eye corrected wall distance |
+| `hits` | cell value at the hit (0 if the ray escaped to `max-depth`) |
+| `sides` | 0 = vertical face, 1 = horizontal face (side shading) |
+| `hxs`, `hys` | hit cell coordinates (texture variation) |
+| `wallxs` | wall-hit fraction in [0, 1): the texture U coordinate |
+| `floordxs`, `floordys` | floor-cast basis: ray direction / cos(offset) |
 
-### Angular offset, not linear sweep
+A floor cell at per-row perpendicular distance `dperp` sits at world `player + dperp * (floordx, floordy)`, so the renderer needs no per-cell trig.
 
-Each column's ray angle is `atan(col-offset / fov-proj-dist)`. A wider terminal expands FOV without scaling walls. A linear sweep would scale walls with width. Wrong.
+## Angular offset, not linear sweep
 
-FOV clamps at `fov-max-deg` (100°, the widescreen sweet spot: roomy without warp). Below `fov-clamp-width` (~167 cols, where the natural FOV hits 100°) `fov-proj-dist` returns the flat `proj-dist`, so narrow terminals widen naturally (80 cols ~60°, 120 cols ~81°, 140 cols ~90°). At or above it, `proj-dist` scales with width, pinning horizontal FOV at 100°: ultrawide terminals gain horizontal resolution instead of bowing into edge fisheye (which set in past ~110°). Wall-height projection still uses the flat `proj-dist`, so the clamp never touches wall scale.
+Each column's ray angle is `atan(col-offset / fov-proj-dist)`. A wider terminal widens the FOV without scaling walls. A linear sweep would scale walls with width.
 
-### Fish-eye correction
+Below `fov-clamp-width` (~167 cols, where the natural FOV hits 100°) `fov-proj-dist` returns the flat `proj-dist`, so narrow terminals widen naturally (80 cols ~60°, 120 cols ~81°, 140 cols ~90°). At or above it, the distance scales with width and pins the FOV at 100°. Ultrawide terminals gain horizontal resolution instead of edge fisheye, which sets in past ~110°. Wall height still uses the flat `proj-dist`.
 
-Edge rays travel further than central rays to reach the same wall plane. Multiply by `cos(offset)` to project onto the player's forward axis. One multiply per column. Without it: barrel distortion.
+## Fish-eye correction
+
+Edge rays travel further than central rays to reach the same wall plane. Multiplying by `cos(offset)` projects onto the player's forward axis. One multiply per column. Without it: barrel distortion.
 
 ## Projection primitive
 
 `src/core/projection.phel` holds the pure vertical-projection kernel shared by the wall paths:
 
 ```phel
-(wall-px num dist)                 ; projected pixel height of a num-unit
-                                   ; surface at distance dist
-(project-height pd vh dist eye-z z); screen row (float) where world height
-                                   ; z lands
-(pitch-rows pitch vh)              ; integer horizon shear (scene rows) for
-                                   ; a look up/down fraction
+(wall-px num dist)                  ; projected height of a num-unit surface
+(project-height pd vh dist eye-z z) ; screen row (float) where height z lands
+(pitch-rows pitch vh)               ; integer horizon shear for a pitch fraction
 ```
 
-- `wall-px num dist` = `num / ((max 0.3 dist) * char-aspect)`. `num` is `proj-dist` for a one-unit wall, or `n * proj-dist` for an n-sub-row half-block slice. The 0.3 floor stops a surface in the player's own cell projecting to an infinite slice. Both paths call it (`compute-wall-shades` at cell resolution, `build-wall-sub-bounds` at half-block sub-pixel), so they agree to the last bit.
-- `project-height pd vh dist eye-z z` = `vh/2 - (z - eye-z) * (wall-px pd dist)`. The horizon (z = eye-z) sits at `vh/2`. Points above the eye rise, below sink. The flat wall is `eye-z = 0.5` with `z = 1` (top) and `z = 0` (bottom).
-- `char-aspect` (2.0) lives here too, the canonical projection constant alongside `proj-dist`, so the kernel stays pure `core/` with no `io/` dependency.
+- `wall-px` = `num / ((max 0.3 dist) * char-aspect)`. `num` is `proj-dist` for a one-unit wall, or `n * proj-dist` for an n-sub-row half-block slice. The 0.3 floor stops a surface in the player's own cell projecting to infinity. The cell-resolution path (`compute-wall-shades`) and the half-block path (`build-wall-sub-bounds`) both call it, so they agree to the last bit.
+- `project-height` = `vh/2 - (z - eye-z) * (wall-px pd dist)`. The horizon sits at `vh/2`. The flat wall is `eye-z = 0.5`, top `z = 1`, bottom `z = 0`.
+- `char-aspect` (2.0) lives here too, so the kernel stays pure `core/` with no `io/` dependency.
 
 ## Look up/down (pitch): horizon shear
 
-Looking up/down is a pure **vertical shear of the horizon**, not a re-projection, so it costs no extra rays. The player carries `:pitch`, a fraction in `[-1, 1]` (1 = full up, -1 = full down, clamped by `state/clamp-pitch`, no wrap). `pitch-rows pitch vh` = `round(pitch * pitch-cap * vh)` turns it into an **integer scene-row offset** `pr`. `pitch-cap` = 0.4, so the horizon travels at most +/-0.4 of viewport height. Positive pitch (look up) gives positive `pr`, sliding the horizon DOWN the screen (more sky). Negative slides it up.
+Looking up or down is a vertical shear of the horizon, not a re-projection, so it costs no extra rays. The player carries `:pitch` in `[-1, 1]` (clamped by `state/clamp-pitch`). `pitch-rows` = `round(pitch * pitch-cap * vh)`, with `pitch-cap` = 0.4, gives an integer scene-row offset `pr`. Positive pitch (look up) slides the horizon down the screen, showing more sky.
 
-`frame->string` computes `pr` once and adds it to every site that centres on `vh/2`, so the whole scene shears as one rigid band:
+`frame->string` computes `pr` once and adds it everywhere the scene centres on `vh/2`:
 
-- wall tops in `compute-wall-shades` (`top = (vh - wall-h)/2 + pr`; `bot` derives from `top`)
-- the sub-row seam bounds in `build-wall-sub-bounds` (`+ pr*n`, n sub-rows per scene cell)
-- the floor-cast distance tables `build-floor-dperp` / `build-floor-dperp-sub` (horizon `vh/2 + pr`, sub-row `vh + 2*pr`)
-- the sky/floor gradients and their code twins in `frame-math` (each gradient builder takes an optional `horizon-offset`; the gradient cache keys on `(vh, pr)`)
-- enemy sprite anchors (the flat z=0 feet row carries the same `pr`, so the feet, the grounding shadow, and the face / HP-flash overlays all shear together with the floor; see "Sprite anchoring")
+- wall tops in `compute-wall-shades` (`top = (vh - wall-h)/2 + pr`)
+- sub-row seam bounds in `build-wall-sub-bounds` (`+ pr*n`)
+- floor-cast distance tables `build-floor-dperp` / `build-floor-dperp-sub`
+- sky and floor gradients in `frame-math` (the gradient cache keys on `(vh, pr)`)
+- enemy sprite feet rows, so feet, shadow and overlays shear with the floor
 
-The crosshair stays fixed (it is a weapon sight, not part of the world). Because every offset is **additive and 0 at `pitch = 0`**, a level gaze renders byte-for-byte identically to the no-pitch path (pinned by `render-cache-test/test-frame-bytes-pinned`).
+The crosshair stays fixed: it is a weapon sight, not part of the world. Every offset is additive and 0 at `pitch = 0`, so a level gaze renders byte-for-byte like the no-pitch path (pinned by `render-cache-test/test-frame-bytes-pinned`).
 
 ### Head bob: a second term into `pr` (#411)
 
-The walk-cycle head bob is another additive horizon shear on top of pitch. `bob-rows phase intensity vh` = `round(intensity * bob-cap * vh * sin(phase))`, `bob-cap` = 0.05, a fraction of pitch's 0.4. `frame->string` adds it to the same `pr` (and `pr-full`), so it rides every shear site above for free. `phase` is the world's `:bob-phase`, advanced by ground distance in `physics/apply-physics`, settled to 0 at rest. `intensity` is the View bob setting mapped to `[0, 1]`. Both `phase = 0` (at rest) and `intensity = 0` (setting off, the default) give 0 rows, so a resting or bob-off frame is byte-identical. Unlike pitch, the bob is NOT fed to the hit gate (`combat/aim-pr` uses true pitch only): the nod is cosmetic and must never change where a shot lands.
+The walk-cycle head bob adds another horizon shear on top of pitch. `bob-rows` = `round(intensity * bob-cap * vh * sin(phase))`, with `bob-cap` = 0.05. `phase` is the world's `:bob-phase`, advanced by ground distance in `physics/apply-physics` and settled to 0 at rest. `intensity` comes from the View bob setting (default 0, off). A resting or bob-off frame is byte-identical to no bob. The bob never reaches the hit gate: `combat/aim-pr` uses true pitch only, so the nod cannot move where a shot lands.
 
-## Sprite anchoring (feet on the floor)
+## Sprite anchoring and hitscan
 
-Enemy billboards are anchored by their **feet**, not their centre: the renderer stands each sprite on a projected row and draws the body UPWARD by its pixel height `h`. On flat ground the feet land on the floor surface row at every distance. Grounding shadow, face glyph and floating HP digit all derive from this row anchor.
+Enemy billboards stand on their feet: the renderer places each sprite on its projected floor row and draws the body upward by its pixel height. Shadow, face glyph and floating HP digit derive from that row.
 
-### Hitscan agreement
+Hitscan reuses the same projection. A shot connects when the fixed screen-centre crosshair lands inside the drawn body. Looking up slides a sprite down past the centre, looking down lifts it: a short far billboard slips off the crosshair, a tall near one stays caught.
 
-Hitscan reuses the same foot-row projection, so the vertical aim gate and the drawn pixels stay in sync. A shot connects when the FIXED screen-centre crosshair (`svh/2`, it does not shear with pitch) lands inside the drawn body. Looking up slides a sprite DOWN past the centre, looking down lifts it UP: a short far billboard slips off the crosshair (vertical aim), a tall near one stays caught.
+## Caching
 
-## Performance
+Two private atoms memoize input-determined data:
 
-DDA averages ~5-8 cell crossings per ray instead of ~35 fixed steps. Hot loop uses direct PHP ops (`php/+`, `php/<`) and `:pgrid` (nested PHP array).
+- `offset-cache`: per-column FOV offsets and their cosines, built once per width.
+- `pause-cast-cache`: single-slot copy of the last cast, read only while paused (player and grid frozen). Active frames never touch it, so pause overlays and the help menu cost no cast.
 
-## Caching (two memo atoms)
-
-Two private atoms memoize input-determined data, so referential transparency holds:
-
-- `offset-cache`: per-column FOV offsets (depends only on width, not state). Built once per width.
-- `pause-cast-cache`: single-slot copy read only while paused (player x/y/angle + grid frozen, so the cast matches the previous frame). Active frames never touch it, so pause overlays and the help menu are free.
-
-## Why `core/`
-
-Pure deterministic logic: given grid, position and angle, always the same output. The two memo caches are input-determined (see Caching), so calls stay pure. Tests verify distance accuracy, side bits, hit-cell coords and array lengths.
+Neither changes a result for given inputs, so the casts stay referentially transparent. That is why the engine lives in `core/`: tests check distances, side bits, hit cells and array lengths against literal grids.

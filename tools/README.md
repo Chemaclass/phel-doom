@@ -1,14 +1,12 @@
 # tools/
 
-Build-time scripts. Run by hand, not part of the game runtime. Nothing here ships in the phar.
+Dev-time scripts. Nothing here ships in the phar.
 
 ## Asset bakers
 
-The game commits no binary art or audio. Each baker extracts lumps from a [Freedoom](https://freedoom.github.io/) WAD (BSD-licensed) and writes a committed Phel data file that the runtime reads. Re-run a baker only when changing which lumps/frames are extracted (edit the lump list in the script) or bumping the Freedoom version. Otherwise the data is already committed and there is nothing to do.
+The repo holds no binary art or audio. Each baker reads lumps from the [Freedoom](https://freedoom.github.io/) WADs (BSD) with `src/io/wad.phel` and writes a committed Phel data file. Re-run one only to change which lumps or frames are extracted (edit the list in the script) or to bump the Freedoom version.
 
-### Get the WADs
-
-The WADs are not in the repo. Fetch Freedoom once:
+Fetch the WADs once:
 
 ```bash
 curl -L -o /tmp/freedoom.zip https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0.zip
@@ -16,55 +14,46 @@ unzip -j /tmp/freedoom.zip '*.wad' -d /tmp/freedoom
 # -> /tmp/freedoom/freedoom1.wad, /tmp/freedoom/freedoom2.wad
 ```
 
-### Run
+Run with `vendor/bin/phel run tools/<script> <freedoom1.wad> <freedoom2.wad>`:
 
-| Script | Command | Writes |
-|--------|---------|--------|
-| `bake-enemy-sprites.phel` | `vendor/bin/phel run tools/bake-enemy-sprites.phel <freedoom1.wad> <freedoom2.wad>` | `src/io/render/enemy_sprites_data.phel` |
-| `bake-weapon-sprites.phel` | `vendor/bin/phel run tools/bake-weapon-sprites.phel <freedoom1.wad> [freedoom2.wad]` | `src/io/render/weapon_sprites_data.phel` |
-| `bake-weapon-sounds.phel` | `vendor/bin/phel run tools/bake-weapon-sounds.phel <freedoom1.wad>` | `src/io/sound_data.phel` |
+| Script | Writes | Content |
+|--------|--------|---------|
+| `bake-enemy-sprites.phel` | `src/io/render/enemy_sprites_data.phel` | 256-colour enemy frames at native resolution, projectiles, floating pickups, death sequences, blood spurts. Needs both WADs. |
+| `bake-weapon-sprites.phel` | `src/io/render/weapon_sprites_data.phel` | first-person weapon frames |
+| `bake-weapon-sounds.phel` | `src/io/sound_data.phel` | 36 DMX sounds as base64 WAVs (see [audio.md](../docs/audio.md)) |
 
-What each bakes:
+`src/io/render/wall_texture_data.phel` was baked once from a Freedoom flat and then sanitized to grayscale. No script regenerates it.
 
-- **Enemy sprites** - front-facing enemy frames at native resolution (render samples them into the billboard span), plus projectile tracers (fireball, BFG ball, rocket, plasma), floating pickups (area-averaged mip), per-type death sequences, and blood-spurt frames. Output is 256-colour.
-- **Weapon sprites** - first-person weapon frames.
-- **Weapon sounds** - DMX sounds decoded to a base64 WAV map. Runtime (`src/io/sound.phel`) writes each to a temp WAV once, then `afplay`s it per fire event.
+After re-baking, run `composer test`, then smoke-test visually with the `/play` skill.
 
-### After re-baking
+## Frame shots
 
-```bash
-composer test   # data files load + game logic still green
-```
-
-Then smoke-test visually with the `/play` skill.
+`frame-shot.sh` renders a frame script (e.g. `shots/showcase.phel`) to PNG through `frame-to-html.php` and headless Chrome. See [contributing.md](../docs/contributing.md#looking-at-a-frame).
 
 ## Benchmarking
 
-`bench-ab.sh` compares two git refs; `bench-flags.sh` compares render features within one ref, by measuring the frame with each switched off. Both interleave their configs, because a single reading drifts more than most changes are worth. See [performance.md](../docs/performance.md) for the current split - the wall texture is ~40% of the frame.
+`bench-ab.sh` compares two git refs. `bench-flags.sh` compares render features within one ref by switching each off. Both interleave their configs, because a single reading drifts more than most changes are worth. See [performance.md](../docs/performance.md) for the current cost split.
 
 ## Build guards
 
-Each is a `composer` script wired into `composer ci`, and each ships its own fixtures (`*-test.sh`) because a guard that is quietly wrong is worse than no guard.
+Each is a `composer` script inside `composer ci`, with its own fixtures (`*-test.sh`). Details: [contributing.md](../docs/contributing.md#gates).
 
 | Guard | Fails when |
 |-------|-----------|
+| `format-sources.sh` | a hand-written `.phel` file is not formatted (skips generated data files) |
 | `check-layers.sh` | a require points the wrong way across `io/` -> `glue/` -> `core/` |
 | `check-cycles.php` | two phel-doom namespaces require each other, directly or through an alias |
 | `check-unused.php` | a top-level definition under `src/` is referenced nowhere in `src/`, `tests/` or `tools/` |
 | `check-docs.php` | a doc links to a missing file or heading, or names a path or composer script that is not there |
 | `check-deprecations.sh` | the suite raises a compiler deprecation or a float-truncation notice |
 
-Every guard ships fixtures (`*-test.sh`) run by its own composer script. `check-deprecations` keeps a compile cache between runs, so its fixtures are about when that cache must be thrown away - a stale one there is a fail-OPEN, a green gate with a live deprecation in the tree.
-
-`check-cycles` and `check-unused` share `lib/phel-source.php`, which blanks `;` comments, `#_` discards and string bodies while keeping offsets and newlines, so neither can be fooled by a name that appears only in prose - and a fix to that parser reaches both.
-
-`php tools/check-unused.php --report` also lists the definitions referenced only from `tests/`. Those are not failures (a fixture, or a parser whose only caller today is its own test), but the list is worth a look when hunting dead weight.
+`check-cycles` and `check-unused` share `lib/phel-source.php`. It blanks `;` comments, `#_` discards and string bodies while keeping offsets, so a name that appears only in prose cannot fool either guard.
 
 ## Release
 
-`release.sh` cuts a phel-doom release: validate semver and preflight, move the `## [Unreleased]` CHANGELOG block into a dated version section, build a self-contained `phel-doom.phar`, smoke-test it, commit, tag `vX.Y.Z`, push branch and tag.
+`release.sh` cuts a release: validate semver and preflight, move the `## [Unreleased]` CHANGELOG block into a dated section, bump `src/core/version.phel`, build and smoke-test `phel-doom.phar` (via `build/phar.sh`), commit, tag `vX.Y.Z`, push, and create the GitHub release with the phar and its SHA256 attached.
 
-Do not invoke it raw. Use the `/release` skill, which wraps this script and verifies the published phar + GitHub release.
+Do not run it raw. Use the `/release` skill, which wraps it and verifies the published phar and GitHub release.
 
 ```
 ./tools/release.sh [version] [--dry-run] [--force] [--name "Release name"]

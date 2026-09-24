@@ -1,175 +1,187 @@
 # World + player state
 
-Pure data shapes that every other module operates on. `src/core/state.phel`.
+Pure data shapes every other module operates on. `src/core/state.phel`. This page owns the world shape; the per-frame flow is in [game-loop.md](game-loop.md).
 
 ## The world map
 
-`new-world` returns a Phel map:
+The world is one immutable Phel map, threaded through the loop and replaced every frame. `new-world` builds the base, `build-world` (`core/level.phel`) stamps the level on top, and the play loop adds session keys.
+
+### From `new-world`
 
 ```phel
-{:grid       <vector of vectors of cell ints>
- :pgrid      <PHP nested array, fast-path twin of :grid>
- :light-grid <PHP array (y*width+x) of per-cell shade bias, derived from :grid (#418)>
- :width      <int>
- :height     <int>
- :player     <player map>
- :show-map   <bool>     ; minimap toggle (default OFF, M toggles)
- :full-map?  <bool>     ; --full-map: minimap starts fully revealed
- :visited    <PHP array keyed (y*width+x)>  ; fog-of-war automap; 1 = seen, nil = unseen
- :switches   <vector of {:at [x y] :targets [[x y] ...]}>  ; wall switches (#62), F-key toggles
- :paused     <bool>     ; P toggle
- :help?      <bool>     ; H overlay
- :debug?     <bool>     ; F3 perf overlay
- :sound-on   <bool>     ; N toggle
- :enemies    <vector of {:x :y :alive :lives :max-lives :type :hit-flash-secs [:respawn-after] [:max-concurrent] [:fire-now]}>
-             ; a spawned enemy also carries the AI slots (:state :lkp :wander-angle :aggression ...) - see docs/monsters.md
- :projectiles <vector of {:x :y :vx :vy :ttl :type}>  ; enemy fireballs (core/projectile)
- :hit-stop-secs <float>  ; >0 freezes the gameplay step (kill weight); decays each frame
- :hearts     <vector of {:x :y}>
- :armors     <vector of {:x :y}>
- :ammo-boxes <vector of {:x :y}>
- :berserks   <vector of {:x :y}>           ; rage spheres (20s ×2 damage)
- :invulns    <vector of {:x :y}>           ; immunity spheres (10s invincible)
- :soulspheres <vector of {:x :y}>          ; over-cap lives pickup (issue #68)
- :soul-decay-secs <float seconds>          ; over-cap decay clock; decrements lives once per 5s while > max-lives
- :armor-shards <vector of {:x :y}>         ; +1 over-cap armor; banks up to armor-shard-cap (10), no decay
- :backpacks  <vector of {:x :y}>           ; per-level pickup spawn vector (stacks via :backpack-level)
- :backpack-level <int 0..max-backpacks>    ; 0 = no backpack, 1+ = stacked; effective reserve cap = base * (1 + level)
- :keycards   <vector of {:x :y :colour}>   ; :blue / :red / :boss keycards for locked exits (boss = synthetic, no pickup)
- :held-keys  <set of colour kws>           ; #{:blue :red :boss} collected so far
- :armor      <int 0..max-armor, hits absorbed before lives drop>
- :armory?    <bool, --armory flag; infinite ammo per-frame refill>
- :berserk-secs <float seconds>             ; while > 0: 2x weapon damage
- :invuln-secs  <float seconds>             ; while > 0: contact hits skipped
- :difficulty <kw :easy|:normal|:hard|:nightmare>
- :god?       <bool, --god flag; no damage>
- :door-lock  <kw :blue|:red|:boss|nil>     ; lock colour on this level's exit (:boss = synthetic, no keycard pickup)
- :weapon     <kw :pistol|:shotgun|:chaingun|:chainsaw|:bfg|:incinerator|:rocket>  ; active weapon
- :owned-weapons <set of kw>                ; pistol owned by default; others must be picked up
+{;; Grid (see ":grid vs :pgrid")
+ :grid        <vector of vectors of cell ints>
+ :pgrid       <PHP nested array, fast-path twin of :grid>
+ :light-grid  <PHP array (y*width+x) of per-cell shade bias (#418)>
+ :width :height <int>
+ :visited     <PHP array keyed (y*width+x)>  ; minimap fog: 1 = seen, missing = unseen
+ :switches    <vector of {:at [x y] :targets [[x y] ...]}>  ; F-key switches (#62)
+
+ :player      <player map, see below>
+ :moves       {:fwd :back :strafe-left :strafe-right :turn-left :turn-right :sprint :pitch-up :pitch-down}
+
+ ;; Toggles
+ :show-map    <bool>   ; M, default off
+ :full-map?   <bool>   ; --full-map: minimap starts revealed
+ :paused      <bool>   ; P, H, focus loss
+ :help?       <bool>   ; H / Esc panel
+ :debug?      <bool>   ; F3 perf overlay
+ :sound-on    <bool>   ; N
+
+ ;; Actors
+ :enemies     <vector of {:x :y :alive :lives :max-lives :type :hit-flash-secs ...}>
+              ; plus AI slots (:state :lkp :wander-angle :aggression ...), see monsters.md
+ :projectiles <vector of {:x :y :vx :vy :ttl :type}>   ; enemy bolts (core/projectile)
+
+ ;; Pickups on the floor (vectors of {:x :y})
+ :hearts :armors :armor-shards :ammo-boxes :berserks :invulns :soulspheres :backpacks
+
+ ;; Player resources
+ :lives           <int 0..14>        ; HP pool, see "Lives"
+ :soul-decay-secs <float>            ; over-cap decay clock: -1 HP every 5 s while above 10
+ :armor           <int 0..10>        ; each unit absorbs one whole hit; 5 normal cap, shards bank to 10
+ :backpack-level  <int 0..3>         ; reserve cap = base * (1 + level)
+ :held-keys       <set of :blue :red :boss>   ; :boss is stamped when the boss dies
+ :keycards        <vector of {:x :y :colour}>
+ :stamina              <float 0..100>
+ :sprint-cooldown-secs <float>       ; regen lockout after sprinting
+ :sprint-blocked?      <bool>        ; latches at 0, clears at 20
+
+ ;; Weapons
+ :weapon          <kw :pistol|:shotgun|:chaingun|:chainsaw|:bfg|:incinerator|:rocket>
+ :owned-weapons   <set of kw>        ; pistol only at start
+ :weapon-state    {<kw> {:mag :reserve}}
+ :mag             <int>              ; active weapon mirror, kept in sync by switch-weapon
+ :ammo-reserve    <int>
+ :fire-cooldown :reload-cooldown :empty-click-secs <float seconds>
+ :heat            <float 0..1>       ; pistol only (:overheats?); >= 1 jams
+ :jam-secs        <float seconds>
+ :aim-col :aim-row <nil>             ; centred-crosshair sentinel, reset every frame (#324)
+
+ ;; Scoring
+ :kills :streak <int>
+ :streak-secs     <float seconds>
+
+ ;; Feel timers and effects (see "Timers")
+ :iframes :shake-secs :fire-anim :intro-secs :flash-secs :msg-secs :hint-secs
+ :berserk-secs :invuln-secs :locked-door-bump-secs <float seconds>
+ :hit-stop-secs   <float seconds>    ; > 0 freezes the gameplay step (kill weight)
+ :locked-door-bump-colour <kw|nil>   ; which key the bumped door wants
+ :msg-text        <string|nil>       ; message line (#456)
+ :fx              <vector of blood splatters, each with :ttl>
+ :blood-drops     <vector>           ; screen-edge drips during i-frames
+ :game-time       <float seconds>    ; pause-aware clock for render pulses
+ :bob-phase       <float radians>    ; head-bob walk cycle (#411); 0.0 at rest
+ :heartbeat-phase <float>
+ :heartbeat-tick? <bool>             ; true on the frame the heartbeat beats
+ :prev-min-enemy-dist <float>        ; drives tick-scare
+ :scare-secs      <float seconds>    ; still set by tick-scare, no longer painted
+}
+```
+
+### From `build-world`
+
+```phel
+{:level         <int 1..10>
+ :level-name    <string>             ; "imps", "demons", ... "the final"
+ :difficulty    <kw :easy|:normal|:hard|:nightmare>
+ :theme         <kw>                 ; floor palette, :base when unset
+ :enemy         <kw>                 ; primary enemy type, render fallback
+ :chase-speed   <float>
+ :door-lock     <kw :blue|:red|:boss|nil>
  :weapon-pickups <vector of {:x :y :weapon}>
- :weapon-state {<kw> {:mag :reserve}}      ; per-weapon ammo bookkeeping
- :kills      <int>
- :streak     <int>            ; consecutive kills inside the streak window
- :streak-secs <float seconds> ; time left to extend the streak
- :lives      <int, 0..max-lives>
- :iframes    <float seconds>  ; post-hit invulnerability
- :shake-secs <float seconds>  ; screen-shake kick (damage + heavy-weapon fire/blast)
- :fire-anim  <float seconds>  ; muzzle flash visibility
- :intro-secs <float seconds>  ; level intro splash countdown
- :flash-secs <float seconds>  ; 1-frame dark-red impact flash
- :msg-text   <string|nil>     ; message line: what was just picked up / revealed / switched to
- :msg-secs   <float seconds>  ; how long that line stays up
- :fx         <vector of blood splatters>
- :blood-drops <vector>        ; screen-edge drips during i-frames
- :game-time  <float seconds>  ; pause-aware clock for render pulses
- :bob-phase  <float radians>  ; head-bob walk cycle (#411); 0.0 at rest, advanced by distance in apply-physics
- :heartbeat-phase <float>     ; low-health heartbeat cycle
- :heartbeat-tick? <bool>      ; true on the frame the heartbeat beats (sfx cue)
- :prev-min-enemy-dist <float> ; last frame's nearest-enemy distance; drives the scare cue
- :scare-secs <float seconds>  ; jump-scare sting timer
- :aim-col    <int|nil>        ; movable reticle cell (#324); nil = centred (mouse off)
- :aim-row    <int|nil>
- :locked-door-bump-secs   <float seconds>  ; 'NEED <COLOUR> KEY' prompt timer
- :locked-door-bump-colour <kw|nil>         ; which key the bumped door wants
- :fire-cooldown <float seconds>  ; per-shot rate limit
- :mag           <int 0..mag-size>     ; rounds in the loaded magazine
- :ammo-reserve  <int 0..reserve-cap>  ; spare ammo pool (per-weapon cap); drained on reload
- :reload-cooldown  <float seconds>    ; drives the reload drop animation
- :empty-click-secs <float seconds>    ; dry-fire CLICK prompt timer
- :heat          <float 0..1>          ; pistol heat; ≥ 1 triggers jam
- :jam-secs      <float seconds>       ; jammed-pistol lockout
- :stamina              <float 0..max-stamina>  ; sprint pool, default 100.0
- :sprint-cooldown-secs <float seconds>         ; regen lockout post-sprint
- :sprint-blocked?      <bool>                  ; latches at 0, clears at threshold
- :moves      {:fwd :back :strafe-left :strafe-right :turn-left :turn-right :sprint :pitch-up :pitch-down}}
+ :secrets-total :secrets-found <int>
+ :intro-secs    1.5                  ; "LEVEL N · NAME" splash
+ :hint-secs     <15.0 on L1, else 0.0>   ; first-run key hints (#467)
+}
 ```
 
-After `build-world` from `core/level.phel` stamps level metadata, the world also carries:
+It also fills `:lives`, `:backpack-level`, `:owned-weapons`, `:switches` and the pickup vectors, and runs the enemy spawn.
 
-```phel
-{:level            <int 1..10>
- :level-name       <string>           ; "imps", "demons", ...
- :chase-speed      <float>            ; enemy speed for this level
- :enemy-head-code  <int 256-color>    ; head zone BG
- :enemy-body-code  <int>              ; body zone BG
- :enemy-legs-code  <int>              ; legs zone BG
- :enemy-body-glyph <1-char string>    ; per-type body texture
- :enemy-body-glyph-fg <int>           ; FG color for texture glyph
- :enemy-face       <ANSI escape string>
- :enemy-face-alt   <ANSI escape string>}
-```
+### Added at runtime
+
+| Keys | Writer | Purpose |
+|------|--------|---------|
+| `:god?`, `:armory?` | `run-levels` | `--god` (no damage), `--armory` (every weapon, ammo refill) |
+| `:settings`, `:settings-cursor` | `run-levels`, settings page | Live options ([settings.md](settings.md)) |
+| `:pause-screen`, `:pause-cursor`, `:pause-action`, `:pause-confirm` | pause menu | Menu state; `:pause-confirm` arms Restart |
+| `:sfx` | every tick step | Queue of `{:name :vol}` cues, reset each tick, played by the loop |
+| `:scene-rows`, `:scene-cols` | game loop | The view size the hitscan gates project against |
+| `:save-flash-secs`, `:save-flash-msg` | `handle-save-load` | `SAVED` / `LOADED` / `NO SAVE` cue |
+| `:reload-ready-secs` | `tick-world` | `READY!` cue after a reload |
+| `:silence-tick?` | `tick-scare` | One-frame audio-silence cue |
+| `:hints-seen` | `note-hint-progress` | Moved / turned / fired so far |
+| `:shots-fired`, `:shots-hit`, `:damage-taken`, `:kills-by-weapon` | `core/combat` | Run summary counters ([scores.md](scores.md)) |
+| `:hit-fx`, `:shot-tracers`, `:hurt-side`, `:hurt-dir` | `core/combat` | Hit marker, tracers, damage direction |
+| `:visited-at` | `mark-visible-cells` | Cell the fog scan last ran from; cleared by `rebuild-pgrid` |
+
+A missing key reads as nil, so readers default with `(or (:k world) 0)`. `frame-stats` centralises the render-side reads so a typo shows up in one place.
 
 ## :grid vs :pgrid
 
-`:grid` is a Phel persistent vector of vectors, good for pure updates via `assoc-in`. `:pgrid` is a PHP-native `array(array(...))` mirror, read by the raycaster and minimap hot loops to dodge Phel's polymorphic collection dispatch. `new-world` creates both:
+`:grid` is a persistent vector of vectors, good for pure updates. `:pgrid` is a PHP-native `array(array(...))` mirror that the raycaster and minimap hot loops read with `php/aget`, skipping Phel's polymorphic collection dispatch.
 
-```phel
-:grid  grid
-:pgrid (to-array (map to-array grid))
-```
+Both must change together. After any grid edit (secret reveal, switch toggle, a demo phase, a savegame load) call `rebuild-pgrid`. It re-derives `:pgrid` and `:light-grid` and clears `:visited-at`. Without it the 3D view paints the old cell, and the player walks through a wall that still looks solid.
 
-On grid mutation (a door turning into floor) **both** must update. See `pickup-hearts` in `core/pickups.phel` and the door logic in `commands/play.phel`. `rebuild-pgrid` runs after any grid edit to keep the PHP mirror in sync.
-
-`:light-grid` (#418) is a third grid-derived array in that family: a PHP array keyed `(y*width + x)` of per-cell shade biases from `core/light/build-light-grid`, read one-per-column by the wall shader when the `:light` setting is on. BOTH `new-world` and `rebuild-pgrid` derive it, so a revealed secret or toggled switch re-lights correctly. Like `:pgrid` it is never serialized: `world->savestring` drops it, load re-derives it.
+`:light-grid` (#418) is the third derived array: per-cell shade biases from `core/light/build-light-grid`, read once per column when the Room light setting is on. None of the three is saved ([savegame.md](savegame.md#dropped-fields)).
 
 ## The player
 
 ```phel
-{:x       <float world units>
- :y       <float>
- :angle   <float radians>
- :pitch   <float look up/down fraction in [-1, 1], 0 = level>}
+{:x     <float world units>
+ :y     <float>
+ :angle <float radians>
+ :pitch <float in [-1, 1]>}   ; look up/down, 0 = level
 ```
 
-`new-player x y angle` places the player at a world position and facing angle. `move-player` does delta translation (no collision), `turn-player` delta angle, `change-pitch` camera look. Collision lives in `physics/try-move`: a cell blocks only when it is a wall, or a locked door the player lacks the key for. Any open floor cell is walkable.
+`new-player x y angle` spawns looking level. `move-player` translates with no collision, `turn-player` rotates, `clamp-pitch` saturates pitch at +-1.
+
+Collision lives in `physics/try-move`. A cell blocks only when it is a wall or a locked door without the matching key; bumping one also arms the `NEED <COLOUR> KEY` prompt. Any open floor cell is walkable, and the world is flat: one floor plane, one ceiling plane (see [adr/0001](adr/0001-remove-verticality-tier-system.md)).
+
+`apply-physics` also advances `:bob-phase` by the ground covered times `bob-phase-per-unit` (pi per unit, one nod every two cells), wrapped into `[0, 2*pi)`. Zero distance settles it to exactly 0.0, so a standing frame renders byte-identical. Amplitude is render-side (the View bob setting); physics tracks only the phase.
 
 ## Movement counters (`:moves`)
 
-Nine time-limited counters drive directional motion, look up/down, and sprint intent. Each holds **seconds remaining**, not a frame count:
+Nine counters, each holding **seconds remaining**. `empty-moves` is the all-zero map used at spawn, on focus loss, on the quit prompt and on savegame load.
 
-```phel
-{:fwd          <float seconds remaining>
- :back         <float>
- :strafe-left  <float>
- :strafe-right <float>
- :turn-left    <float>
- :turn-right   <float>
- :sprint       <float>}    ; SHIFT+WASD or `x` press refresh
- :pitch-up     <float>     ; ↑ arrow
- :pitch-down   <float>     ; ↓ arrow
-```
+| Slot | Armed by |
+|------|----------|
+| `:fwd` `:back` `:strafe-left` `:strafe-right` | `w` `s` `a` `d` |
+| `:turn-left` `:turn-right` | `←` `→` |
+| `:pitch-up` `:pitch-down` | `↑` `↓` |
+| `:sprint` | `Shift`+WASD or `x` |
 
-Each input byte from `glue/controls.phel` refreshes the matching counter to its hold-secs value. Every frame `core/physics.phel` consumes whatever is non-zero (scaled by `dt`), then decays every counter by `dt` seconds (clamped at 0.0). A hold lasts the same wall-clock time at any frame rate. Counter hits 0 = direction stops.
+Each input byte sets its slot to a hold time (`glue/controls.phel`). Every frame `core/physics.phel` applies the non-zero slots scaled by `dt`, then subtracts `dt` from each (floored at 0). A hold lasts the same wall-clock time at any frame rate. The hold values and their trade-offs are in [input.md](input.md#movement-slots-and-hold-time).
 
-`:sprint` is intent only. The speed boost is gated by `:stamina > 0` AND `not :sprint-blocked?`. See `physics.phel`'s `tick-stamina` + `sprinting?`.
-
-Hold-secs is the only "feel" knob: shorter = snappier stop, longer = smoother sustained hold (it bridges OS auto-repeat gaps). Current: `move-hold-secs=0.30` (~300ms), `turn-hold-secs=0.05` / `pitch-hold-secs=0.05` / `sprint-hold-secs=0.05` (~50ms). All frame-rate independent, defined in `glue/controls.phel`.
+`:sprint` is intent only. The boost needs `:stamina > 0` and not `:sprint-blocked?` (`physics/sprinting?`).
 
 ## Lives (half-heart HP pool)
 
-`:lives` is an HP pool capped by `max-lives` (10), drawn as 5 hearts of 2 HP each, so a hit can cost half a heart. New worlds start at `max-lives`. Heart pickups heal a whole heart (`gain-life` adds 2, clamped). `take-damage` (contact) and `hit-player-at` (bolt) in `core/combat.phel` subtract the attacker's `enemy-hit-damage` (1 light / 2 heavy + caster / 3 boss). Armor absorbs a whole hit whatever its size. Soulsphere pushes the pool past the cap toward `soulsphere-cap` (14), decaying back down over time.
+`:lives` is an HP pool capped at `max-lives` (10), drawn as 5 hearts of 2 HP, so a hit can cost half a heart. New runs start full.
 
-HUD draws 5 heart slots from the pool: `♥` full, `◖` half, `·` empty (over-cap soul HP shows as extra full hearts). Sized from `:max-lives` in the stats map, so the cap can change without touching the renderer.
+- Heart pickups heal a whole heart (`gain-life`, +2, clamped).
+- `take-damage` (contact) and `hit-player-at` (bolt) in `core/combat.phel` subtract `enemy-hit-damage`: 1 light, 2 heavy or caster, 3 boss.
+- Armor absorbs a whole hit of any size.
+- A soulsphere pushes the pool up to `soulsphere-cap` (14); the excess decays by 1 every 5 s.
+
+The HUD draws 5 slots: `♥` full, `◖` half, `·` empty, with over-cap HP as extra full hearts. It sizes from `:max-lives` in the stats map, so the cap can change without touching the renderer.
 
 ## Timers
 
-Float-seconds countdowns on the world, decayed by `decay-timers` in `core/combat.phel`. A timer that is absent or already at 0.0 is left alone rather than rewritten, so a quiet frame writes only the timers that are running (see `combat/decay-key`); `state/assoc-changed` applies the same rule to the latches and phases the other tickers write.
+Float-seconds countdowns, decayed by `decay-timers` in `core/combat.phel`. A timer that is absent or already 0.0 is not rewritten (`combat/decay-key`), so a quiet frame writes only running timers. `state/assoc-changed` applies the same rule to latches and phases.
 
 | Timer | Set by | Drives |
-|---|---|---|
-| `:iframes` | `take-damage` (1.0s) | Red palette flush + immunity window |
-| `:shake-secs` | `take-damage` (0.25s), heavy-weapon fire/blast (splash-radius-scaled) | Cursor-home offset screen-shake |
-| `:flash-secs` | `take-damage` (0.05s) | 1-frame all-red impact wash (#465) |
-| `:fire-anim` | `fire-shot` (0.09s) | Muzzle flash visibility |
-| `:intro-secs` | `build-world` (1.5s) | "LEVEL N · NAME" splash overlay |
-| `:msg-secs` | `push-msg` (2.0s) | Message line naming the pickup / secret / weapon (#456) |
+|-------|--------|--------|
+| `:iframes` | a landed hit (1.0 s) | Red palette wash and immunity window |
+| `:shake-secs` | a landed hit (0.25 s), heavy-weapon fire and blasts | Screen shake |
+| `:flash-secs` | a landed hit (0.03 s) | One-frame dark-red impact wash (#465) |
+| `:fire-anim` | a shot (0.13 s) | Muzzle flash |
+| `:intro-secs` | `build-world` (1.5 s) | Level splash |
+| `:msg-secs` | `push-msg` (2.0 s) | Message line naming a pickup, secret or weapon (#456) |
+| `:hint-secs` | `build-world` (15 s on L1) | First-run key hints (#467) |
 
-`:fx` is a vector of blood splatters with their own `:ttl` ticked by `decay-fx`.
+Also decayed there: `:streak-secs`, `:fire-cooldown`, `:reload-cooldown`, `:empty-click-secs`, `:berserk-secs`, `:invuln-secs`, `:jam-secs`, `:locked-door-bump-secs`, pistol `:heat`, and the `:ttl` of each `:fx` entry and `:hit-fx`.
 
-### `:game-time` - the pause-aware clock
+### `:game-time`: the pause-aware clock
 
-`advance-game-time` adds `dt` to `:game-time` on every non-paused frame. A paused frame returns early from `tick-world`, leaving the value put. Render samples this clock for every blink and pulse (door, behind warning, jam, pickup throb, enemy face/body cycle, screen-shake), so `p` freezes every animation the wall clock used to drive. Resume picks up where the freeze caught it.
-
-## Flat world design
-
-Every level is flat: the floor a single plane (z = 0), the ceiling a full-height plane (z = 1). Construction stays simple (one `new-world` call), updates lightweight (`assoc`/`update`), tests literal (`(is (= expected (tick-world ...)))`). Trade-off: no compiler help on key names, so `frame-stats` centralizes every read to catch typos.
+`advance-game-time` adds `dt` on every unpaused frame; a paused frame returns before it. Render samples this clock for every blink and pulse (door, behind warning, jam, pickup throb, enemy face cycle, screen shake), so `P` freezes every animation, and resume continues from the same instant.

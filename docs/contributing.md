@@ -1,106 +1,81 @@
 # Contributing
 
-Dev workflow, test conventions, and Phel quirks.
+Dev loop, gates, test conventions, and Phel quirks.
 
-## Bootstrap
+## Dev loop
 
 ```bash
 git clone git@github.com:Chemaclass/phel-doom.git
 cd phel-doom
-composer install     # installs deps + wires .githooks/pre-commit
-make play            # or: composer play
+composer install   # deps + .githooks/pre-commit + .agents/
+composer play      # or: make play
 ```
 
-`composer install` sets `core.hooksPath` to `.githooks/`. Every commit then runs `composer ci` (format-check, lint, layering, cycles, tests, build) before landing. Bypass with `git commit --no-verify` only in emergencies.
+PHP 8.5 is the floor, locally and in CI. Phel dev-main requires it. `composer.lock` is gitignored, so `composer install` resolves the current dev-main.
 
-## Composer scripts
+Work with `composer test`. Before a commit, the pre-commit hook runs `composer ci`, the same gate CI runs. Bypass with `git commit --no-verify` only in emergencies.
 
-```bash
-composer dev          # run CLI from source
-composer play         # launch game
-composer test         # run tests (PHEL_DOOM_SILENT=1)
-composer bench        # frame/cast benchmarks (tests/bench, phel bench)
-composer bench-store  # write .phel/bench-baseline.json (run on main)
-composer bench-ref    # compare against it, fail past +10% (same machine)
-tools/bench-ab.sh <ref> [pairs] [filter]  # interleaved A/B vs another ref (the reliable one)
-tools/bench-flags.sh [passes] [filter]    # where frame time goes, by render feature
-composer format       # auto-format hand-written .phel files
-composer format-check # dry-run, fails CI on drift (+ the guard's own fixtures)
-composer format-all   # include the generated data files (rarely needed)
-composer lint         # static analysis
-composer check-layers # io/ -> glue/ -> core/ direction holds
-composer check-cycles # no require cycles (+ the guard's own fixtures)
-composer check-unused # no src/ definition that nothing references (+ fixtures)
-composer check-docs   # every doc link, anchor and path claim resolves (+ fixtures)
-composer check-deprecations # the suite with every deprecation channel on (+ the guard's own fixtures)
-composer build        # compile to out/main.php
-composer ci           # full pre-push gate
-composer repl         # REPL
-composer doctor       # env diagnostics
-```
+| Script | Does |
+|---|---|
+| `composer play` / `composer dev` | launch the game / run the CLI from source |
+| `composer test` | run the suite (sets `PHEL_DOOM_SILENT=1`) |
+| `composer ci` | full gate: format-check, lint, layers, cycles, unused, docs, deprecations (runs the suite), build |
+| `composer format` | format hand-written `.phel` files |
+| `composer format-check` | dry-run format, fails on drift |
+| `composer format-all` | format everything, including generated data files |
+| `composer lint` | static analysis |
+| `composer build` | compile to `out/main.php` |
+| `composer bench` | frame/cast benchmarks (`tests/bench`) |
+| `composer bench-store` / `composer bench-ref` | save a baseline to `.phel/bench-baseline.json` / fail past +10% against it (same machine) |
+| `composer repl` / `composer doctor` | REPL / environment check |
 
-PHP 8.5 is the floor, locally and in CI. Phel dev-main requires it.
+For reliable perf numbers use `tools/bench-ab.sh <ref>` (interleaved A/B against another ref) and `tools/bench-flags.sh` (frame cost per render feature). See [performance.md](performance.md).
 
-`format` / `format-check` run `tools/format-sources.sh`: every hand-written `.phel` file, minus the four generated ones (`enemy_sprites_data`, `weapon_sprites_data`, `wall_texture_data`, `sound_data`). `phel format` is quadratic in the elements of one collection literal ([phel-lang#3218](https://github.com/phel-lang/phel-lang/issues/3218)), and each baked asset file is one enormous literal. `enemy_sprites_data.phel` alone took 94.7s of a 124s check, 70% of the pre-commit gate; skipping the four takes the check to 4.8s and the gate from 173s to 50s. `tools/bake-*.phel` writes them, never a human, so formatting them was pure cost. The script fails loudly if one is renamed, so the skip list cannot silently stop matching. `composer format-all` still formats everything.
+## Gates
 
-The check also remembers what passed. It is one yes/no question asked on every commit about ~90 files, nearly all untouched by that commit, so `format-sources.sh --dry-run` keeps the content hashes that already came back clean, keyed by `composer.lock` (a formatter upgrade changes what "formatted" means, and starts an empty list). **5.1s to 0.5s.** It can only skip work that would have passed: entries are written after a clean run, any edit changes the file's hash and requeues it, and a failing check records nothing, so a retry re-checks the file that failed rather than going green. Write mode never consults the list, since a cache that could suppress a write is a way to leave a file unformatted on disk. `tools/format-sources-test.sh` pins that with the formatter stubbed.
+Every guard below is a composer script inside `composer ci`. Each ships its own fixtures (`tools/*-test.sh`), because a quietly wrong guard is worse than none. [tools/README.md](../tools/README.md) has the one-line summary of each.
 
-`check-unused` fails on a top-level `def` / `defn` / `defmacro` / `defstruct` under `src/` that nothing in `src/`, `tests/` or `tools/` references as code. It exists for one specific rot. `secret-tex-offset` was a real constant with a real docstring for the secret-wall cue; then texture mips landed and the call site started deriving the shift from the live mip size. The feature kept working, the constant went dead, and its docstring kept describing behaviour that had moved elsewhere: it reads as current, so it is worse than no comment. Nothing else catches that. The linter is per-form, tests only exercise what is reachable, and the build compiles dead code as happily as live code.
+**Format** (`tools/format-sources.sh`). Skips the four generated data files (`enemy_sprites_data`, `weapon_sprites_data`, `wall_texture_data`, `sound_data`): `phel format` is quadratic in the size of one collection literal ([phel-lang#3218](https://github.com/phel-lang/phel-lang/issues/3218)), and `enemy_sprites_data.phel` alone cost 95s of a 124s check. The script fails if a skipped file is renamed. Check mode also caches content hashes that passed, keyed by `composer.lock`, so unchanged files are not re-checked. Write mode never uses the cache.
 
-Privates count too. `composer lint` passes clean on an unused `def-` and an unused `defn-` (checked directly), so skipping them would leave them uncovered, which is how #516 left a dead `bfs-steps` behind. Definitions referenced only from `tests/` (fixtures, parsers whose only caller today is their own test) are legitimate; `php tools/check-unused.php --report` lists them instead of failing. It shares its Phel source scanner with `check-cycles` (`tools/lib/phel-source.php`), so a name surviving only in a docstring, a `;` comment or a `#_` form is still dead. It also sees through what hides a definition from a naive scan: metadata between form and name (`(defn ^:pure foo ...)`), the predicate `defstruct` generates (a struct reached only through `point?` is live), and the facade re-exports in `render.phel`, where the qualified half of `(def render! render/render!)` is the API being forwarded, not a use of it. References resolve by name, not namespace, so two files defining the same name share one verdict.
+**Unused** (`composer check-unused`). Fails on a top-level `def` / `defn` / `defmacro` / `defstruct` under `src/` that nothing in `src/`, `tests/` or `tools/` references as code. It catches dead constants whose docstrings still describe behaviour that moved elsewhere. Privates count too, since `composer lint` passes an unused `defn-`. Names in comments, docstrings or `#_` forms do not count. It sees through `^:pure` metadata, `defstruct` predicates and the `render.phel` re-exports. References resolve by name, not namespace, so two files defining the same name share one verdict. `php tools/check-unused.php --report` lists definitions referenced only from `tests/`, which are allowed.
 
-`check-docs` fails when a doc points at something that is not there: a relative markdown link to a missing file, a `#fragment` naming a heading that no longer exists, a backticked repo path (`src/...`, `tools/...`) with nothing on disk, or a backticked `composer <script>` that is neither a script nor a composer builtin. `docs/` is part of this codebase, and what rots silently is the mechanical part: nobody re-clicks every cross-reference on a rename. It found four on its first run, including a link to a `#pixel-doubling` section that had been retitled and a path written `sound-data` for a file called `sound_data.phel`. Prose is deliberately not checked: an earlier cut verified every backticked kebab-case name against the definitions in `src/` and produced 97 hits, nearly all `let` bindings and map keys named in correct prose. Paths resolve against `git ls-files`, not the filesystem. A file that exists only in your working tree, anything under the generated `.claude/` or `.agents/` trees, is missing for everyone who clones, and checking the disk would pass locally then fail in CI, which is what happened on this guard's first run. Paths inside `docs/adr/` and `CHANGELOG.md` are exempt, since those record what was and legitimately name files a later commit removed, but their links and anchors are still checked.
+**Docs** (`composer check-docs`). Fails on a relative link to a missing file, a `#fragment` with no matching heading, a backticked repo path (`src/...`, `tools/...`) that is not in `git ls-files`, or a backticked `composer <script>` that does not exist. Prose is not checked. Paths in `docs/adr/` and `CHANGELOG.md` are history and exempt, but their links are checked. Generated trees (`.claude/`, `.agents/`) are not tracked, so do not cite paths inside them.
 
-`check-deprecations` is the gate's ONLY suite run. `composer ci` used to run `composer test` and then this: the same ~3900 tests twice, 12s warm plus 28s cold, a pure duplication that spent 40 of the gate's 50 seconds running one suite two ways. `composer test` on its own is untouched and stays the fast way to run tests while working. A plain test failure inside the gate now prints the failing test names and copies the full log to `/tmp/phel-doom-ci-failure.log`.
-
-The compile it needs works around [phel-lang#3222](https://github.com/phel-lang/phel-lang/issues/3222): the cache key ignores the warn-deprecations flag, so a warm shared cache reports nothing, and `phel test` has no `--no-cache`. It used to delete the shared cache for that compile, a full cold recompile every run: 25.4s of a 41s gate, paid even by a one-line doc change. It now keeps its own cache directory (`PHEL_CACHE_DIR`), so only what changed recompiles. **11.2s warm**, and the gate is about 27s.
-
-Two things keep that honest. The directory name carries a hash of `composer.lock` and `phel-config.php`, so a compiler upgrade or an optimisation-level change starts a fresh cache instead of trusting yesterday's output. And a run that finds something deletes the cache before exiting: otherwise the offending file stays cached with its warning already emitted, the next run goes green with nothing fixed, and you have a gate you can pass by running it twice. Failure costs the next run a cold compile, the right price. CI is unaffected, since a fresh runner has no such directory and compiles everything. The cache handling has its own fixtures (`tools/check-deprecations-test.sh`, stubbing `phel test` so a 25-second suite does not end up inside a fixture): a clean run keeps the cache, a deprecation / a test failure / an empty run / an interrupt each drop it, a lockfile or `phel-config.php` change starts a new one, and stale ones are pruned.
-
-`check-deprecations` runs the suite under `PHEL_WARN_DEPRECATIONS=1` and fails on any notice. It exists for the quiet half. Phel 0.50 infers a parameter's type from its body, so comparing a parameter to an int literal emits `int $p`, and a fractional caller is TRUNCATED at the signature: no error, no failing test unless one happens to assert that exact value. PHP reports it as "Implicit conversion from float X to int loses precision", invisible at the default error level. The same pass catches superseded interop spellings (`php/new`, `php/->`, `php/::`, `set-var`). Those are raised while a namespace COMPILES, so the script clears `.phel/cache` first: with the cache warm from an earlier `composer test`, nothing recompiles and a `php/new` in the tree passes clean. See `.agnostic-ai/rules/phel.md`, "Type inference traps".
+**Deprecations** (`composer check-deprecations`). The gate's only suite run. Runs the tests with `PHEL_WARN_DEPRECATIONS=1` and fails on any notice. The notice that matters most: Phel infers a parameter's type from its body, so comparing a parameter to an int literal emits `int $p` and silently truncates a float caller ("Implicit conversion from float X to int loses precision"). See `.agnostic-ai/rules/phel.md`, "Type inference traps". A warm cache hides compile-time deprecations ([phel-lang#3222](https://github.com/phel-lang/phel-lang/issues/3222)), so the script keeps its own cache under `.phel/`, keyed by `composer.lock` and `phel-config.php`, and deletes it after any failing run. On failure it prints the failing test names and copies the log to `/tmp/phel-doom-ci-failure.log`.
 
 ## Looking at a frame
 
-The suite pins bytes and hashes. That proves a frame did not CHANGE, never that it looks right. To see one:
+Golden tests pin bytes and hashes. They prove a frame did not change, not that it looks right. To see one:
 
 ```bash
 tools/frame-shot.sh tools/shots/showcase.phel /tmp/showcase.png
 ```
 
-`tools/shots/showcase.phel` is a deterministic frame with every on-screen feature lit at once: the message line, the first-run key hints, an enemy mid-windup (attack pose plus its `!`), a red hostile reticle, the full HUD strip with keycards and difficulty, and the minimap. Any script that writes raw ANSI to its first CLI argument works the same way.
+`tools/shots/showcase.phel` renders a deterministic frame with every on-screen feature lit: message line, first-run key hints, an enemy mid-windup, a red hostile reticle, the full HUD strip, and the minimap. Any script that writes raw ANSI to its first CLI argument works the same way. `tools/frame-to-html.php` emulates the terminal cell grid, then headless Chrome takes the PNG. Without Chrome you still get the HTML.
 
-The frame goes through `tools/frame-to-html.php`, which emulates a terminal cell grid so absolutely-positioned overlays land where they would on screen, then through headless Chrome. Without a browser you still get the HTML.
-
-Two things that look like bugs and are not: a dotted teal outline around the gun is the `:steel` floor theme showing through the sprite's transparent gaps, and the keycard glyphs may render as tofu boxes depending on the font. That second one is what the **HUD glyphs** setting exists for.
+Two things that look like bugs and are not: a dotted teal outline around the gun is the `:steel` floor theme showing through the sprite's transparent gaps, and keycard glyphs may render as tofu boxes in some fonts (the **HUD glyphs** setting exists for that).
 
 ## AI agent config (generated, not committed)
 
-The per-tool agent config is generated, not tracked. Only the specs are.
+- `.claude/` and root `AGENTS.md` come from [agnostic-ai](https://github.com/Chemaclass/agnostic-ai). The source of truth is `.agnostic-ai/`.
+- `.agents/` comes from `vendor/bin/phel agent-install`, run by `composer install`.
 
-- `.claude/` and root `AGENTS.md` come from [agnostic-ai](https://github.com/Chemaclass/agnostic-ai). Source of truth lives in `.agnostic-ai/`. Hook scripts live in `.agnostic-ai/scripts/`.
-- `.agents/` comes from `vendor/bin/phel agent-install`, run automatically by `composer install`.
-
-If you use an AI agent (Claude Code, Codex) and want its config locally, install the tool and sync:
+To get the Claude Code or Codex config locally:
 
 ```bash
-brew install Chemaclass/tap/agnostic-ai   # one-time, needs >= 0.30.0
-agnostic-ai sync                          # rebuild .claude/ + AGENTS.md from .agnostic-ai/
+brew install Chemaclass/tap/agnostic-ai   # needs >= 0.30.0
+agnostic-ai sync                          # rebuild .claude/ + AGENTS.md
 ```
 
-Use agnostic-ai 0.30.0 or newer. Earlier versions leak an untracked README into the generated agent directory, can delete other targets' files on a scoped `sync --only`, and list the gitignore block file-by-file instead of `/.claude/`.
-
-This is a contributor convenience only. It is not needed to run, build, or play the game.
-
-To change agent behavior, edit specs under `.agnostic-ai/` (never the generated files) and re-run `agnostic-ai sync`. CI gate: `agnostic-ai sync --check`.
+Older agnostic-ai versions leak files and can delete other targets' output. To change agent behaviour, edit `.agnostic-ai/` and re-run `agnostic-ai sync`. `agnostic-ai sync --check` reports drift. None of this is needed to build or play.
 
 ## Test conventions
 
-- **Assert behavior, not implementation.** Test WHAT a fn returns, not how it walks data or which shape it uses.
-- **No real audio.** `composer test` sets `PHEL_DOOM_SILENT=1` (short-circuits `play-sfx!`). Always use the composer script, not bare `vendor/bin/phel test`.
-- **No real filesystem.** Pure halves get tested; IO wrappers don't. E.g., `merge-run` in `scores.phel` is tested; `update-scores!` is not.
-- **No fakes/mocks in `core/`.** Test pure code against literal data (hand-built worlds, grids). See `tests/core/physics-test.phel`.
+- **Assert behaviour, not implementation.** Test what a fn returns, not how it walks data.
+- **No real audio.** Use `composer test`, which sets `PHEL_DOOM_SILENT=1`. `io/sound` also mutes itself under the `phel test` runner as a safety net.
+- **Pure halves first.** Test `core/` against literal data (hand-built worlds and grids, see `tests/core/physics-test.phel`). No fakes or mocks in `core/`. IO wrappers that touch disk run against an isolated temp `$HOME` (see `tests/io/scores-test.phel`).
 
-Add tests before or right after implementation. Keep test count accurate.
+Write the test before or right after the implementation.
 
 ## Phel gotchas
 
@@ -113,28 +88,15 @@ Add tests before or right after implementation. Keep test count accurate.
 
 (let [a (php/array)]
   (paint-into! a)
-  (php/aget a 0))   ; => nil (copy was mutated, not original)
+  (php/aget a 0))   ; => nil (the copy was mutated)
 ```
 
-Mutating a passed array only changes the local copy. Two fixes:
+Two fixes:
 
-1. Keep the loop **inline** in the same `let` scope:
-   ```phel
-   (let [a (php/array)]
-     (loop [...] (php/aset a ...))
-     a)   ; works
-   ```
+1. Keep the loop inline in the same `let` scope that owns the array.
+2. Let the helper create the array and return it. Callers rebind via `let`.
 
-2. Helper **owns creation** and **returns** the array:
-   ```phel
-   (defn- build-arr []
-     (let [a (php/array)]
-       (loop [...] (php/aset a ...))
-       a))
-   (let [a (build-arr)] ...)   ; works
-   ```
-
-See `src/io/render.phel` for pattern 2 in the paint-overlay chain.
+The render layer uses pattern 2 throughout (`compute-wall-shades`, the `paint-*` helpers). A related trap: `php/aset` inside a `let` binding VALUE can compile to a closure and write to a copy. Mutate in statement position.
 
 ### Destructure: `{local-name :keyword}` (Clojure-style)
 
@@ -143,118 +105,79 @@ See `src/io/render.phel` for pattern 2 in the paint-overlay chain.
   [a b])   ; => [1 2]
 ```
 
-Binding-first, same order as Clojure, since Phel 0.51. `{:keys [foo bar]}` works when the local name matches the key. The old key-first order (`{:foo a}`) still compiles but is deprecated and will be removed; `composer check-deprecations` flags it.
+Binding-first since Phel 0.51. `{:keys [foo bar]}` works when the local name matches the key. The old key-first order (`{:foo a}`) is deprecated and `composer check-deprecations` flags it.
 
 ### `recur` re-binds loop names, not let-shadows of them
 
-A `let` inside a `loop` that destructures into a local sharing a loop-binding name silently drops the value: at the `recur` site that name resolves to the loop's ORIGINAL binding, not the shadow.
+A `let` inside a `loop` that destructures into a local sharing a loop-binding name drops the value: at `recur`, that name resolves to the loop's original binding.
 
 ```phel
-;; BROKEN - recur sends the loop's old `settings`, not the navigated one
+;; BROKEN - recur sends the loop's old `settings`
 (loop [settings s0 cursor 0]
   (let [{:keys [cursor settings]} (navigate settings cursor steps)]
-    (recur settings cursor)))        ; every edit lost next iteration
+    (recur settings cursor)))
 
-;; FIX - destructure into a non-loop name, read via accessors
+;; FIX - destructure into a non-loop name
 (loop [settings s0 cursor 0]
   (let [nav (navigate settings cursor steps)]
     (recur (:settings nav) (:cursor nav))))
 ```
 
-Bit the start-menu options page (`settings-screen!`): every change applied live then reverted on the next frame.
+This broke the options page once: every change applied, then reverted next frame.
 
 ### `def-` takes no docstring slot
 
-`def` accepts `(def name "doc" value)`, but the private `def-` is `(def- name value)` only. Pass a docstring and it silently becomes the VALUE; the real value is dropped. Lint stays quiet, so it surfaces as a runtime type error far from the def.
+`def` accepts `(def name "doc" value)`. The private `def-` is `(def- name value)` only. A docstring there becomes the value and the real value is dropped. Lint stays quiet. Use a `;;` comment instead. `defn-` does take a docstring.
 
 ```phel
-;; BROKEN - bfs-steps is now the STRING, not the vector
+;; BROKEN - bfs-steps is now the string
 (def- bfs-steps
   "4-connected BFS offsets."
-  [[1 0] [-1 0] [0 1] [0 -1]])   ; dropped -> later (+ int bfs-steps) blows up
+  [[1 0] [-1 0] [0 1] [0 -1]])
 
-;; FIX - move the note to a line comment
+;; FIX
 ;; 4-connected BFS offsets.
 (def- bfs-steps [[1 0] [-1 0] [0 1] [0 -1]])
 ```
 
-`defn-` DOES take a docstring; only `def-` is the odd one out.
+### Lint warnings can be false positives
 
-### Lint warnings are often false positives
-
-`vendor/bin/phel lint` warns on:
-- **Unused let bindings referenced by later bindings.** Phel `let` is sequential; the linter checks each binding independently.
-- **Threading macros.** `(-> w (foo arg) (bar))` looks like 1-arg calls; emits spurious arity errors.
-
-Errors fail CI; warnings don't. If you need threading, use a sequential `let` instead to keep lint quiet.
+`composer lint` may warn on a `let` binding used only by a later binding, and on threading macros (`(-> w (foo arg))` reads as a 1-arg call). Errors fail CI, warnings do not.
 
 ### Avoid Phel vectors in hot loops
 
-Phel persistent vectors use polymorphic dispatch on every `get`; render at 180×40 would drop from 60+ fps to <2 fps. We use php-arrays with compile-time macros:
+Phel persistent vectors dispatch polymorphically on every `get`, which is far too slow per cell. Hot paths use php-arrays through compile-time macros in `src/io/render/buffer.phel`:
 
 ```phel
-;; src/io/render/buffer.phel
-(defmacro buf-mk  []          `(php/array))
-(defmacro buf-set [b i v]     `(php/aset ~b ~i ~v))
-(defmacro buf-get [b i]       `(php/aget ~b ~i))
+(defmacro buf-mk  []      `(php/array))
+(defmacro buf-set [b i v] `(php/aset ~b ~i ~v))
+(defmacro buf-get [b i]   `(php/aget ~b ~i))
 ```
 
-Call sites: `(buf-set tops col top)` - reads Phel, compiles to `php/aset` with zero overhead. Caveats: macros aren't first-class; php-arrays still pass-by-value at fn boundaries (must return from builders).
-
-Outside hot loops: use Phel-native data (maps, vectors, keywords).
+Call sites read as Phel and compile to plain array ops. Macros are not first-class, and the pass-by-value rule still applies. Outside hot loops, use Phel-native data.
 
 ### Hot loops use raw `php/*` ops; everything else uses Phel wrappers
 
-Phel's `+`, `-`, `*`, `<`, `=`, ... wrap PHP operators with `NumericOperations` dispatch for `BigInt` / `Ratio`. The overhead adds up per-cell and per-ray.
+Phel's `+`, `<`, `=` dispatch through `NumericOperations` for `BigInt` / `Ratio`. That cost adds up per ray and per cell.
 
-- **Hot loops** (cast-ray, compute-wall-shades, per-cell paint): `php/+`, `php/<`, `php/===` (direct, no dispatch).
-- **Everything else**: `+`, `<`, `=` (idiomatic, overhead invisible).
+- **Hot loops** (`cast-frame`, `compute-wall-shades`, per-cell paint): `php/+`, `php/<`, `php/===`.
+- **Everything else**: `+`, `<`, `=`.
 
-## Example: adding an overlay
+## Recipes
 
-New kill-counter banner at top-right?
+### Adding a HUD overlay
 
-1. Write `paint-kill-counter` in `src/io/render/paint.phel`:
-   ```phel
-   (defn- paint-kill-counter [parts stats vw]
-     (let [k (or (get stats :kills) 0)]
-       (php/array_push parts
-                       (str "\e[1;" (php/- vw 12) "H kills: " k "\e[0m")))
-     parts)
-   ```
+Copy the shape of `paint-save-flash` in `src/io/render/paint.phel`: take `[parts stats vw vh]`, `buf-push` an ANSI string when visible, return `parts`. Thread it into the paint chain in `frame->string` (`src/io/render/main.phel`). Any state it reads must reach `stats` through `frame-stats` (`src/commands/play.phel`).
 
-2. Thread into the paint chain (integrate with existing overlays in `paint.phel`).
+### Adding a core mechanic
 
-3. Optional: test if logic is non-trivial (`tests/io/render-test.phel`).
+Stamina is the worked example:
 
-4. Run `composer ci`.
+1. State field: `:stamina` defaults to `max-stamina` (`src/core/state.phel`).
+2. Pure step: `tick-stamina` in `src/core/physics.phel`.
+3. Wiring: `tick-world` calls it (`src/commands/play.phel`).
+4. Render input: `frame-stats` forwards `:stamina`.
+5. Overlay: `stamina-chip` in `src/io/render/paint.phel`.
+6. Test: `tests/core/physics-test.phel`.
 
-## Example: adding a core mechanic
-
-New stamina meter that drains while sprinting?
-
-1. Add `:stamina 1.0` to `new-world` (`src/core/state.phel`).
-
-2. Add `tick-stamina` in `src/core/physics.phel`:
-   ```phel
-   (defn tick-stamina [world ^float dt]
-     (let [s' (php/max 0.0 (php/min 1.0
-                 (php/+ (:stamina world)
-                        (if (:sprinting world) (php/* -0.4 dt) (php/* 0.2 dt)))))]
-       (assoc world :stamina s')))
-   ```
-
-3. Wire into `tick-world` (`src/commands/play.phel`).
-
-4. Forward `:stamina` through `frame-stats` to render.
-
-5. Test in `tests/core/physics-test.phel`:
-   ```phel
-   (deftest test-tick-stamina-drains-while-sprinting
-     (let [w (tick-stamina {:stamina 1.0 :sprinting true} 0.5)]
-       (is (< (:stamina w) 1.0))))
-   ```
-
-6. Render the HUD bar as a separate overlay.
-
-Loop: state field → core fn → tick-world wiring → frame-stats → overlay. Keep effects out of core; tests stay easy.
+Keep effects out of `core/` and the tests stay cheap. Run `composer ci` before you push.

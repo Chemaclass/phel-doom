@@ -1,147 +1,127 @@
 # Level system
 
-10-level progression catalog + `build-world` factory. `src/core/level.phel`.
+The 10-level catalog, difficulty scaling and the `build-world` factory. `src/core/level.phel`, `src/core/difficulty.phel`. Grid generation lives in [map.md](map.md); monster types in [monsters.md](monsters.md).
 
 ## Levels at a glance
 
-| # | Name | Type | Enemies |
-|---|---|---|---|
-| 1 | imps | random | 4 imps |
-| 2 | demons | hand-authored flat chamber | 5 demons + 2 imps + shotgun |
-| 3 | cacodemons | hand-authored flat chamber | 3 cacos + 2 demons + 2 imps + chaingun |
-| 4 | barons | hand-authored flat chamber + blue lock | 3 barons + 4 demons + 2 imps |
-| 5 | cyberdemons | hand-authored flat chamber + red lock | 2 cyberdemons + 4 imps |
-| 6 | spectres | hand-authored flat chamber | 6 spectres + 3 imps + 1 caco |
-| 7 | revenants | hand-authored flat chamber + yellow lock | 5 revenants + 2 demons + 1 baron |
-| 8 | archvile court | hand-authored flat chamber | 2 archviles + 3 cacos + 3 mancubi |
-| 9 | the brood | random mix | 6 pinkies + 4 barons + 2 mancubi |
-| 10 | the final | hand-authored boss arena | 1 cyberdemon boss (50 HP) + 2 imps (max 1 alive) |
+| # | Name | Room | Lock | Enemies | Chase | `:walls` | Theme | Weapon debut |
+|---|---|---|---|---|---|---|---|---|
+| 1 | imps | procgen 22x16 | - | 4 imps | 0.8 | 12 | base | - |
+| 2 | demons | layout 24x18 | - | 5 demons, 2 imps | 1.0 | 12 | steel | shotgun |
+| 3 | cacodemons | layout 28x24 | - | 3 cacos, 2 demons, 2 imps | 1.2 | 18 | steel | chaingun |
+| 4 | barons | layout 44x28 | blue | 3 barons, 4 demons, 2 imps | 1.4 | 34 | moss | chainsaw |
+| 5 | cyberdemons | layout 30x26 | red | 2 cybers, 4 imps | 1.6 | 22 | clay | rocket |
+| 6 | spectres | layout 42x26 | - | 6 spectres, 3 imps, 1 caco | 1.7 | 30 | moss | incinerator |
+| 7 | revenants | layout 42x26 | yellow | 5 revenants, 2 demons, 1 baron | 1.8 | 30 | rust | BFG |
+| 8 | archvile court | layout 50x30 | - | 2 archviles, 3 cacos, 3 mancubi | 1.9 | 42 | clay | - |
+| 9 | the brood | procgen 54x32 | - | 6 pinkies, 4 barons, 2 mancubi | 2.0 | 78 | rust | - |
+| 10 | the final | hand-authored arena | boss | 1 cyber (50 HP), 2 imps (max 1 alive) | 1.6 | - | hell | - |
 
-## Catalog
+- **Procgen** (L1, L9): `random-grid` builds the room from `:size` and `:walls`.
+- **Fixed shell** (L2-L8): a `:layout` gives an empty bordered room and spawn; `:walls` random blobs fill it each run.
+- **Hand-authored arena** (L10): the layout pins walls, 2 secrets and 2 switches. No random walls: switch targets are fixed cells.
 
-L1: single-type procgen tutorial (imps only). L2-L8: hand-authored flat chambers, each seeded with random interior walls (`:walls` count) so the room layout varies every run. L9: mixed-monster procgen (melee secondary salted per level). L10: hand-authored boss arena with secrets + switches (no random walls, since switch targets are hand-placed).
+Every level gets a random exit (`map/place-exit`), then its lock, so finding the way out is part of the game.
 
-Non-locked procgen levels seed up to 2 secret passages (see [map.md](map.md)) that drop reward stashes on reveal. Locked levels (L4) and hand-authored layouts (L2-L8, L10) skip seeding. That blocks keycard bypass and keeps the authored geometry explicit.
+Design rules: chase speed never drops before L10, which eases to 1.6 (a dodging arena, not a swarm). L1 is pure imps; later levels mix in a melee secondary. L6 and L7 each carry one caster. L5 has two cybers, not five: five out-gunned the L10 boss.
 
-Each level also carries a `:theme` keyword (#417). It tints the floor
-gradient at load time (grey / steel / moss / clay / rust / hell), so
-episodes read as distinct places at zero hot-path cost. Unknown or
-missing themes fall back to neutral `:base` grey. The keyword lives in
-`core/level.phel` (pure data). `io/render/palette.phel` resolves it to
-a floor gradient base code via `theme-floor-code`.
+### Secrets
 
-```phel
-(def levels
-  [{:size [22 16] :walls 12 :enemy :imp   :enemies 4 :chase 0.8 :name "imps" :theme :base}
-   ;; L2: hand-authored flat chamber.
-   {:enemy :demon :chase 1.0 :name "demons" :theme :steel
-    :enemies [{:type :demon :count 5} {:type :imp :count 2}]
-    :layout l2-layout}
-   ;; L3: hand-authored flat chamber.
-   {:enemy :caco :chase 1.2 :name "cacodemons"
-    :enemies [{:type :caco :count 3} {:type :demon :count 2} {:type :imp :count 2}]
-    :layout l3-layout}
-   {:size [44 28] :walls 55 :enemy :baron :chase 1.4 :name "barons" :door-lock :blue
-    :enemies [{:type :baron :count 3} {:type :demon :count 3}]}
-   ;; L5: hand-authored flat chamber + red lock.
-   {:enemy :cyber :chase 1.6 :name "cyberdemons" :door-lock :red
-    :enemies [{:type :cyber :count 2} {:type :imp :count 4}]
-    :layout l5-layout}
-   ;; L6-L8: hand-authored flat chambers.
-   ;; L10: :layout + :switches, :door-lock :boss.
-   ...])
-```
+`build-world` seeds up to 2 secrets (`map/seed-secrets`) only on levels with no `:layout` and no lock: L1 and L9. Layouts keep explicit geometry, and a secret could bypass a keycard door. L10 has a hand-authored pair. Mechanics: [map.md](map.md#secret-walls).
 
-Chase speed climbs monotonically L1-L9 (`0.8 1.0 1.2 1.4 1.6 1.7 1.8 1.9 2.0`). L10 eases to `1.6` for the single-boss arena. L2-L9 mix a melee secondary into the headline type, so no level is one enemy on repeat. L1 stays pure imps as a tutorial. L6-L7 each carry one caster (caco/baron) for ranged pressure. Every enemy gets a depth-scaled `:aggression` cooldown multiplier (see [monsters.md](monsters.md)). Mixed specs without `:lives` inherit catalog HP.
+## Config fields
 
-Required fields:
+Required:
 
 | Field | Meaning |
 |---|---|
-| `:size`     | `[width height]` of grid in cells |
-| `:walls`    | Random interior wall-blob count - scattered into procgen rooms AND hand-authored `:layout` rooms (skipped only when `:switches` is set) |
-| `:enemy`    | Catalog kw - see [monsters.md](monsters.md) for the type list |
-| `:enemies`  | Int (count of `:enemy`) OR vector of mixed specs (see below) |
-| `:chase`    | Chase AI speed (units/sec) |
-| `:name`     | HUD + intro-splash label |
+| `:enemy`   | Headline type: the render fallback for sprites. The splash and HUD show `:name` |
+| `:enemies` | Int (count of `:enemy`) or a vector of mixed specs |
+| `:chase`   | Chase speed (units/sec) |
+| `:name`    | HUD and intro-splash label |
+| `:size`    | `[width height]` in cells. Procgen levels only |
+| `:walls`   | Random wall-blob count. Used by procgen and fixed-shell levels; ignored when `:switches` is set |
 
 Optional:
 
 | Field | Meaning |
 |---|---|
-| `:enemy-lives` | Override the catalog's `:default-lives` (single-type entries only) |
-| `:door-lock`   | `:blue` / `:red` / `:yellow` - adds a matching keycard pickup and locks the exit |
-| `:layout`      | Hand-authored ASCII grid (vector of strings) - bypasses `random-grid` |
+| `:layout`      | Hand-authored ASCII grid (vector of strings); bypasses `random-grid` |
+| `:door-lock`   | `:blue` / `:red` / `:yellow` (spawns a matching keycard) or `:boss` (opens on the cyber kill) |
+| `:switches`    | `[{:at [x y] :targets [[x y] ...]}]`, see [map.md](map.md#switches) |
+| `:theme`       | Floor tint (#417), resolved by `io/render/palette.phel` `theme-floor-code` at load time; unknown falls back to `:base` |
+| `:enemy-lives` | HP override for single-type (int `:enemies`) levels |
 
 ### Mixed-monster rooms
 
-When `:enemies` is a vector, each spec spawns its own count + HP and the enemy carries `:type` for render lookup:
+A vector of specs, each with its own count and HP:
 
 ```phel
-{:size [40 30] :walls 50 :enemy :imp :name "the brood" :chase 1.8
- :enemies [{:type :pinky :count 3 :lives 2}
-           {:type :baron :count 3 :lives 4}
-           {:type :mancubus :count 2}]}   ; :lives omitted → catalog default
+{:size [54 32] :walls 78 :enemy :pinky :chase 2.0 :name "the brood" :theme :rust
+ :enemies [{:type :pinky    :count 6}
+           {:type :baron    :count 4}
+           {:type :mancubus :count 2}]}   ; :lives omitted -> catalog default
 ```
 
-### Hand-authored arenas (`:layout`)
+Specs may add `:lives N` and `:max-concurrent K` ([monsters.md](monsters.md#spawning)).
 
-`[" ###### " " #....# " " #..@.# " " #....# " " ###### "]` parses via `map/parse-layout`:
+### Layouts (`:layout`)
 
-| Char | Meaning |
+`map/parse-layout` reads one character per cell:
+
+| Char | Cell |
 |---|---|
-| `#` / `.` | wall / floor |
-| `@` | player spawn |
-| `S` | secret wall (press F to reveal) |
-| `T` | switch (toggles target cells via `:switches` config) |
+| `#` | wall |
+| `.` | floor |
+| `@` | player spawn (required, else `build-world` throws) |
+| `S` | secret wall (F reveals) |
+| `T` | switch (F toggles its `:switches` targets) |
 
-`:layout` supplies GEOMETRY + spawn (+ secrets / switches) only. It authors neither the interior walls nor the exit. `map/scatter-walls` seeds `:walls` random interior wall blobs into each hand-authored room (skipped on `:switches` levels), then seals any cut-off pocket so the floor stays connected. `map/place-exit` drops exactly one exit door at a random reachable wall, interior pillar or border edge, on EVERY level. `lock-the-door` applies the `:door-lock`. So room layout AND the way out are randomised per run: finding the exit is part of the game. Enemy spawn still applies.
+Unknown characters read as floor. A layout never holds the exit: `build-grid` scatters `:walls` (unless `:switches` is set), then `place-exit` adds the door and `lock-the-door` locks it.
 
-Switches: `:switches [{:at [cx cy] :targets [[tx ty] ...]}]`. F near `:at` flips targets wall↔floor.
+### Adding a level
 
-### Adding a new room
+Append one map literal to `levels`; `num-levels` follows. New enemy types: [monsters.md](monsters.md#catalog-enemy-types).
 
-Append one map literal to `levels`. Adding a new enemy type = append one entry to `enemies/enemy-types` (see [monsters.md](monsters.md)).
+## Difficulty
 
-## `config-for`
+`difficulty/scale-cfg` applies the multipliers before the build. `--difficulty` overrides the settings default; an unrecognised value falls back to the settings-page default (`resolve-difficulty`).
 
-```phel
-(defn config-for [n]
-  (get levels (php/max 0 (php/min (php/- num-levels 1) (php/- n 1)))))
-```
+| | easy | normal | hard | nightmare |
+|---|---|---|---|---|
+| Chase speed | x0.7 | x1.0 | x1.3 | x1.8 |
+| Enemy HP (rounded up) | x1.0 | x1.0 | x1.3 | x1.5 |
+| Enemy count (L1 only) | x0.7 | x1.0 | x1.3 | x1.5 |
+| Ammo boxes | x1.0 | x1.0 | x1.2 | x1.5 |
+| Hearts / armor shards | 1 / 3 | 1 / 3 | 1 / 4 | 2 / 5 |
 
-Level N config (1-indexed). Clamps out-of-range to nearest valid.
+Count scales only int `:enemies` (L1); mixed specs are author-tuned. Powerup odds never scale. Nightmare also gives 1-2s respawns and no `:max-concurrent` cap ([monsters.md](monsters.md#respawn)).
 
 ## `build-world`
 
-Signature: `(build-world level-num lives backpack-level diff owned)` → new world state.
+`(build-world level-num lives backpack-level diff owned)` returns a fresh world (shorter arities default to 0, `:normal`, `#{:pistol}`). `config-for` reads level N, clamped. Per build: grid, secrets, enemies ([monsters.md](monsters.md#spawning)), then pickups:
 
-Per build: grid (hand-authored or random), player spawn + angle, enemies from mixed specs. Pickups seeded:
-- Heart: only if `lives < max-lives`.
-- Armor (50%), berserk (1/8), invuln (1/12), soulsphere (1/10), backpack (L2+, 1/5).
-- 3 armor shards per level.
-- Keycard if locked (not `:boss`). Weapon drops: every weapon whose debut level has passed and the player does not own, most recent debut first, capped at 2 per level. Debuts: shotgun (L2), chaingun (L3), chainsaw (L4), rocket (L5), incinerator (L6), BFG (L7). The level's own debut weapon is always the most recent, so the cap never drops it. The rest covers a player who arrives with an empty rack (`--level=N`, or a retry) and would otherwise find nothing on the floor.
-- Ammo boxes: `max(2, ceil(total_hp / 8))` where `total_hp = sum(count * lives)`.
+| Pickup | Rule |
+|---|---|
+| Hearts | 1 (2 on nightmare), only when `lives < max-lives` |
+| Armor | 1 in 2 levels |
+| Berserk / invuln / soulsphere | 1 in 8 / 1 in 12 / 1 in 10 |
+| Backpack | 1 in 5, from L2, while below the 3-stack cap |
+| Armor shards | 3 (4 hard, 5 nightmare) |
+| Keycard | one, when the lock is a colour |
+| Weapons | every weapon whose debut level has passed and the player lacks, most recent first, capped at 2 |
+| Ammo boxes | `max(2, ceil(ammo-mul * total_hp / 8))`, `total_hp = sum(count * lives)` |
 
-Stamps: `:enemy` (primary type fallback), `:level-name`, `:difficulty`, `:intro-secs` (1.5s).
+The weapon rule (#453) arms a player who arrives with an empty rack (`--level=8`); the level's own debut is always the most recent, so the cap never drops it. The world also gets `:intro-secs` (1.5s splash) and, on L1, `:hint-secs` (first-run key hints).
 
-`run-levels` (in `commands/play.phel`) overlays cross-level state: active weapon + mag/reserve, backpack level, minimap + audio toggles, `:god?` + `:armory?` flags.
+Gotcha: every roll draws from one seeded stream in a fixed order. A guard that skips a roll must short-circuit before drawing, or every later spawn shifts and same-seed replay breaks.
 
-## Reading order through a run
+## Run flow
 
-```
-build-world 1 5     → L1 imps, no heart (started at max-lives)
-... play ...
-result :next-level :level 2 :lives 4
-build-world 2 4     → L2 demons, ONE heart (lives < 5)
-... play ...
-result :next-level :level 3 :lives 5
-build-world 3 5     → L3 cacodemons, no heart
-... play ...
-```
+`run-levels` (`commands/play.phel`) seeds `core/rng` and calls `build-world` per level, then overlays the dev flags, toggles, settings and the weapon stash.
 
-`run-levels` in `commands/play.phel` calls `build-world` per iteration.
+- **Next level**: seed from the stream (`rng/next-raw!`). Lives, kills, time, weapons, ammo, backpack and toggles carry; stamina refills.
+- **Death retry**: the same level with the weapons and backpack you entered it with, fresh ammo, full health, kills and time reset. `r` = fresh seed, `R` = same seed. Entry values keep `R` identical: a weapon grabbed during the fatal attempt would shift every later spawn.
+- **Victory or pause-menu Restart**: L1 with a fresh rack (victory `R` reuses the seed).
 
-## Replay with same seed
-
-`run-levels` captures `(php/mt_rand)` before each `build-world` and reuses it on capital `R` from an end screen. All randomness (grid, spawn, doors, enemies) draws from the same PRNG, so sequences are deterministic.
+A seed plus the input stream fully determines a run ([demo.md](demo.md)).

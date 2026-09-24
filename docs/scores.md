@@ -1,6 +1,6 @@
 # High scores
 
-Three running bests in `$HOME/.phel-doom-scores.json` (plain JSON):
+Three running bests in `$HOME/.phel-doom-scores.json`, plain JSON (`src/io/scores.phel`):
 
 ```json
 {
@@ -10,20 +10,20 @@ Three running bests in `$HOME/.phel-doom-scores.json` (plain JSON):
 }
 ```
 
-- `best-kills`: most kills in a single run
-- `best-level`: deepest level reached
-- `fastest-victory-s`: shortest L10-clear time in seconds (0 when no victory)
+- `best-kills`: most kills in one run.
+- `best-level`: deepest level reached.
+- `fastest-victory-s`: shortest run, in seconds, that cleared the last level (L10); 0 until the first victory.
 
-API: `load-scores` returns the map. `update-scores! kills level survived-s victory?` merges the run and writes the file. The end screen renders bests alongside current totals.
+`update-scores! kills level survived-s victory?` loads the file, merges the run with the pure `merge-run`, writes it back and returns the bests for the end screen. Only a victory can set `fastest-victory-s`, and only when it beats the record or none exists.
 
-Missing or malformed files return zeros. Write failures are silent: lose a score before blocking the game.
+A missing or malformed file reads as zeros. A failed write never interrupts play: `scores-write-failed?` records it and the game reports it once on exit.
 
 ## Run summary + grade (end screen)
 
-The death / victory screens also show a per-run summary, from counters accumulated across the whole run. Not persisted: it describes the single run just played.
+The death and victory screens also show a summary of the finished run. It is not persisted. `merge-run-stats` sums the counters across levels.
 
-- **accuracy** - `accuracy-pct fired hit` (`core/format`): connecting trigger pulls / total trigger pulls, as an integer percent. A "hit" is one trigger pull that connects with at least one enemy. So a piercing pistol shot through three enemies, or a shotgun cone that grazes several, still counts as ONE fired and ONE hit. A BFG/rocket blast counts as a hit only when it kills (splash has no wound-only signal). The combat step bumps `:shots-fired` in `fire-shot` and `:shots-hit` in `stamp-hit-fx`. `merge-run-stats` sums them across levels.
-- **secrets** - cumulative `found / total` across every level played (hidden when a run had no secrets).
-- **damage** - total HP lost across the run. Armor-absorbed hits cost no HP, so they don't count. Bumped in `apply-hit` when a hit lands on the life pool.
-- **by:** - a per-weapon kill breakdown (`chaingun 29  shotgun 8  pistol 5`), sorted most-used first, so the box-width clip drops the least-used weapon rather than the headline. Bumped at each kill site (`bump-weapon-kills`, keyed by the active weapon) and summed across levels.
-- **rank** - `run-grade accuracy secrets-found secrets-total` (`core/format`): a letter S/A/B/C/D from `score = 0.7*accuracy + 0.3*secrets-ratio`. The secrets ratio is `found/total`, treated as 1.0 when a run had no secrets, so a secret-less run is never penalised. Thresholds: `S >= 0.9`, `A >= 0.75`, `B >= 0.6`, `C >= 0.4`, else `D`. Pure + deterministic, so a recorded demo always grades the same. The letter is colour-coded on screen (gold S, green A, cyan B, white C, dim D).
+- **accuracy**: `accuracy-pct fired hit` (`core/format`), connecting trigger pulls over total pulls, as a rounded integer percent. `fire-shot` bumps `:shots-fired`; `stamp-hit-fx` bumps `:shots-hit`. One pull counts once, so a pistol shot piercing three enemies or a shotgun cone grazing several is one fired, one hit. A BFG or rocket blast counts as a hit only when it kills, because splash has no wound-only signal.
+- **secrets**: `found/total` across every level played. Hidden when the run had no secrets.
+- **damage**: total HP lost. `apply-hit` adds the HP lost after clamping to the pool, so armor-absorbed hits and overkill do not count.
+- **by**: kills per weapon (`chaingun 29  shotgun 8  pistol 5`), most-used first, so a narrow box clips the least-used weapon. Bumped at each kill by `bump-weapon-kills`, keyed by the active weapon.
+- **rank**: `run-grade accuracy found total` (`core/format`). `score = 0.7 * accuracy + 0.3 * secrets-ratio`, where a run with no secrets counts the ratio as 1.0. `S >= 0.9`, `A >= 0.75`, `B >= 0.6`, `C >= 0.4`, else `D`. Pure, so a recorded demo always grades the same. Colours: gold S, green A, cyan B, white C, dim D.

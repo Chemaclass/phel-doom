@@ -1,43 +1,64 @@
 # Settings
 
-Player options across audio, gameplay defaults, input, accessibility and performance (full set in the Fields table below). Persisted to `$HOME/.phel-doom-settings.json`, plain JSON and editable by hand, so choices survive restarts.
+Player options for audio, gameplay defaults, input, accessibility and rendering. Persisted to `$HOME/.phel-doom-settings.json`: plain JSON, editable by hand.
 
 ## Architecture
 
-- `src/core/settings.phel` (pure): the data model. Defaults, `coerce-settings` (clamp/validate), `move-cursor`, `adjust`, volume mappings (`music-volume`, `sfx-scalar`).
-- `src/io/settings.phel` (io): `load-settings` / `save-settings!`. A bad file never blocks startup, it returns defaults. Difficulty is stored as a string, keyword-ised on load.
-- `commands/play.phel`: wires page into start menu + in-game overlay, applies volumes to `io/sound` + `io/music`.
+- `src/core/settings.phel` (pure): the model. `page-fields` is the single table of fields; defaults, coercion, navigation and the page layout all derive from it. Also `coerce-settings`, `navigate` / `move-cursor` / `adjust`, and the value mappings (`music-volume`, `sfx-scalar`, `mouse-sensitivity`, `view-bob-intensity`).
+- `src/io/settings.phel` (io): `load-settings` / `save-settings!`. Both iterate `page-fields`, so a new field persists without extra code (a hand-written key list once dropped `:view-bob` and `:light`). The JSON key is the field name; enum fields are stored as the bare name (`"normal"`).
+- `src/commands/play.phel`: shows the page from the start menu and the pause menu, and applies volumes to `io/sound` and `io/music`.
 
-The page groups fields under section headers (Audio, Video, Play, Controls, Access) and shows a one-line hint for the field under the cursor (issue #468). Both come from the same `page-fields` table that drives navigation and rendering, so a new field cannot ship without a section and a hint. A test asserts it. On a terminal too short for seventeen fields the LIST scrolls around the cursor instead of the box growing past the screen. The selected field is always on screen.
+Loading never blocks startup. A missing or malformed file yields defaults, and `coerce-settings` clamps percents to 0-100, forces bools and resets unknown enum values to the default. A failed save does not interrupt play: `settings-write-failed?` records it and the game reports it once on exit.
+
+The page groups fields under section headers (Audio, Video, Play, Controls, Access) and shows a one-line hint for the field under the cursor (#468). A test asserts every field has both. On a terminal too short for all eighteen fields, the list scrolls around the cursor.
+
+### Terminal-derived defaults
+
+Two fields pick a default from the terminal when the player has never saved a choice. A saved choice always wins.
+
+- **Sub-pixel** starts off on macOS Terminal.app (`$TERM_PROGRAM` = `Apple_Terminal`), which draws `▀` with row seams (#332). `PHEL_DOOM_SUBPIXEL=1` forces it on.
+- **HUD glyphs** starts as `ascii` when `LC_ALL` / `LC_CTYPE` / `LANG` is not UTF-8 (#471).
 
 ## Fields
 
-| Field | Type | Range | Effect |
-|-------|------|-------|--------|
-| Music | pct | 0-100 (step 10) | OST `-v` level. 0% stops the soundtrack. 60% = 0.30 (default). Capped at 0.5, so max volume never masks footsteps. |
-| SFX | pct | 0-100 (step 10) | Global multiplier on `play-sfx!` events. 0% mutes without touching the N toggle. |
-| Minimap | bool | on / off | Default `:show-map` state. Live edits apply immediately. |
-| Difficulty | enum | easy / normal / hard / nightmare | Default for next run. CLI `--difficulty` overrides. Baked at level build time. |
-| Crosshair | enum | cross / dot / open / off | Idle reticle glyph (`+` / `·` / `○` / hidden). `off` hides the idle reticle; the hit-marker still flashes on a hit. With mouselook on, `off` still draws a minimal centre dot, so the aim point is never lost. |
-| Mouse | bool | on / off | FPS-style mouselook (issue #246), **on by default**. Move the mouse to turn + look up/down, left-click to fire. Off omits the xterm mouse-tracking escapes entirely, so a terminal that dislikes pointer capture opts out cleanly. Keyboard path unchanged either way. See [input.md](input.md#mouse-look-issue-246). |
-| Sensitivity | pct | 0-100 (step 10) | Mouselook speed multiplier, geometric around the midpoint (issue #275): `3 ^ ((pct - 50) / 50)`. **50% = the neutral 1.0x** (saved-settings back-compat). 0% slows to ~0.33x (1/3) for fine aiming, 100% speeds up to 3.0x for fast flicks. Each end sits the same ratio from neutral, so the slider spans a useful slow <-> fast range instead of the old narrow 0..2x linear band. Raise for faster turns, lower for fine tracking. The camera turn already tracks pointer speed (a 2x-bigger flick = 2x yaw); this only scales that proportional response. Mapped through `core/settings.mouse-sensitivity`. |
-| Run timer | bool | on / off | Append the elapsed run time (`M:SS`) to the row-2 HUD strip. |
-| High contrast | bool | on / off | Accessibility. Un-dims the dim/grey HUD elements: compass non-facing letters, empty heart pips and a healthy ammo-reserve count render bold white instead of SGR-dim/grey, so the HUD reads on washed-out or low-quality terminals. |
-| Colorblind | enum | none / deuteran / protan / tritan | Accessibility (colour-vision deficiency). The minimap keycard (`k`) and door (`▌`) markers are the only glyphs told apart by colour alone (blue / red / yellow share a glyph each), so a CVD player can confuse which key opens which door. Non-`none` modes remap that triad to a brightness-plus-hue-separated, CVD-safe set, the same code on a key and its matching door: `deuteran` + `protan` (red-green) use sky-blue / orange / white, `tritan` (blue-yellow) uses blue / red / white. Overlay-only palette swap, selected once per frame, so zero hot-3D-path cost. Every other marker already carries a distinct glyph (shape-not-colour). |
-| Low detail | bool | on / off | Performance. Paints each wall AND floor cell as one flat colour instead of a two-sample `▀` half-block. Trades interior vertical texture detail for speed: ~11-26% less render time (scaling up with screen size), ~31-40% fewer bytes per frame. Wall silhouettes and top/bottom edges keep their sub-pixel precision (the seam mixer still runs); sky and sprites are untouched. Off by default, so the shipped look is unchanged (golden frame hashes identical). Aimed at large terminals and slower hardware where the per-cell render loop dominates. The internal setting key stays `:fast-walls` (save-file back-compat). Dev / bench override: `PHEL_DOOM_FLAT_WALLTEX=1` forces it without touching saved settings. |
-| View bob | pct | 0-100 (step 10) | Walk-cycle head bob (#411). **0% (default) = off**, so the shipped moving look is unchanged. Higher nods the whole scene (walls, floor, sky, enemies) further as you walk. Distance-driven: a `:bob-phase` on the world advances with ground covered in `core/physics.phel` and settles to 0 at rest, so a standing frame is byte-identical. The percent maps to a `[0, 1]` amplitude via `core/settings.view-bob-intensity`, which `core/projection.bob-rows` scales by a small fraction of the viewport height (a subtle 1-2 row nod, not a look-around). Accessibility: a motion-sensitive player leaves it at 0. Aiming is unaffected: the hit gate stays on true camera pitch, so the bob never moves where a shot lands. |
-| Sub-pixel | bool | on / off | Compatibility (#332). **On** (default) draws the `▀` half-block 2-colour cells (full vertical fidelity on floor / walls / sky). **Off** falls back to one solid colour per cell. Turn it OFF on terminals that render `▀` with anti-aliased row seams or inter-line gaps, most notably **macOS Terminal.app**, where the half-block illusion breaks into visible horizontal seams. The flat-cell path renders cleanly there. Off costs vertical fidelity but is faster. See the Terminal.app note in [rendering.md](rendering.md#macos-terminalapp-compatibility). Dev / bench override: `PHEL_DOOM_NO_SUBPIXEL=1` forces it off without touching saved settings. |
-| Room light | bool | on / off | Atmosphere (#418). **Off** (default) keeps the uniform distance shading, so golden frames are unchanged. **On** folds a per-cell room-light bias into the wall shade, so levels read as dark rooms with lit pools instead of even lighting. The bias grid comes from the map at load (`core/light`, lamp pools on a coarse lattice), looked up one-per-column at the ray's hit cell, so the hot path stays within budget (measured +0.5-2.5% render, off-path byte-identical). See [rendering.md](rendering.md#per-column-shade-composition). |
-| HUD glyphs | enum | unicode / ascii | Symbol set for the HUD (issue #471). `unicode` draws the keycard, half-heart, info and bullet glyphs. `ascii` swaps each for a single-column stand-in, for a font that renders them as tofu, which is often double width and shifts every column after it. On first run a non-UTF-8 locale (`LC_ALL` / `LC_CTYPE` / `LANG`) defaults to `ascii`. A saved choice always wins. |
+| Field | Key | Type (default) | Effect |
+|-------|-----|----------------|--------|
+| Music | `:music` | pct (60) | OST volume. `music-volume` maps it to a 0-0.5 playback level (60% = 0.30), so a maxed bed never masks footsteps. 0% stops the soundtrack. |
+| SFX | `:sfx` | pct (90) | Multiplier on every `play-sfx!` event. 0% mutes without touching the `N` toggle. |
+| Minimap | `:minimap` | bool (off) | Default `:show-map`. A live edit applies at once; restarts honour it. |
+| Difficulty | `:difficulty` | enum (normal) | easy / normal / hard / nightmare. Default for the next run; CLI `--difficulty` overrides. Baked in at level build. |
+| Crosshair | `:crosshair` | enum (cross) | `+` / `·` / `○` / off. With the mouse on, `off` still draws `·`. The hit marker always flashes. |
+| Run timer | `:timer` | bool (off) | Appends elapsed run time (`M:SS`) to the row-2 HUD strip. |
+| Mouse | `:mouse` | bool (on) | Mouselook: move to turn and look, click to fire (#246). Off sends no mouse escapes, so the terminal never captures the pointer. See [input.md](input.md#mouse-look-issue-246). |
+| Sensitivity | `:sensitivity` | pct (50) | Mouselook multiplier `3 ^ ((pct - 50) / 50)` (#275): 0% = 1/3x, 50% = 1.0x, 100% = 3x. Geometric, so each end is the same ratio from neutral. |
+| High contrast | `:high-contrast` | bool (off) | Renders dim HUD elements (compass off-letters, empty heart pips, a healthy reserve count) bold white for washed-out terminals. |
+| Colorblind | `:colorblind` | enum (none) | none / deuteran / protan / tritan. Remaps the minimap keycard and door colours, the only glyphs told apart by colour alone. See [rendering.md](rendering.md#minimap-panel). |
+| Low detail | `:fast-walls` | bool (off) | One flat sample per wall and floor cell instead of a `▀` half-block: ~11-26% less render time, ~31-40% fewer bytes. For large terminals and slow machines. The key keeps its old name for save compatibility. |
+| Sub-pixel | `:subpixel` | bool (on) | `▀` half-block cells with two colours each. Off: one colour per cell, faster, less vertical detail. Turn it off where `▀` shows seams ([rendering.md](rendering.md#macos-terminalapp-compatibility)). |
+| Truecolor | `:truecolor` | bool (off) | 24-bit fog cells instead of the xterm-256 cube, so the fade has no banding. Needs a truecolor terminal. |
+| Quad detail | `:quad` | bool (off) | 2x2 quadrant glyphs where the four sub-pixels differ: smoother wall silhouettes, more horizontal floor detail. Needs Sub-pixel on. |
+| View bob | `:view-bob` | pct (0) | Walk-cycle head bob (#411), off at 0. Distance-driven: `:bob-phase` advances with ground covered and returns to 0 at rest. `view-bob-intensity` maps the percent to [0, 1] and `projection/bob-rows` scales that to a 1-2 row nod. Aim is unaffected: the hit gate uses true pitch. |
+| Room light | `:light` | bool (off) | Folds a per-cell room-light bias (#418) into the wall shade, so levels read as dark rooms with lit pools. Looked up once per column; +0.5-2.5% render ([rendering.md](rendering.md#per-column-shade-composition)). |
+| HUD glyphs | `:glyphs` | enum (unicode) | unicode / ascii (#471). ascii swaps the keycard, heart, info and bullet glyphs for single-column stand-ins, for fonts that draw them as double-width tofu. |
+| Texture filter | `:texmip` | bool (off) | Picks a pre-filtered texture level per wall column (#462), replacing far-wall speckle with an average. |
+
+Every rendering option except Sub-pixel defaults off, and off is byte-identical to the shipped frame. All but Room light and View bob have a `PHEL_DOOM_*` environment override that applies for one run without touching the saved file; the list, scope and costs are in [rendering.md](rendering.md#optional-render-modes).
 
 ## Access
 
-Pressing `p` opens the navigable **pause menu** (issue #203): `Resume` / `Settings` / `Restart` / `Quit`. `up`/`down` (or `w`/`s`) move the cursor, `enter` or `space` selects. `Resume` unpauses. `Settings` drops into the options sub-page below. `Restart` restarts the run from level 1 with a fresh seed, asking twice first (the row reads `Restart?  enter again`; moving the cursor disarms). `Quit` exits to the shell. `q` in a live run opens this menu on Quit, so a second `q` quits (issue #454). Start menu: ENTER to play, `s` for settings, `q` quit.
+**Start menu.** `Enter` or `Space` plays, `s` opens settings, `q` quits. On that settings screen `Esc` goes back and saves.
 
-On the **Settings** sub-page: `up`/`down` (or `w`/`s`) move the cursor, `left`/`right` (or `a`/`d`) adjust the selected value. WASD is the fallback when arrow codes misfire. Holding ramps sliders. `enter` or `space` (or `p`) backs out to the pause menu. Leaving the pause overlay persists changes.
+**Pause menu** (`P`, #203): `Resume` / `Settings` / `Restart` / `Quit`. Up/down or `w`/`s` move the cursor; `Enter` or `Space` selects.
 
-Control internals: `glue/controls.nav-deltas` converts raw key drain to `{:cursor :value}` steps, `core/settings.navigate` applies them. Settings live on the world as `:settings` / `:settings-cursor`, so `frame-stats` can render them and edits carry across level cuts.
+- `Resume` unpauses.
+- `Settings` opens the options sub-page.
+- `Restart` restarts the run from level 1 with a fresh seed. It asks twice: the row reads `Restart?  enter again`, and moving the cursor disarms it.
+- `Quit` exits. `q` in a live run opens this menu with the cursor on Quit, so a second `q` quits (#454).
+
+**Settings sub-page.** Up/down or `w`/`s` move the cursor; left/right or `a`/`d` change the value. WASD is the fallback when arrow codes misfire. Holding a key ramps a slider. `Enter` or `Space` returns to the pause menu; `P` resumes the game directly. Leaving the pause overlay (resume or quit) saves the settings.
+
+Internals: `glue/controls.nav-deltas` turns the drained keys into `{:cursor :value}` steps and `core/settings.navigate` applies them. Settings ride on the world as `:settings` / `:settings-cursor`, so `frame-stats` can render them and edits survive level changes. A quick-load keeps the live settings, not the ones in the save (#279).
 
 ## Platform note
 
-Volume reaches `afplay -v 0..1`, `paplay --volume=0..65536` and `play -v` (issue #459). Only `aplay` has no volume flag. There the sliders persist and the N toggle works, but the level does not change.
+Volume reaches `afplay -v 0..1`, `paplay --volume=0..65536` and `play -v`. `aplay` has no volume flag: there the sliders persist and `N` works, but the level does not change.

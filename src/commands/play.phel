@@ -290,8 +290,8 @@
    left/right (or A/D) adjust the selected field. A held key ramps
    through the OS key-repeat. Volume edits take effect immediately;
    the minimap field mirrors into :show-map so the change shows at once."
-  [^map world keys]
-  (let [{cursor-steps :cursor value-steps :value} (nav-deltas keys)
+  [^map world pressed]
+  (let [{cursor-steps :cursor value-steps :value} (nav-deltas pressed)
         {:keys [cursor settings adjusted?]}
         (navigate (:settings world) (or (:settings-cursor world) 0) cursor-steps value-steps)]
     (when adjusted? (apply-audio-settings! settings))
@@ -485,7 +485,7 @@
    top-to-bottom: handle one-shots, refresh held-key counters, run
    physics, collect pickups, advance enemies, resolve a shot, decay
    timers + apply contact damage."
-  [^map world keys ^float dt ^map edges]
+  [^map world pressed ^float dt ^map edges]
   ;; Reset the per-frame sfx queue up front so events accumulate fresh
   ;; each tick. Every cue (pickups, interactions, combat) enqueues via
   ;; combat/push-sfx instead of emitting inline, keeping this transform
@@ -507,7 +507,7 @@
       ;; but the lint pass doesn't macro-expand it (arity-mismatch
       ;; false positives), so stick with sequential let bindings.
       :else
-      (let [w1   (refresh-from-keys w0 keys)
+      (let [w1   (refresh-from-keys w0 pressed)
             ;; Weapon swap (1-8) routes through weapons/switch-weapon
             ;; — no-op when the player is mid-reload so the lockout
             ;; can't be skipped.
@@ -1044,9 +1044,9 @@
               ;; feeds recorded frames (issue #64). A replay that runs
               ;; out of frames sets `:end?` and the cond below quits.
                 frame     (demo/resolve-frame! live-keys live-ms)
-                keys      (or (:keys frame) "")
+                pressed   (or (:keys frame) "")
                 ms        (or (:ms frame) live-ms)
-                now-keys  (key-states keys)
+                now-keys  (key-states pressed)
                 edges0    (rising-edges now-keys prev-keys)
                 ;; Mouselook (#324): parse the same drained byte string for
                 ;; SGR mouse reports. The crosshair is fixed dead-centre
@@ -1066,14 +1066,14 @@
                 ;; rate independent at any cap.
                 mouse-on? (boolean (:mouse (:settings world)))
                 mpos      (if (not= [rows cols] dims) nil prev-mpos)
-                look      (mouse-aim keys mpos
+                look      (mouse-aim pressed mpos
                                      (mouse-sensitivity (:settings world))
                                      (php// ms 1000.0)
                                      [rows cols])
                 ;; Wheel ticks are weapon steps (#464): the same drained
                 ;; byte string, read for scroll reports the aim path
                 ;; deliberately ignores. Brackets already arrive as edges.
-                wheel     (wheel-weapon-step keys)
+                wheel     (wheel-weapon-step pressed)
                 edges     (assoc edges0
                                  :fire      (or (:fire edges0) (:fire? look))
                                  :fire-held (or (:fire-held edges0) (:fire-held? look))
@@ -1115,7 +1115,7 @@
                     aimed    (if (and mouse-on? (not (:paused world)))
                                (apply-mouse-look reticled look)
                                reticled)
-                    ticked0  (tick-world aimed keys (php// ms 1000.0) edges)
+                    ticked0  (tick-world aimed pressed (php// ms 1000.0) edges)
                   ;; Pause overlay (#203): while paused (and not in the H
                   ;; info panel) the navigable pause MENU is up. up/down move
                   ;; the cursor, enter/space selects. Selecting Settings drops
@@ -1126,10 +1126,10 @@
                                (not (and (:paused ticked0) (not (:help? ticked0))))
                                ticked0
                                (= (:pause-screen ticked0) :settings)
-                               (let [s (step-settings! ticked0 keys)]
+                               (let [s (step-settings! ticked0 pressed)]
                                  (if (:confirm edges) (assoc s :pause-screen :menu) s))
                                :else
-                               (step-pause-menu ticked0 (:cursor (nav-deltas keys)) (:confirm edges)))
+                               (step-pause-menu ticked0 (:cursor (nav-deltas pressed)) (:confirm edges)))
                   ;; F5 / F9 quick-save / load run here (file IO),
                   ;; outside the pure tick. Load swaps the whole world;
                   ;; both stamp a brief HUD flash so the player sees it
@@ -1204,12 +1204,12 @@
       (redraw-if-resized dims rows cols)
       (render-fn cols rows)
       (php/usleep menu-frame-us)
-      (let [keys (drain-keys)]
+      (let [pressed (drain-keys)]
         (cond
-          (or (str/contains? keys "q") (interrupted?)) :quit
-          (str/contains? keys "R")                     :restart-same
-          (str/contains? keys "r")                     :restart
-          :else                                        (recur [rows cols] (php/+ frame 1) [rows cols]))))))
+          (or (str/contains? pressed "q") (interrupted?)) :quit
+          (str/contains? pressed "R")                     :restart-same
+          (str/contains? pressed "r")                     :restart
+          :else                                           (recur [rows cols] (php/+ frame 1) [rows cols]))))))
 
 (defn- intermission-loop
   "Show the between-level card until the player presses something (#470).
@@ -1237,11 +1237,11 @@
                                     (or (:secrets-total result) 0)
                                     (or (:survived-s result) 0))
         (php/usleep menu-frame-us)
-        (let [keys (drain-keys)]
+        (let [pressed (drain-keys)]
           (cond
-            (or (str/contains? keys "q") (interrupted?)) :quit
-            (php/> (php/strlen keys) 0)                  :continue
-            :else                                        (recur [rows cols] (php/+ frame 1) [rows cols])))))))
+            (or (str/contains? pressed "q") (interrupted?)) :quit
+            (php/> (php/strlen pressed) 0)                  :continue
+            :else                                           (recur [rows cols] (php/+ frame 1) [rows cols])))))))
 
 (defn- death-loop [kills survived-s level level-name scores summary]
   (end-loop (fn [cols rows]
@@ -1517,8 +1517,8 @@
       (redraw-if-resized dims rows cols)
       (render-settings! cols rows settings cursor)
       (php/usleep menu-frame-us)
-      (let [keys     (drain-keys)
-            now      (key-states keys)
+      (let [pressed  (drain-keys)
+            now      (key-states pressed)
             ;; Naked-ESC edge: key-states folds ESC into the h-aliased
             ;; info panel in game, but this pre-game screen just needs
             ;; "did ESC go down this frame" to go back.
@@ -1533,7 +1533,7 @@
           ;; recur re-bind the loop's ORIGINAL values, silently dropping
           ;; every edit. Use `nav` + accessors so the recur threads the
           ;; navigated map forward.
-          (let [{cursor-steps :cursor value-steps :value} (nav-deltas keys)
+          (let [{cursor-steps :cursor value-steps :value} (nav-deltas pressed)
                 nav                                       (navigate settings cursor cursor-steps value-steps)]
             (when (:adjusted? nav) (apply-audio-settings! (:settings nav)))
             (recur (:settings nav) (:cursor nav) now [rows cols] (php/+ frame 1) [rows cols])))))))
@@ -1541,10 +1541,10 @@
 (defn- start-pressed?
   "True when `keys` carries an ENTER / Return (raw mode sends CR; some
    terminals send LF). Space also starts, as a forgiving second key."
-  [keys]
-  (or (str/contains? keys "\r")
-      (str/contains? keys "\n")
-      (str/contains? keys " ")))
+  [pressed]
+  (or (str/contains? pressed "\r")
+      (str/contains? pressed "\n")
+      (str/contains? pressed " ")))
 
 (defn- show-start-menu!
   "Block on the start screen until the player acts. Re-draws each frame
@@ -1561,18 +1561,18 @@
       (redraw-if-resized dims rows cols)
       (render-start-menu cols rows (pointer-limit-notice (terminal-program)))
       (php/usleep menu-frame-us)
-      (let [keys (drain-keys)]
+      (let [pressed (drain-keys)]
         (cond
           ;; Ctrl-C must work here too: install-signal-handlers! replaces
           ;; the default terminate disposition process-wide, so a menu
           ;; that never dispatches would swallow the signal entirely and
           ;; then fire it at the first frame of the run the player starts.
-          (or (str/contains? keys "q") (interrupted?)) :quit
+          (or (str/contains? pressed "q") (interrupted?)) :quit
           ;; Returning from the settings sub-loop is a fresh entry; reset
           ;; the poll counter so the menu re-samples size eagerly.
-          (str/contains? keys "s")                     (recur (settings-screen! settings) [rows cols] 0 [rows cols])
-          (start-pressed? keys)                        settings
-          :else                                        (recur settings [rows cols] (php/+ frame 1) [rows cols]))))))
+          (str/contains? pressed "s")                     (recur (settings-screen! settings) [rows cols] 0 [rows cols])
+          (start-pressed? pressed)                        settings
+          :else                                           (recur settings [rows cols] (php/+ frame 1) [rows cols]))))))
 
 (defn- resolve-difficulty
   "Pick the run difficulty: an explicit, valid --difficulty CLI value

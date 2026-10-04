@@ -298,9 +298,9 @@
    up/down so the floor plane tracks the pitched wall band; pr=0 keeps
    the table identical."
   [^int vh ^float k & [pr-arg]]
-  (let [pr     (or pr-arg 0)
-        arr    (php/array)
-        center (php/+ (php/* 0.5 vh) pr)]
+  (let [pitch-offset (or pr-arg 0)
+        arr          (php/array)
+        center       (php/+ (php/* 0.5 vh) pitch-offset)]
     (loop [r 0]
       (when (php/< r vh)
         (let [p (php/- (php/+ r 0.5) center)]
@@ -358,10 +358,10 @@
    up/down so the floor tracks the pitched wall sub-bounds; pr=0 keeps
    the table identical."
   [^int vh ^float k & [pr-arg]]
-  (let [pr     (or pr-arg 0)
-        arr    (php/array)
-        sub    (php/* 2 vh)
-        center (php/+ (php/* 1.0 vh) (php/* pr 2))]
+  (let [pitch-offset (or pr-arg 0)
+        arr          (php/array)
+        sub          (php/* 2 vh)
+        center       (php/+ (php/* 1.0 vh) (php/* pitch-offset 2))]
     (loop [s 0]
       (when (php/< s sub)
         (let [p (php/- (php/+ s 0.5) center)]
@@ -460,7 +460,7 @@
         ;; non-mix wall-texture branch's per-ROW `(max 1 (- bot top))`
         ;; in emit-scene-px1 into one `aget`.
         wall-h-buf                                                     (buf-mk)
-        pr                                                             (or pr-arg 0)
+        pitch-offset                                                             (or pr-arg 0)
         ;; Column-loop invariant: vh-1 is used in sky-edge-row and
         ;; flr-edge-row (both per-column). Hoisting saves 2*vw
         ;; subtractions per compute-wall-shades call.
@@ -481,7 +481,7 @@
       (when (php/< col vw)
         (let [dist         (buf-get dists col)
               wall-h       (php/min vh (php/intval (wall-px pd dist)))
-              top          (php/+ (php/intdiv (php/- vh wall-h) 2) pr)
+              top          (php/+ (php/intdiv (php/- vh wall-h) 2) pitch-offset)
               blood?       (php/> (buf-get blood-cols col) 0.4)
               stbl-l       (if blood? shade-table-blood stbl)
               ctbl-l       (if blood? shade-code-table-blood ctbl)
@@ -685,23 +685,23 @@
    default 0) shears the sub-row band by `pr*n` for look up/down so the
    seam tracks the cell-res tops; pr=0 keeps the bounds identical."
   [dists tex-levels emask tops bots ^bool sprites-on ^bool tex-on? ^int svw ^int svh ^float pd ^int n & [pr-arg]]
-  (let [pr  (or pr-arg 0)
-        ts  (php/array)
-        bs  (php/array)
-        mx  (php/array)
-        sl  (php/array)
-        ff  (php/array)
-        nf  (php/* 1.0 n)
-        cap (php/* n svh)
+  (let [pitch-offset   (or pr-arg 0)
+        ts             (php/array)
+        bs             (php/array)
+        mx             (php/array)
+        sl             (php/array)
+        ff             (php/array)
+        nf             (php/* 1.0 n)
+        cap            (php/* n svh)
         ;; Look up/down: shear the sub-row wall band by `pr` SCENE rows =
         ;; `pr*n` sub-rows (n per scene cell), matching the cell-res tops
         ;; from compute-wall-shades so the half-row seam tracks the band.
-        prn (php/* pr n)]
+        pitch-offset-n (php/* pitch-offset n)]
     (loop [c 0]
       (when (php/< c svw)
         (let [dist (buf-get dists c)
               whs  (php/min cap (php/intval (wall-px (php/* nf pd) dist)))
-              t    (php/+ (php/intdiv (php/- cap whs) 2) prn)
+              t    (php/+ (php/intdiv (php/- cap whs) 2) pitch-offset-n)
               b    (php/+ t whs)
               ;; Plain nested `if` (ternary) instead of `and`/`or`: those
               ;; macro forms compile to a per-column IIFE closure capturing
@@ -776,29 +776,29 @@
    pr=0 / sub-vh=vh / pr-sub=pr reproduces the pre-memo bundle
    byte-for-byte."
   [^int vh & [pr-arg sub-vh-arg pr-sub-arg base-arg]]
-  (let [pr     (or pr-arg 0)
-        sub-vh (or sub-vh-arg vh)
-        pr-sub (or pr-sub-arg pr)
-        base   (or base-arg 239)
-        c      @gradient-cache]
-    (if (and (php/=== vh (:vh c)) (php/=== pr (:pr c))
+  (let [pitch-offset (or pr-arg 0)
+        sub-vh       (or sub-vh-arg vh)
+        pr-sub       (or pr-sub-arg pitch-offset)
+        base         (or base-arg 239)
+        c            @gradient-cache]
+    (if (and (php/=== vh (:vh c)) (php/=== pitch-offset (:pr c))
              (php/=== sub-vh (:sub-vh c)) (php/=== pr-sub (:pr-sub c))
              (php/=== base (:base c)))
       c
-      (let [fd     (build-floor-dperp vh floor-cast-k pr)
+      (let [fd     (build-floor-dperp vh floor-cast-k pitch-offset)
             fds    (build-floor-dperp-sub sub-vh floor-cast-k-sub pr-sub)
             bundle {:vh              vh
-                    :pr              pr
+                    :pr              pitch-offset
                     :sub-vh          sub-vh
                     :pr-sub          pr-sub
                     :base            base
-                    :sky             (build-horizon-gradient vh shade-table pr)
-                    :sky-hb          (build-sky-halfblock vh shade-code-table pr)
-                    :floor           (build-themed-gradient vh base true pr)
-                    :sky-code        (build-horizon-gradient vh shade-code-table pr)
-                    :floor-code      (build-themed-gradient-codes vh base true pr)
-                    :blood-sky       (build-horizon-gradient vh shade-table-blood pr)
-                    :blood-sky-code  (build-horizon-gradient vh shade-code-table-blood pr)
+                    :sky             (build-horizon-gradient vh shade-table pitch-offset)
+                    :sky-hb          (build-sky-halfblock vh shade-code-table pitch-offset)
+                    :floor           (build-themed-gradient vh base true pitch-offset)
+                    :sky-code        (build-horizon-gradient vh shade-code-table pitch-offset)
+                    :floor-code      (build-themed-gradient-codes vh base true pitch-offset)
+                    :blood-sky       (build-horizon-gradient vh shade-table-blood pitch-offset)
+                    :blood-sky-code  (build-horizon-gradient vh shade-code-table-blood pitch-offset)
                     :sky-sub-codes   (build-sky-codes-sub sub-vh shade-code-table pr-sub)
                     :floor-dperp     fd
                     :floor-level     (build-floor-level fd vh)
@@ -1613,14 +1613,14 @@
         ;; and only paid with View bob on. See docs/performance.md.
         bob-ph                             (or (:bob-phase world) 0.0)
         bob-int                            (get stats :view-bob 0.0)
-        pr                                 (php/+ (pitch-rows (or (:pitch (:player world)) 0.0) svh)
-                                                  (bob-rows bob-ph bob-int svh))
+        pitch-offset                                 (php/+ (pitch-rows (or (:pitch (:player world)) 0.0) svh)
+                                                            (bob-rows bob-ph bob-int svh))
         ;; Sub-row twin: the half-block sky / floor-cast tables index at
         ;; 2 sub-rows per SCENE row at full detail and 2 per PASSED-vh row
         ;; in px2 (where the table is built at 2·svh). They scale `pr` by
         ;; 2 internally, so a px2 scene-row shift needs 2·pr handed in to
         ;; land 4 sub-rows per scene cell - matching the n=4 wall bounds.
-        pr-sub                             (if px2? (php/* 2 pr) pr)
+        pr-sub                             (if px2? (php/* 2 pitch-offset) pitch-offset)
         ;; Full-resolution pitch shear (rows): the HP-flash overlay floats
         ;; at terminal resolution (vh, not svh), so it tracks the sprite
         ;; head using the vh-scaled offset.
@@ -1644,7 +1644,7 @@
         ;; mode (2×svh instead of svh); at full detail it collapses back
         ;; to svh so the memo key degenerates to the pre-existing (svh, pr).
         sub-vh                             (if px2? (php/* 2 svh) svh)
-        grads                              (frame-gradients svh pr sub-vh pr-sub floor-base)
+        grads                              (frame-gradients svh pitch-offset sub-vh pr-sub floor-base)
         sky-gradient                       (:sky grads)
         ;; Half-block sky: per-row ▀ cell stacking two sub-rows of the
         ;; horizon gradient (2× vertical smoothness). Row-constant, so it
@@ -1907,7 +1907,7 @@
                               :blood-floor-code-grad blood-floor-code-gradient}
                              blood-cols
                              scene-pd
-                             pr
+                             pitch-offset
                              light-grid
                              gw
                              texmip?
@@ -2061,7 +2061,7 @@
           ;; `scene-pd` is halved in px2 mode, so the projection scales there.
           (let [feet-row (php/+ (php/intval (php/round (php/+ (php// svh 2.0)
                                                               (php/* 0.5 (wall-px scene-pd d)))))
-                                pr)
+                                pitch-offset)
                 e-top    (php/- feet-row h)]
             (let [e-bot         (php/+ e-top h)
                   e-mid         (php/+ e-top (php/intdiv h 3))
@@ -2167,7 +2167,7 @@
               ;; pass anchors the sprite to, so shadow + feet track together.
               e-bot  (php/+ (php/intval (php/round (php/+ (php// svh 2.0)
                                                           (php/* 0.5 (wall-px scene-pd d)))))
-                            pr)
+                            pitch-offset)
               c-from (php/max 0 (php/- col hw))
               c-to   (php/min (php/- svw 1) (php/+ col hw))]
           (when (php/< e-bot svh)
@@ -2298,7 +2298,7 @@
                                                      (if px2? tex-on? (if subpixel? tex-on? false))
                                                      svw svh scene-pd
                                                      (if px2? 4 2)
-                                                     pr)
+                                                     pitch-offset)
           wsub-top            (php/aget wsub 0)
           wsub-bot            (php/aget wsub 1)
           wsub-mix            (php/aget wsub 2)
@@ -2434,7 +2434,7 @@
                                                 (if px2?
                                                   (collect-enemy-projs-pd scene-pd (:enemies world) (:player world) svw)
                                                   enemy-projs)
-                                                stats svw svh dists edists face-phase px-sc pr))
+                                                stats svw svh dists edists face-phase px-sc pitch-offset))
             p4          (paint-crosshair          p1 stats vw vh center-bg)
             p5          (paint-intro-splash       p4 stats vw vh)
             p6          (paint-blood-drops        p5 stats vw vh)
@@ -2477,7 +2477,7 @@
                                                   (if px2?
                                                     (collect-enemy-projs-pd scene-pd (:enemies world) (:player world) svw)
                                                     enemy-projs)
-                                                  stats svw svh dists edists px-sc pr)
+                                                  stats svw svh dists edists px-sc pitch-offset)
             ;; Clipped at the minimap's left margin: the panel's content
             ;; starts on row 3 too, and this pass paints after it.
             p19d        (paint-message           p19c2 stats

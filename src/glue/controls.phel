@@ -132,9 +132,9 @@
    stops the player within ~150ms instead of ~300ms.
 
    Anything else (unmapped bytes) leaves the world untouched."
-  [^map world byte]
-  (let [slot       (get key->slot byte)
-        shift-slot (get shift-key->slot byte)]
+  [^map world input-byte]
+  (let [slot       (get key->slot input-byte)
+        shift-slot (get shift-key->slot input-byte)]
     (cond
       (some? shift-slot)
       (-> world
@@ -161,8 +161,8 @@
   (php/array "^"    "_"    "<"    ">"
              "^"    "_"    "<"    ">"))
 
-(defn- normalise-arrows [keys]
-  (php/str_replace arrow-escape-keys arrow-escape-replacements keys))
+(defn- normalise-arrows [pressed]
+  (php/str_replace arrow-escape-keys arrow-escape-replacements pressed))
 
 ;; ---------------------------------------------------------------------
 ;; Kitty keyboard protocol parsing.
@@ -259,7 +259,7 @@
    Returns [world-after-events leftover-string]; leftover-string is
    what's left after stripping recognised CSI-u tokens so the legacy
    byte path can handle anything that wasn't a kitty event."
-  [^map world keys]
+  [^map world pressed]
   (let [matches (php/array)
         ;; Regex: ESC [ <code> ( ; mods ( : event )? )? u
         ;; - code  is digits
@@ -267,14 +267,14 @@
         ;;         as bits+1; bit 0 = SHIFT — used by sprint arming)
         ;; - event optional digits after ':' (1=press 2=repeat 3=release)
         re      "/\\x1b\\[(\\d+)(?:;(\\d+)(?::(\\d+))?)?u/"]
-    (php/preg_match_all re keys matches)
+    (php/preg_match_all re pressed matches)
     (let [codes-arr (php/aget matches 1)
           mods-arr  (php/aget matches 2)
           ev-arr    (php/aget matches 3)
           n         (php/count codes-arr)]
       (loop [i 0 w world]
         (if (php/>= i n)
-          [w (php/preg_replace re "" keys)]
+          [w (php/preg_replace re "" pressed)]
           (let [code  (php/intval (php/aget codes-arr i))
                 mods  (kitty-mods (php/aget mods-arr i))
                 event (kitty-event (php/aget ev-arr i))]
@@ -299,17 +299,17 @@
    sprinting (mirrors the SHIFT+WASD path in apply-kitty-events).
    Plain legacy arrows (\\e[A etc.) are untouched here and handled
    downstream by normalise-arrows. Returns [world leftover]."
-  [^map world keys]
+  [^map world pressed]
   (let [matches (php/array)
         re      "/\\x1b\\[1(?:;(\\d+)(?::(\\d+))?)?([ABCD])/"]
-    (php/preg_match_all re keys matches)
+    (php/preg_match_all re pressed matches)
     (let [mods-arr (php/aget matches 1)
           ev-arr   (php/aget matches 2)
           letters  (php/aget matches 3)
           n        (php/count letters)]
       (loop [i 0 w world]
         (if (php/>= i n)
-          [w (php/preg_replace re "" keys)]
+          [w (php/preg_replace re "" pressed)]
           (let [letter (php/aget letters i)
                 mods   (kitty-mods (php/aget mods-arr i))
                 event  (kitty-event (php/aget ev-arr i))
@@ -335,8 +335,8 @@
 (defn- strip-mouse-reports
   "Remove every SGR mouse report from `keys` so the movement / edge
    parsers below see only keyboard bytes. Pure string scrub."
-  [keys]
-  (php/preg_replace mouse-report-re "" keys))
+  [pressed]
+  (php/preg_replace mouse-report-re "" pressed))
 
 (def- focus-out-re
   ;; Focus tracking (`\e[?1004h`, enabled by io/input): the terminal
@@ -351,15 +351,15 @@
   "True when the terminal reported the window losing focus this frame
    (#454). The game pauses on it, so alt-tabbing away can't leave the
    player standing in front of an enemy."
-  [keys]
-  (= 1 (php/preg_match focus-out-re keys)))
+  [pressed]
+  (= 1 (php/preg_match focus-out-re pressed)))
 
 (defn- strip-focus-events
   "Remove focus in / out reports from `keys`. `esc-pressed?` already
    discards them with its CSI strip, but the movement walk should never
    see them either."
-  [keys]
-  (php/preg_replace focus-event-re "" keys))
+  [pressed]
+  (php/preg_replace focus-event-re "" pressed))
 
 (defn refresh-from-keys
   "Fold every input byte into `world`. Four-stage parse: strip SGR mouse
@@ -368,10 +368,10 @@
    (\\e[1;m:eD with same events) → legacy normalise + single-byte
    refresh. Terminals supporting any subset of kitty fall through
    gracefully to the legacy path."
-  [^map world keys]
-  (if (php/=== "" keys)
+  [^map world pressed]
+  (if (php/=== "" pressed)
     world
-    (let [no-mouse       (strip-focus-events (strip-mouse-reports keys))
+    (let [no-mouse       (strip-focus-events (strip-mouse-reports pressed))
           [w1 leftover1] (apply-kitty-events world no-mouse)
           [w2 leftover2] (apply-kitty-arrow-events w1 leftover1)]
       (let [normalised (normalise-arrows leftover2)
@@ -526,10 +526,10 @@
    SGR button codes: bit 6 marks a wheel report, and the low bits give
    the direction (64 = up, 65 = down). The LAST tick in the frame wins,
    so a fast flick lands on one weapon rather than replaying the rack."
-  [keys]
+  [pressed]
   (let [re    "/\\x1b\\[<(\\d+);\\d+;\\d+[Mm]/"
         m     (php/array)
-        found (php/preg_match_all re keys m)]
+        found (php/preg_match_all re pressed m)]
     (if (or (php/=== found false) (php/=== found 0))
       0
       (loop [i 0 step 0]
@@ -670,13 +670,13 @@
    parses, so non-loop callers are unaffected. A non-mouse sequence (kitty
    CSI-u key, arrow, F-key) matches nothing, so the keyboard path is never
    disturbed."
-  [keys prev-pos ^float sensitivity ^float dt & [dims]]
+  [pressed prev-pos ^float sensitivity ^float dt & [dims]]
   (let [matches (php/array)
         rows    (when (some? dims) (get dims 0))
         cols    (when (some? dims) (get dims 1))
         ;; ESC [ < b ; Cx ; Cy (M|m) — SGR-extended (1006) mouse report.
         re      "/\\x1b\\[<(\\d+);(\\d+);(\\d+)([Mm])/"]
-    (php/preg_match_all re keys matches)
+    (php/preg_match_all re pressed matches)
     (let [bs     (php/aget matches 1)
           xs     (php/aget matches 2)
           ys     (php/aget matches 3)
@@ -748,19 +748,19 @@
    :q false :focus-out false
    :esc false :k1 false :k2 false :k3 false :k4 false :k5 false :k6 false :k7 false})
 
-(defn- f3-pressed? [keys]
+(defn- f3-pressed? [pressed]
   ;; F3 across terminals: xterm/macOS Terminal/iTerm2 send `\eOR`;
   ;; Linux console + a few others send `\e[13~`. Cover both.
-  (or (str/contains? keys "\eOR")
-      (str/contains? keys "\e[13~")))
+  (or (str/contains? pressed "\eOR")
+      (str/contains? pressed "\e[13~")))
 
-(defn- f5-pressed? [keys]
+(defn- f5-pressed? [pressed]
   ;; F5 = `\e[15~` on xterm / iTerm2 / Terminal.app / Linux console.
-  (str/contains? keys "\e[15~"))
+  (str/contains? pressed "\e[15~"))
 
-(defn- f9-pressed? [keys]
+(defn- f9-pressed? [pressed]
   ;; F9 = `\e[20~`.
-  (str/contains? keys "\e[20~"))
+  (str/contains? pressed "\e[20~"))
 
 (defn- esc-pressed?
   "True when ESC was pressed this frame. Two paths:
@@ -777,21 +777,21 @@
       would erase that whole sequence, so we explicitly preg_match
       kitty's press-only form first. Same `:1` / no-`:event` rule as
       `key-pressed?` so repeats (`:2`) / releases (`:3`) don't fire."
-  [keys]
+  [pressed]
   (let [kitty-esc-re "/\\x1b\\[27(?:u|;\\d+(?::1)?u)/"
         re           "/\\x1b(?:\\[[\\d;:<=>?]*[@-~]|O[A-Za-z])/"
-        stripped     (php/preg_replace re "" keys)]
-    (or (= 1 (php/preg_match kitty-esc-re keys))
+        stripped     (php/preg_replace re "" pressed)]
+    (or (= 1 (php/preg_match kitty-esc-re pressed))
         (str/contains? stripped "\e"))))
 
 (defn- enter-pressed?
   "True when ENTER / Return appears in `keys`. Raw mode sends CR (`\\r`),
    some terminals LF (`\\n`); kitty CSI-u wraps Return (code 13) as
    `\\e[13u` (press-only, same `:1`/no-`:event` rule as key-pressed?)."
-  [keys]
-  (or (str/contains? keys "\r")
-      (str/contains? keys "\n")
-      (= 1 (php/preg_match "/\\x1b\\[13(?:u|;\\d+(?::1)?u)/" keys))))
+  [pressed]
+  (or (str/contains? pressed "\r")
+      (str/contains? pressed "\n")
+      (= 1 (php/preg_match "/\\x1b\\[13(?:u|;\\d+(?::1)?u)/" pressed))))
 
 (defn- key-pressed?
   "True when the byte `plain` OR its kitty CSI-u PRESS code appears in
@@ -808,11 +808,11 @@
    2. The kitty regex matches PRESS events only (no `:event` suffix
       OR `:1`); repeat (`:2`) and release (`:3`) are excluded so a
       held key fires exactly once on its rising edge."
-  [keys plain code]
-  (let [stripped (php/preg_replace "/\\x1b\\[[\\d;:<=>?]*[@-~]/" "" keys)
+  [pressed plain code]
+  (let [stripped (php/preg_replace "/\\x1b\\[[\\d;:<=>?]*[@-~]/" "" pressed)
         kitty-re (str "/\\x1b\\[" code "(?:u|;\\d+(?::1)?u)/")]
     (or (str/contains? stripped plain)
-        (= 1 (php/preg_match kitty-re keys)))))
+        (= 1 (php/preg_match kitty-re pressed)))))
 
 (defn- arrow-count
   "How many PRESS / REPEAT arrows with final byte `letter` (A=up B=down
@@ -827,9 +827,9 @@
    optional `(?::[12])?` accepts press (`:1` / none) and repeat (`:2`,
    so a held key still ramps) but not release. Counting (not a bool)
    lets a held key's repeat burst ramp a slider."
-  [keys letter]
+  [pressed letter]
   (let [m (php/array)]
-    (php/preg_match_all (str "/\\x1b(?:\\[[\\d;]*(?::[12])?|O)" letter "/") keys m)))
+    (php/preg_match_all (str "/\\x1b(?:\\[[\\d;]*(?::[12])?|O)" letter "/") pressed m)))
 
 (defn nav-deltas
   "Net menu-navigation intent in `keys` for the settings page, as
@@ -839,11 +839,11 @@
    when a terminal's arrow encoding isn't recognised, and a held key
    (arrow or WASD) ramps via OS key-repeat. Read straight off the drain
    string, no rising-edge snapshot needed."
-  [keys]
-  (let [up    (php/+ (arrow-count keys "A") (php/substr_count keys "w"))
-        down  (php/+ (arrow-count keys "B") (php/substr_count keys "s"))
-        left  (php/+ (arrow-count keys "D") (php/substr_count keys "a"))
-        right (php/+ (arrow-count keys "C") (php/substr_count keys "d"))]
+  [pressed]
+  (let [up    (php/+ (arrow-count pressed "A") (php/substr_count pressed "w"))
+        down  (php/+ (arrow-count pressed "B") (php/substr_count pressed "s"))
+        left  (php/+ (arrow-count pressed "D") (php/substr_count pressed "a"))
+        right (php/+ (arrow-count pressed "C") (php/substr_count pressed "d"))]
     {:cursor (php/- down up)
      :value  (php/- right left)}))
 
@@ -852,31 +852,31 @@
    Codes are ASCII codepoints for the matching lowercase letter /
    digit (m=109, p=112, etc.) so the kitty CSI-u path stays in sync
    with the legacy byte path."
-  [keys]
-  {:m  (key-pressed? keys "m" 109)
-   :sp (key-pressed? keys " " 32)
-   :p  (key-pressed? keys "p" 112)
-   :n  (key-pressed? keys "n" 110)
-   :e  (key-pressed? keys "e" 101)
-   :f  (key-pressed? keys "f" 102)
-   :f3 (f3-pressed? keys)
-   :f5 (f5-pressed? keys)
-   :f9 (f9-pressed? keys)
-   :r  (key-pressed? keys "r" 114)
-   :h  (key-pressed? keys "h" 104)
-   :q  (key-pressed? keys "q" 113)
-   :bracket-left  (key-pressed? keys "[" 91)
-   :bracket-right (key-pressed? keys "]" 93)
-   :focus-out (focus-out? keys)
-   :esc (esc-pressed? keys)
-   :enter (enter-pressed? keys)
-   :k1 (key-pressed? keys "1" 49)
-   :k2 (key-pressed? keys "2" 50)
-   :k3 (key-pressed? keys "3" 51)
-   :k4 (key-pressed? keys "4" 52)
-   :k5 (key-pressed? keys "5" 53)
-   :k6 (key-pressed? keys "6" 54)
-   :k7 (key-pressed? keys "7" 55)})
+  [pressed]
+  {:m  (key-pressed? pressed "m" 109)
+   :sp (key-pressed? pressed " " 32)
+   :p  (key-pressed? pressed "p" 112)
+   :n  (key-pressed? pressed "n" 110)
+   :e  (key-pressed? pressed "e" 101)
+   :f  (key-pressed? pressed "f" 102)
+   :f3 (f3-pressed? pressed)
+   :f5 (f5-pressed? pressed)
+   :f9 (f9-pressed? pressed)
+   :r  (key-pressed? pressed "r" 114)
+   :h  (key-pressed? pressed "h" 104)
+   :q  (key-pressed? pressed "q" 113)
+   :bracket-left  (key-pressed? pressed "[" 91)
+   :bracket-right (key-pressed? pressed "]" 93)
+   :focus-out (focus-out? pressed)
+   :esc (esc-pressed? pressed)
+   :enter (enter-pressed? pressed)
+   :k1 (key-pressed? pressed "1" 49)
+   :k2 (key-pressed? pressed "2" 50)
+   :k3 (key-pressed? pressed "3" 51)
+   :k4 (key-pressed? pressed "4" 52)
+   :k5 (key-pressed? pressed "5" 53)
+   :k6 (key-pressed? pressed "6" 54)
+   :k7 (key-pressed? pressed "7" 55)})
 
 (defn rising-edges
   "Build the edges map tick consumes — truthy only for keys that just

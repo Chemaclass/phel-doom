@@ -213,7 +213,7 @@
         imap                (scaled-cells (:invulns world) step out-w (fn [_] true))
         ssmap               (scaled-cells (:soulspheres world) step out-w (fn [_] true))
         asmap               (scaled-cells (:armor-shards world) step out-w (fn [_] true))
-        pmap                (scaled-cells (:backpacks world) step out-w (fn [_] true))
+        backpack-map        (scaled-cells (:backpacks world) step out-w (fn [_] true))
         kbmap               (scaled-cells (:keycards world) step out-w
                                           (fn [k] (php/=== (:colour k) :blue)))
         krmap               (scaled-cells (:keycards world) step out-w
@@ -256,7 +256,7 @@
                             (buf-get imap idx)                          invuln-marker
                             (buf-get ssmap idx)                         soulsphere-marker
                             (buf-get asmap idx)                         armor-shard-marker
-                            (buf-get pmap idx)                          backpack-marker
+                            (buf-get backpack-map idx)                  backpack-marker
                             (buf-get kbmap idx)                         kb-mk
                             (buf-get krmap idx)                         kr-mk
                             (buf-get kymap idx)                         ky-mk
@@ -388,21 +388,21 @@
    `help-weapon-name-width` and dmg pads to 2 cols so every column
    aligns down the table."
   [kw spec active? owned? mag reserve cap row-w]
-  (let [name     (or (:name spec) (php/strval kw))
-        dmg      (or (:damage spec) 0)
-        mag-sz   (or (:mag-size spec) 0)
-        marker   (if active? "> " "  ")
-        name-pad (php/str_repeat " " (php/max 0 (php/- help-weapon-name-width (php/strlen name))))
-        dmg-str  (php/str_pad (php/strval dmg) 2 " ")
-        ammo-txt (if owned?
-                   (let [mag-frag (str mag "/" mag-sz)]
-                     (str mag-frag
-                          (php/str_repeat " " (php/max 0 (php/- 7 (php/strlen mag-frag))))
-                          "[" reserve "/" cap "]"))
-                   "--/--  [--/--]")
-        body     (str " " marker name name-pad " dmg " dmg-str "  " ammo-txt)
-        body-pad (php/str_repeat " " (php/max 0 (php/- row-w (php/strlen body))))
-        sgr      (cond active? "\e[1;93m" owned? "\e[97m" :else "\e[2;90m")]
+  (let [weapon-name (or (:name spec) (php/strval kw))
+        dmg         (or (:damage spec) 0)
+        mag-sz      (or (:mag-size spec) 0)
+        marker      (if active? "> " "  ")
+        name-pad    (php/str_repeat " " (php/max 0 (php/- help-weapon-name-width (php/strlen weapon-name))))
+        dmg-str     (php/str_pad (php/strval dmg) 2 " ")
+        ammo-txt    (if owned?
+                      (let [mag-frag (str mag "/" mag-sz)]
+                        (str mag-frag
+                             (php/str_repeat " " (php/max 0 (php/- 7 (php/strlen mag-frag))))
+                             "[" reserve "/" cap "]"))
+                      "--/--  [--/--]")
+        body        (str " " marker weapon-name name-pad " dmg " dmg-str "  " ammo-txt)
+        body-pad    (php/str_repeat " " (php/max 0 (php/- row-w (php/strlen body))))
+        sgr         (cond active? "\e[1;93m" owned? "\e[97m" :else "\e[2;90m")]
     (str "│" sgr body "\e[40;97m" body-pad "│")))
 
 (defn help-menu-rows
@@ -644,27 +644,27 @@
 (defn- settings-slider
   "Render a 0..100 percent as a fixed-width filled/empty bar."
   [pct]
-  (let [filled (php/intdiv (php/max 0 (php/min 100 pct)) 10)
-        empty  (php/- settings-slider-cells filled)]
-    (str (php/str_repeat "█" filled) (php/str_repeat "░" empty))))
+  (let [filled      (php/intdiv (php/max 0 (php/min 100 pct)) 10)
+        empty-cells (php/- settings-slider-cells filled)]
+    (str (php/str_repeat "█" filled) (php/str_repeat "░" empty-cells))))
 
 (defn- settings-value-str
   "Visible (colour-free) value cell for a settings row, framed by the
    ◀ ▶ adjust arrows: a slider + percent for volumes, ON/OFF for the
    minimap toggle, the difficulty name for the enum."
-  [kind val]
+  [kind field-value]
   (cond
     (= kind :pct)
-    (str "◀ " (settings-slider (php/intval val)) " ▶ "
-         (php/str_pad (str (php/intval val) "%") 4 " " php/STR_PAD_LEFT))
+    (str "◀ " (settings-slider (php/intval field-value)) " ▶ "
+         (php/str_pad (str (php/intval field-value) "%") 4 " " php/STR_PAD_LEFT))
 
     (= kind :bool)
-    (if val "◀  ON  ▶" "◀  OFF ▶")
+    (if field-value "◀  ON  ▶" "◀  OFF ▶")
 
     (= kind :enum)
-    (str "◀ " (name val) " ▶")
+    (str "◀ " (name field-value) " ▶")
 
-    :else          (php/strval val)))
+    :else          (php/strval field-value)))
 
 (defn- settings-section-row
   "A dim section header inside the settings box (#468). The page grew to

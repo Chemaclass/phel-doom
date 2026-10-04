@@ -113,14 +113,14 @@
    vector, no world / player. `grid` is the Phel cell grid."
   [projectiles grid ^float dt]
   (filterv some?
-           (map (fn [^map pr]
-                  (let [nx   (php/+ (:x pr) (php/* (:vx pr) dt))
-                        ny   (php/+ (:y pr) (php/* (:vy pr) dt))
-                        ttl' (php/- (:ttl pr) dt)]
+           (map (fn [^map pitch-offset]
+                  (let [nx   (php/+ (:x pitch-offset) (php/* (:vx pitch-offset) dt))
+                        ny   (php/+ (:y pitch-offset) (php/* (:vy pitch-offset) dt))
+                        ttl' (php/- (:ttl pitch-offset) dt)]
                     (if (or (php/<= ttl' 0.0)
                             (wall? grid (php/intval nx) (php/intval ny)))
                       nil
-                      (assoc pr :x nx :y ny :ttl ttl'))))
+                      (assoc pitch-offset :x nx :y ny :ttl ttl'))))
                 (or projectiles []))))
 
 (defn resolve-hits
@@ -137,17 +137,17 @@
         py     (:y p)
         r2     (php/* hit-radius hit-radius)
         projs  (or (:projectiles world) [])
-        hit?   (fn [^map pr]
-                 (let [dx (php/- (:x pr) px)
-                       dy (php/- (:y pr) py)]
+        hit?   (fn [^map pitch-offset]
+                 (let [dx (php/- (:x pitch-offset) px)
+                       dy (php/- (:y pitch-offset) py)]
                    (php/<= (php/+ (php/* dx dx) (php/* dy dy)) r2)))
         ;; One walk partitions into struck (consumed) vs remaining so
         ;; `hit?` is evaluated once per bolt, not twice.
         parts  (reduce
-                (fn [a pr]
-                  (if (hit? pr)
-                    {:struck (conj (:struck a) pr) :rest (:rest a)}
-                    {:struck (:struck a) :rest (conj (:rest a) pr)}))
+                (fn [a pitch-offset]
+                  (if (hit? pitch-offset)
+                    {:struck (conj (:struck a) pitch-offset) :rest (:rest a)}
+                    {:struck (:struck a) :rest (conj (:rest a) pitch-offset)}))
                 {:struck [] :rest []}
                 projs)
         struck (:struck parts)

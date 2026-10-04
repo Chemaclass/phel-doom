@@ -177,9 +177,9 @@
    `svh` nil disables the gate (legacy / test callers that pre-date
    vertical aim): with no scene height there is nothing to project
    against, so the call behaves exactly like the old XY-only hitscan."
-  [enemy ^float dist svh ^int pr]
+  [enemy ^float dist svh ^int pitch-offset]
   (or (nil? svh)
-      (let [feet-row (php/+ (php/intval (php/round (php/+ (php// svh 2.0) (php/* 0.5 (wall-px proj-dist dist))))) pr)
+      (let [feet-row (php/+ (php/intval (php/round (php/+ (php// svh 2.0) (php/* 0.5 (wall-px proj-dist dist))))) pitch-offset)
             h        (php/intval (php/* 2.0 (sprite-half-rows svh dist (sprite-scale-for enemy))))
             cross    (php/intdiv svh 2)]
         (and (php/<= (php/- feet-row h) cross)
@@ -198,7 +198,7 @@
    without firing. A reticle that answers with its own approximation of
    the rule would eventually disagree with the shot, which is worse than
    no reticle at all."
-  [es ^float x ^float y ^float a ^float wd ^float hr ^float max-r svh ^int pr]
+  [es ^float x ^float y ^float a ^float wd ^float hr ^float max-r svh ^int pitch-offset]
   (let [cos-a (php/cos a)
         sin-a (php/sin a)]
     (loop [i      0
@@ -214,7 +214,7 @@
                         (let [proj (php/+ (php/* dx cos-a) (php/* dy sin-a))]
                           (when (and (php/> proj 0.0) (php/< proj best-d)
                                      (php/< proj wd)
-                                     (vertical-hit? e proj svh pr))
+                                     (vertical-hit? e proj svh pitch-offset))
                             (let [perp-x (php/- dx (php/* proj cos-a))
                                   perp-y (php/- dy (php/* proj sin-a))]
                               (let [perp2 (php/+ (php/* perp-x perp-x) (php/* perp-y perp-y))]
@@ -243,8 +243,8 @@
    (shoot es0 px0 py0 a0 wd0 hr0 mr0 1 nil nil 0))
   ([es1 ^float px1 ^float py1 ^float a1 ^float wd1 ^float hr1 ^float mr1 ^int dmg1 dtype1]
    (shoot es1 px1 py1 a1 wd1 hr1 mr1 dmg1 dtype1 nil 0))
-  ([es' ^float x' ^float y' ^float a' ^float wd' ^float hr ^float max-r ^int damage damage-type svh ^int pr]
-   (let [best (target-index es' x' y' a' wd' hr max-r svh pr)]
+  ([es' ^float x' ^float y' ^float a' ^float wd' ^float hr ^float max-r ^int damage damage-type svh ^int pitch-offset]
+   (let [best (target-index es' x' y' a' wd' hr max-r svh pitch-offset)]
      (if (= best -1)
        [es' false nil -1]
         ;; Decrement lives; flip :alive only when the shot empties the
@@ -368,7 +368,7 @@
    the old XY-only behaviour."
   ([es0 ^float px0 ^float py0 ^float a0 ^float wd0 ^float hr0 ^float mr0 ^int dmg0 dtype0]
    (pierce es0 px0 py0 a0 wd0 hr0 mr0 dmg0 dtype0 nil 0))
-  ([enemies ^float px ^float py ^float angle ^float wall-dist ^float hit-radius ^float max-range ^int damage damage-type svh ^int pr]
+  ([enemies ^float px ^float py ^float angle ^float wall-dist ^float hit-radius ^float max-range ^int damage damage-type svh ^int pitch-offset]
    (let [cos-a (php/cos angle)
          sin-a (php/sin angle)
          cap   (php/min wall-dist max-range)
@@ -385,7 +385,7 @@
                in?   (and (:alive e)
                           (php/> proj 0.0)
                           (php/< proj cap)
-                          (vertical-hit? e proj svh pr)
+                          (vertical-hit? e proj svh pitch-offset)
                           (php/<= (php/+ (php/* perpx perpx) (php/* perpy perpy)) hr2))]
            (if (not in?)
              (recur (php/+ i 1) (conj acc e) killed best-d hit-pos tough)
@@ -421,7 +421,7 @@
    on its billboard. The two rules disagree in BOTH directions at the
    ranges a shotgun is used at, so the hostile reticle has to ask the
    same one the trigger will."
-  [enemies ^float px ^float py ^float angle ^float wall-dist ^float half-angle ^float max-range svh ^int pr]
+  [enemies ^float px ^float py ^float angle ^float wall-dist ^float half-angle ^float max-range svh ^int pitch-offset]
   (let [cos-a    (php/cos angle)
         sin-a    (php/sin angle)
         cos-half (php/cos half-angle)
@@ -437,7 +437,7 @@
                   proj (php/+ (php/* dx cos-a) (php/* dy sin-a))]
               (if (and (php/< proj best-d)
                        (in-cone? dx dy cos-a sin-a cos-half cap)
-                       (vertical-hit? e proj svh pr))
+                       (vertical-hit? e proj svh pitch-offset))
                 (recur (php/+ i 1) i proj)
                 (recur (php/+ i 1) best best-d)))))))))
 
@@ -457,7 +457,7 @@
    the old cone-only behaviour."
   ([es0 ^float px0 ^float py0 ^float a0 ^float wd0 ^float ha0 ^float mr0 ^int pdmg0 ^int gdmg0 ^int mt0 dtype0]
    (spread-shoot es0 px0 py0 a0 wd0 ha0 mr0 pdmg0 gdmg0 mt0 dtype0 nil 0))
-  ([enemies ^float px ^float py ^float angle ^float wall-dist ^float half-angle ^float max-range ^int primary-dmg ^int graze-dmg ^int max-targets damage-type svh ^int pr]
+  ([enemies ^float px ^float py ^float angle ^float wall-dist ^float half-angle ^float max-range ^int primary-dmg ^int graze-dmg ^int max-targets damage-type svh ^int pitch-offset]
    (let [cos-a    (php/cos angle)
          sin-a    (php/sin angle)
          cos-half (php/cos half-angle)
@@ -467,9 +467,9 @@
          ;; projects against, so it doubles as the gate's `dist`.
          in-shot? (fn [e ^float dx ^float dy ^float proj]
                     (and (in-cone? dx dy cos-a sin-a cos-half cap)
-                         (vertical-hit? e proj svh pr)))
+                         (vertical-hit? e proj svh pitch-offset)))
          primary  (spread-target-index enemies px py angle wall-dist half-angle
-                                       max-range svh pr)]
+                                       max-range svh pitch-offset)]
      (if (php/< primary 0)
        [enemies 0 nil 0]
        (loop [i 0 acc [] killed 0 tough 0 grazed 0 hit-pos nil]

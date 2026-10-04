@@ -37,8 +37,8 @@
    and plays each event (gated on :sound-on). `tick-world` clears the
    queue at the start of every frame, so events never replay. Used by
    core/combat and by the pickup / interaction steps in commands/play."
-  [^map world name ^float vol]
-  (assoc world :sfx (conj (or (:sfx world) []) {:name name :vol vol})))
+  [^map world sfx-name ^float vol]
+  (assoc world :sfx (conj (or (:sfx world) []) {:name sfx-name :vol vol})))
 
 ;; =====================================================================
 ;; § Tunables
@@ -685,14 +685,14 @@
     (pitch-rows (or (:pitch (:player world)) 0.0) svh)))
 
 (defn- target-in-sights?* [world]
-  (let [p      (:player world)
-        spec   (w-spec world)
-        angle  (aim-angle world)
-        svh    (aim-svh world)
-        pr     (aim-pr world svh)
-        wall-d (cast-wall-dist world angle)
-        max-r  (or (:max-range spec) shot-max-range)
-        idx    (if (:spread? spec)
+  (let [p            (:player world)
+        spec         (w-spec world)
+        angle        (aim-angle world)
+        svh          (aim-svh world)
+        pitch-offset (aim-pr world svh)
+        wall-d       (cast-wall-dist world angle)
+        max-r        (or (:max-range spec) shot-max-range)
+        idx          (if (:spread? spec)
                  ;; The shotgun takes the nearest enemy inside its CONE,
                  ;; with no perpendicular corridor, and the two rules
                  ;; disagree in both directions at shotgun range: a
@@ -700,12 +700,12 @@
                  ;; but outside the cone (red, whiffs), and one 0.8 off at
                  ;; five units is outside the corridor but inside the cone
                  ;; (white, hits). Ask the rule this weapon actually fires.
-                 (spread-target-index (:enemies world) (:x p) (:y p) angle
-                                      wall-d
-                                      (or (:spread-half-angle spec) shotgun-spread-half-angle)
-                                      max-r svh pr)
-                 (target-index (:enemies world) (:x p) (:y p) angle
-                               wall-d shot-hit-radius max-r svh pr))]
+                       (spread-target-index (:enemies world) (:x p) (:y p) angle
+                                            wall-d
+                                            (or (:spread-half-angle spec) shotgun-spread-half-angle)
+                                            max-r svh pitch-offset)
+                       (target-index (:enemies world) (:x p) (:y p) angle
+                                     wall-d shot-hit-radius max-r svh pitch-offset))]
     (php/>= idx 0)))
 
 (defn target-in-sights?

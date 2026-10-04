@@ -67,7 +67,7 @@
    paints at the sprite's upper third (`feet-row - h + h/6`) so it sits on
    the standing body."
   [parts enemy-projs stats vw vh dists edists face-phase ^int sc & [pr-arg]]
-  (let [pr (or pr-arg 0)]
+  (let [pitch-offset (or pr-arg 0)]
     (doseq [proj enemy-projs]
       (let [col         (:col proj)
             d           (:dist proj)
@@ -84,7 +84,7 @@
                    (php/< col vw)
                    (enemy-front-visible-at? d col dists edists))
           (let [h        (sprite-h vh d 1.0)
-                feet-row (php/+ (php/intval (php/round (php/+ (php// vh 2.0) (php/* 0.5 (wall-px proj-dist d))))) pr)
+                feet-row (php/+ (php/intval (php/round (php/+ (php// vh 2.0) (php/* 0.5 (wall-px proj-dist d))))) pitch-offset)
                 face-row (php/+ (php/- feet-row h) (php/intdiv h 6))]
             (when (and (php/>= face-row 1) (php/<= face-row vh))
               (buf-push parts
@@ -797,15 +797,15 @@
         (buf-push parts
                   (str "\e[" row ";" (php/- cc 3) "H\e[91;1mJAMMED\e[0m"))
         :else
-        (let [filled (php/intval (php/* heat 10.0))
-              empty  (php/- 10 filled)
-              colour (cond (php/>= heat 0.85) "\e[41m"
-                           (php/>= heat 0.6)  "\e[43m"
-                           :else              "\e[42m")]
+        (let [filled      (php/intval (php/* heat 10.0))
+              empty-cells (php/- 10 filled)
+              colour      (cond (php/>= heat 0.85) "\e[41m"
+                                (php/>= heat 0.6)  "\e[43m"
+                                :else              "\e[42m")]
           (buf-push parts
                     (str "\e[" row ";" (php/- cc 5) "H"
                          colour (php/str_repeat " " filled)
-                         "\e[100m" (php/str_repeat " " empty)
+                         "\e[100m" (php/str_repeat " " empty-cells)
                          "\e[0m"))))))
   parts)
 
@@ -950,7 +950,7 @@
    is `round(vh/2 + 0.5 * wall-px(proj-dist, d)) + pr`, and the digit
    floats one row above the head (`feet-row - h - 1`)."
   [parts enemy-projs vw vh & [pr-arg]]
-  (let [pr (or pr-arg 0)]
+  (let [pitch-offset (or pr-arg 0)]
     (doseq [proj enemy-projs]
       (when (and (php/> (or (:lives proj) 0) 0)
                  (php/> (or (:max-lives proj) 1) 1)
@@ -958,7 +958,7 @@
         (let [col      (:col proj)
               d        (:dist proj)
               h        (sprite-h vh d 1.0)
-              feet-row (php/+ (php/intval (php/round (php/+ (php// vh 2.0) (php/* 0.5 (wall-px proj-dist d))))) pr)
+              feet-row (php/+ (php/intval (php/round (php/+ (php// vh 2.0) (php/* 0.5 (wall-px proj-dist d))))) pitch-offset)
               row      (php/max 1 (php/- (php/- feet-row h) 1))]
           (when (and (php/>= col 1) (php/<= col vw))
             (buf-push parts
@@ -1011,7 +1011,7 @@
    cue on the enemy about to hit you would be worse than one transient
    cell of compass."
   [parts enemy-projs stats ^int vw ^int vh dists edists ^int sc & [pr-arg]]
-  (let [pr (or pr-arg 0)]
+  (let [pitch-offset (or pr-arg 0)]
     (doseq [proj enemy-projs]
       (when (and (= :attacking (:state proj))
                  (php/> (or (:lives proj) 0) 0))
@@ -1025,7 +1025,7 @@
             ;; put the mark on its chest in the one fight where reading the
             ;; windup matters most.
             (let [h        (sprite-h vh d (or (:scale proj) 1.0))
-                  feet-row (php/+ (php/intval (php/round (php/+ (php// vh 2.0) (php/* 0.5 (wall-px proj-dist d))))) pr)
+                  feet-row (php/+ (php/intval (php/round (php/+ (php// vh 2.0) (php/* 0.5 (wall-px proj-dist d))))) pitch-offset)
                   row      (php/- (php/- feet-row h) 1)]
               (when (and (php/>= row 1) (php/<= row vh))
                 (buf-push parts
@@ -1056,7 +1056,7 @@
         disp          (php/max 0 (php/min hp (php/+ cap 4)))
         full          (php/intdiv disp 2)
         half?         (php/=== 1 (php/% disp 2))
-        empty         (php/max 0 (php/- slots (php/+ full (if half? 1 0))))
+        empty-cells   (php/max 0 (php/- slots (php/+ full (if half? 1 0))))
         armor         (or (get stats :armor) 0)
         god?          (:god? stats)
         ;; High-contrast (#200): empty heart pips in plain white instead
@@ -1068,7 +1068,7 @@
                    (php/str_repeat (str (hud-glyph ascii-glyphs? :heart) " ") full)
                    (if half? (str (hud-glyph ascii-glyphs? :half-heart) " ") "")
                    empty-sgr
-                   (php/str_repeat (str (hud-glyph ascii-glyphs? :empty-pip) " ") empty)
+                   (php/str_repeat (str (hud-glyph ascii-glyphs? :empty-pip) " ") empty-cells)
                    (if (php/> armor 0)
                      (str "\e[40;94;1m" (php/str_repeat "◆ " armor))
                      "")
@@ -1134,43 +1134,43 @@
    HUD beneath."
   [parts stats vw vh floor-gradient]
   (when (php/>= vh 6)
-    (let [cc        (php/+ (php/intdiv vw 2) 1)
-          drop      (reload-offset stats)
+    (let [cc          (php/+ (php/intdiv vw 2) 1)
+          reload-drop (reload-offset stats)
           ;; Recoil shifts the sprite UP (negative row delta) on every
           ;; shot. Combined with the reload drop so a fire mid-reload
           ;; just nudges the in-flight reload position.
-          recoil    (recoil-offset stats)
-          shift     (php/- drop recoil)
-          row-bg    (fn [r]
-                      (let [cell (buf-get floor-gradient r)]
-                        (php/mb_substr cell 0
-                                       (php/max 0 (php/- (php/mb_strlen cell) 1)))))
+          recoil      (recoil-offset stats)
+          shift       (php/- reload-drop recoil)
+          row-bg      (fn [r]
+                        (let [cell (buf-get floor-gradient r)]
+                          (php/mb_substr cell 0
+                                         (php/max 0 (php/- (php/mb_strlen cell) 1)))))
           ;; Render one pistol row only if the shifted row still fits
           ;; on screen. Returns the cursor + paint string or "" when
           ;; the row has slid below the viewport or above row 1.
-          paint-row (fn [base-row col bg-row sgr glyphs]
-                      (let [r (php/+ base-row shift)]
-                        (if (or (php/> r vh) (php/< r 1))
-                          ""
-                          (str "\e[" r ";" col "H" (row-bg bg-row) sgr glyphs))))
+          paint-row   (fn [base-row col bg-row sgr glyphs]
+                        (let [r (php/+ base-row shift)]
+                          (if (or (php/> r vh) (php/< r 1))
+                            ""
+                            (str "\e[" r ";" col "H" (row-bg bg-row) sgr glyphs))))
           ;; Per-weapon palette comes from weapons/weapons :palette.
           ;; Falls back to the pistol scheme when no weapon spec is
           ;; passed (e.g. legacy test fixtures). Same 6-slot sprite
           ;; geometry for every weapon; only the SGRs swap so each
           ;; weapon reads with its own colour at a glance.
-          palette   (or (get stats :palette)
-                        {:muzzle    "\e[1;38;5;250m"
-                         :slide     "\e[1;38;5;233m"
-                         :slide-dim "\e[1;38;5;232m"
-                         :frame     "\e[1;38;5;232m"
-                         :grip-hi   "\e[1;38;5;166m"
-                         :grip-lo   "\e[1;38;5;130m"})
-          muzzle    (:muzzle    palette)
-          slide     (:slide     palette)
-          slide-dim (:slide-dim palette)
-          frame     (:frame     palette)
-          grip-hi   (:grip-hi   palette)
-          grip-lo   (:grip-lo   palette)]
+          palette     (or (get stats :palette)
+                          {:muzzle    "\e[1;38;5;250m"
+                           :slide     "\e[1;38;5;233m"
+                           :slide-dim "\e[1;38;5;232m"
+                           :frame     "\e[1;38;5;232m"
+                           :grip-hi   "\e[1;38;5;166m"
+                           :grip-lo   "\e[1;38;5;130m"})
+          muzzle      (:muzzle    palette)
+          slide       (:slide     palette)
+          slide-dim   (:slide-dim palette)
+          frame       (:frame     palette)
+          grip-hi     (:grip-hi   palette)
+          grip-lo     (:grip-lo   palette)]
       ;; Gradient indices are 0-based for vh rows; cursor positions are
       ;; 1-based. Per-weapon SILHOUETTE dispatches on :weapon so each
       ;; weapon reads by SHAPE, not just colour: the pistol is a narrow
@@ -1263,7 +1263,7 @@
       ;; the recoil so the flash hangs above the muzzle through the
       ;; kick instead of floating in stale screen space.
       (when (and (php/> (or (get stats :fire-anim) 0.0) 0.0)
-                 (php/=== drop 0))
+                 (php/=== reload-drop 0))
         (let [r-top (php/max 1 (php/+ (php/- vh 7) shift))
               r-bot (php/max 1 (php/+ (php/- vh 6) shift))]
           (buf-push parts

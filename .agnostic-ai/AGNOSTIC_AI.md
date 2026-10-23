@@ -25,8 +25,6 @@ Authoritative for their topic. Load skill before guessing. Match workflow first,
 - `/test [scope]` → run tests, scope mapping (`.claude/skills/test/SKILL.md`)
 - `/commit [msg]` → ci gates + conventional commit (`.claude/skills/commit/SKILL.md`)
 - `/pr [issue]` → push + open PR via template (`.claude/skills/pr/SKILL.md`)
-- `/phel-doom-gh-issue [N]` → fetch issue, branch, TDD, ship (`.claude/skills/phel-doom-gh-issue/SKILL.md`)
-- `/phel-doom-gh-issues` → walk all open issues sequentially (`.claude/skills/phel-doom-gh-issues/SKILL.md`)
 - `/fix` → auto-format + lint (`.claude/skills/fix/SKILL.md`)
 - `/changelog [entry]` → update `## Unreleased` (`.claude/skills/changelog/SKILL.md`)
 - `/changelog-simplify` → tighten + de-dup `## [Unreleased]`, commit + push (`.claude/skills/changelog-simplify/SKILL.md`)
@@ -59,6 +57,15 @@ Spawn via Agent tool. Prefer parallel where independent. For codebase search use
 - Side effects only in `src/io/`. `core/` and `glue/` stay pure.
 - PR label by branch prefix: `fix/` → `bug`, `feat/` → `enhancement`, `perf/` → `performance`, `docs/` → `documentation`, `ref/` → `refactoring`.
 - GH issues: do NOT auto-assign on create. Assignment = WIP signal.
+
+## Issue work
+
+`/gh-issue` and `/gh-issues` (personal skills) own the workflow. Project specifics:
+
+- Branch `<prefix><issue>-<slug>` from `origin/main`; prefix from issue label: `bug` → `fix/`, `enhancement` → `feat/`, `performance` → `perf/`, `documentation` → `docs/`, `refactoring` → `ref/`, none → `feat/`.
+- Test first via `tdd-coach`; hand engine math, render, and perf to their specialist agents. `io/` changes need a `/play` smoke test.
+- Gate: `composer ci`. Before `/pr`, run `clean-code-reviewer` over the diff and commit its fixes as a separate `ref:` commit.
+- Squash-merge only after CI is green; never `--admin` past a red check.
 
 ## Module-specific rules
 

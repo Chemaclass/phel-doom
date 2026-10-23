@@ -3,14 +3,7 @@ name: render-expert
 description: Specialist for ANSI rendering, RLE emit, color, HUD, frame-stats, terminal cursor model. Use when modifying render.phel or any visual output.
 model: sonnet
 maxTurns: 20
-allowed_tools:
-  - Read
-  - Edit
-  - Glob
-  - Grep
-  - Bash(vendor/bin/phel test:*)
-  - Bash(composer test:*)
-  - Bash(composer play:*)
+can: [read, Glob, Grep, edit, shell]
 target: claude
 ---
 

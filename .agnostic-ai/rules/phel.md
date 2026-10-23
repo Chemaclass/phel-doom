@@ -1,6 +1,6 @@
 ---
 description: Phel language conventions for source and test files
-globs: src/**,tests/**,*.phel
+globs: src/**,tests/**,tools/**
 ---
 
 # Phel Conventions

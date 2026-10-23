@@ -1,6 +1,6 @@
 ---
 description: Macro-hygiene pitfalls for quasiquote, gensym, and expand-time evaluation
-globs: src/**,tests/**,*.phel
+globs: src/**,tests/**,tools/**
 ---
 
 # Macro Hygiene

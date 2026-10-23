@@ -1,6 +1,6 @@
 ---
 description: Game-loop discipline, frame budget, state purity
-globs: src/**,tests/**,*.phel
+globs: src/**,tests/**,tools/**
 ---
 
 # Game Conventions

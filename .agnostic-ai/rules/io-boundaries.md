@@ -1,6 +1,6 @@
 ---
 description: What belongs in core/ vs glue/ vs io/
-globs: src/**,*.phel
+globs: src/**
 ---
 
 # IO Boundaries

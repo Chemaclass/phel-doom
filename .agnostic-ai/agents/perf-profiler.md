@@ -3,14 +3,7 @@ name: perf-profiler
 description: Measures cast/render phase timing, bytes emitted, memory. Measurement-led — never optimizes without numbers. Use to validate perf hypotheses or check regressions.
 model: sonnet
 maxTurns: 15
-allowed_tools:
-  - Read
-  - Glob
-  - Grep
-  - Bash(vendor/bin/phel *)
-  - Bash(composer *)
-  - Bash(git diff:*)
-  - Bash(git log:*)
+can: [read, Glob, Grep, shell]
 target: claude
 ---
 

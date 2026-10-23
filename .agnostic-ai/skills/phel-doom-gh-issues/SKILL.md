@@ -1,8 +1,8 @@
 ---
-description: Walk all open GitHub issues (unassigned or assigned to me) and process each via /gh-issue
+description: Walk all open GitHub issues (unassigned or assigned to me) and process each via /phel-doom-gh-issue
 argument-hint: "[--limit N] [--label foo] [--dry-run]"
 disable-model-invocation: true
-allowed-tools: "Read, Bash(gh *), Bash(git *), Bash(composer *), Skill(gh-issue), Skill(pr)"
+allowed-tools: "Read, Bash(gh *), Bash(git *), Bash(composer *), Skill(phel-doom-gh-issue), Skill(pr)"
 target: claude
 ---
 
@@ -10,7 +10,7 @@ target: claude
 
 ## Purpose
 
-Process every open issue that is **unassigned** or **assigned to `@me`**, oldest first, delegating each to `/gh-issue`. Stop on first hard failure.
+Process every open issue that is **unassigned** or **assigned to `@me`**, oldest first, delegating each to `/phel-doom-gh-issue`. Stop on first hard failure.
 
 ## Args
 
@@ -54,7 +54,7 @@ Abort if dirty. Never auto-stash.
 For each issue:
 
 1. Re-check assignment (someone may have grabbed it).
-2. Invoke `/gh-issue <num>`. That skill owns full workflow.
+2. Invoke `/phel-doom-gh-issue <num>`. That skill owns full workflow.
 3. Wait CI: `gh pr checks --watch`.
 4. Merge: `gh pr merge --auto --squash --admin`.
 5. Sync `main`: `git checkout main && git fetch origin main && git reset --hard origin/main`.
@@ -62,7 +62,7 @@ For each issue:
 
 ## Stop conditions
 
-- `/gh-issue` errors or leaves dirty worktree.
+- `/phel-doom-gh-issue` errors or leaves dirty worktree.
 - `composer ci` fails.
 - CI red after one fix attempt.
 - Merge blocked beyond `--admin`.
@@ -80,4 +80,4 @@ No blind retries. Report failed issue + reason.
 - `gh` authenticated.
 - Clean worktree.
 - `main` tracks `origin/main`.
-- `/gh-issue` and `/pr` available.
+- `/phel-doom-gh-issue` and `/pr` available.

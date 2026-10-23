@@ -3,12 +3,7 @@ name: clean-code-reviewer
 description: Reviews diff for Phel smells, game conventions, IO-boundary violations. Use after implementation, before commit/PR.
 model: sonnet
 memory: project
-allowed_tools:
-  - Read
-  - Glob
-  - Grep
-  - Bash(git diff:*)
-  - Bash(git log:*)
+can: [read, Glob, Grep, shell]
 target: claude
 ---
 
@@ -42,7 +37,7 @@ Review staged diff (`git diff --cached`), unstaged (`git diff`), or branch (`git
 - `io/` functions SHOULD end in `!`.
 - Math that decides what to draw belongs in `core/` or `glue/`, not `io/`.
 
-See `.claude/rules/io-boundaries.md`.
+See `.agnostic-ai/rules/io-boundaries.md`.
 
 ## Game-specific checks
 

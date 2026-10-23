@@ -3,15 +3,7 @@ name: tdd-coach
 description: Drives strict red-green-refactor for new behavior in phel-doom. Owns failing test first. Use when implementing features or fixes test-first.
 model: sonnet
 maxTurns: 25
-allowed_tools:
-  - Read
-  - Edit
-  - Write
-  - Glob
-  - Grep
-  - Bash(vendor/bin/phel test:*)
-  - Bash(composer test:*)
-  - Bash(composer format:*)
+can: [read, Glob, Grep, edit, write, shell]
 target: claude
 ---
 
@@ -37,9 +29,9 @@ REFACTOR → Clean up, keep tests green
 - Pure modules (`core/`, `glue/`) MUST have tests. `io/` may rely on `/play` smoke tests.
 
 Before coding, skim:
-- `.claude/rules/phel.md` — naming, ns, docstrings
-- `.claude/rules/io-boundaries.md` — which layer owns the change
-- `.claude/rules/macro-hygiene.md` — if a macro is involved
+- `.agnostic-ai/rules/phel.md` — naming, ns, docstrings
+- `.agnostic-ai/rules/io-boundaries.md` — which layer owns the change
+- `.agnostic-ai/rules/macro-hygiene.md` — if a macro is involved
 
 ## Phel test shape
 

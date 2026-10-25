@@ -158,7 +158,7 @@ The same compilation rule is a correctness trap. A `buf-push` or any `php/aset` 
 
 ### Direct PHP ops and native arrays
 
-Unspecialised Phel ops dispatch through the runtime. Hot loops use `php/+`, `php/<`, `php/aget`, `php/===`: `$a + $b`, `$arr[$k]`, no dispatch.
+Unspecialised Phel ops cost a type check. Hot loops use `php/+`, `php/<`, `php/aget`, `php/===`: `$a + $b`, `$arr[$k]`, no dispatch.
 
 - **`:pgrid`.** `new-world` builds a PHP-array twin of the grid, `(to-array (map to-array grid))`. The raycaster and minimap subscript it directly. `state/rebuild-pgrid` keeps `:grid` and `:pgrid` in sync. `:light-grid` is a sibling twin updated by the same hook. Room lighting adds one `php/aget` per COLUMN, never per texel (+0.5% render at 120x30, +2.5% at 180x40, only with the opt-in `:light` setting).
 - **Inline `?? 1` subscripts** replace `engine/cell-at` at every former call site (#354): the cast column loop, `cast-ray` and `los-clear?`.
@@ -193,21 +193,23 @@ The trap: never swap `str` for `php/.` over a float, a bool or nil. PHP renders 
 
 ### What a Phel operation costs
 
-Loop overhead subtracted for the 0.50 column (200k iterations, 2026-08-17). The 0.53 column is the matching `composer bench` row (2026-09-24, PHP 8.5, loop overhead included). Read rows against each other, not as absolutes.
+Loop overhead subtracted for the 0.50 column (200k iterations, 2026-08-17). The 0.53 and 0.54 columns are the matching `composer bench` rows (PHP 8.5, loop overhead included; 0.53 on 2026-09-24, 0.54 on 2026-10-25 as the lowest of 5 runs at load average 5). Read rows against each other, not as absolutes.
 
-| | phel 0.50 | 0.53 row |
-|---|---|---|
-| `php/aget` on a nested php array | ~4 ns | - |
-| `(get row x)` on a persistent vector | ~600 ns | - |
-| reading a module-level `def` | ~320 ns | 199 ns (`read-module-def`) |
-| `php/===` against a literal | free (folded) | - |
-| `=` on ints | ~850 ns | 345 ns vs 203 ns for `php/===` |
-| `(cell grid x y)` | 1.6 us | 810 ns |
-| `(wall? grid x y)` | 2.1 us (was 5.9) | 904 ns |
+| | phel 0.50 | 0.53 row | 0.54 row |
+|---|---|---|---|
+| `php/aget` on a nested php array | ~4 ns | - | - |
+| `(get row x)` on a persistent vector | ~600 ns | - | - |
+| reading a module-level `def` | ~320 ns | 199 ns (`read-module-def`) | 151 ns |
+| `php/===` against a literal | free (folded) | - | - |
+| `=` on ints | ~850 ns | 345 ns vs 203 ns for `php/===` | 155 ns vs 155 ns |
+| `+` on ints | - | - | 165 ns vs 152 ns for `php/+` |
+| `<` on ints | - | - | 164 ns vs 153 ns for `php/<` |
+| `(cell grid x y)` | 1.6 us | 810 ns | 571 ns |
+| `(wall? grid x y)` | 2.1 us (was 5.9) | 904 ns | 631 ns |
 
 - **A module-level `def` is not a constant.** Every read is a registry lookup by two strings. Hoist constants into a `let` outside the loop. Inside a per-call predicate there is nowhere to hoist to, which is why `wall?` compares against literals, pinned by `test-wall-literals-match-the-constants`.
-- **`=` and `<` dispatch on type.** On values known to be ints, use `php/===` and `php/<`.
-- The persistent, generic version of an operation cost 100x to 1000x the native one on 0.50. The gap has narrowed on 0.53 but still favours native ops. None of this moves a frame on its own (the `wall?` swap is ~1.5% of a threaded frame). It matters where calls are counted in thousands.
+- **Generic math is close to native on 0.54.** Phel 0.54 answers `=`, `<`, `+`, `-`, `*`, `inc` and `dec` inline for native ints. `=` now costs the same as `php/===`; `+` and `<` cost about 8% more than the `php/` form. Keep `php/+`, `php/<` and `php/===` in the per-cell and per-column loops, where calls run in the thousands. Elsewhere write the plain operator.
+- The persistent, generic version of an operation cost 100x to 1000x the native one on 0.50. The gap has narrowed on each release since and still favours native ops in the loops. None of this moves a frame on its own (the `wall?` swap is ~1.5% of a threaded frame). It matters where calls are counted in thousands.
 
 ### What a write costs on Phel 0.51
 

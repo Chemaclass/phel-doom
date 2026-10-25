@@ -1,9 +1,9 @@
 ---
 description: Cut a phel-doom release via tools/release.sh, then verify the published phar + GitHub release
-argument-hint: "[version] [--dry-run]"
 disable-model-invocation: false
 allowed-tools: "Read, Bash(./tools/release.sh *), Bash(git *), Bash(gh *), Bash(composer *), Bash(shasum *)"
-target: claude
+x-claude:
+  argument-hint: "[version] [--dry-run]"
 ---
 
 # Release
@@ -15,8 +15,13 @@ artifact.
 
 ## Context
 
+::target claude
 !`git rev-parse --abbrev-ref HEAD`
 !`git status --porcelain`
+::end
+::target codex
+Run first: `git rev-parse --abbrev-ref HEAD`, `git status --porcelain`.
+::end
 
 ## Instructions
 

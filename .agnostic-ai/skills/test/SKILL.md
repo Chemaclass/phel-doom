@@ -1,9 +1,9 @@
 ---
 description: Run phel-doom tests with smart scope filtering
-argument-hint: "[scope-or-file]"
 disable-model-invocation: true
 allowed-tools: "Bash(composer *), Bash(vendor/bin/phel *)"
-target: claude
+x-claude:
+  argument-hint: "[scope-or-file]"
 ---
 
 # Quick Test Runner
@@ -36,7 +36,7 @@ composer doctor        # env check
 
 ## Instructions
 
-1. Empty `$ARGUMENTS` or `all`:
+1. No argument, or `all`:
    ```bash
    composer test
    ```
@@ -50,14 +50,14 @@ composer doctor        # env check
 
 3. Looks like file path:
    ```bash
-   vendor/bin/phel test "$ARGUMENTS"
+   vendor/bin/phel test <file>
    ```
 
 4. Looks like module name (e.g. `engine`):
    ```bash
-   vendor/bin/phel test tests/core/$ARGUMENTS-test.phel 2>/dev/null \
-   || vendor/bin/phel test tests/glue/$ARGUMENTS-test.phel 2>/dev/null \
-   || vendor/bin/phel test tests/commands/$ARGUMENTS-test.phel
+   vendor/bin/phel test tests/core/<module>-test.phel 2>/dev/null \
+   || vendor/bin/phel test tests/glue/<module>-test.phel 2>/dev/null \
+   || vendor/bin/phel test tests/commands/<module>-test.phel
    ```
 
 5. Report pass/fail count clearly.

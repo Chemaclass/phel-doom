@@ -22,16 +22,16 @@ Read `docs/architecture.md`, `docs/state.md`, `docs/performance.md` before touch
 
 Authoritative for their topic. Load skill before guessing. Match workflow first, fall back to plain commands.
 
-- `/test [scope]` → run tests, scope mapping (`.claude/skills/test/SKILL.md`)
-- `/commit [msg]` → ci gates + conventional commit (`.claude/skills/commit/SKILL.md`)
-- `/pr [issue]` → push + open PR via template (`.claude/skills/pr/SKILL.md`)
-- `/fix` → auto-format + lint (`.claude/skills/fix/SKILL.md`)
-- `/changelog [entry]` → update `## Unreleased` (`.claude/skills/changelog/SKILL.md`)
-- `/changelog-simplify` → tighten + de-dup `## [Unreleased]`, commit + push (`.claude/skills/changelog-simplify/SKILL.md`)
-- `/release [version]` → cut release via `tools/release.sh` + verify phar/GH artifact (`.claude/skills/release/SKILL.md`)
-- `/phel-repl <expr>` → eval Phel expression (`.claude/skills/phel-repl/SKILL.md`)
-- `/perf-bench [scope]` → cast/render phase timing (`.claude/skills/perf-bench/SKILL.md`)
-- `/play` → launch game, smoke-test feature manually (`.claude/skills/play/SKILL.md`)
+- `/test [scope]` → run tests, scope mapping
+- `/commit [msg]` → ci gates + conventional commit
+- `/pr [issue]` → push + open PR via template
+- `/fix` → auto-format + lint
+- `/changelog [entry]` → update `## Unreleased`
+- `/changelog-simplify` → tighten + de-dup `## [Unreleased]`, commit + push
+- `/release [version]` → cut release via `tools/release.sh` + verify phar/GH artifact
+- `/phel-repl <expr>` → eval Phel expression
+- `/perf-bench [scope]` → cast/render phase timing
+- `/play` → launch game, smoke-test feature manually
 
 ## Agents (subagents)
 
@@ -69,7 +69,7 @@ Spawn via Agent tool. Prefer parallel where independent. For codebase search use
 
 ## Module-specific rules
 
-Under `.claude/rules/`:
+Sources under `.agnostic-ai/rules/` (each tool loads them for the files they cover):
 - `phel.md` — naming, docstrings, comments
 - `macro-hygiene.md` — quasiquote, gensym, shadowing
 - `game.md` — frame budget, pure state, immutable world

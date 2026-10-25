@@ -1,10 +1,10 @@
 ---
 name: render-expert
 description: Specialist for ANSI rendering, RLE emit, color, HUD, frame-stats, terminal cursor model. Use when modifying render.phel or any visual output.
-model: sonnet
+model:
+  claude: sonnet
 maxTurns: 20
 can: [read, Glob, Grep, edit, shell]
-target: claude
 ---
 
 # Render Expert

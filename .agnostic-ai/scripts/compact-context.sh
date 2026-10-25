@@ -14,5 +14,5 @@ cat <<'EOF'
 - PRs: assign `Chemaclass`, label by type, body uses `Closes #N`.
 - Issues: do NOT auto-assign on create.
 - Protected: `composer.lock`, `out/main.php`, `phel-config.php`, `.phel/cache/*`.
-- Auto-format: `.phel` files via PostToolUse hook (`vendor/bin/phel format`).
+- Auto-format: `.phel` files via the after-edit hook (`vendor/bin/phel format`).
 EOF

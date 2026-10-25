@@ -1,9 +1,7 @@
 ---
 description: Tighten and de-duplicate the CHANGELOG.md `## [Unreleased]` notes, then commit + push
-argument-hint: ""
 disable-model-invocation: false
 allowed-tools: "Read, Edit, Bash(git *)"
-target: claude
 ---
 
 # Simplify Changelog
@@ -14,7 +12,12 @@ touched.
 
 ## Context
 
+::target claude
 !`git rev-parse --abbrev-ref HEAD`
+::end
+::target codex
+Run first: `git rev-parse --abbrev-ref HEAD`.
+::end
 
 ## Instructions
 

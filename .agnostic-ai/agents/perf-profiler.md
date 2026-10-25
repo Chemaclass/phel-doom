@@ -1,10 +1,10 @@
 ---
 name: perf-profiler
 description: Measures cast/render phase timing, bytes emitted, memory. Measurement-led — never optimizes without numbers. Use to validate perf hypotheses or check regressions.
-model: sonnet
+model:
+  claude: sonnet
 maxTurns: 15
 can: [read, Glob, Grep, shell]
-target: claude
 ---
 
 # Perf Profiler

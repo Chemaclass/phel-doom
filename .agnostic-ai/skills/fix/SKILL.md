@@ -1,9 +1,9 @@
 ---
 description: Auto-format Phel and lint
-argument-hint: "[file-path]"
 disable-model-invocation: true
 allowed-tools: "Read, Edit, Bash(composer *), Bash(vendor/bin/phel *)"
-target: claude
+x-claude:
+  argument-hint: "[file-path]"
 ---
 
 # Fix Code Quality
@@ -15,7 +15,7 @@ target: claude
    lexer, so parens in strings, comments and regexes never mislead it:
    ```bash
    vendor/bin/phel balance src tests          # report
-   vendor/bin/phel balance --fix "$ARGUMENTS" # append the missing closers
+   vendor/bin/phel balance --fix <file> # append the missing closers
    ```
    `--fix` refuses anything with more than one plausible repair (a surplus
    closer, an unterminated string); fix those by hand.
@@ -26,7 +26,7 @@ target: claude
    ```
    Or single file:
    ```bash
-   vendor/bin/phel format "$ARGUMENTS"
+   vendor/bin/phel format <file>
    ```
 
 2. Lint:

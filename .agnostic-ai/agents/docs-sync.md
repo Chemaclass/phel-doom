@@ -1,10 +1,10 @@
 ---
 name: docs-sync
 description: Audits docs/<topic>.md against code in src/ and fixes drift. Use after refactors, renames, or before release.
-model: haiku
+model:
+  claude: haiku
 memory: project
 can: [read, Glob, Grep, edit]
-target: claude
 ---
 
 # Docs Sync

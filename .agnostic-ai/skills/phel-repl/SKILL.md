@@ -1,9 +1,9 @@
 ---
 description: Evaluate a Phel expression to verify behavior without writing a test
-argument-hint: "<phel expression>"
 disable-model-invocation: true
 allowed-tools: "Bash(vendor/bin/phel *), Bash(echo *), Bash(timeout *), Read, Write"
-target: claude
+x-claude:
+  argument-hint: "<phel expression>"
 ---
 
 # Phel REPL
@@ -12,13 +12,13 @@ Evaluate ad-hoc Phel expressions. Use to confirm syntax, fn shape, or quick math
 
 ## Instructions
 
-1. Take expression from `$ARGUMENTS`. Ask if empty.
+1. Take expression from the argument. Ask if empty.
 
 2. Write a one-shot file (REPL eval-from-stdin is unreliable):
    ```bash
    cat > /tmp/phel-doom-repl.phel <<'EOF'
    (ns phel-doom-repl)
-   (println $ARGUMENTS)
+   (println <expr>)
    EOF
    timeout 10 vendor/bin/phel run /tmp/phel-doom-repl.phel
    ```

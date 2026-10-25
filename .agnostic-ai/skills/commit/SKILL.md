@@ -1,18 +1,23 @@
 ---
 description: Auto-fix, run ci gates, and commit with a conventional message
-argument-hint: "[optional commit message]"
 disable-model-invocation: true
 allowed-tools: "Read, Edit, Bash(composer *), Bash(vendor/bin/phel *), Bash(git *)"
-target: claude
+x-claude:
+  argument-hint: "[optional commit message]"
 ---
 
 # Commit
 
 ## Context
 
+::target claude
 !`git diff --stat`
 !`git diff --cached --stat`
 !`git status --short`
+::end
+::target codex
+Run first: `git diff --stat`, `git diff --cached --stat`, `git status --short`.
+::end
 
 ## Instructions
 
@@ -53,7 +58,7 @@ If any step fails, fix it and re-run from that step. Do NOT commit with failures
 6. **Stage files** — add specific files by name. NEVER `git add -A` (would pick up generated `out/main.php`, `.phel/cache/*`).
 
 7. **Draft commit message** in Conventional Commits format:
-   - If `$ARGUMENTS` provided, use it.
+   - If a message was passed as the argument, use it.
    - Otherwise analyze the staged diff and generate one.
    - Prefixes: `feat:`, `fix:`, `ref:`, `chore:`, `docs:`, `test:`, `perf:`.
    - **Use `ref:` not `refactor:`**.

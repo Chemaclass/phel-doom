@@ -1,10 +1,10 @@
 ---
 name: game-debugger
 description: Diagnoses runtime issues in phel-doom — crashes, wrong render, input desync, raycast math off, audio glitches. Use when game misbehaves and the cause is not obvious.
-model: sonnet
+model:
+  claude: sonnet
 maxTurns: 20
 can: [read, Glob, Grep, shell]
-target: claude
 ---
 
 # Game Debugger

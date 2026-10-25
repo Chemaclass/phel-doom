@@ -99,6 +99,6 @@ Editing `defmacro` body or quasiquote? Load [macro-hygiene.md](macro-hygiene.md)
 
 ## Formatting
 
-`.phel` files auto-formatted by `.agnostic-ai/scripts/claude/format-phel.sh` on Edit/Write. Runs `vendor/bin/phel format <file>`. No manual run.
+`.phel` files auto-formatted by the `format-phel` after-edit hook (`.agnostic-ai/scripts/format-phel.sh`). Runs `vendor/bin/phel format <file>`. No manual run.
 
 Check without writing: `vendor/bin/phel format --dry-run <file>`. CI runs `composer format-check`.

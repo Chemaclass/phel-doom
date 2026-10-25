@@ -1,22 +1,27 @@
 ---
 description: Update CHANGELOG.md `## Unreleased` from recent commits or a manual entry
-argument-hint: "[entry text]"
 disable-model-invocation: true
 allowed-tools: "Read, Edit, Bash(git *)"
-target: claude
+x-claude:
+  argument-hint: "[entry text]"
 ---
 
 # Update Changelog
 
 ## Context
 
+::target claude
 !`git log $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD~30)..HEAD --oneline`
+::end
+::target codex
+Run first: `git log $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD~30)..HEAD --oneline`.
+::end
 
 ## Instructions
 
 1. Read `CHANGELOG.md`.
 
-2. If `$ARGUMENTS` supplied, add it under the right `## Unreleased` subsection.
+2. If an entry was passed as the argument, add it under the right `## Unreleased` subsection.
 
 3. Otherwise analyze commits and draft entries:
    - `### Added` — `feat:`

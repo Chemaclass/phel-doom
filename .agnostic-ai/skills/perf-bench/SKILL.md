@@ -1,8 +1,8 @@
 ---
 description: Measure cast/render cost before/after a change with the tracked `phel bench` harness (tests/bench)
-argument-hint: "[baseline-ref] [candidate-ref]"
 allowed-tools: "Read, Bash(vendor/bin/phel *), Bash(composer *), Bash(git *)"
-target: claude
+x-claude:
+  argument-hint: "[baseline-ref] [candidate-ref]"
 ---
 
 # Perf Bench
@@ -23,7 +23,7 @@ alone; `frame-120x30` / `frame-180x45` / `frame-240x60` time the whole
 
 ## Inputs
 
-- `$ARGUMENTS` parses as `[baseline] [candidate]`. Default: `main HEAD`.
+- The argument parses as `[baseline] [candidate]`. Default: `main HEAD`.
 
 ## Procedure
 

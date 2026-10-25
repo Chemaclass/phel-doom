@@ -1,18 +1,23 @@
 ---
 description: Push branch, open PR with concise body, assign Chemaclass, apply correct label
-argument-hint: "[issue-number]"
 disable-model-invocation: false
 allowed-tools: "Read, Edit, Bash(git *), Bash(gh *)"
-target: claude
+x-claude:
+  argument-hint: "[issue-number]"
 ---
 
 # Create Pull Request
 
 ## Context
 
+::target claude
 !`git branch --show-current`
 !`git log main..HEAD --oneline`
 !`git diff main..HEAD --stat`
+::end
+::target codex
+Run first: `git branch --show-current`, `git log main..HEAD --oneline`, `git diff main..HEAD --stat`.
+::end
 
 ## Instructions
 
@@ -27,7 +32,7 @@ target: claude
    ```
 
 3. **PR title** — Conventional Commit style, under 70 chars. Derive type from branch prefix (`feat/` → `feat`, `fix/` → `fix`, `docs/` → `docs`, `perf/` → `perf`, `ref/` → `ref`).
-   If `$ARGUMENTS` is an issue number, pull issue title for inspiration:
+   If the argument is an issue number, pull issue title for inspiration:
    ```bash
    gh issue view <number> --json title -q '.title'
    ```

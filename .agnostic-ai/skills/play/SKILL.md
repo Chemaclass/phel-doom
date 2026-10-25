@@ -1,9 +1,9 @@
 ---
 description: Launch the game to manually verify a change. Required smoke test for io/ work.
-argument-hint: "[check-list]"
 disable-model-invocation: false
 allowed-tools: "Bash(composer play:*), Bash(make play:*)"
-target: claude
+x-claude:
+  argument-hint: "[check-list]"
 ---
 
 # Play
@@ -25,7 +25,7 @@ Launch phel-doom to verify a change end-to-end.
    composer play
    ```
 
-2. Check the **golden path** from `$ARGUMENTS` (or default smoke: load → move → shoot → take damage → die → restart).
+2. Check the **golden path** from the argument (or default smoke: load → move → shoot → take damage → die → restart).
 
 3. Check **edge cases** for the feature you changed.
 

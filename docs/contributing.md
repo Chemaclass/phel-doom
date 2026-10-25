@@ -11,7 +11,7 @@ composer install   # deps + .githooks/pre-commit + .agents/
 composer play      # or: make play
 ```
 
-PHP 8.5 is the floor, locally and in CI. Phel 0.53 requires it. `composer.lock` is gitignored, so `composer install` resolves the newest `^0.53`.
+PHP 8.5 is the floor, locally and in CI. Phel 0.53 and later require it. `composer.lock` is gitignored, so `composer install` resolves the newest `^0.54`.
 
 Work with `composer test`. Before a commit, the pre-commit hook runs `composer ci`, the same gate CI runs. Bypass with `git commit --no-verify` only in emergencies.
 
@@ -58,7 +58,7 @@ Two things that look like bugs and are not: a dotted teal outline around the gun
 ## AI agent config (generated, not committed)
 
 - `.claude/` and root `AGENTS.md` come from [agnostic-ai](https://github.com/Chemaclass/agnostic-ai). The source of truth is `.agnostic-ai/`.
-- `.agents/` comes from `vendor/bin/phel agent-install`, run by `composer install`.
+- `.agents/` and the phel-lang skill source come from `tools/install-phel-agents.sh`, run by `composer install` (see [tools/README.md](../tools/README.md#agent-setup)).
 
 To get the Claude Code or Codex config locally:
 

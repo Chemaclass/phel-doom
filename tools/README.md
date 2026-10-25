@@ -49,6 +49,10 @@ Each is a `composer` script inside `composer ci`, with its own fixtures (`*-test
 
 `check-cycles` and `check-unused` share `lib/phel-source.php`. It blanks `;` comments, `#_` discards and string bodies while keeping offsets, so a name that appears only in prose cannot fool either guard.
 
+## Agent setup
+
+`install-phel-agents.sh` runs after every `composer install` and `composer update` (the `agents-install` script). It installs the `.agents/` Phel docs from the installed Phel and copies its bundled phel-lang guide to `.agnostic-ai/skills/phel-lang/SKILL.md`. `agnostic-ai sync` then writes that one skill for Claude and Codex. A Phel upgrade can change the copied guide: commit it with the upgrade.
+
 ## Release
 
 `release.sh` cuts a release: validate semver and preflight, move the `## [Unreleased]` CHANGELOG block into a dated section, bump `src/core/version.phel`, build and smoke-test `phel-doom.phar` (via `build/phar.sh`), commit, tag `vX.Y.Z`, push, and create the GitHub release with the phar and its SHA256 attached.

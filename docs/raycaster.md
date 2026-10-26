@@ -96,6 +96,8 @@ The walk-cycle head bob adds another horizon shear on top of pitch. `bob-rows` =
 
 Enemy billboards stand on their feet: the renderer places each sprite on its projected floor row and draws the body upward by its pixel height. Shadow, face glyph and floating HP digit derive from that row.
 
+Their horizontal positions use the same width-aware `fov-proj-dist` as the wall rays. The size and vertical placement still use `proj-dist`, so a wide viewport does not move a sprite away from its wall ray or change its height. Pixel-doubled scenes apply the same field of view at half scale; on an odd terminal width the scene column can differ by one cell from the full-resolution projection.
+
 Hitscan reuses the same projection. A shot connects when the fixed screen-centre crosshair lands inside the drawn body. Looking up slides a sprite down past the centre, looking down lifts it: a short far billboard slips off the crosshair, a tall near one stays caught.
 
 ## Caching

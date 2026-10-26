@@ -17,6 +17,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Fixed
 
+- Aligned enemies and other sprites with wall rays on wide screens.
 - Reduced menu flicker by avoiding unnecessary redraws.
 
 ## [0.20.0] - 2026-09-24

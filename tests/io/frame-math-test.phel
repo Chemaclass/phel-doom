@@ -1,7 +1,9 @@
 (ns phel-doom-tests.io.frame-math-test
   (:require phel.test :refer [deftest is])
-  (:require phel-doom.io.render.frame-math :refer [scene-rows collect-enemy-projs collect-enemy-projs-pd layout])
-  (:require phel-doom.core.engine :refer [proj-dist]))
+  (:require phel-doom.io.render.frame-math :refer [scene-rows collect-enemy-projs collect-enemy-projs-pd project-enemy project-enemy-pd layout])
+  (:require phel-doom.core.engine :refer [proj-dist fov-proj-dist])
+  (:require phel-doom.core.combat :refer [aim-angle-offset])
+  (:require phel-doom.core.enemy :refer [target-index]))
 
 ;; ---------------------------------------------------------------------
 ;; scene-rows (#243): the full-detail viewport height the renderer uses
@@ -76,6 +78,30 @@
 (def- px2-player {:x 5.0 :y 5.0 :angle 0.0})
 (def- px2-svw 60)
 (def- px2-pd (php/* 0.5 proj-dist))
+
+(deftest test-wide-billboard-aligns-with-wall-ray
+  (let [enemy   {:x 11.0 :y 8.0 :alive true}
+        narrow  (project-enemy enemy px2-player 120)
+        wide    (project-enemy enemy px2-player 240)
+        ray-col (php/intval (php/+ 120.0 (php/* 0.5 (fov-proj-dist 240))))]
+    (is (= ray-col (:col wide)) "wide sprite is on the ray through its world position")
+    (is (= (:half-width narrow) (:half-width wide)) "the vertical projection scale remains unchanged")))
+
+(deftest test-wide-pixel-doubled-billboard-aligns-with-full-resolution
+  (let [enemy {:x 11.0 :y 8.0 :alive true}]
+    (foreach [width [240 241]]
+      (let [scene-width (php/intdiv (php/+ width 1) 2)
+            full        (:col (project-enemy enemy px2-player width))
+            scene       (:col (project-enemy-pd px2-pd enemy px2-player scene-width))]
+        (is (php/<= (php/abs (php/- scene (php/intdiv full 2))) 1)
+            (str "width " width " keeps the scene sprite on the same ray"))))))
+
+(deftest test-wide-billboard-center-aims-at-its-world-position
+  (let [enemy {:x 11.0 :y 8.0 :alive true}
+        col   (:col (project-enemy enemy px2-player 240))
+        angle (aim-angle-offset col 240)]
+    (is (= 0 (target-index [enemy] 5.0 5.0 angle 12.0 0.5 12.0 nil 0))
+        "a shot through the displayed center reaches the displayed enemy")))
 
 (defn- body-col
   ;; Where the zone pass actually puts the body in px2: projected at the

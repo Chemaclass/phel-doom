@@ -1,10 +1,10 @@
 # Map / grid
 
-`src/core/map.phel`: grid shape, cell semantics, generation, lookup helpers. How levels use it: [level-system.md](level-system.md).
+`src/core/map.phel` defines the grid, cell types, generation and lookup helpers. See [level-system.md](level-system.md) for how levels use them.
 
 ## Cells
 
-A grid is a vector of rows of ints. Always use the named constants, never raw literals.
+A grid is a vector of integer rows. Use the named constants rather than raw literals.
 
 | Constant | Value | Blocks player | Blocks rays | Notes |
 |---|---|---|---|---|
@@ -39,7 +39,7 @@ A grid is a vector of rows of ints. Always use the named constants, never raw li
 
 ## Generation
 
-All generation draws from the seeded `rng`, so the same seed gives the same room.
+Generation uses the seeded `rng`, so the same seed produces the same room.
 
 - `(random-grid w h n-blocks)`: bordered room plus `n-blocks` random 1x1 or 2x2 wall blobs. The border is never overwritten. Size and obstacle density are independent knobs.
 - `(scatter-walls grid [sx sy] n)`: the same blobs on an existing grid (fixed-shell levels), then `seal-pockets` walls off any floor cut off from spawn. The floor stays one connected region, the spawn cell stays clear, and pickups, enemies and the exit are never stranded.
@@ -49,12 +49,12 @@ All generation draws from the seeded `rng`, so the same seed gives the same room
 
 ### Cost lessons
 
-Generation floods and scans the whole grid, so it works on a flat PHP-native mirror (`grid->php`, index `y*w + x`) instead of `cell` lookups. On 64x40 that took `place-exit` from 57.9 to 8.4 ms and `scatter-walls` from 58.1 to 10.1 ms, with all 210 worlds (10 levels x 7 seeds x 3 difficulties) hashing identically. The same pass keys the flood's seen-set by flat index (not a fresh `"x:y"` string), reads the four neighbour offsets from a flat int array (not a vector literal rebuilt per dequeue), and writes wall blobs into the mirror instead of `assoc-in` on the persistent grid per cell (~83 us each). A whole level build went from 42.7 to 13.9 ms.
+Generation floods and scans the whole grid using a flat PHP array (`grid->php`, index `y*w + x`) instead of `cell` lookups. On 64x40 that took `place-exit` from 57.9 to 8.4 ms and `scatter-walls` from 58.1 to 10.1 ms, with all 210 worlds (10 levels x 7 seeds x 3 difficulties) hashing identically. The same pass keys the flood's seen-set by flat index (not a fresh `"x:y"` string), reads the four neighbour offsets from a flat int array (not a vector literal rebuilt per dequeue), and writes wall blobs into the mirror instead of `assoc-in` on the persistent grid per cell (~83 us each). A whole level build went from 42.7 to 13.9 ms.
 
 Gotchas:
 
 - PHP arrays pass BY VALUE into closures and functions. A `visit!` or `place-block!` helper writes to a copy and the caller sees nothing: silent, and fast-looking (the broken flood seemed 10x faster because it stopped after one cell). Mutate the array in the function that owns it, in statement position.
-- The flat key collides out of bounds: `(-1, y)` and `(w-1, y-1)` share an index. Bounds-guard every lookup, and let the flood write only cells the grid reports as floor.
+- Flat keys collide outside the bounds: `(-1, y)` and `(w-1, y-1)` share an index. Check bounds on every lookup, and let the flood write only cells the grid reports as floor.
 
 ## Secret walls
 
@@ -64,11 +64,11 @@ Sources: `S` in a `:layout`, or `seed-secrets` on procgen levels (rule in [level
 
 F with a secret in the cell directly ahead calls `reveal-secret` (swap to floor), rebuilds the ray grid, bumps `:secrets-found`, and drops a stash via `level/place-secret-reward`: an ammo box, an armor shard, and a trophy rotating soulsphere, berserk, invuln by reveal order. `:secrets-total` comes from `count-secrets` at build time.
 
-Visual tell (issue #469): a secret samples the wall texture half a tile out of phase with its neighbours. See [rendering.md](rendering.md#secret-wall-tell-issue-469).
+A secret samples the wall texture half a tile out of phase with its neighbours (#469). See [rendering.md](rendering.md#secret-wall-tell-issue-469).
 
 ## Switches
 
-Hand-authored only (`T` in a `:layout`, L10). The level config lists targets:
+Switches are hand-authored (`T` in a `:layout`, L10). The level config lists targets:
 
 ```phel
 :switches [{:at [3 14]  :targets [[7 10]]}

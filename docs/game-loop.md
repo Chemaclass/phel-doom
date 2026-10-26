@@ -1,6 +1,6 @@
 # Game loop
 
-An IO shell around a pure per-frame transition, in `src/commands/play.phel`. The loop shape is: input, `tick-world` (pure), cast and render (io).
+`src/commands/play.phel` wraps a pure frame transition in IO: input, `tick-world`, cast and render.
 
 ## Lifecycle layers
 
@@ -23,11 +23,11 @@ An IO shell around a pure per-frame transition, in `src/commands/play.phel`. The
 10. **Effects.** Save settings when the pause page closes. Drain `:sfx` through `io/sound`, plus the heartbeat thump and the silence cue, all gated on `:sound-on`. Start or stop the OST when `:sound-on` flips; SIGSTOP / resume it when `:paused` flips.
 11. **Branch.** Pause-menu quit or restart, death, door, or `recur`.
 
-The recur threads `world`, timing, the key snapshot, `[rows cols]`, calibration state, the pointer position and the poll counter.
+`recur` carries `world`, timing, the key snapshot, `[rows cols]`, calibration state, pointer position and poll counter.
 
 ## tick-world
 
-Pure one-frame transition: `(tick-world world keys dt edges)` returns the next world. The game loop and the tests call it the same way.
+`(tick-world world keys dt edges)` is a pure frame transition that returns the next world. The game loop and tests call it the same way.
 
 It first applies `handle-toggles` (focus loss, quit request, pause, minimap, sound, debug, help, about-face) and resets `:sfx` to `[]`. Toggles run before the pause check, so `P`, `H`, `Esc` and `F3` work while paused. Then:
 
@@ -58,7 +58,7 @@ It first applies `handle-toggles` (focus loss, quit request, pause, minimap, sou
 | HUD timers | Decay `:save-flash-secs`, `:reload-ready-secs` | `commands/play` |
 | `advance-game-time` | Add `dt` to the pause-aware `:game-time` | `core/state` |
 
-`tick-world` does no IO. Every cue goes onto `:sfx` as `{:name :vol}` via `push-sfx`, and the loop plays them after the tick. So tests can run whole frame sequences with no side effects. See [audio.md](audio.md).
+`tick-world` does no IO. It queues each cue on `:sfx` as `{:name :vol}` via `push-sfx`; the loop plays them after the tick. Tests can run frame sequences without side effects. See [audio.md](audio.md).
 
 Physics details (collision in `physics/try-move`, the `:bob-phase` walk cycle) are in [state.md](state.md#the-player).
 
@@ -78,9 +78,9 @@ With neither flag set (`opt-int` returns -1), auto mode fills the terminal and p
 
 ## Resize: SIGWINCH, not polling (issue #459)
 
-Each `term-size` sample forks `stty size`, about 5 ms on an 8.3 ms budget, to answer a question that changes about once a session. `install-resize-handler!` traps SIGWINCH and raises a flag.
+Each `term-size` sample forks `stty size`, costing about 5 ms of an 8.3 ms frame budget, even though the size rarely changes. `install-resize-handler!` traps SIGWINCH and raises a flag.
 
-- The game loop asks `resized?` every frame, at the checkpoint where it already asks `interrupted?`. `sample-size?` forks only on the signal, plus frame 0 so initial sizing is never late.
+- The game loop asks `resized?` every frame at the same checkpoint as `interrupted?`. `sample-size?` forks only on the signal, plus frame 0 so initial sizing is never late.
 - The menu and end-screen loops do not read the flag. They keep `poll-size?`: frame 0, then every `resize-poll-frames` (12) frames, about 200 ms at their ~60 fps. A static screen can afford it.
 - Without ext-pcntl, the game loop falls back to the same frame-count poll (~100 ms at 120 fps).
 
@@ -107,11 +107,11 @@ Delivery is synchronous, never mid-render, per [io-boundaries](../.agnostic-ai/r
 - **Death beat.** `death-beat!` holds the killing frame 0.6 s, then drains input typed during it, so a panicked key cannot select anything on the death screen.
 - **Intermission.** `intermission-loop` shows a card for the cleared level: its kills, secrets and time. Any key continues; `q` and Ctrl-C quit.
 
-Both are skipped under `--demo` replay: nothing is watching, and waiting for input would desync the recording.
+Both are skipped during `--demo` replay, where waiting for input would desync the recording.
 
 ## Quitting and restarting (issue #454)
 
-`q` in a live run does not quit. `arm-quit-menu` opens the pause menu with the cursor on Quit and zeroes the hold counters, so the second `q` (or Enter on that row) confirms. `quit-confirmed?` is the one gate: true on the pause page, false in the `H` / `Esc` help panel. The help panel freezes the world too, but it has no Quit row and `Esc` is the universal back-out key, so `q` there arms the menu like a live run does. Holding `q` on a legacy terminal reaches the quit through key repeat; a held key is not an accident.
+`q` in a live run does not quit. `arm-quit-menu` opens the pause menu with the cursor on Quit and zeroes the hold counters, so the second `q` (or Enter on that row) confirms. `quit-confirmed?` is the one gate: true on the pause page, false in the `H` / `Esc` help panel. The help panel freezes the world too, but it has no Quit row and `Esc` is the universal back-out key, so `q` there arms the menu like a live run does. On a legacy terminal, holding `q` confirms the quit through key repeat.
 
 The start menu, intermission and end screens run their own loops and quit on one `q`. Ctrl-C quits from anywhere.
 
@@ -126,4 +126,4 @@ The end screen offers `r` (fresh seed) and `R` (same seed); `q` quits.
 - **After death**, both retry the level you died on. `R` reuses that level's seed, so it rebuilds the identical level.
 - **After victory**, both restart at level 1 with the starting loadout. `R` passes the last level's seed, so it is not a replay of the run.
 
-A death retry carries the loadout you ENTERED the level with (`retry-loadout`, #453): owned weapons, backpack stack and the gun in hand. Not the rack you died holding, because weapon-pickup cells are drawn from the run PRNG before the ammo boxes; one more owned weapon shifts every later spawn and breaks `R`. A weapon picked up on the fatal attempt is back on the floor. Ammo does not carry: mags and reserves come fresh from `build-world`. Kills, time and lives reset, so a retry is a fresh attempt, not a checkpoint.
+A death retry carries the loadout you entered the level with (`retry-loadout`, #453): owned weapons, backpack stack and the gun in hand. It does not carry weapons picked up during the attempt, because weapon-pickup cells are drawn from the run PRNG before ammo boxes; another owned weapon shifts later spawns and breaks `R`. A weapon picked up on the fatal attempt is back on the floor. Ammo does not carry: mags and reserves come fresh from `build-world`. Kills, time and lives reset, so a retry is a fresh attempt, not a checkpoint.

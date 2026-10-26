@@ -1,6 +1,6 @@
 # Coming from Clojure or PHP
 
-Phel is a Lisp that **compiles to PHP**. If you know either language, most of phel-doom is familiar. This page maps what carries over and what bites. Read it first, then [architecture.md](architecture.md).
+Phel is a Lisp that **compiles to PHP**. This guide covers familiar concepts and differences for Clojure and PHP developers. Continue with [architecture.md](architecture.md).
 
 ## 60-second model
 
@@ -23,19 +23,19 @@ Conventions: kebab-case names, `defn-` private, `?` = predicate (`door?`), `!` =
 | Only `false` / `nil` are falsy | same as Clojure |
 | Interop: `(new C)`, `(.method obj)`, `(C/static)` | Clojure-style is the only spelling Phel accepts |
 
-What bites:
+Differences to watch:
 
 - **Map destructuring is binding-first** (`{local :key}`), same as Clojure, since Phel 0.51. `{:keys [x y]}` works too. The old key-first order is deprecated.
 - **`def-` takes no docstring slot.** A string becomes the value. `defn-` is fine.
 - **`recur` re-binds loop names, not a `let`-shadow of them.** Destructure into a different name.
 - **Phel vectors are slow in hot loops** (polymorphic `get`). Render uses php-arrays via `buf-*` macros.
-- **PHP arrays are a separate world** from Phel colls. See below.
+- **PHP arrays differ from Phel collections.** See below.
 
 Details and fixes for each: [contributing.md](contributing.md#phel-gotchas).
 
 ## Coming from PHP
 
-Phel compiles *to* PHP, so the runtime is yours. A fn becomes a class with `__invoke`. Data becomes Phel objects:
+Phel runs on PHP. A function becomes a class with `__invoke`, and data becomes Phel objects:
 
 ```phel
 (defn new-player [x y angle]
@@ -57,7 +57,7 @@ Phel compiles *to* PHP, so the runtime is yours. A fn becomes a class with `__in
 
 The older `php/new`, `php/->` and `php/::` forms are rejected as source on current Phel.
 
-Traps:
+Differences to watch:
 
 - **`0`, `""`, `[]` are truthy.** Only `false` and `nil` are falsy. The opposite of PHP.
 - **PHP arrays are pass-by-value across fn boundaries.** Mutating a passed `php/array` changes a copy. Build and return, or keep the loop inline.

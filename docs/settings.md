@@ -1,6 +1,6 @@
 # Settings
 
-Player options for audio, gameplay defaults, input, accessibility and rendering. Persisted to `$HOME/.phel-doom-settings.json`: plain JSON, editable by hand.
+Player options for audio, gameplay, input, accessibility and rendering are saved as JSON in `$HOME/.phel-doom-settings.json`. The file can be edited by hand.
 
 ## Architecture
 
@@ -8,13 +8,13 @@ Player options for audio, gameplay defaults, input, accessibility and rendering.
 - `src/io/settings.phel` (io): `load-settings` / `save-settings!`. Both iterate `page-fields`, so a new field persists without extra code (a hand-written key list once dropped `:view-bob` and `:light`). The JSON key is the field name; enum fields are stored as the bare name (`"normal"`).
 - `src/commands/play.phel`: shows the page from the start menu and the pause menu, and applies volumes to `io/sound` and `io/music`.
 
-Loading never blocks startup. A missing or malformed file yields defaults, and `coerce-settings` clamps percents to 0-100, forces bools and resets unknown enum values to the default. A failed save does not interrupt play: `settings-write-failed?` records it and the game reports it once on exit.
+Loading never blocks startup. A missing or malformed file yields defaults. `coerce-settings` clamps percentages to 0-100, converts booleans and resets unknown enum values to the default. A failed save does not interrupt play: `settings-write-failed?` records it and the game reports it on exit.
 
-The page groups fields under section headers (Audio, Video, Play, Controls, Access) and shows a one-line hint for the field under the cursor (#468). A test asserts every field has both. On a terminal too short for all eighteen fields, the list scrolls around the cursor.
+The page groups fields under Audio, Video, Play, Controls and Access, and shows a one-line hint for the selected field (#468). A test checks that every field has a section and hint. The list scrolls around the cursor when the terminal cannot show all eighteen fields.
 
 ### Terminal-derived defaults
 
-Two fields pick a default from the terminal when the player has never saved a choice. A saved choice always wins.
+Two fields use a terminal-derived default when the player has not saved a choice. A saved choice takes precedence.
 
 - **Sub-pixel** starts off on macOS Terminal.app (`$TERM_PROGRAM` = `Apple_Terminal`), which draws `▀` with row seams (#332). `PHEL_DOOM_SUBPIXEL=1` forces it on.
 - **HUD glyphs** starts as `ascii` when `LC_ALL` / `LC_CTYPE` / `LANG` is not UTF-8 (#471).
@@ -42,7 +42,7 @@ Two fields pick a default from the terminal when the player has never saved a ch
 | HUD glyphs | `:glyphs` | enum (unicode) | unicode / ascii (#471). ascii swaps the keycard, heart, info and bullet glyphs for single-column stand-ins, for fonts that draw them as double-width tofu. |
 | Texture filter | `:texmip` | bool (off) | Picks a pre-filtered texture level per wall column (#462), replacing far-wall speckle with an average. |
 
-Every rendering option except Sub-pixel defaults off, and off is byte-identical to the shipped frame. All but Room light and View bob have a `PHEL_DOOM_*` environment override that applies for one run without touching the saved file; the list, scope and costs are in [rendering.md](rendering.md#optional-render-modes).
+Every rendering option except Sub-pixel defaults off. Disabled options produce the shipped frame byte-for-byte. All but Room light and View bob have a `PHEL_DOOM_*` override for one run without changing the saved file. See [rendering.md](rendering.md#optional-render-modes) for overrides, scope and costs.
 
 ## Access
 

@@ -1,10 +1,10 @@
 # Monsters
 
-`src/core/enemies.phel` (catalog), `enemy.phel` (record, spawn, chase, hitscan targeting, respawn), `enemy_ai.phel` (state machine, sight, attacks, noise), `projectile.phel` (caster bolts). Rendering: [rendering.md](rendering.md#enemy-sprite-paint).
+`src/core/enemies.phel` holds the catalog. `enemy.phel` handles records, spawning, chase, hitscan targeting and respawn; `enemy_ai.phel` handles states, sight, attacks and noise; `projectile.phel` handles caster bolts. See [rendering.md](rendering.md#enemy-sprite-paint).
 
 ## Catalog (`enemy-types`)
 
-Ten types. Every entry carries the `required-keys` (name, HP, head/body/legs colour codes, body glyphs, idle/alt/attack faces; pinned by tests) and an optional `:resists` set.
+The catalog has ten types. Each entry has the tested `required-keys` (name, HP, head/body/legs colours, body glyphs and idle/alt/attack faces) and an optional `:resists` set.
 
 | Kw | Name | HP | Head | Body | Face (idle / alt) |
 |---|---|---|---|---|---|
@@ -49,7 +49,7 @@ Design intent:
 
 ### Depth-scaled aggression
 
-`enemy_ai/aggression-for` gives 1.0 on L1, minus 0.03 per level, floored at 0.8 from L8 on. `tick-attack` multiplies the cooldown by it: up to 25% more attacks deeper in. Windups never shrink, and the floor keeps deep levels dodgeable despite key-repeat lag.
+`enemy_ai/aggression-for` returns 1.0 on L1, subtracts 0.03 per level and floors the result at 0.8 from L8 on. `tick-attack` multiplies the cooldown by it, allowing up to 25% more attacks on deeper levels. Windups stay the same, and the floor keeps deep levels dodgeable despite key-repeat lag.
 
 ## Spawning
 
@@ -68,7 +68,7 @@ Each enemy carries `:state` and an optional `:lkp` (last-known player position).
 | `:pain`      | no  | no  | 0.3s stagger |
 | `:attacking` | no  | yes | Frozen windup before a swing or a bolt |
 
-An enemy with no `:state` (unit fixtures) reads as `:aware`.
+An enemy without `:state`, as in some test fixtures, is treated as `:aware`.
 
 Transitions (`next-state`, run by `observe` each frame):
 
@@ -78,7 +78,7 @@ Transitions (`next-state`, run by `observe` each frame):
 - `:aware` + in range + cooldown done → `:attacking` (`maybe-start-attack`). Windup expiry → `:aware`, arms the cooldown, and raises `:fire-now` for casters.
 - A wound rolls `pain-chance-of` (table above): success → `:pain`, expiry → `:aware`. Only single-target hitscans roll it; pierce, spread and splash never stagger.
 
-Breaking contact: duck behind a wall and the hunter walks to where it last saw you, finds nothing, and sleeps.
+After losing sight, a hunter walks to the last known position and becomes dormant if it does not see the player.
 
 ### Wake triggers
 
@@ -86,7 +86,7 @@ Breaking contact: duck behind a wall and the hunter walks to where it last saw y
 - **Being shot**: every damage path sets the target `:aware`.
 - **Noise**: every shot runs `noise-wake`, a 4-connected flood from the player's cell up to 3 cells over floor only (walls and every door variant block). Dormant and wandering enemies inside switch to `:hunting` toward the fire origin; hunters refresh their `:lkp`; aware enemies ignore it.
 
-Waking plays one per-type sight cue for the nearest waker of the frame (#460).
+The nearest enemy that wakes in a frame plays its per-type sight cue (#460).
 
 ### Chase
 

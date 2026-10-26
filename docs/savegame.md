@@ -1,14 +1,14 @@
 # Save / load
 
-`F5` saves and `F9` loads mid-level (#63). Both use slot 1 (`quick-save-slot`). The world map round-trips through JSON with a tagged codec in `src/io/savegame.phel`.
+`F5` saves and `F9` loads during a level (#63). Both use slot 1 (`quick-save-slot`). `src/io/savegame.phel` encodes and restores the world as tagged JSON.
 
-Files live at `$HOME/.phel-doom/saves/slot-<n>.json`; the directory is created on first save. The API accepts slots 1-9 (`max-slots`), but no key reaches slots 2-9 yet.
+Saves live at `$HOME/.phel-doom/saves/slot-<n>.json`. The directory is created on the first save. The API accepts slots 1-9 (`max-slots`); the keys use slot 1.
 
 ## Flow
 
-`handle-save-load` runs in the game loop after `tick-world`, never inside the pure tick. It stamps a 1.2 s HUD cue: `SAVED`, `SAVE FAILED`, `LOADED` or `NO SAVE`.
+`handle-save-load` runs in the game loop after the pure `tick-world` and shows a 1.2 s HUD cue: `SAVED`, `SAVE FAILED`, `LOADED` or `NO SAVE`.
 
-A load replaces the whole world, except that `adopt-loaded-world` keeps the live `:settings` and `:settings-cursor` (#279). Settings are session preference, not run state; restoring the saved copy would revert them, and the next resume would persist the stale copy.
+A load replaces the world, while `adopt-loaded-world` keeps the live `:settings` and `:settings-cursor` (#279). This preserves session preferences and prevents the next resume from saving stale settings.
 
 ## Codec
 
@@ -20,7 +20,7 @@ Phel types map to JSON arrays:
 - vector: `[items...]`
 - scalar: itself
 
-`encode` and `decode` are pure and tested for round-trip equality. `decode` checks the `$m` payload at every level, so a malformed nested map returns nil instead of throwing out of the play loop.
+`encode` and `decode` are pure and tested for round-trip equality. `decode` checks each `$m` payload and returns nil for a malformed nested map rather than throwing from the play loop.
 
 ## Dropped fields
 
@@ -40,4 +40,4 @@ Phel types map to JSON arrays:
 
 `world->savestring` wraps the world in `{"version": N, "world": ...}`. `savestring->world` returns nil for malformed JSON, a version mismatch, or a `world` that is not an encoded map; the HUD then shows `NO SAVE`. Bump `save-version` (currently 1) on an incompatible world change.
 
-Old saves still load inside version 1: `state/backpack-level` reads a pre-#68 `:backpack?` boolean as level 1. Do not remove that path without bumping the version.
+Version 1 still loads old saves: `state/backpack-level` reads a pre-#68 `:backpack?` boolean as level 1. Do not remove that path without bumping the version.

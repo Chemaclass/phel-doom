@@ -1,6 +1,6 @@
 # phel-doom internals
 
-Per-subsystem docs. Each one links to its source files and key functions.
+Subsystem guides with links to source files and key functions.
 
 ## Map
 
@@ -38,7 +38,7 @@ Per-subsystem docs. Each one links to its source files and key functions.
 4. [raycaster.md](raycaster.md) + [rendering.md](rendering.md): how pixels reach the screen.
 5. [contributing.md](contributing.md): dev loop, gates, Phel quirks.
 
-Then pick subsystems as needed.
+Then choose a subsystem guide.
 
 ## File layout
 
@@ -59,4 +59,4 @@ src/io/render/        buffer, enemy_sprite, frame_math, hud, main, paint,
 tests/<layer>/        mirrors src/, plus tests/bench for `composer bench`
 ```
 
-What each file does and which layer may require which: [architecture.md](architecture.md).
+File responsibilities and dependency rules: [architecture.md](architecture.md).

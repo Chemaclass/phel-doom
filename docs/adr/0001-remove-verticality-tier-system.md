@@ -8,10 +8,9 @@
 
 ## Context
 
-phel-doom is a terminal raycaster. Twice now it has grown a full
-"verticality" layer (variable floor and ceiling heights, staircases,
-step-up physics, tier-aware rendering and AI) and twice the maintainer has
-judged it a net negative for the play experience.
+phel-doom is a terminal raycaster. Two versions added a verticality layer
+with variable floor and ceiling heights, stairs, step-up physics, and
+tier-aware rendering and AI. The maintainer judged both worse for play.
 
 - First build: removed in a deliberate full flat reset (issue #325 / PR #328,
   shipped `0.16.0`, 2026-06-27). The look up/down pitch aim was ruled a camera
@@ -35,9 +34,7 @@ Why it deteriorates the experience (maintainer judgment, both times):
    other level stayed deliberately flat to preserve the byte-identical
    invariant (see below). The cost/benefit did not land.
 
-The maintainer wants the complexity out of the game today, with this ADR as
-the durable record so a third attempt (if ever) starts from the learnings,
-not from zero.
+This ADR records the decision and lessons for a possible third attempt.
 
 ## Decision
 

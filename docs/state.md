@@ -136,7 +136,7 @@ Both must change together. After any grid edit (secret reveal, switch toggle, a 
 
 `new-player x y angle` spawns looking level. `move-player` translates with no collision, `turn-player` rotates, `clamp-pitch` saturates pitch at +-1.
 
-Collision lives in `physics/try-move`. A cell blocks only when it is a wall or a locked door without the matching key; bumping one also arms the `NEED <COLOUR> KEY` prompt. Any open floor cell is walkable, and the world is flat: one floor plane, one ceiling plane (see [adr/0001](adr/0001-remove-verticality-tier-system.md)).
+`physics/try-move` blocks walls, and blocks locked doors when the player lacks the matching key. A locked-door bump also shows `NEED <COLOUR> KEY`. Open floor cells are walkable; the world has one floor plane and one ceiling plane (see [adr/0001](adr/0001-remove-verticality-tier-system.md)).
 
 `apply-physics` also advances `:bob-phase` by the ground covered times `bob-phase-per-unit` (pi per unit, one nod every two cells), wrapped into `[0, 2*pi)`. Zero distance settles it to exactly 0.0, so a standing frame renders byte-identical. Amplitude is render-side (the View bob setting); physics tracks only the phase.
 
@@ -153,7 +153,7 @@ Nine counters, each holding **seconds remaining**. `empty-moves` is the all-zero
 
 Each input byte sets its slot to a hold time (`glue/controls.phel`). Every frame `core/physics.phel` applies the non-zero slots scaled by `dt`, then subtracts `dt` from each (floored at 0). A hold lasts the same wall-clock time at any frame rate. The hold values and their trade-offs are in [input.md](input.md#movement-slots-and-hold-time).
 
-`:sprint` is intent only. The boost needs `:stamina > 0` and not `:sprint-blocked?` (`physics/sprinting?`).
+`:sprint` records intent. The boost requires `:stamina > 0` and `:sprint-blocked?` to be false (`physics/sprinting?`).
 
 ## Lives (half-heart HP pool)
 
@@ -168,7 +168,7 @@ The HUD draws 5 slots: `♥` full, `◖` half, `·` empty, with over-cap HP as e
 
 ## Timers
 
-Float-seconds countdowns, decayed by `decay-timers` in `core/combat.phel`. A timer that is absent or already 0.0 is not rewritten (`combat/decay-key`), so a quiet frame writes only running timers. Latches and phases are written with a plain `assoc`: on Phel 0.53 rewriting the stored value returns the map itself.
+`decay-timers` in `core/combat.phel` decays these float-second countdowns. `combat/decay-key` skips absent and zero timers, so a quiet frame writes only running timers. Latches and phases use `assoc`: on Phel 0.53 writing the existing value returns the same map.
 
 | Timer | Set by | Drives |
 |-------|--------|--------|
@@ -184,4 +184,4 @@ Also decayed there: `:streak-secs`, `:fire-cooldown`, `:reload-cooldown`, `:empt
 
 ### `:game-time`: the pause-aware clock
 
-`advance-game-time` adds `dt` on every unpaused frame; a paused frame returns before it. Render samples this clock for every blink and pulse (door, behind warning, jam, pickup throb, enemy face cycle, screen shake), so `P` freezes every animation, and resume continues from the same instant.
+`advance-game-time` adds `dt` on every unpaused frame. Render uses this clock for blinks and pulses (door, behind warning, jam, pickup throb, enemy face cycle and screen shake), so `P` freezes these animations and resume continues from the same instant.

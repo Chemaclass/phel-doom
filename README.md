@@ -2,13 +2,13 @@
 
 [![phel-doom gameplay (YouTube)](https://img.youtube.com/vi/Gvz95m4wAkQ/maxresdefault.jpg)](https://www.youtube.com/watch?v=Gvz95m4wAkQ)
 
-DOOM-lite raycaster in your terminal. Pure [Phel](https://phel-lang.org/) (Lisp on PHP). 256-color ANSI, 10 levels, FPS combat, ~5ms frame. Full feature list: [docs/features.md](docs/features.md).
+A DOOM-lite raycaster for the terminal, written in pure [Phel](https://phel-lang.org/), a Lisp that compiles to PHP. It has 256-color ANSI graphics, 10 levels, first-person combat, and a frame time of about 5 ms. See the [feature list](docs/features.md).
 
 ## Play
 
 Needs PHP >= 8.5 and a 256-color terminal.
 
-Grab the single-file PHAR from the [latest release](https://github.com/Chemaclass/phel-doom/releases/latest). No clone, no Composer:
+Download the single-file PHAR from the [latest release](https://github.com/Chemaclass/phel-doom/releases/latest). You don't need to clone the repository or install Composer:
 
 ```bash
 curl -fsSL -o phel-doom.phar https://github.com/Chemaclass/phel-doom/releases/latest/download/phel-doom.phar
@@ -25,7 +25,7 @@ make install   # or: composer install
 make play      # or: composer play
 ```
 
-No local PHP? The Docker image bundles PHP 8.5, Composer and the deps:
+The Docker image includes PHP 8.5, Composer, and the dependencies:
 
 ```bash
 make docker-build   # build image (tag: DOCKER_IMG=mytag)
@@ -35,21 +35,21 @@ make docker-shell   # bash inside container
 make docker-clean   # remove image
 ```
 
-Docker adds ~1s per command. Host PHP stays the faster inner loop.
+Docker adds about 1 second per command. Local PHP is faster for development.
 
 </details>
 
 ## Controls
 
-`w` `a` `s` `d` move, arrows or mouse turn and look, `space` or left-click fire, `r` reload, `1`-`7` weapons, `p` pause, `q` quit (press twice). Walk into doors to advance.
+Use `w` `a` `s` `d` to move, arrows or mouse to turn and look, `space` or left-click to fire, `r` to reload, `1`-`7` to select weapons, `p` to pause, and `q` twice to quit. Walk into doors to advance.
 
-Full key list, pickups and weapons: [docs/gameplay.md](docs/gameplay.md).
+See [gameplay](docs/gameplay.md) for all controls, pickups, and weapons.
 
 ## Internals
 
-- [docs/README.md](docs/README.md): index of per-subsystem docs.
-- [docs/coming-from-clojure-or-php.md](docs/coming-from-clojure-or-php.md): read Phel fast if you know Clojure or PHP.
-- [docs/contributing.md](docs/contributing.md): dev loop, gates, test conventions, Phel gotchas.
+- [Documentation index](docs/README.md): guides to each subsystem.
+- [Coming from Clojure or PHP](docs/coming-from-clojure-or-php.md): an introduction to Phel for Clojure and PHP developers.
+- [Contributing](docs/contributing.md): development commands, checks, test conventions, and Phel pitfalls.
 
 ## License
 

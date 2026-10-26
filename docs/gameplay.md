@@ -1,6 +1,6 @@
 # Player guide
 
-Controls, pickups, weapons, CLI flags. The README has the short version; internals live in [combat.md](combat.md), [monsters.md](monsters.md), [level-system.md](level-system.md).
+Controls, pickups, weapons and CLI flags. The README has a short overview; implementation details are in [combat.md](combat.md), [monsters.md](monsters.md), [level-system.md](level-system.md).
 
 ## Controls
 
@@ -26,13 +26,13 @@ Controls, pickups, weapons, CLI flags. The README has the short version; interna
 | `F5` / `F9` | Quick-save / quick-load (slot 1) |
 | `q` | Opens the pause menu on Quit; press again to quit |
 
-`TAB` is not bound. Walk into the exit door to finish the level (no use key needed). The compass letter toward your goal tints: the keycard's colour until you hold it, then exit orange.
+`TAB` is not bound. Walk into the exit door to finish the level. The compass letter toward your goal takes the keycard's colour until you hold it, then turns exit orange.
 
-Mouselook is additive (every key still works); see the **Mouse** and **Sensitivity** settings in [settings.md](settings.md#fields) and [input.md](input.md#mouse-look-issue-246). Pitch drives aim: a shot must land on the drawn sprite, and the crosshair turns red while one would connect ([combat.md](combat.md#vertical-aim-gate-look-updown)). Terminal quirks (kitty, tmux): [input.md](input.md).
+Mouselook works alongside the keyboard controls. See the **Mouse** and **Sensitivity** settings in [settings.md](settings.md#fields) and [input.md](input.md#mouse-look-issue-246). Pitch drives aim: a shot must land on the drawn sprite, and the crosshair turns red while one would connect ([combat.md](combat.md#vertical-aim-gate-look-updown)). Terminal quirks (kitty, tmux): [input.md](input.md).
 
 ## Pickups
 
-Health is 10 HP, drawn as 5 hearts. Hits cost 1-3 HP by attacker ([monsters.md](monsters.md#stats-comparison)); one armor point absorbs one whole hit.
+Health is 10 HP, shown as 5 hearts. Hits cost 1-3 HP depending on the attacker ([monsters.md](monsters.md#stats-comparison)); one armor point absorbs one whole hit.
 
 - **heart**: heals one heart (2 HP), capped at 10. Only spawns while you are hurt.
 - **armor**: +1 armor, cap 5.
@@ -49,7 +49,7 @@ A revealed secret drops an ammo box, an armor shard and a rotating trophy (souls
 
 ## Weapons
 
-Niches, not upgrades. Each weapon debuts on one level and is found on the map.
+Each weapon has a distinct role, debuts on one level and is found on the map.
 
 | Key | Weapon | Damage | Cooldown | Mag | Reserve cap | DPS | Debut | Niche |
 |---|---|---|---|---|---|---|---|---|

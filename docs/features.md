@@ -1,6 +1,6 @@
 # Features
 
-One line per feature. The linked doc holds the detail.
+A feature overview with links to the detailed guides.
 
 ## Rendering
 
@@ -8,7 +8,7 @@ One line per feature. The linked doc holds the detail.
 - Textured stone walls and a floor-cast textured floor, both distance-fogged. `PHEL_DOOM_FLAT_WALLS=1` / `PHEL_DOOM_FLAT_FLOOR=1` restore flat shading.
 - Half-block sub-pixels: `▀` cells with independent top/bottom colours double vertical resolution for about +2% CPU. The **Sub-pixel** setting (or `PHEL_DOOM_NO_SUBPIXEL=1`) turns it off.
 - Enemies, pickups, corpses and fireballs are baked Freedoom sprites. `PHEL_DOOM_NO_SPRITES=1` falls back to glyph monsters.
-- Resizing widens the FOV (clamped at 100 degrees) instead of zooming.
+- Resizing widens the FOV, clamped at 100 degrees, without zooming.
 - Full screen, ~120fps cap. Big screens (beyond 200x45 cells) that cannot hold the framerate pixel-double the scene. `--max-cols` / `--max-rows` override.
 
 See [rendering.md](rendering.md), [raycaster.md](raycaster.md), [performance.md](performance.md).
@@ -21,7 +21,7 @@ See [rendering.md](rendering.md), [raycaster.md](raycaster.md), [performance.md]
 - Secrets: up to 2 auto-seeded on L1 and L9, a hand-authored pair on L10. F reveals one and drops a reward stash.
 - Switches (L10): F opens and shuts walls.
 - Per-level floor tint themes.
-- Lives, weapons, ammo and backpack carry across levels. A death retry replays the level with the loadout you entered it with.
+- Lives, weapons, ammo and backpack carry across levels. A death retry uses the loadout from the start of the level.
 
 See [level-system.md](level-system.md), [map.md](map.md).
 
@@ -38,7 +38,7 @@ See [monsters.md](monsters.md).
 
 ## Combat + weapons
 
-- 7 weapons, niches not upgrades: pistol (pierces every enemy in line, not walls), shotgun (cone), chaingun, chainsaw, BFG (plasma splash), incinerator (fire), rocket launcher (splash). Table: [gameplay.md](gameplay.md#weapons).
+- 7 weapons with distinct roles: pistol (pierces every enemy in line, not walls), shotgun (cone), chaingun, chainsaw, BFG (plasma splash), incinerator (fire), rocket launcher (splash). Table: [gameplay.md](gameplay.md#weapons).
 - Fire resistance: caco, baron, archvile and mancubus take 0 from the incinerator.
 - Vertical-aware aim (#243): a shot must land on the drawn sprite. The crosshair turns red while one would connect (#458).
 - Hit feedback: blood, knockback, hit-stop on tough kills, pain stagger, HP digits, kill loot.
@@ -70,7 +70,7 @@ The lights-flicker, jump-scare face and blinking door-eyes were removed (see [Ac
 
 ## Accessibility
 
-- Calm 3D view for everyone: no decorative blinks or strobes. Decoration was removed; information cues hold steady instead of pulsing; one-shot feedback (hit arc, kill flash, hit-marker) stays. See [rendering.md](rendering.md#calm-3d-view-no-decorative-blinks).
+- No decorative blinks or strobes in the 3D view. Information cues hold steady; one-shot feedback (hit arc, kill flash, hit-marker) remains. See [rendering.md](rendering.md#calm-3d-view-no-decorative-blinks).
 - High contrast setting: dim HUD elements render bold white.
 - View bob is off by default.
 
@@ -100,4 +100,4 @@ System audio player (`afplay`, `paplay`, `aplay`, `play`), else the terminal bel
 
 ## Misc
 
-- WAD parser: header, lump directory, VERTEXES/LINEDEFS. A toy reader, not wired to the renderer. See [wad-parser.md](wad-parser.md).
+- WAD parser: header, lump directory, VERTEXES/LINEDEFS. A small reader that is not wired to the renderer. See [wad-parser.md](wad-parser.md).

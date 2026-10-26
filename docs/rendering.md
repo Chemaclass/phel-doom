@@ -2,7 +2,7 @@
 
 The render layer builds one ANSI string per frame from `world` and `stats` and writes it to stdout.
 
-Callers require the facade `phel-doom.io.render` (`src/io/render.phel`), never a sub-namespace. It re-exports `render!`, `clear-screen`, `read-perf-snapshot`, the full-screen entry points, and helpers tests use (`direction-char`, `project-enemy`, `enemy-front-visible-at?`, `scene-rows`, `reload-reminder-visible?`, `build-blood-cols`, `help-menu-rows`).
+Callers require the facade `phel-doom.io.render` (`src/io/render.phel`), not a sub-namespace. It re-exports `render!`, `clear-screen`, `read-perf-snapshot`, the full-screen entry points and helpers used by tests (`direction-char`, `project-enemy`, `enemy-front-visible-at?`, `scene-rows`, `reload-reminder-visible?`, `build-blood-cols`, `help-menu-rows`).
 
 | Namespace | File | Responsibility |
 |-----------|------|----------------|
@@ -16,13 +16,13 @@ Callers require the facade `phel-doom.io.render` (`src/io/render.phel`), never a
 | `...render.main` | `main.phel` | `frame->string`, the scene emitters, `render!`, perf snapshot. |
 | `...render.screens` | `screens.phel` | Start menu, settings page, intermission, death and victory screens. |
 
-`*_data.phel` files hold baked assets. Dependencies are acyclic (`buffer -> palette -> frame-math -> {enemy-sprite, hud, paint, sprites} -> {main, screens} -> facade`). Cross-namespace calls compile to static PHP calls and the buffer macros inline, so the split is free.
+`*_data.phel` files hold baked assets. Dependencies are acyclic (`buffer -> palette -> frame-math -> {enemy-sprite, hud, paint, sprites} -> {main, screens} -> facade`). Cross-namespace calls compile to static PHP calls, and buffer macros inline.
 
 ## How a frame is drawn
 
 `render! [world stats cols rows]` builds `pain-flash-frame` (one dark red frame while `:flash-secs > 0`, #465) or `frame->string`, then wraps the cursor setup and frame output in synchronized update escapes (`\e[?2026h` and `\e[?2026l`). Supporting terminals present the completed frame together; others ignore the escapes. It re-asserts the hidden cursor (and mouse pointer while Mouse is on), moves the cursor home, prints the frame, ends the update and flushes. During `:shake-secs` the home anchor shifts up to 2 columns. With F3 on it also times the frame for the perf snapshot. It uses `print`, never `php/fwrite`: a partial write silently truncates the frame (PR #54).
 
-The alternate screen is redrawn in place from cursor home: no clear, no scroll, no flicker. The scene is one row-major string. Everything else paints on top with absolute cursor moves (`\e[r;cH`).
+The alternate screen is redrawn in place from cursor home without clearing, scrolling or flicker. The scene is one row-major string; overlays use absolute cursor moves (`\e[r;cH`).
 
 `frame->string` in order:
 
@@ -48,7 +48,7 @@ Overlays follow the numbered `p1`..`p20b` chain in `frame->string`: debug row, t
 
 ## Half-block sub-pixel rendering (floor / walls / sky)
 
-A terminal cell holds two colours, fg and bg. Fidelity comes from subdividing the cell, not from more colours. Floor, wall body and sky emit `▀` with the **top colour as fg and the bottom as bg**: two sub-pixels per cell, 2x vertical resolution. Cells are about 2:1 tall, so sub-pixels read as square (the chafa/timg/viu technique).
+A terminal cell holds foreground and background colours. Floor, wall and sky cells use `▀` with the **top colour as foreground and the bottom as background**, giving two sub-pixels per cell and 2x vertical resolution. Cells are about twice as tall as they are wide, so the sub-pixels appear square (the chafa/timg/viu technique).
 
 - **Floor:** `build-floor-dperp-sub` / `build-floor-level-sub` are per-sub-row twins of the cell tables (`floor-cast-k-sub = 2·floor-cast-k`). Each cell samples a farther (top) and nearer (bottom) ground point.
 - **Wall body:** two texture-V samples down the column.
@@ -92,7 +92,7 @@ Fog on textured walls and floor fades toward a near-neutral grey haze (`fog-rgb`
 
 The 256-colour tint stays neutral because the palette has no "barely cool" mid-grey: near-neutral snaps onto the grey ramp, anything bluer jumps to cube 95/95/135, which read as a blue band through far openings. Truecolor has no such limit (#419): its target `fog-rgb-tc` = 104/110/130 has the same luminance and a real cool bias.
 
-It all bakes at load. `fade-256-fog` lerps each code toward the tint in RGB and re-quantizes with `palette/nearest-256` into `tex-fade-table` (24 levels x 256 codes) and the themed gradients, so the hot path stays one nested `aget`. `sprite-fade` derives from the same table. `PHEL_DOOM_FLAT_FOG=1` restores the linear fade to black. The grayscale sky and the seam darkening are not tinted.
+These tables are built at load. `fade-256-fog` interpolates each code toward the RGB tint, then re-quantizes with `palette/nearest-256` into `tex-fade-table` (24 levels x 256 codes) and the themed gradients. The hot path uses one nested `aget`; `sprite-fade` derives from the same table. `PHEL_DOOM_FLAT_FOG=1` restores the linear fade to black. The grayscale sky and seam darkening are not tinted.
 
 ## Textured walls
 
@@ -114,7 +114,7 @@ A secret wall shifts `u` by half the sampled texture size, so its pattern runs o
 
 Opt-in `Texture filter` setting (`:texmip`; `PHEL_DOOM_TEXMIP=1` forces it), covering walls and, since #494, the floor. A far wall projects a few rows out of 64 texels and point-samples a different texel each frame: shimmer. With the filter on, a column samples a box-filtered level from `wall-tex-mips` (64/32/16/8, built with the sprite path's `half-mip`), dropping a level at 3x, 6x and 24x oversampling. Doors stay at 64.
 
-The floor filters per row, since its distance is row-constant: `floor-mip-size` reads the row's `dperp` and picks from `floor-tex-mips`. `floor-code-at` (the seam sampler) uses the same level, so a boundary cell never mixes filtered and unfiltered floor. Near rows magnify the texture, so the filter only fires in the band under the horizon.
+The floor filters per row because distance is constant across a row. `floor-mip-size` uses the row's `dperp` to pick from `floor-tex-mips`; the seam sampler, `floor-code-at`, uses the same level. Near rows magnify the texture, so filtering applies only in the band below the horizon.
 
 Measured on the L1 fixture at 200x50 (share of adjacent cells whose BG differs): walls 82.5% -> 79.1%, floor horizon band 81.7% -> 80.5%, near floor unchanged; frames 2.1% smaller, frame time unchanged. Off, every size is 64, so default golden hashes hold.
 
@@ -177,7 +177,7 @@ Every term is exactly 0 at `pitch = 0`, `intensity = 0` or `phase = 0`, so a lev
 
 **Sprite mode (default).** `enemy_sprites_data.phel` holds an xterm-256 grid per sprite id (`{:w :h :px}`, -1 transparent). `enemy-sprite/sprite-type-map` maps `:type` to an id; pinky and spectre reuse `:demon`. Box width follows the native aspect, `half-width = round(h * sw / sh)`, and height scales by `:scale` (2.0 for `:cyber`).
 
-The zone pass projects every enemy once (`collect-enemy-projs`) and paints back to front. Per covered column with `d < dists[c]` it stashes the box and sprite ref in `e-stop/e-sbot/e-sx/e-sxr/e-spx/e-sw/e-sh/e-fade` and leaves the wall `tops/bots` alone, so transparent texels show the wall. It records the nearest enemy per column in `edists`. A column behind a wall writes nothing, so a hidden enemy never occludes a pickup or triggers a depth-gated overlay.
+The zone pass projects each enemy once (`collect-enemy-projs`) and paints back to front. For each covered column with `d < dists[c]`, it stores the box and sprite reference in `e-stop/e-sbot/e-sx/e-sxr/e-spx/e-sw/e-sh/e-fade`. Wall `tops/bots` remain available through transparent texels. `edists` records the nearest enemy per column. Columns behind walls write nothing, so hidden enemies cannot occlude pickups or trigger depth-gated overlays.
 
 `enemy-sprite-cell` samples a 2x2 texel footprint per cell. Opaque cells with horizontal variation get a quadrant glyph, others `▀`. An edge cell with one opaque sub-pixel becomes a solid `█`: clean silhouette, no halo. Sampling is centre-of-footprint (`intdiv(sub*sh + h2/2, h2)`), which removed a top-left bias that striped texel columns.
 
@@ -208,17 +208,17 @@ Without sprites: ttl-tiered red blocks for deaths, an orange glow for fireballs,
 
 ### Face glyphs
 
-Glyph mode only; Freedoom sprites already show a face. `paint-face-overlay` paints `:face` (alternating with `:face-alt`), or `:face-attack` within `aggro-distance`, at the upper third of the body, depth-gated by `enemy-front-visible-at?`.
+Freedoom sprites already show a face, so this overlay is for glyph mode. At the upper third of the body, `paint-face-overlay` paints `:face` alternating with `:face-alt`, or `:face-attack` within `aggro-distance`. `enemy-front-visible-at?` applies the depth gate.
 
 ### Attack telegraph (issue #457)
 
 A steady `!` one row above the head of any enemy in `:attacking`, in warning amber (`telegraph-sgr`, the low-ammo colour) on a dark BG. Casters freeze 0.6-0.8 s before the bolt, melee monsters 0.3-0.8 s before the swing, and dodging depends on reading that. The first version used each type's head colour, a glyph-era colour unrelated to the sprite (the cacodemon's is cyan, its sprite red), so one amber replaced it.
 
-`paint-attack-telegraphs` filters the zone pass's bundle (`:state` rides on it for free), holds for the whole windup, follows the pitch shear, and scales by `:scale` so the boss's mark clears its 2x head. It is depth-gated by `enemy-front-visible-at?`: `collect-enemy-projs` has no occlusion test, and an ungated mark over a wall is a free wallhack.
+`paint-attack-telegraphs` filters the zone pass bundle by `:state`. Marks persist through the windup, follow pitch shear and scale with `:scale` to clear the boss's 2x head. `enemy-front-visible-at?` applies the depth gate because `collect-enemy-projs` does not test occlusion; without it, marks would show through walls.
 
 In px2 it needs the SCENE projection numerator. A bundle at `svw` with the full numerator put an off-centre enemy at about twice its offset and depth-tested the wrong column: on a 120-column terminal, 12 columns of drift at 1 world unit off axis, 34 at 3. Both px2 overlays (telegraph and face glyph, #477) use `collect-enemy-projs-pd`. Only glyph mode showed it, so no golden frame caught it.
 
-Two overlaps are deliberate: the telegraph paints after a wounded attacker's HP digit and wins the windup, and a point-blank mark may land on HUD row 1 or 2 rather than hide.
+The telegraph paints after a wounded attacker's HP digit, so it takes precedence during windup. A point-blank mark may appear on HUD row 1 or 2.
 
 ### Crosshair
 
@@ -230,7 +230,7 @@ Style comes from the Crosshair setting; position is the mouse aim cell, or the s
 
 **Hint strip (#467).** One dim steady line at the bottom for up to 15 s on level 1: `WASD move   mouse / arrows look   SPACE fire   F use   H help`. It retires once the player has moved, turned and fired (`note-hint-progress`). Hidden under `vh` 12.
 
-Quick-saves drop both.
+Quick-saves omit the message and hint strip.
 
 ### Minimap panel
 
@@ -240,7 +240,7 @@ The row loop emits flat sky for the rectangle the panel covers (`mini-col0`, `mi
 
 ### Accessibility: colorblind palettes
 
-Keycard `k` and door `▌` markers are the only minimap glyphs told apart by colour alone. `palette/colorblind-markers` remaps the triad for the `:colorblind` setting: `:deuteran` / `:protan` -> 39 / 208 / 231, `:tritan` -> 33 / 196 / 231. Each triad also separates by brightness, and a key and its door share a code. Selected once per frame.
+Keycard `k` and door `▌` markers are the only minimap glyphs distinguished by colour alone. `palette/colorblind-markers` maps `:deuteran` / `:protan` to 39 / 208 / 231 and `:tritan` to 33 / 196 / 231. Each set also differs in brightness, and a key shares a code with its door. The set is selected once per frame.
 
 ### Weapon viewmodel
 

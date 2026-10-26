@@ -1,6 +1,6 @@
 # Contributing
 
-Dev loop, gates, test conventions, and Phel quirks.
+Development workflow, checks, test conventions and Phel details.
 
 ## Dev loop
 
@@ -33,7 +33,7 @@ For reliable perf numbers use `tools/bench-ab.sh <ref>` (interleaved A/B against
 
 ## Gates
 
-Every guard below is a composer script inside `composer ci`. Each ships its own fixtures (`tools/*-test.sh`), because a quietly wrong guard is worse than none. [tools/README.md](../tools/README.md) has the one-line summary of each.
+Each check below runs through `composer ci` and has fixtures (`tools/*-test.sh`). [tools/README.md](../tools/README.md) has the one-line summary of each.
 
 **Format** (`tools/format-sources.sh`). Skips the four generated data files (`enemy_sprites_data`, `weapon_sprites_data`, `wall_texture_data`, `sound_data`): `phel format` is quadratic in the size of one collection literal ([phel-lang#3218](https://github.com/phel-lang/phel-lang/issues/3218)), and `enemy_sprites_data.phel` alone cost 95s of a 124s check. The script fails if a skipped file is renamed. Check mode also caches content hashes that passed, keyed by `composer.lock`, so unchanged files are not re-checked. Write mode never uses the cache.
 
@@ -45,15 +45,15 @@ Every guard below is a composer script inside `composer ci`. Each ships its own 
 
 ## Looking at a frame
 
-Golden tests pin bytes and hashes. They prove a frame did not change, not that it looks right. To see one:
+Golden tests pin frame bytes and hashes but do not verify appearance. To inspect a frame:
 
 ```bash
 tools/frame-shot.sh tools/shots/showcase.phel /tmp/showcase.png
 ```
 
-`tools/shots/showcase.phel` renders a deterministic frame with every on-screen feature lit: message line, first-run key hints, an enemy mid-windup, a red hostile reticle, the full HUD strip, and the minimap. Any script that writes raw ANSI to its first CLI argument works the same way. `tools/frame-to-html.php` emulates the terminal cell grid, then headless Chrome takes the PNG. Without Chrome you still get the HTML.
+`tools/shots/showcase.phel` renders a deterministic frame with the message line, first-run key hints, an enemy mid-windup, a red hostile reticle, the full HUD strip and the minimap. Any script that writes raw ANSI to its first CLI argument works the same way. `tools/frame-to-html.php` emulates the terminal cell grid, then headless Chrome takes the PNG. Without Chrome you still get the HTML.
 
-Two things that look like bugs and are not: a dotted teal outline around the gun is the `:steel` floor theme showing through the sprite's transparent gaps, and keycard glyphs may render as tofu boxes in some fonts (the **HUD glyphs** setting exists for that).
+A dotted teal outline around the gun is the `:steel` floor theme showing through the sprite's transparent gaps. Some fonts render keycard glyphs as boxes; use the **HUD glyphs** setting to change them.
 
 ## AI agent config (generated, not committed)
 
@@ -96,7 +96,7 @@ Two fixes:
 1. Keep the loop inline in the same `let` scope that owns the array.
 2. Let the helper create the array and return it. Callers rebind via `let`.
 
-The render layer uses pattern 2 throughout (`compute-wall-shades`, the `paint-*` helpers). A related trap: `php/aset` inside a `let` binding VALUE can compile to a closure and write to a copy. Mutate in statement position.
+The render layer uses pattern 2 throughout (`compute-wall-shades`, the `paint-*` helpers). `php/aset` inside a `let` binding VALUE can compile to a closure and write to a copy. Mutate in statement position.
 
 ### Destructure: `{local-name :keyword}` (Clojure-style)
 
@@ -142,7 +142,7 @@ This broke the options page once: every change applied, then reverted next frame
 
 ### Lint warnings can be false positives
 
-`composer lint` may warn on a `let` binding used only by a later binding, and on threading macros (`(-> w (foo arg))` reads as a 1-arg call). Errors fail CI, warnings do not.
+`composer lint` may warn about a `let` binding used only by a later binding or a threading macro (`(-> w (foo arg))` reads as a 1-arg call). Errors fail CI; warnings do not.
 
 ### Avoid Phel vectors in hot loops
 
@@ -180,4 +180,4 @@ Stamina is the worked example:
 5. Overlay: `stamina-chip` in `src/io/render/paint.phel`.
 6. Test: `tests/core/physics-test.phel`.
 
-Keep effects out of `core/` and the tests stay cheap. Run `composer ci` before you push.
+Keep effects out of `core/` so its tests stay cheap. Run `composer ci` before pushing.

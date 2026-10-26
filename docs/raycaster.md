@@ -1,6 +1,6 @@
 # Raycaster
 
-`src/core/engine.phel`. Per-column wall distances via grid-aligned DDA traversal.
+`src/core/engine.phel` calculates per-column wall distances with grid-aligned DDA traversal.
 
 For each screen column, fire a ray from the player at an angle offset from facing. Walk the grid until the ray hits a non-floor cell. The distance sets that column's wall height (Wolfenstein-style 2D ray march, no 3D math).
 
@@ -13,7 +13,7 @@ For each screen column, fire a ray from the player at an angle offset from facin
 
 ## DDA: grid-aligned traversal
 
-Step grid line to grid line, not at fixed intervals. Two per-axis side distances track the next x and y crossing. Each step advances the nearer one, lands in the next cell, and adds that axis's `|1/dir|` delta. A ray takes ~5-8 cell crossings instead of ~35 fixed steps.
+DDA steps from one grid line to the next. Two side distances track the next x and y crossings. Each step advances the nearer crossing, enters the next cell and adds that axis's `|1/dir|` delta. A ray takes ~5-8 cell crossings instead of ~35 fixed steps.
 
 ```phel
 (let [stepx  (if (php/< dirx 0.0) -1 1)
@@ -24,11 +24,11 @@ Step grid line to grid line, not at fixed intervals. Two per-axis side distances
   ...)                                   ; same for y
 ```
 
-The player's cell and its edge offsets are hoisted out of the per-column loop. The march runs in statement position and writes `[dist hit side hx hy]` into one reused PHP-array register, so it compiles to a plain `while` with no per-column closure (issue #345, see [performance.md](performance.md)). The map is read through `:pgrid`, a nested PHP array.
+The player's cell and edge offsets are computed outside the per-column loop. The march writes `[dist hit side hx hy]` into a reused PHP-array register in statement position, compiling to a `while` without a per-column closure (#345; see [performance.md](performance.md)). It reads the map through `:pgrid`, a nested PHP array.
 
 ## `cast-ray`: one ray
 
-Returns the raw (uncorrected) distance only. Used by the hitscan (`combat`) and the enemy line-of-sight probe (`enemy_ai`), which only need the distance.
+Returns the raw, uncorrected distance. Hitscan (`combat`) and enemy line-of-sight probes (`enemy_ai`) use this distance.
 
 ## `cast-frame`: all rays at once
 
@@ -58,7 +58,7 @@ Below `fov-clamp-width` (~167 cols, where the natural FOV hits 100°) `fov-proj-
 
 ## Fish-eye correction
 
-Edge rays travel further than central rays to reach the same wall plane. Multiplying by `cos(offset)` projects onto the player's forward axis. One multiply per column. Without it: barrel distortion.
+Edge rays travel further than central rays to reach the same wall plane. Multiplying by `cos(offset)` projects each distance onto the player's forward axis and avoids barrel distortion.
 
 ## Projection primitive
 
@@ -86,7 +86,7 @@ Looking up or down is a vertical shear of the horizon, not a re-projection, so i
 - sky and floor gradients in `frame-math` (the gradient cache keys on `(vh, pr)`)
 - enemy sprite feet rows, so feet, shadow and overlays shear with the floor
 
-The crosshair stays fixed: it is a weapon sight, not part of the world. Every offset is additive and 0 at `pitch = 0`, so a level gaze renders byte-for-byte like the no-pitch path (pinned by `render-cache-test/test-frame-bytes-pinned`).
+The crosshair stays fixed as a weapon sight. Every offset is additive and 0 at `pitch = 0`, so a level gaze renders byte-for-byte like the no-pitch path (`render-cache-test/test-frame-bytes-pinned`).
 
 ### Head bob: a second term into `pr` (#411)
 
@@ -107,4 +107,4 @@ Two private atoms memoize input-determined data:
 - `offset-cache`: per-column FOV offsets and their cosines, built once per width.
 - `pause-cast-cache`: single-slot copy of the last cast, read only while paused (player and grid frozen). Active frames never touch it, so pause overlays and the help menu cost no cast.
 
-Neither changes a result for given inputs, so the casts stay referentially transparent. That is why the engine lives in `core/`: tests check distances, side bits, hit cells and array lengths against literal grids.
+Neither cache changes results for given inputs, so casts remain referentially transparent. Tests check distances, side bits, hit cells and array lengths against literal grids.

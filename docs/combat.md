@@ -1,6 +1,6 @@
 # Combat
 
-Shooting, taking damage, hit feedback. `src/core/combat.phel`, plus `loot.phel` and `weapons.phel`. Pure: sound cues queue as `{:name :vol}` on the world's `:sfx`, which `commands/play` drains and plays after `tick-world`.
+Shooting, damage and hit feedback live in `src/core/combat.phel`, `loot.phel` and `weapons.phel`. The logic is pure: it queues sound cues as `{:name :vol}` on the world's `:sfx`, and `commands/play` plays them after `tick-world`.
 
 Weapon numbers: [gameplay.md](gameplay.md#weapons). Monster stats: [monsters.md](monsters.md#stats-comparison).
 
@@ -40,7 +40,7 @@ The heat/jam machinery (`:overheats?`, `heat-per-shot`, `jam-seconds`) is still 
 
 ## Magazine + reload
 
-Each shot burns one round and arms the cooldown (`apply-heat`). `reload` moves `min(mag-size - mag, reserve)` into the mag and arms the reload timer. It returns the same world when a reload is running, the mag is full, or the reserve is empty.
+Each shot consumes one round and starts the cooldown (`apply-heat`). `reload` moves `min(mag-size - mag, reserve)` into the mag and arms the reload timer. It returns the same world when a reload is running, the mag is full, or the reserve is empty.
 
 An empty-mag pull shows `CLICK - press R to reload` (or `OUT OF AMMO`) for 0.8s. The reload nag (`reload-reminder-visible?` in `src/io/render/paint.phel`) arms at a mag fraction of 0.3 or less, so a pistol and a shotgun both nag at "nearly empty". It skips single-round mags, a dry reserve, a running reload, the CLICK prompt, and viewports under 9 rows. A finished reload flashes ` READY! ` for 0.30s.
 
@@ -50,11 +50,11 @@ A shot casts the wall probe (`cast-ray`), then `enemy/target-index` picks the ne
 
 `enemy/shoot` applies damage (0 if resisted) and sets the target `:aware`. A kill flips `:alive false` and arms the respawn timer; a wound floats the HP digit and rolls pain. `on-shot-hit` then bumps kills and streak, unlocks the L10 door on a cyber kill, drops loot, arms hit-stop, and stamps blood and the hit-marker.
 
-A wounding hit shoves the enemy 1.0 unit along the shot, falling back to 0.5 then 0.25 against walls. Killing blows skip it, so corpse and loot stay on the death cell. A miss plays the report only, scaled by the distance to the wall.
+A wounding hit pushes the enemy 1.0 unit along the shot, falling back to 0.5 then 0.25 against walls. Killing blows do not push, so the corpse and loot stay on the death cell. A miss plays the report only, scaled by the distance to the wall.
 
 ### Vertical aim gate (look up/down)
 
-With pitch, the flat cylinder test would hit an enemy while the crosshair points at the floor. So `shoot`, `pierce` and `spread-shoot` also require the crosshair on the drawn billboard (`enemy/vertical-hit?`, issue #243).
+With pitch, a flat cylinder test could hit an enemy while the crosshair points at the floor. `shoot`, `pierce` and `spread-shoot` also require the crosshair on the drawn billboard (`enemy/vertical-hit?`, issue #243).
 
 The crosshair sits at scene row `svh/2`. The feet sit at `round(svh/2 + 0.5*wall-px) + pr` (`pr` = pitch shear) and the body spans `2 * sprite-half-rows` up. That matches the renderer, so near enemies forgive more, far ones need level aim, and the 2x cyberdemon is easiest. `svh` arrives as the world's `:scene-rows`; without it the gate is off. Splash impacts are not gated.
 
@@ -64,18 +64,16 @@ A connecting shot stamps `:hit-fx {:kill? :ttl}`: the `+` becomes a red `✗` on
 
 ## Hostile reticle (issue #458)
 
-`frame-stats` calls `combat/target-in-sights?` once per frame, and the crosshair paints steady red while a shot would connect. It runs the trigger's own selection (`enemy/target-index`, the damage-free half of `shoot`), never a copy.
-
-Lesson: ask the real rule. A reticle on its own approximation drifts from the gun, which is worse than none.
+`frame-stats` calls `combat/target-in-sights?` once per frame, and the crosshair stays red while a shot would connect. It uses the trigger's selection (`enemy/target-index`, the damage-free half of `shoot`) to keep the reticle aligned with the gun.
 
 The rule is per weapon: the shotgun asks its cone (`enemy/spread-target-index`), which disagrees with the corridor both ways (0.45 off axis at point blank is inside the corridor, outside the cone; 0.8 off at five units is the reverse). The pistol needs no special case. Splash can still catch an enemy the reticle left white. The reticle answers where the shot goes, not whether the gun is loaded: it stays red during a reload or on an empty mag. Hit-marker and muzzle flash outrank it; paused frames skip it.
 
 ## Weapon specializations
 
 - **Pistol** (`:pierce?`, issue #124): `enemy/pierce` damages every enemy along the ray up to the first wall. Its edge over the higher-DPS chaingun is a lined-up corridor.
-- **Shotgun** (`:spread?`, issue #125): the nearest enemy in the cone takes 3, then up to 2 more (index order) take 1. A slow crowd weapon.
+- **Shotgun** (`:spread?`, issue #125): the nearest enemy in the cone takes 3, then up to 2 more (index order) take 1. A slow weapon for groups.
 - **Chainsaw**: `:no-ammo?` (no mag, `R` does nothing), `:max-range 1.5`, `:movement-mul 0.5` while the cooldown runs. Damage type `:melee`.
-- **Incinerator** (issue #122): the only `:fire` weapon. Fast (0.06s) and short (`:max-range 4.0`), a swarm-clearer that fire-resistant types ignore.
+- **Incinerator** (issue #122): the only `:fire` weapon. Its cooldown is 0.06s and range is 4.0. It works against groups but does no damage to fire-resistant types.
 
 ### Splash: BFG (slot 5), rocket (slot 7)
 
@@ -104,11 +102,11 @@ A catalog entry may carry `:resists #{...}`; `enemies/resists?` zeroes that dama
 
 ## Hit-stop (kill weight)
 
-`hit-stop-for` freezes the world by the victim's max HP: none for 1-2, 0.07s for 3-9, 0.16s for 10+ (only the 50 HP boss). While `:hit-stop-secs` runs, `tick-world` skips the gameplay step and render holds the frame. Trash kills skip it so auto-fire stays fluid.
+`hit-stop-for` freezes the world by the victim's max HP: none for 1-2, 0.07s for 3-9, 0.16s for 10+ (only the 50 HP boss). While `:hit-stop-secs` runs, `tick-world` skips the gameplay step and render holds the frame. Low-HP kills skip it so auto-fire stays fluid.
 
 ## Berserk pickup
 
-Issue #127. `arm-berserk` sets 18s on `:berserk-secs` (refresh, not stack) and heals to 10 HP without lowering a soulsphere surplus. `berserk-mul-for` scales `:melee` x6 and every other type x2: the chainsaw shreds, guns get a nudge.
+Issue #127. `arm-berserk` sets 18s on `:berserk-secs` (refresh, not stack) and heals to 10 HP without lowering a soulsphere surplus. `berserk-mul-for` scales `:melee` x6 and every other type x2: the chainsaw gains a larger boost than guns.
 
 ## Kill loot
 

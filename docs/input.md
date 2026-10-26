@@ -5,7 +5,7 @@ Raw stdin to world state, in two layers:
 - `src/io/input.phel`: side effects. `stty`, ANSI escapes, signal handlers, non-blocking `fread`.
 - `src/glue/controls.phel`: pure. Parses the drained byte string into hold counters, rising edges and mouselook. Fully unit-tested.
 
-The player-facing key list is in [gameplay.md](gameplay.md#controls). This page maps keys to what the parser produces:
+For player-facing controls, see [gameplay.md](gameplay.md#controls). This table maps keys to parser output:
 
 | Keys | Parsed into |
 |------|-------------|
@@ -63,7 +63,7 @@ SIGWINCH works the same way: see [game-loop.md](game-loop.md#resize-sigwinch-not
 
 ## Reading input
 
-`drain-keys` reads up to `drain-bytes` (512) once per frame and returns `""` when nothing is queued. 512 fits a fast mouse drag: any-motion tracking floods ~12-byte reports, and the parser drops a half-read trailing report. Held keys arrive as several auto-repeat bytes per frame, and every byte counts.
+`drain-keys` reads up to `drain-bytes` (512) once per frame and returns `""` when nothing is queued. The limit accommodates fast mouse drags, which generate many ~12-byte any-motion reports. The parser drops a partially read trailing report. Held keys can produce several auto-repeat bytes per frame; each byte counts.
 
 `refresh-from-keys` folds the string into `:moves` in four stages:
 
@@ -88,7 +88,7 @@ Each byte sets its slot to a hold time in seconds. Physics subtracts `dt` every 
 | `pitch-hold-secs` | 0.05 | Looking up/down halts the same way. |
 | `sprint-hold-secs` | 0.05 | No Shift-release signal exists; a longer hold shows a phantom stamina drain. |
 
-Lesson from #461: when every byte re-armed 0.30 s, the last repeat kept the player walking ~300 ms after release, past doorways and into melee range. 0.15 s covers repeat rates down to ~7/s, below every default (macOS ~15/s at its slowest, X11 ~25/s). A crippled rate such as `xset r rate 400 5` stutters.
+Before #461, every byte re-armed 0.30 s, so the last repeat kept the player walking ~300 ms after release, sometimes past doorways or into melee range. The 0.15 s repeat hold covers rates down to ~7/s, below the defaults (macOS ~15/s at its slowest, X11 ~25/s). A slower rate such as `xset r rate 400 5` stutters.
 
 A kitty release event (type 3) clears the slot at once, so kitty terminals have no glide.
 
@@ -126,13 +126,13 @@ In tmux: `set -g extended-keys on`, `setw -g xterm-keys on`, and `set -g focus-e
 
 ## One-shot actions (rising edges)
 
-`key-states` snapshots every tracked key each frame, plus the `focus-out` report. `rising-edges` diffs it against the previous snapshot. Exceptions to the plain edge rule:
+`key-states` records every tracked key each frame, plus the `focus-out` report. `rising-edges` compares it with the previous snapshot. Exceptions:
 
 - `:fire-held` is true whenever space is in the input. Auto-fire weapons (pistol, chaingun) spray on it.
 - `:confirm` is space or Enter as a rising edge, so a held fire key cannot auto-select a menu row.
 - `:focus-out` is presence, not an edge: the report arrives once per focus loss.
 
-Parsing gotchas, each one a past bug:
+Parsing rules:
 
 - **Strip CSI before the plain-byte check.** `\e[50;1:3u` (release of `2`) contains the bytes `1` and `3`. `key-pressed?` removes every CSI sequence first.
 - **Kitty presses only.** The match accepts no event field or `:1`, so a held key fires once.
@@ -169,7 +169,7 @@ A report is `\e[<b;Cx;Cy` then `M` (press or motion) or `m` (release). `Cx` `Cy`
 
 ### Fixed-centre crosshair and delta mouselook (issue #324)
 
-Terminals cannot lock, warp or confine the pointer (#313). A pure delta turn freezes once a flick carries the pointer off the window, because reporting stops there. So `mouse-aim` (pure) adds an edge term:
+Terminals cannot lock, warp or confine the pointer (#313). A turn based only on pointer movement freezes when the pointer leaves the window and reporting stops. `mouse-aim` adds an edge term:
 
 ```
 yaw   = ( mouse-look-gain * dx / fov-proj-dist(cols)  + edge-pan-rate(x, cols, mouse-yaw-rate-max)   * dt ) * sensitivity
@@ -178,7 +178,7 @@ pitch = ( -mouse-look-gain * dy / (pitch-cap * rows)  - edge-pan-rate(y, rows, m
 
 - **Delta turn.** `dx` `dy` are cells moved since last frame. `1 / fov-proj-dist(cols)` is one rendered column per pointer column, which reads slow: a full swipe is only ~80-180 columns. `mouse-look-gain` (5.0) makes one swipe cover most of a turn. No `dt`: one report already is one frame's motion.
 - **Edge pan.** 0 in the centre region. In the outer `mouse-edge-band-frac` (30%) of each half-axis it ramps ease-in (fraction squared) to `mouse-yaw-rate-max` 9.6 rad/s (a full turn in ~0.65 s) or `mouse-pitch-rate-max` 3.6/s. Per second, so scaled by `dt`.
-- **Ungated.** The edge pan runs every frame from the cached position. A pointer parked at or past a border keeps turning, which keeps mouselook alive after the pointer leaves the window.
+- **Ungated.** The edge pan runs every frame from the cached position. A pointer parked at or past a border keeps turning after it leaves the window.
 - **No mid-screen drift.** A pointer resting in the centre adds nothing, so an unhideable OS pointer never spins the camera.
 - **Signs.** Right of centre is +yaw. Rows grow downward, so pointer up is +pitch.
 
@@ -191,11 +191,11 @@ Each frame the loop calls `state/reset-reticle` and then `apply-mouse-look`, whi
 
 ### Sensitivity
 
-`core/settings.mouse-sensitivity` maps the 0-100 setting to `3 ^ ((pct - 50) / 50)` (#275): 1/3x, 1.0x (default 50%), 3.0x. It scales both terms, so far-edge yaw runs 3.2 / 9.6 / 28.8 rad/s. There is no acceleration curve: the ease-in band already gives fine control near centre.
+`core/settings.mouse-sensitivity` maps the 0-100 setting to `3 ^ ((pct - 50) / 50)` (#275): 1/3x, 1.0x (default 50%), 3.0x. It scales both terms, so far-edge yaw runs 3.2 / 9.6 / 28.8 rad/s. There is no acceleration curve; the ease-in band gives fine control near centre.
 
 ### Fire and weapon cycling (issue #464)
 
-A left press sets `:fire?`, ORed into `:fire`. A left press or drag sets `:fire-held?`, ORed into `:fire-held`, so auto-fire weapons spray while the button is down. Terminals only report a held button while it moves.
+A left press sets `:fire?`, ORed into `:fire`. A left press or drag sets `:fire-held?`, ORed into `:fire-held`, so auto-fire weapons fire while the button is down. Terminals report a held button only while it moves.
 
 The wheel and `[` / `]` step through owned weapons, wrapping. `wheel-weapon-step` reads wheel reports from the same drain string; the last tick in a frame wins. Brackets are edges, so holding one steps once. Both go through `weapons/cycle-weapon` to `switch-weapon`, which keeps mag bookkeeping and the reload lockout. A number key in the same frame wins. Unowned weapons are skipped.
 
@@ -214,7 +214,7 @@ A focus change or a resize can make a terminal drop mouse tracking. `rearm-mouse
 | iTerm2, Terminal.app | Visible: no XTSMPOINTER, no setting |
 | kitty, WezTerm, Ghostty, Alacritty | Visible: hidden only when idle or typing |
 
-This is a terminal limit. The centre crosshair stays the aim and the edge pan keeps turning. `pointer-limit-notice` checks `$TERM_PROGRAM`; for iTerm2, Apple Terminal, VS Code and Ghostty the start menu says the arrow is cosmetic.
+Terminal support limits pointer hiding. The centre crosshair remains the aim point, and edge pan keeps turning. `pointer-limit-notice` checks `$TERM_PROGRAM`; for iTerm2, Apple Terminal, VS Code and Ghostty the start menu says the arrow is cosmetic.
 
 `paint-crosshair` draws at row `svh/2`, col `cols/2`. With the mouse on, Crosshair style `off` still draws `·`. With it off, `off` hides the idle crosshair. The hit marker (`✗` kill, `×` wound) always shows.
 

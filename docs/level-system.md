@@ -1,6 +1,6 @@
 # Level system
 
-The 10-level catalog, difficulty scaling and the `build-world` factory. `src/core/level.phel`, `src/core/difficulty.phel`. Grid generation lives in [map.md](map.md); monster types in [monsters.md](monsters.md).
+`src/core/level.phel` defines the 10-level catalog and `build-world` factory. `src/core/difficulty.phel` scales difficulty. See [map.md](map.md) for grid generation and [monsters.md](monsters.md) for monster types.
 
 ## Levels at a glance
 
@@ -21,13 +21,13 @@ The 10-level catalog, difficulty scaling and the `build-world` factory. `src/cor
 - **Fixed shell** (L2-L8): a `:layout` gives an empty bordered room and spawn; `:walls` random blobs fill it each run.
 - **Hand-authored arena** (L10): the layout pins walls, 2 secrets and 2 switches. No random walls: switch targets are fixed cells.
 
-Every level gets a random exit (`map/place-exit`), then its lock, so finding the way out is part of the game.
+Every level gets a random exit (`map/place-exit`), followed by its lock.
 
-Design rules: chase speed never drops before L10, which eases to 1.6 (a dodging arena, not a swarm). L1 is pure imps; later levels mix in a melee secondary. L6 and L7 each carry one caster. L5 has two cybers, not five: five out-gunned the L10 boss.
+Chase speed rises through L9, then drops to 1.6 for the L10 dodging arena. L1 has only imps; later levels include a melee secondary. L6 and L7 each have one caster. L5 has two cybers because five out-gunned the L10 boss.
 
 ### Secrets
 
-`build-world` seeds up to 2 secrets (`map/seed-secrets`) only on levels with no `:layout` and no lock: L1 and L9. Layouts keep explicit geometry, and a secret could bypass a keycard door. L10 has a hand-authored pair. Mechanics: [map.md](map.md#secret-walls).
+`build-world` seeds up to 2 secrets (`map/seed-secrets`) on levels without a `:layout` or lock: L1 and L9. Layouts retain their explicit geometry, and secrets could bypass keycard doors. L10 has two hand-authored secrets. See [map.md](map.md#secret-walls).
 
 ## Config fields
 
@@ -77,7 +77,7 @@ Specs may add `:lives N` and `:max-concurrent K` ([monsters.md](monsters.md#spaw
 | `S` | secret wall (F reveals) |
 | `T` | switch (F toggles its `:switches` targets) |
 
-Unknown characters read as floor. A layout never holds the exit: `build-grid` scatters `:walls` (unless `:switches` is set), then `place-exit` adds the door and `lock-the-door` locks it.
+Unknown characters read as floor. The layout does not contain the exit: `build-grid` scatters `:walls` unless `:switches` is set, then `place-exit` adds the door and `lock-the-door` locks it.
 
 ### Adding a level
 
@@ -85,7 +85,7 @@ Append one map literal to `levels`; `num-levels` follows. New enemy types: [mons
 
 ## Difficulty
 
-`difficulty/scale-cfg` applies the multipliers before the build. `--difficulty` overrides the settings default; an unrecognised value falls back to the settings-page default (`resolve-difficulty`).
+`difficulty/scale-cfg` applies the multipliers before the build. `--difficulty` overrides the settings default; an unrecognised value falls back to it (`resolve-difficulty`).
 
 | | easy | normal | hard | nightmare |
 |---|---|---|---|---|
@@ -114,7 +114,7 @@ Count scales only int `:enemies` (L1); mixed specs are author-tuned. Powerup odd
 
 The weapon rule (#453) arms a player who arrives with an empty rack (`--level=8`); the level's own debut is always the most recent, so the cap never drops it. The world also gets `:intro-secs` (1.5s splash) and, on L1, `:hint-secs` (first-run key hints).
 
-Gotcha: every roll draws from one seeded stream in a fixed order. A guard that skips a roll must short-circuit before drawing, or every later spawn shifts and same-seed replay breaks.
+Every roll draws from one seeded stream in a fixed order. A guard that skips a roll must short-circuit before drawing; otherwise later spawns shift and same-seed replay breaks.
 
 ## Run flow
 

@@ -1,6 +1,6 @@
 # Architecture
 
-Pure `core/` (deterministic logic) → `glue/` (pure wiring) → `io/` (terminal, disk, audio effects). The CLI entry point is `main.phel`; `commands/` orchestrates.
+`core/` contains deterministic logic, `glue/` contains pure wiring, and `io/` handles terminal, disk and audio effects. `io/` may depend on `glue/` and `core/`; `glue/` may depend on `core/`. The CLI entry point is `main.phel`; `commands/` orchestrates the layers.
 
 ```
 src/
@@ -72,9 +72,9 @@ src/
    uses core/engine cast-frame)
 ```
 
-The loop reads input, runs the pure `tick-world`, then renders. IO happens only around the tick. [game-loop.md](game-loop.md) has the full step table.
+The loop reads input, runs the pure `tick-world`, then renders. IO happens around the tick. See [game-loop.md](game-loop.md) for each step.
 
 ## Why this layout
 
-- Test cost is visible from the folder. `core/` tests run on hand-built maps. `io/` tests cover the pure halves of each effect module plus golden frame bytes.
-- Dependency arrows point one way: no cycles (`composer check-cycles`), easy to grep.
+- `core/` tests run on hand-built maps. `io/` tests cover the pure parts of effect modules and golden frame bytes.
+- Dependencies point one way. `composer check-cycles` checks for cycles, and the layout makes them easy to search.

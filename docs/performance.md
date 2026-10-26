@@ -1,12 +1,12 @@
 # Performance
 
-The loop is `input -> step -> cast -> render`. Render dominates: it visits every terminal cell per frame (cols x rows). Cast is a rounding error. The step is a real but smaller share.
+The loop is `input -> step -> cast -> render`. Render dominates because it visits every terminal cell per frame (cols x rows). Cast takes a small fraction; the step takes more than cast but less than render.
 
-Every large win here came from one move: opting out of the persistent, generic Phel operation in code that runs thousands of times per frame. Read [Rules for the hot path](#rules-for-the-hot-path) and [Tried and rejected](#tried-and-rejected-do-not-retry) before optimising anything.
+The largest gains came from replacing persistent, generic Phel operations in code that runs thousands of times per frame. Read [Rules for the hot path](#rules-for-the-hot-path) and [Tried and rejected](#tried-and-rejected-do-not-retry) before optimising.
 
 ## How to measure
 
-Absolute numbers do not travel between machines. The local php CLI runs without OPcache or JIT. A single reading drifts more than most changes are worth: in one sitting the same commit read 4.65 ms, 5.09 ms and 6.91 ms as the laptop warmed up. Compare in one sitting, interleaved, and trust deltas over milliseconds.
+Absolute timings vary by machine. The local PHP CLI runs without OPcache or JIT. Readings also drift: one commit measured 4.65 ms, 5.09 ms and 6.91 ms as the laptop warmed up. Compare runs in one sitting, interleaved, and use the relative change.
 
 ### The tracked harness
 
@@ -19,7 +19,7 @@ Absolute numbers do not travel between machines. The local php CLI runs without 
 | `step-fire-120` | `tick-world` with `:fire true` |
 | `frame-120x30`, `frame-180x45`, `frame-240x60` | the whole `frame->string` |
 
-`tests/bench/phel-costs-bench.phel` tracks the Phel primitives the hot paths are built on (map writes, `def` reads, equality, grid access). When a compiler upgrade makes one of those rows free, the workaround it justified can go.
+`tests/bench/phel-costs-bench.phel` tracks primitives used by the hot paths: map writes, `def` reads, equality and grid access. If a compiler upgrade makes a primitive free, its workaround can be removed.
 
 ```sh
 composer bench                # every row, this machine
@@ -28,11 +28,11 @@ composer bench-ref            # on the branch: delta per row, fail past +10%
 composer bench -- --filter=cast --revs=1000   # one family, more revs
 ```
 
-Each row reports mean and `rstdev`. Under 1% is normal on an idle machine. Above a few percent is noise to re-run, not a result. `bench-ref` is a same-machine, same-session gate, not a CI one. The suite loads the bench files too, so nothing in them runs at load: the scene is a `delay` forced on the first warmup rev.
+Each row reports mean and `rstdev`. Under 1% is normal on an idle machine; repeat a run with deviation above a few percent. `bench-ref` compares runs on the same machine in the same session, not in CI. The test suite also loads bench files, so the scene is a `delay` forced on the first warmup rev.
 
 ### A/B against another ref
 
-Use `tools/bench-ab.sh`, never two separate `composer bench` runs. Running the old ref then the new one has "measured" a 20% regression and a 10% win on unchanged code.
+Use `tools/bench-ab.sh` rather than two separate `composer bench` runs. Sequential runs have measured a 20% regression and a 10% improvement on unchanged code.
 
 ```sh
 tools/bench-ab.sh v0.17.0          # 3 pairs, the frame-120 row
@@ -154,7 +154,7 @@ Check for regressions with the closure count in [Structural checks](#structural-
 
 ### Phel/PHP closure gotcha in the emitter
 
-The same compilation rule is a correctness trap. A `buf-push` or any `php/aset` inside a let-binding VALUE runs inside the IIFE closure. PHP `use` copies arrays in, so the write lands on a copy and is silently lost. Binding values stay pure reads; mutation goes in statement position before `recur`. PHP arrays also pass by value across fn boundaries: the lifted scene emitters return `[parts center-cap]` and the caller must rebind both from the result.
+The same compilation rule affects correctness. A `buf-push` or `php/aset` inside a let-binding value runs inside an IIFE closure. PHP `use` copies arrays, so the write is lost. Keep binding values as reads and put mutation in statement position before `recur`. PHP arrays also pass by value across function boundaries: scene emitters return `[parts center-cap]`, and the caller rebinds both.
 
 ### Direct PHP ops and native arrays
 
@@ -189,7 +189,7 @@ Anything that does not change per cell is computed once, at the coarsest level i
 
 Measured over 200 frames (2026-08-16): `str` calls per frame 874 -> 113, `weapon-row-string` 84.5 -> 18.5 us/call, `compute-wall-shades` 874.7 -> 336.9 us/call. Whole frame -8.4% at 120x30, -5.7% at 240x60.
 
-The trap: never swap `str` for `php/.` over a float, a bool or nil. PHP renders them differently (`1.0` -> `"1"`, `true` -> `"1"`, nil -> `""`). Ints and strings are safe.
+Do not replace `str` with `php/.` for a float, bool or nil. PHP renders them differently (`1.0` -> `"1"`, `true` -> `"1"`, nil -> `""`). Integers and strings are safe.
 
 ### What a Phel operation costs
 
@@ -213,7 +213,7 @@ Loop overhead subtracted for the 0.50 column (200k iterations, 2026-08-17). The 
 
 ### What a write costs on Phel 0.51
 
-The step phase lives on map writes. The 0.51 column is a microbench on the real 90-key world map (2026-09-22, PHP 8.4, no JIT, 20k iterations). The 0.53 column re-measures the same shapes on a synthetic 90-key map (2026-09-24, PHP 8.5, no JIT, 20k iterations, scratch loop).
+The step phase spends time on map writes. The 0.51 column is a microbenchmark on the real 90-key world map (2026-09-22, PHP 8.4, no JIT, 20k iterations). The 0.53 column measures the same shapes on a synthetic 90-key map (2026-09-24, PHP 8.5, no JIT, 20k iterations, scratch loop).
 
 | | phel 0.51 | 0.53 |
 |---|---|---|
@@ -246,7 +246,7 @@ The rules, as they stand on 0.53:
 
 `phel-config.php` builds at `withOptimizationLevel(2)`, which enables the compiler's `CallInliner`. `^:pure` on a `defn-` asserts the body is side-effect-free and lets the inliner splice a single-expression body into its call sites, dropping the `getDefinition(...)->__invoke(...)` dispatch. `src/` carries 59 `^:pure` helpers: `map/cell`, `map/wall?`, `projection/wall-px`, `enemy/in-cone?`, the AI, physics and render-math helpers.
 
-The win is removing a PHP frame per call, not changing the math. It is small in ms and lost in bench noise. Verify it by diffing `out/`, where the dispatch form disappears.
+Inlining removes a PHP frame per call without changing the math. The time saved is small and lost in benchmark noise. Verify it by diffing `out/`, where the dispatch form disappears.
 
 Two compiler facts shape this:
 
@@ -278,7 +278,7 @@ PHP deprecates implicit lossy float-to-int conversion. Hot-path numeric args car
 
 ### Rule for march changes
 
-The DDA march (~5-8 cell crossings per ray instead of ~35 fixed steps, see [raycaster.md](raycaster.md)) runs on every column of every frame of every level. Any per-step cost added unconditionally shows up everywhere. Gate it or make it free.
+The DDA march runs for every column of every frame, crossing ~5-8 cells per ray rather than ~35 fixed steps (see [raycaster.md](raycaster.md)). Unconditional per-step costs affect every frame, so gate them or eliminate their cost.
 
 ## Runtime and scaling
 
@@ -322,13 +322,13 @@ Head bob adds a walk-cycle term to `pr`, the `frame-gradients` memo key, so View
 
 ### Memory
 
-The renderer is built out of lazy memos (half-block and truecolor cell caches, BG cell cache, per-width offset tables, gradient bundles). Each is a per-frame leak if its key can keep taking new values: nothing fails, and a long session dies on the memory limit.
+The renderer uses lazy memos for half-block and truecolor cells, background cells, per-width offset tables and gradient bundles. A cache whose keys keep changing can grow every frame until a long session reaches the memory limit.
 
 Measured with the player walking and turning (2026-08-17): **flat at 1130 frames in 256-colour and truecolor modes**. Baseline ~63 MB of baked tables; peak 63.5 MB at 120x30, 67.6 MB at 400x100. A default 128M `memory_limit` has room. `tests/io/render-memory-test.phel` runs 400 moving frames after a 30-frame warmup with a 256 KB budget, which catches a leak of ~640 bytes per frame.
 
 ## Tried and rejected (do not retry)
 
-Each entry has the number that decided it. Re-open one only if the stated condition changes.
+Each entry includes its deciding measurement. Revisit it only if the stated condition changes.
 
 - **`^vector` tags on the enemy loops (Phel 0.53).** On a `^vector` local, `(count v)` compiles to `->count()` and `(nth v i)` to `->get()`, skipping the generic dispatch. Tagging `target-index`, `closest-attacker`, `rear-attacker?`, `beam-impact`, `splash`, `pierce` and the spread pair: `step-120` +1.4%, `step-fire-120` +0.2%, mixed signs over 5 pairs. A level holds a dozen or so enemies, so the loop overhead is not a cost, and the tag adds a `TypeError` if a non-vector ever arrives. Revisit if enemy counts grow by an order of magnitude.
 
@@ -346,7 +346,7 @@ Each entry has the number that decided it. Re-open one only if the stated condit
 
 ## History
 
-The wins that built today's frame, oldest first.
+Rendering improvements, oldest first.
 
 | when | change | result |
 |---|---|---|

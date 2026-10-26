@@ -1,12 +1,12 @@
 # Audio
 
-One-shot sound effects via `src/io/sound.phel`, plus a background soundtrack via `src/io/music.phel`. Both shell out to a system audio player. No FFI, no PHP extensions.
+Sound effects use `src/io/sound.phel`; the background soundtrack uses `src/io/music.phel`. Both run a system audio player, with no FFI or PHP extensions.
 
 ## Players and fallbacks
 
-`audio-player` probes `PATH` once and memoises the first of `afplay`, `paplay`, `aplay`, `play`. The OST reuses the same probe.
+`audio-player` probes `PATH` once and memoises the first available player: `afplay`, `paplay`, `aplay` or `play`. The soundtrack uses the same probe.
 
-Each event plays, in order of preference:
+Each event uses the first available sound:
 
 1. A baked Freedoom sound, if the event has one.
 2. A macOS system sound from `/System/Library/Sounds/*.aiff` (`macos-sounds`), on macOS only.
@@ -16,7 +16,7 @@ SFX volume reaches `afplay -v 0..1`, `paplay --volume=0..65536` and `play -v` (i
 
 ## Baked Freedoom sounds (issue #460)
 
-`tools/bake-weapon-sounds.phel` extracts DMX lumps from the Freedoom IWADs (BSD) into `src/io/sound_data.phel` as base64 8-bit mono WAVs. No binary asset lives in the repo. At runtime `ensure-sfx-file!` decodes each to a temp WAV once (memoised in `sfx-files`) and plays it from there.
+`tools/bake-weapon-sounds.phel` extracts DMX lumps from the Freedoom IWADs (BSD) into `src/io/sound_data.phel` as base64 8-bit mono WAVs. The repo contains no binary sound assets. At runtime `ensure-sfx-file!` decodes each sound to a temporary WAV once, memoises its path in `sfx-files`, and plays it.
 
 The map (`freedoom-sfx`) covers 36 events: the seven weapon reports, per-type monster sight and death cries, the fireball launch, the melee claw, monster pain, the player's grunt, and the world cues (item, weapon, powerup, door, locked door, switch).
 
@@ -30,7 +30,7 @@ Cost of the full set: `sound_data.phel` 190 KB → 1.3 MB, phar 3.47 MB → 4.08
 
 ## The sfx sidecar (issue #459)
 
-A per-event `php/exec "player file &"` costs a fork+exec on the game thread (~3-4 ms). The chaingun fires 20 times a second inside an 8.3 ms frame budget, and the cost never shows in F3's cast/render split. So `io/sound` starts one long-lived `sh` on the first audible event and writes it one command line per sound (~0.001 ms). The sidecar:
+A per-event `php/exec "player file &"` costs a fork+exec on the game thread (~3-4 ms). The chaingun fires 20 times a second within an 8.3 ms frame budget, and this cost does not appear in F3's cast/render split. `io/sound` instead starts a long-lived `sh` on the first audible event and writes one command line per sound (~0.001 ms). The sidecar:
 
 - reads a line at a time, so it costs nothing between events;
 - backgrounds each player, so a long sound cannot delay the next;
@@ -41,7 +41,7 @@ A per-event `php/exec "player file &"` costs a fork+exec on the game thread (~3-
 Write rules:
 
 - **Non-blocking.** A full pipe drops the sound instead of stalling the frame.
-- **No torn lines.** Lines are 60-90 bytes, below `PIPE_BUF` (512 on macOS, 4096 on Linux), so a write lands whole or fails. A short write still gets a newline as a backstop.
+- **No torn lines.** Lines are 60-90 bytes, below `PIPE_BUF` (512 on macOS, 4096 on Linux), so a write lands whole or fails. A short write gets a newline as a backstop.
 - **Skip dead pipes.** Ctrl-C can kill the sidecar mid-frame. Writes are skipped once `proc_get_status` says it is gone, else "Broken pipe" prints over the screen.
 - **No retries.** A failed start is remembered. Hosts without `proc_open` fall back to the per-event exec.
 
@@ -49,7 +49,7 @@ A silent session (tests, `PHEL_DOOM_SILENT`, muted settings) starts no sidecar.
 
 ## Event queue
 
-Core code never plays sound. It enqueues `{:name :vol}` on the world's per-frame `:sfx` queue via `combat/push-sfx`. `tick-world` clears the queue at frame start, so events never replay. After the tick, `commands/play` plays each queued event, gated on `:sound-on`. The heartbeat and the door-advance cue play directly from the outer loop.
+Core code queues `{:name :vol}` on the world's per-frame `:sfx` queue via `combat/push-sfx`. `tick-world` clears the queue at frame start so events do not replay. After the tick, `commands/play` plays each queued event, gated on `:sound-on`. The heartbeat and the door-advance cue play directly from the outer loop.
 
 Sources:
 
@@ -62,7 +62,7 @@ The two maps in `src/io/sound_data.phel` and `src/io/sound.phel` are the full ev
 
 ## Fire report volume
 
-Every shot plays its report, hit or miss, attenuated by the distance to what it struck: the enemy on a hit, the wall on a miss (`cast-wall-dist`). Point-blank is full volume, far drops toward ~0.1. A near wall reads loud, an open level quiet. The kill cue layers on top at the same volume.
+Every shot plays a report at a volume based on distance to the enemy hit or, on a miss, the wall (`cast-wall-dist`). Point-blank is full volume; distant targets drop toward ~0.1. Nearby walls sound loud and open levels quiet. The kill cue plays at the same volume.
 
 ## Volume and mute
 
@@ -75,10 +75,10 @@ The N key toggles `:sound-on`: mute is instant, in-flight sounds finish, and the
 
 ## Background OST
 
-An original procedural riff in E minor, evoking DOOM without its copyrighted soundtrack (`src/io/music.phel`, issue #158). No WAD, no shipped asset.
+An original procedural riff in E minor evokes DOOM without its copyrighted soundtrack (`src/io/music.phel`, issue #158). It uses no WAD or shipped audio asset.
 
-- `doom-riff` is an eighth-note ostinato. `variant-riff` sprinkles random 3rd/5th/octave stabs over the root hits. `session-riff` chains 8 such sections into one track, seeded off the PID, so each session sounds different.
+- `doom-riff` is an eighth-note ostinato. `variant-riff` adds random 3rd/5th/octave stabs over the root hits. `session-riff` chains 8 such sections into one track, seeded off the PID, so each session sounds different.
 - `riff-wav-bytes` synthesises a 16-bit mono 22050 Hz WAV. Each note is a fundamental, a sub-octave and two harmonics under an envelope that returns to zero, so section joins and the loop wrap are click-free.
-- The track is written once per session to `sys_get_temp_dir()/phel-doom-music-<pid>.wav` and looped whole by a backgrounded shell. That shell also guards on `kill -0 <game-pid>`.
+- The track is written once per session to `sys_get_temp_dir()/phel-doom-music-<pid>.wav` and looped by a backgrounded shell, which guards on `kill -0 <game-pid>`.
 
 Lifecycle, driven from `commands/play`: `start-music!` when gameplay begins, `pause-music!` / `resume-music!` (SIGSTOP / SIGCONT) on the pause edge, `sync-music!` on N, `stop-music!` on teardown, which also deletes the temp WAV. Every entry point is a no-op under `PHEL_DOOM_SILENT` or with no audio player.

@@ -1,6 +1,6 @@
 # High scores
 
-Three running bests in `$HOME/.phel-doom-scores.json`, plain JSON (`src/io/scores.phel`):
+`src/io/scores.phel` stores three records as JSON in `$HOME/.phel-doom-scores.json`:
 
 ```json
 {
@@ -14,13 +14,13 @@ Three running bests in `$HOME/.phel-doom-scores.json`, plain JSON (`src/io/score
 - `best-level`: deepest level reached.
 - `fastest-victory-s`: shortest run, in seconds, that cleared the last level (L10); 0 until the first victory.
 
-`update-scores! kills level survived-s victory?` loads the file, merges the run with the pure `merge-run`, writes it back and returns the bests for the end screen. Only a victory can set `fastest-victory-s`, and only when it beats the record or none exists.
+`update-scores! kills level survived-s victory?` loads the file, merges the run with `merge-run`, writes the result and returns the records for the end screen. A victory sets `fastest-victory-s` if it beats the record or no record exists.
 
-A missing or malformed file reads as zeros. A failed write never interrupts play: `scores-write-failed?` records it and the game reports it once on exit.
+A missing or malformed file reads as zeros. A failed write does not interrupt play: `scores-write-failed?` records it, and the game reports it on exit.
 
 ## Run summary + grade (end screen)
 
-The death and victory screens also show a summary of the finished run. It is not persisted. `merge-run-stats` sums the counters across levels.
+The death and victory screens show a run summary that is not saved. `merge-run-stats` sums the counters across levels.
 
 - **accuracy**: `accuracy-pct fired hit` (`core/format`), connecting trigger pulls over total pulls, as a rounded integer percent. `fire-shot` bumps `:shots-fired`; `stamp-hit-fx` bumps `:shots-hit`. One pull counts once, so a pistol shot piercing three enemies or a shotgun cone grazing several is one fired, one hit. A BFG or rocket blast counts as a hit only when it kills, because splash has no wound-only signal.
 - **secrets**: `found/total` across every level played. Hidden when the run had no secrets.

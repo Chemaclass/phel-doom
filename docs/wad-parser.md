@@ -1,6 +1,6 @@
 # WAD parser
 
-`src/io/wad.phel`. Parses the DOOM `.wad` binary format. The game does not load WADs at runtime (levels are procedural grids). The asset bakers in `tools/` use it to pull Freedoom sprites and sounds (see [tools/README.md](../tools/README.md)).
+`src/io/wad.phel` parses the DOOM `.wad` binary format. Asset bakers in `tools/` use it to extract Freedoom sprites and sounds (see [tools/README.md](../tools/README.md)). The game uses procedural grids and does not load WADs at runtime.
 
 ## Format
 
@@ -21,6 +21,6 @@ Each level (E1M1, MAP01, ...) is a marker lump followed by VERTEXES, LINEDEFS, S
 (read-linedefs bytes entry)   ; => PHP array of {:a :b} (vertex indices, 14-byte records)
 ```
 
-Linedef flags, types and sidedefs are skipped, as are SECTORS and the BSP lumps. The whole file is read into memory (a WAD is a few MB).
+The parser skips linedef flags, types and sidedefs, as well as SECTORS and the BSP lumps. It reads the whole file into memory; a WAD is a few MB.
 
-`tests/io/wad-test.phel` covers header, directory, and vertex/linedef decoding against a minimal WAD built inline.
+`tests/io/wad-test.phel` checks header, directory and vertex/linedef decoding against an inline minimal WAD.

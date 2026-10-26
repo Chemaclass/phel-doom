@@ -9,6 +9,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-26
+
 ### Changed
 
 - Lowered enemy pain cries when they are shot.
@@ -556,7 +558,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 - `cast + render` under 5 ms per frame at 120×30.
 - Flat PHP arrays on hot paths; `:tag` types for OPcache JIT tracing.
 
-[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/Chemaclass/phel-doom/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/Chemaclass/phel-doom/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/Chemaclass/phel-doom/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/Chemaclass/phel-doom/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/Chemaclass/phel-doom/compare/v0.17.0...v0.18.0

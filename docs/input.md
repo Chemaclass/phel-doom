@@ -42,7 +42,7 @@ Doors need no key: walk into them. `TAB` is not bound.
 
 `restore!` undoes it in three steps:
 
-1. `restore-prelude`: `\e[<u` (pop kitty flags), `mouse-disable` (`\e[?1003l\e[?1006l\e[>1p`), `\e[?1004l`. The mouse disable always goes out; it is harmless when the mouse was never on.
+1. `restore-prelude`: `\e[?2026l` (end synchronized output), `\e[<u` (pop kitty flags), `mouse-disable` (`\e[?1003l\e[?1006l\e[>1p`), `\e[?1004l`. The mouse disable always goes out; it is harmless when the mouse was never on.
 2. Flush, then `drain-stdin!` for 120 ms. This swallows the kitty release report of the quit key, which would otherwise echo onto the shell prompt.
 3. `\e[?25h\e[?7h\e[?1049l`, then `stty sane`.
 

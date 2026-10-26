@@ -9,7 +9,7 @@
   (:require phel-doom.io.render.frame-math :refer [halfblock build-sky-halfblock])
   (:require phel-doom.io.render.palette :refer [shade-code-table boss-door-marker])
   (:require phel-doom.io.render.hud :refer [minimap-rows minimap-door-pulse])
-  (:require phel-doom.io.render.main :refer [frame->string floor-tex-px]))
+  (:require phel-doom.io.render.main :refer [frame->string floor-tex-px render!]))
 
 ;; ---------------------------------------------------------------------
 ;; Gradient memo (frame-gradients) transparency. The sky/floor gradient
@@ -43,10 +43,37 @@
   ;; pixel change - e.g. a regression in the vertical-projection kernel -
   ;; flips a hash and fails loudly. Update the constants DELIBERATELY when
   ;; output is meant to change.
-  (is (= "453c4baf9062da97bed130cc89623807" (php/md5 (frame->string world stats 120 30))))
-  (is (= "c13279bcc03f79f194d9daa4cfd883fe" (php/md5 (frame->string world stats 80 24))))
-  (is (= "a8944ba06820b1c267695234ffed6ecb" (php/md5 (frame->string world stats 160 44))))
+  (is (= "586338bf67d5c9f7c02b707c99f9357a" (php/md5 (frame->string world stats 120 30))))
+  (is (= "c445674f8156b828bb9e8aa72e624e41" (php/md5 (frame->string world stats 80 24))))
+  (is (= "a01d68e418e3d741f444f3cf87a18766" (php/md5 (frame->string world stats 160 44))))
   (is (= "23df8cf945a88757c0b7e000b1b811ec" (php/md5 (frame->string world (assoc stats :px2? true) 120 30)))))
+
+(deftest test-full-detail-runs-preserve-visible-cells
+  (let [frame (frame->string world (assoc stats :quad true) 120 30)]
+    (is (= 1 (php/preg_match "/\\x1b\\[[0-9;]*m▀▀+\\x1b\\[0m\\n/u" frame))
+        "a row-ending run repeats each half-block")
+    (is (= 1 (php/preg_match "/\\x1b\\[[0-9;]*m([▘▝▖▗▌▐▚▞▙▛▜▟█])\\1+\\x1b\\[/u" frame))
+        "a mid-row run repeats each quadrant glyph")
+    (is (= 1 (php/preg_match "/\\x1b\\[[0-9;]*m  /u" frame))
+        "solid background runs remain compact")))
+
+(defn- capture-render [render-stats]
+  (php/ob_start)
+  (render! world render-stats 120 30)
+  (php/ob_get_clean))
+
+(deftest test-game-frame-is-a-synchronized-update
+  (let [out (capture-render stats)]
+    (is (= (str "\e[?2026h\e[?25l\e[1;1H" (frame->string world stats 120 30) "\e[?2026l") out))))
+
+(deftest test-pain-and-debug-frames-close-the-synchronized-update
+  (doseq [render-stats [(assoc stats :flash-secs 0.03)
+                        (assoc stats :debug? true :mouse true)]]
+    (let [out (capture-render render-stats)]
+      (is (php/str_starts_with out "\e[?2026h\e[?25l"))
+      (is (php/str_ends_with out "\e[?2026l"))
+      (is (= 1 (php/substr_count out "\e[?2026h")))
+      (is (= 1 (php/substr_count out "\e[?2026l"))))))
 
 (deftest test-theme-tints-the-floor-gradient
   ;; #417: a level's :theme resolves to a floor gradient base code that is
@@ -95,7 +122,7 @@
   (let [bob-on  (assoc stats :view-bob 1.0)
         resting (php/md5 (frame->string world bob-on 120 30))
         peak    (php/md5 (frame->string (assoc world :bob-phase (php/* 0.5 php/M_PI)) bob-on 120 30))]
-    (is (= "453c4baf9062da97bed130cc89623807" resting)
+    (is (= "586338bf67d5c9f7c02b707c99f9357a" resting)
         "View bob on but at rest (bob-phase 0) stays the golden frame")
     (is (not= resting peak) "a mid-stride bob shifts the whole scene")))
 
@@ -107,12 +134,12 @@
   ;; the min-23 CLAMP is guarded by the level-10 test below (this lives-5
   ;; scene's net shift is too shallow to push any wall index past 23).
   (let [firing (php/md5 (frame->string world (assoc stats :fire-anim 0.1) 120 30))]
-    (is (= "453c4baf9062da97bed130cc89623807"
+    (is (= "586338bf67d5c9f7c02b707c99f9357a"
            (php/md5 (frame->string world stats 120 30)))
         "not firing (no :fire-anim) stays the golden frame - byte-identical")
-    (is (= "5a50ebb91f4d822cb553f8147ecd7f44" firing)
+    (is (= "c85385c9cc6362f0f7cbe75a8d290bbb" firing)
         "a fresh shot brightens the walls to this exact frame")
-    (is (not= "453c4baf9062da97bed130cc89623807" firing)
+    (is (not= "586338bf67d5c9f7c02b707c99f9357a" firing)
         "firing genuinely changes the scene bytes")))
 
 (deftest test-muzzle-extralight-clamps-the-negative-haze
@@ -128,7 +155,7 @@
   (let [w10    (mark-visible-cells (build-world 10 5 0 :normal #{:pistol}))
         s10    (assoc stats :level 10)
         firing (php/md5 (frame->string w10 (assoc s10 :fire-anim 0.1) 120 30))]
-    (is (= "830b7faa50f1407daf28e81c1b8a4479" firing)
+    (is (= "c60d3e997d79d3e9b5e4ac89d600b239" firing)
         "level-10 firing brightens to this exact clamped frame")
     (is (not= firing (php/md5 (frame->string w10 s10 120 30)))
         "firing genuinely brightens the walls vs the resting frame")))
@@ -158,11 +185,11 @@
 (def golden-geometry-cases
   ;; [level pitch px2? md5] - pitch +0.8 looks up (sky-heavy top), -0.8
   ;; looks down (floor pulled up into view), 0.0 is level gaze.
-  [[1  0.8  false "40858c111481ff74d3eb21125694c3bd"]
-   [1  -0.8 false "20172363e8f68e6fec5948d910576b34"]
-   [3  0.0  false "e8d360fd9876eaaf2999aecf4d07337c"]
-   [7  0.0  false "35a1113a6639205e6c3ca0f63862f7e8"]
-   [10 0.0  false "9f421313ef4ce2c433a07955cceb6cc3"]
+  [[1  0.8  false "dfd12876fe76fc054d0207220ba42d91"]
+   [1  -0.8 false "8e73f170f136144a04316a25656a31b0"]
+   [3  0.0  false "84a55b5912db317c1d4d667b7ff0c289"]
+   [7  0.0  false "7c3081a106ecc5fc720d0c8a731bd9a2"]
+   [10 0.0  false "0f15fffe2625380215d1db8ca693605e"]
    [3  0.0  true  "d3d45922c861376cadc53a521c7f7195"]
    [10 0.8  true  "751fd4213c1dc8965800075cd563eb99"]
    [3  -0.8 true  "5fd6badeb600f2e39416395d37ceb7d8"]])

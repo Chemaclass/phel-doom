@@ -20,7 +20,7 @@ Callers require the facade `phel-doom.io.render` (`src/io/render.phel`), never a
 
 ## How a frame is drawn
 
-`render! [world stats cols rows]` re-asserts the hidden cursor (and mouse pointer while Mouse is on), moves the cursor home, prints `pain-flash-frame` (one dark red frame while `:flash-secs > 0`, #465) or `frame->string`, and flushes. During `:shake-secs` the home anchor shifts up to 2 columns. With F3 on it also times the frame for the perf snapshot. It uses `print`, never `php/fwrite`: a partial write silently truncates the frame (PR #54).
+`render! [world stats cols rows]` builds `pain-flash-frame` (one dark red frame while `:flash-secs > 0`, #465) or `frame->string`, then wraps the cursor setup and frame output in synchronized update escapes (`\e[?2026h` and `\e[?2026l`). Supporting terminals present the completed frame together; others ignore the escapes. It re-asserts the hidden cursor (and mouse pointer while Mouse is on), moves the cursor home, prints the frame, ends the update and flushes. During `:shake-secs` the home anchor shifts up to 2 columns. With F3 on it also times the frame for the perf snapshot. It uses `print`, never `php/fwrite`: a partial write silently truncates the frame (PR #54).
 
 The alternate screen is redrawn in place from cursor home: no clear, no scroll, no flicker. The scene is one row-major string. Everything else paints on top with absolute cursor moves (`\e[r;cH`).
 
@@ -44,7 +44,7 @@ overlays              -> HUD, minimap, crosshair, cues, weapon, menus
 
 Overlays follow the numbered `p1`..`p20b` chain in `frame->string`: debug row, tagline and minimap first, then crosshair, vignettes, HUD strips, weapon, prompts, enemy HP digits, attack telegraphs, message and hint lines, and the pause, settings and help menus last. Each painter takes and returns `parts`, because PHP arrays pass by value.
 
-**Run-length encoding.** Consecutive identical cells coalesce into one escape plus N spaces (or N `▀`, since SGR state persists). This cuts output 5-10x on flat rows.
+**Run-length encoding.** Consecutive identical cells coalesce into one escape plus N spaces or copies of the cell's glyph, since SGR state persists. This preserves half-block, quadrant and sprite glyphs across a run and cuts output 5-10x on flat rows.
 
 ## Half-block sub-pixel rendering (floor / walls / sky)
 

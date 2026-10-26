@@ -1457,7 +1457,10 @@
           (if (php/>= col vw)
             (when (php/> run 0)
               (buf-push parts prev)
-              (buf-push parts (php/str_repeat " " (php/- run 1))))
+              (when (php/> run 1)
+                (buf-push parts (php/str_repeat (if (php/str_ends_with prev " ") " "
+                                                    (if (php/str_ends_with prev "m") prev (php/mb_substr prev -1)))
+                                                (php/- run 1)))))
             (do
                   ;; Resolve this cell into cell-reg[0]: base kind first
                   ;; (sky / floor / glyph zones / edges / wall body),
@@ -1570,7 +1573,10 @@
                   (php/=== c prev) (recur (php/+ col 1) prev (php/+ run 1))
                   :else            (do
                                      (buf-push parts prev)
-                                     (buf-push parts (php/str_repeat " " (php/- run 1)))
+                                     (when (php/> run 1)
+                                       (buf-push parts (php/str_repeat (if (php/str_ends_with prev " ") " "
+                                                                           (if (php/str_ends_with prev "m") prev (php/mb_substr prev -1)))
+                                                                       (php/- run 1))))
                                      (recur (php/+ col 1) c 1))))))))
       (buf-push parts "\e[0m\n"))
     [parts center-cap]))
@@ -2566,8 +2572,8 @@
                     :php-mem-peak (php/memory_get_peak_usage true))))))
 
 (defn render!
-  "Move cursor home and overwrite the previous frame in place. Avoids
-   the full-screen clear that would otherwise flicker each frame.
+  "Overwrite the previous frame in a synchronized terminal update.
+   Terminals without synchronized updates ignore the mode escapes.
    While :flash-secs > 0 the whole viewport takes a dark-red wash, a 1-frame
    impact jolt that lands before the red i-frame wash. Screen-shake:
    while :shake-secs > 0 the cursor-home anchor is offset by up to 2 cols
@@ -2583,14 +2589,25 @@
         debug?  (get stats :debug?)
         shake-x (if shake?
                   (php/+ 1 (mod (php/intval (php/* t 50.0)) 3))
-                  1)]
+                  1)
+        frame   (if (php/> (or (get stats :flash-secs) 0.0) 0.0)
+                  (pain-flash-frame cols rows)
+                  (if debug?
+                    (let [t-start  (php/microtime true)
+                          drawn    (frame->string world stats cols rows)
+                          total-ms (php/* (php/- (php/microtime true) t-start) 1000.0)]
+                      (update-perf-snapshot! drawn total-ms)
+                      drawn)
+                    (frame->string world stats cols rows)))]
     ;; Re-assert hide-cursor every frame (#246): init-input! hides the
     ;; terminal caret once, but a terminal can resurface it on a mode
     ;; flip / resize / SGR-mouse-tracking enable, which would leave a
     ;; blinking caret racing the fixed-centre crosshair (the real FPS aim
     ;; point). Re-emitting \e[?25l per frame is one idempotent escape and
     ;; keeps the caret reliably hidden for the whole session.
-    (print "\e[?25l")
+    (try
+      (print "\e[?2026h")
+      (print "\e[?25l")
     ;; Same per-frame re-assert for the OS MOUSE pointer (#295): the
     ;; crosshair IS the aim, so the arrow must stay hidden. `\e[>3p`
     ;; (XTSMPOINTER always-hide) is sent on enable + rearm, but a mode flip
@@ -2598,15 +2615,9 @@
     ;; per frame (only while the Mouse setting is on) keeps it hidden as
     ;; reliably as the caret. Terminals without XTSMPOINTER ignore it - no
     ;; portable escape can hide the pointer there (#313).
-    (when (get stats :mouse) (print "\e[>3p"))
-    (print (str "\e[1;" shake-x "H"))
-    (if (php/> (or (get stats :flash-secs) 0.0) 0.0)
-      (print (pain-flash-frame cols rows))
-      (if debug?
-        (let [t-start  (php/microtime true)
-              frame    (frame->string world stats cols rows)
-              total-ms (php/* (php/- (php/microtime true) t-start) 1000.0)]
-          (print frame)
-          (update-perf-snapshot! frame total-ms))
-        (print (frame->string world stats cols rows)))))
-  (php/flush))
+      (when (get stats :mouse) (print "\e[>3p"))
+      (print (str "\e[1;" shake-x "H"))
+      (print frame)
+      (finally
+        (print "\e[?2026l")
+        (php/flush)))))

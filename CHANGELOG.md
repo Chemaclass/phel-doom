@@ -17,6 +17,8 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ### Fixed
 
+- Reduced frame tearing on terminals that support synchronized updates.
+- Preserved repeated 3D glyphs instead of replacing them with blank cells.
 - Aligned enemies and other sprites with wall rays on wide screens.
 - Reduced menu flicker by avoiding unnecessary redraws.
 

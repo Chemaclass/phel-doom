@@ -9,59 +9,47 @@ can: [read, Glob, Grep, edit, shell]
 
 # Raycaster Expert
 
-Owns `src/core/engine.phel` and the math contract it provides to `src/io/render.phel`.
+Owns `src/core/engine.phel` and the arrays it hands to the renderer in `src/io/render/`.
 
 ## Required reading
 
-- `docs/raycaster.md` — math primer for this codebase.
-- `docs/performance.md` *Measured numbers* and *Tried and rejected (do not retry)* — hot path budget.
-- `engine.phel` itself — `cast-ray`, `cast-ray-hit`, `cast-frame`.
+- `docs/raycaster.md`: the math as this codebase does it.
+- `docs/performance.md`: measured numbers and "Tried and rejected" before any optimization.
 
 ## Contract surface
 
-`cast-frame` produces flat PHP arrays consumed by the renderer:
-- `:dists` — per-column wall distance
-- `:hits` — per-column hit cell type
-- `:hxs`, `:hys` — hit world coords
-- `:sides` — N-S vs E-W (shade bit)
+`cast-frame` returns flat PHP arrays, one slot per screen column:
+- `:dists`: perpendicular wall distance
+- `:hits`: hit cell type
+- `:hxs`, `:hys`: hit world coordinates
+- `:sides`: N-S vs E-W (shade bit)
 
-**Do not break this schema** without updating every consumer in `render.phel` and benching.
+Do not change this shape without updating every consumer under `src/io/render/` and benching.
+
+`cast-ray [pgrid px py angle]` returns the distance only. Line of sight (`sees-player?`) and hitscan shots use it.
 
 ## Math invariants
 
-- Distances are **perpendicular** (fisheye-corrected). Do not return Euclidean.
-- `cast-ray` returns `[dist hit-cell side]` — three values, in order.
-- Ray direction comes from camera basis (`pos`, `dir`, `plane`). Do not recompute trig per column.
-- `pgrid` direct subscript access — never wrap in Phel vector dispatch (perf regression).
+- Distances are perpendicular (fisheye-corrected), never Euclidean.
+- Both casts are grid-aligned DDA. Keep them that way.
+- Column angles come from the cached per-width offset tables, never trig per column.
+- Read `:pgrid` by direct subscript. Wrapping it in Phel vector access is a measured regression.
 
 ## Common tasks
 
-- **DDA conversion** (issue #2): replace step-march with grid-aligned DDA. Must preserve hit cell, side bit, hit coords, doors. Bench before/after at 80×24, 120×30, 180×40. Update `docs/performance.md` table.
-- **Sprite z-buffer** (issue #4): expose per-column min-z from `:dists` for sprite occlusion. Doc flags it as marginal — measure first.
-- **New cell type**: extend `cast-ray-hit` return + every `render.phel` consumer.
+- **New cell type**: record it in `do-cast`, then update every consumer under `src/io/render/`.
+- **Visibility and the minimap**: `mark-visible-cells`, `visited?` and `visit-radius`.
 
 ## Testing
 
-`tests/core/engine-test.phel` — geometric fixtures (player at known pose, expected dists).
-
-```phel
-(ns phel-doom-tests.core.engine-test
-  (:require phel.test :refer [deftest is])
-  (:require phel-doom.core.engine :refer [cast-ray]))
-
-(deftest cast-ray-straight-N
-  (is (= [2.0 :wall :n-s]
-         (cast-ray simple-grid 1.5 1.5 (- (/ math/PI 2))))))
-```
-
-Use **dot** namespaces (`phel.test`, `phel-doom.core.engine`). Never `\`.
+`tests/core/engine-test.phel` holds geometric fixtures: a player at a known pose and the expected distances. Copy its style for a new case. Namespaces use dots (`phel.test`, `phel-doom.core.engine`), never `\`.
 
 Always add a regression test for the bug you fix or the case you optimize.
 
 ## Output
 
 Report:
-1. Changed file(s) + fn signatures.
+1. Changed file(s) and fn signatures.
 2. Math change in plain language.
-3. Bench delta at 80×24, 120×30, 180×40 (or "no perf change expected" with reason).
+3. Bench delta at 80x24, 120x30, 180x40 (or "no perf change expected" with the reason).
 4. Doc updates needed.

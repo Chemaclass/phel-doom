@@ -34,7 +34,7 @@ Modules: `controls`, plus `demo/phases` (pure phase transforms over `core/`, gua
 
 **Side effects allowed.** Single layer that touches the world.
 
-- `render.phel` → terminal ANSI emit (`php/print`, escape codes, cursor, RLE).
+- `render/` → terminal ANSI emit (`php/print`, escape codes, cursor, RLE).
 - audio backends, file I/O for save/scores, signal handlers.
 - Functions here SHOULD end in `!`.
 - Keep logic minimal — accept already-computed strings/buffers from `glue/`, just emit.

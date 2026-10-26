@@ -15,13 +15,13 @@ can: [read, Glob, Grep, shell]
 |---------|-------|---------------|
 | Phel compile error, namespace not found | build/loader | `phel-config.php`, `src/main.phel`, `vendor/bin/phel build --no-cache` |
 | `Cannot resolve symbol X` | analyzer | check `:require` in offending ns, fn name typo |
-| Crash mid-frame, stack trace into PHP | runtime | trace from frame: `play.phel` → `core/` fn → `io/render`? |
-| Wall renders wrong distance / fisheye | raycaster | `src/core/engine.phel:cast-ray`, `cast-ray-hit` |
-| Walls render but ordering off, sprites bleed through | render order | `src/io/render.phel` (z handling, `:dists`) |
+| Crash mid-frame, stack trace into PHP | runtime | trace from frame: `play.phel` → `core/` fn → `io/render/`? |
+| Wall renders wrong distance / fisheye | raycaster | `src/core/engine.phel`: `cast-frame`, `do-cast` |
+| Walls render but ordering off, sprites bleed through | render order | `src/io/render/main.phel`, `sprites.phel`, `enemy_sprite.phel` (`:dists` occlusion) |
 | Enemy shoots through walls | collision/LOS | `src/core/combat.phel`, `physics.phel` |
-| Input lag or stuck key | input pipeline | `src/glue/input.phel`, `controls.phel` |
-| Pause doesn't freeze | tick-gated effect | grep for animation timers not gated on `:paused?` |
-| Audio plays at wrong time | audio queue | `src/glue/sound.phel`, `src/io/audio.phel` |
+| Input lag or stuck key | input pipeline | `src/io/input.phel`, `src/glue/controls.phel` |
+| Pause doesn't freeze | tick-gated effect | grep for animation timers not gated on `:paused` |
+| Audio plays at wrong time | audio queue | `src/io/sound.phel`, `src/io/music.phel` |
 | FPS regressed | hot path | run `/perf-bench`, see `docs/performance.md` |
 
 ## Diagnostic steps
@@ -38,7 +38,7 @@ can: [read, Glob, Grep, shell]
 - **Wrong line/error position**: source location not propagated; check that the failing form has line metadata.
 - **Pure fn returning stale data**: caller forgot to rebind the new world. Search call site for `(let [w (step-world w ...)])` vs missing rebind.
 - **Render shows last frame**: alt-screen not cleared, or full-frame emit skipped. Check `render!` invalidation path.
-- **Enemy frozen but spawn timer fires**: not all timers gated on pause. Grep `(when-not (:paused? world) ...)`.
+- **Enemy frozen but spawn timer fires**: not all timers gated on pause. Grep for `(:paused world)`.
 
 ## Output
 

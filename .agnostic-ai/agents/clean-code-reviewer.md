@@ -15,7 +15,7 @@ Review staged diff (`git diff --cached`), unstaged (`git diff`), or branch (`git
 
 | Principle | Good | Bad |
 |-----------|------|-----|
-| Naming | `cast-frame`, `enemy-alive?`, `mag-size` | `cf`, `process`, `data` |
+| Naming | `cast-frame`, `wall?`, `mag-size` | `cf`, `process`, `data` |
 | Function size | < 30 lines, one job, 0-3 args | many args, two jobs |
 | Side effects | query OR command, not both | pure-looking fn that prints |
 | Errors | specific exception, fail fast | swallowed, generic |
@@ -41,7 +41,7 @@ See `.agnostic-ai/rules/io-boundaries.md`.
 
 ## Game-specific checks
 
-- Hot paths (`engine.phel`, `render.phel`, `physics.phel`) — any new allocation per frame is suspicious. Defend or refactor.
+- Hot paths (`engine.phel`, `src/io/render/`, `physics.phel`) — any new allocation per frame is suspicious. Defend or refactor.
 - `world` map shape changes? `docs/state.md` updated?
 - Render output changes? `docs/rendering.md` updated?
 - New feature exposed to player? `CHANGELOG.md` `## Unreleased` updated?

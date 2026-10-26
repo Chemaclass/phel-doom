@@ -11,7 +11,7 @@ Target: **cast + render < 5 ms** per frame at 120×30. Hard ceiling: 16 ms (60 f
 
 Hot paths (do NOT regress without justification):
 - `src/core/engine.phel` — `cast-ray`, `cast-frame`
-- `src/io/render.phel` — `render!`, RLE emit, shade strings
+- `src/io/render/` — `render!`, RLE emit, shade strings
 - `src/core/physics.phel` — `step-world`
 
 Before optimizing: read `docs/performance.md`. Before claiming a win: bench (see `/perf-bench`).
@@ -42,11 +42,11 @@ Changing behavior covered by `docs/<topic>.md`? Update the doc in the same commi
 | Code area | Doc |
 |-----------|-----|
 | `engine.phel` | `docs/raycaster.md` |
-| `render.phel` | `docs/rendering.md`, `docs/performance.md` |
+| `src/io/render/` | `docs/rendering.md`, `docs/performance.md` |
 | `combat.phel`, `enemy.phel` | `docs/combat.md`, `docs/monsters.md` |
 | `level.phel`, `map.phel`, `wad.phel` | `docs/level-system.md`, `docs/map.md`, `docs/wad-parser.md` |
 | `state.phel` | `docs/state.md` |
 | `controls.phel`, `input.phel` | `docs/input.md` |
-| `sound.phel` | `docs/audio.md` |
+| `sound.phel`, `music.phel` | `docs/audio.md` |
 | `scores.phel` | `docs/scores.md` |
 | `play.phel` | `docs/game-loop.md` |

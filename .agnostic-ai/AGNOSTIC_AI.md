@@ -6,46 +6,21 @@ Terminal raycaster DOOM-lite, written in pure Phel (Lisp on PHP). ANSI render, p
 
 ```
 src/main.phel                → CLI bootstrap (symfony/console via phel.cli)
-src/commands/play.phel       → game loop (cast → step → render)
-src/core/            → pure logic: engine, combat, enemy, level, map, physics, state
-src/glue/            → wiring: controls, input, scores, sound, wad
-src/io/              → side effects: render (ANSI), audio
-tests/<layer>/       → phel.test deftest files, mirror src layout (`-test` suffix)
-tests/commands/              → top-level command tests
+src/commands/play.phel       → game loop (input → step → cast → render)
+src/commands/demo.phel       → talk showcase: the play loop plus src/demo/phases.phel
+src/core/                    → pure logic: engine, combat, enemies, level, map, physics, state, weapons, ...
+src/glue/controls.phel       → pure wiring: key codes to intents
+src/io/                      → side effects: render/ (ANSI), input, sound, music, scores, savegame, wad
+tests/<layer>/               → phel.test deftest files, mirror src layout (`-test` suffix)
 docs/<topic>.md              → architecture, perf, render, raycaster, state, etc.
 out/main.php                 → `composer build` artifact (do NOT edit by hand)
 ```
 
 Read `docs/architecture.md`, `docs/state.md`, `docs/performance.md` before touching anything cross-cutting. Each major module has matching `docs/<module>.md`.
 
-## Skills (slash commands)
+## Skills and agents
 
-Authoritative for their topic. Load skill before guessing. Match workflow first, fall back to plain commands.
-
-- `/test [scope]` → run tests, scope mapping
-- `/commit [msg]` → ci gates + conventional commit
-- `/pr [issue]` → push + open PR via template
-- `/fix` → auto-format + lint
-- `/changelog [entry]` → update `## Unreleased`
-- `/changelog-simplify` → tighten + de-dup `## [Unreleased]`, commit + push
-- `/release [version]` → cut release via `tools/release.sh` + verify phar/GH artifact
-- `/phel-repl <expr>` → eval Phel expression
-- `/perf-bench [scope]` → cast/render phase timing
-- `/play` → launch game, smoke-test feature manually
-
-## Agents (subagents)
-
-Spawn via Agent tool. Prefer parallel where independent. For codebase search use built-in `Explore`. For changelog updates use `/changelog`.
-
-| Agent | When |
-|-------|------|
-| `tdd-coach` | red-green-refactor a new behavior. owns failing test first. |
-| `clean-code-reviewer` | review diff or PR for Phel smells + game conventions. |
-| `game-debugger` | crash, wrong render, input desync, raycast math off. |
-| `raycaster-expert` | DDA, ray math, fisheye, hit-side, sprite occlusion (`engine.phel`). |
-| `render-expert` | ANSI emit, RLE, frame-stats, color, HUD layout (`render.phel`). |
-| `perf-profiler` | cast/render ms split, bytes emitted, memory. measurement-led. |
-| `docs-sync` | drift between code and `docs/<module>.md`. |
+Project skills (`test`, `commit`, `pr`, `fix`, `changelog`, `release`, `phel-repl`, `perf-bench`, `play`) are authoritative for their topic: load one before guessing. Hand engine math, render, perf, debugging and docs drift to the matching project agent. For codebase search use a read-only explorer.
 
 ## Project conventions (not in global)
 
@@ -69,8 +44,8 @@ Spawn via Agent tool. Prefer parallel where independent. For codebase search use
 
 ## Module-specific rules
 
-Sources under `.agnostic-ai/rules/` (each tool loads them for the files they cover):
-- `phel.md` — naming, docstrings, comments
-- `macro-hygiene.md` — quasiquote, gensym, shadowing
-- `game.md` — frame budget, pure state, immutable world
-- `io-boundaries.md` — what may live in `io/` vs `core/` vs `glue/`
+Sources live in `.agnostic-ai/rules/`: `phel.md` (naming, interop, per-frame maps), `macro-hygiene.md`, `game.md` (frame budget, pure state), `io-boundaries.md` (what goes in `core/`, `glue/`, `io/`).
+
+::target codex
+Codex loads them through the nested `AGENTS.md` in `src/`, `tests/` and `tools/` only when the session starts there. From the root, read that folder's `AGENTS.md` before editing under it.
+::end

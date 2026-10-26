@@ -18,16 +18,16 @@ Audit `docs/*.md` against the code that backs them. Fix drift.
 | `docs/architecture.md` | `src/main.phel`, `src/commands/`, `src/` tree |
 | `docs/game-loop.md` | `src/commands/play.phel` |
 | `docs/raycaster.md` | `src/core/engine.phel` |
-| `docs/rendering.md` | `src/io/render.phel` |
-| `docs/performance.md` | `engine.phel` + `render.phel` + measured numbers |
+| `docs/rendering.md` | `src/io/render/` |
+| `docs/performance.md` | `engine.phel` + `src/io/render/` + measured numbers |
 | `docs/state.md` | `src/core/state.phel` |
 | `docs/combat.md` | `src/core/combat.phel` |
 | `docs/monsters.md` | `src/core/enemy.phel` |
 | `docs/map.md`, `docs/level-system.md` | `level.phel`, `map.phel` |
 | `docs/wad-parser.md` | `src/io/wad.phel` |
-| `docs/input.md` | `controls.phel`, `input.phel` |
-| `docs/audio.md` | `sound.phel` (+ `io/audio` if present) |
-| `docs/scores.md` | `src/glue/scores.phel` |
+| `docs/input.md` | `src/glue/controls.phel`, `src/io/input.phel` |
+| `docs/audio.md` | `src/io/sound.phel`, `src/io/music.phel` |
+| `docs/scores.md` | `src/io/scores.phel` |
 | `docs/features.md` | spans the whole game |
 
 ## Per-doc checklist

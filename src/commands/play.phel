@@ -868,6 +868,20 @@
 (defn- redraw-if-resized [dims rows cols]
   (when (not= [rows cols] dims) (clear-screen)))
 
+(defn menu-redraw?
+  "Redraw a menu on entry, resize, or a change to its visible content."
+  [frame dims current-dims previous-content content]
+  (or (php/=== frame 0)
+      (not= dims current-dims)
+      (not= previous-content content)))
+
+(defn game-frame-redraw?
+  "Keep an unchanged paused frame on screen unless the debug overlay is active."
+  [world rows cols px2? drawn]
+  (or (not (:paused world))
+      (:debug? world)
+      (not= drawn [world rows cols px2?])))
+
 (def death-beat-us
   "Microseconds the killing frame is held before the death screen (#470).
    Death used to cut straight to the box, so the blow that ended the run
@@ -996,6 +1010,7 @@
            prev-keys  initial-key-snapshot
            dims       [0 0]
            cal        {:px nil :n 0 :best 1.0e9 :tdims [0 0]}
+           drawn      nil
            ;; Cached pointer position positional mouselook (#318) steers
            ;; from. nil until the first SGR report or until seeded to the
            ;; terminal CENTER below (a centered pointer steers zero, so the
@@ -1027,11 +1042,13 @@
         (when (and (:mouse (:settings world))
                    (rearm-mouse? poll-frame (not= [rows cols] dims)))
           (rearm-mouse!))
-        (let [render-start (php/microtime true)
-              _draw        (draw-frame world fps frame-ms rows cols px2?)
+        (let [draw?        (game-frame-redraw? world rows cols px2? drawn)
+              render-start (php/microtime true)
+              _draw        (when draw? (draw-frame world fps frame-ms rows cols px2?))
               render-ms    (php/* (php/- (php/microtime true) render-start) 1000.0)
               _sleep       (adaptive-sleep! render-start cols rows)
-              cal'         (next-cal cal auto? trows tcols render-ms)]
+              cal'         (if draw? (next-cal cal auto? trows tcols render-ms) cal)
+              drawn'       (if (:paused world) [world rows cols px2?] nil)]
           (let [live-keys (drain-keys)
                 now       (php/microtime true)
                 ;; Clamp the raw per-frame dt (#278) so one stalled frame
@@ -1180,6 +1197,7 @@
                                                              now-keys
                                                              [rows cols]
                                                              cal'
+                                                             drawn'
                                                              (:pos look)
                                                              (php/+ poll-frame 1)
                                                              [trows tcols]))))))))))
@@ -1202,7 +1220,8 @@
          tdims-last [0 0]]
     (let [[rows cols] (if (poll-size? frame) (term-size) tdims-last)]
       (redraw-if-resized dims rows cols)
-      (render-fn cols rows)
+      (when (menu-redraw? frame dims [rows cols] nil nil)
+        (render-fn cols rows))
       (php/usleep menu-frame-us)
       (let [pressed (drain-keys)]
         (cond
@@ -1229,13 +1248,14 @@
            tdims-last [0 0]]
       (let [[rows cols] (if (poll-size? frame) (term-size) tdims-last)]
         (redraw-if-resized dims rows cols)
-        (render-intermission-screen cols rows
-                                    (php/- (:level result) 1)
-                                    (:level-name result)
-                                    (:kills result)
-                                    (or (:secrets-found result) 0)
-                                    (or (:secrets-total result) 0)
-                                    (or (:survived-s result) 0))
+        (when (menu-redraw? frame dims [rows cols] nil nil)
+          (render-intermission-screen cols rows
+                                      (php/- (:level result) 1)
+                                      (:level-name result)
+                                      (:kills result)
+                                      (or (:secrets-found result) 0)
+                                      (or (:secrets-total result) 0)
+                                      (or (:survived-s result) 0)))
         (php/usleep menu-frame-us)
         (let [pressed (drain-keys)]
           (cond
@@ -1511,11 +1531,13 @@
          cursor     0
          prev       initial-key-snapshot
          dims       [0 0]
+         drawn      nil
          frame      0
          tdims-last [0 0]]
     (let [[rows cols] (if (poll-size? frame) (term-size) tdims-last)]
       (redraw-if-resized dims rows cols)
-      (render-settings! cols rows settings cursor)
+      (when (menu-redraw? frame dims [rows cols] drawn [settings cursor])
+        (render-settings! cols rows settings cursor))
       (php/usleep menu-frame-us)
       (let [pressed  (drain-keys)
             now      (key-states pressed)
@@ -1536,7 +1558,8 @@
           (let [{cursor-steps :cursor value-steps :value} (nav-deltas pressed)
                 nav                                       (navigate settings cursor cursor-steps value-steps)]
             (when (:adjusted? nav) (apply-audio-settings! (:settings nav)))
-            (recur (:settings nav) (:cursor nav) now [rows cols] (php/+ frame 1) [rows cols])))))))
+            (recur (:settings nav) (:cursor nav) now [rows cols] [settings cursor]
+                   (php/+ frame 1) [rows cols])))))))
 
 (defn- start-pressed?
   "True when `keys` carries an ENTER / Return (raw mode sends CR; some
@@ -1547,8 +1570,7 @@
       (str/contains? pressed " ")))
 
 (defn- show-start-menu!
-  "Block on the start screen until the player acts. Re-draws each frame
-   so terminal resizes don't leave a stale half-painted box. ENTER (or
+  "Block on the start screen until the player acts. ENTER (or
    space) starts; `s` opens settings (returning here after); `q` quits.
    Other keys are ignored so a stray arrow can't launch the run by
    accident. Returns :quit, or the (possibly edited) settings map."
@@ -1559,7 +1581,8 @@
          tdims-last [0 0]]
     (let [[rows cols] (if (poll-size? frame) (term-size) tdims-last)]
       (redraw-if-resized dims rows cols)
-      (render-start-menu cols rows (pointer-limit-notice (terminal-program)))
+      (when (menu-redraw? frame dims [rows cols] nil nil)
+        (render-start-menu cols rows (pointer-limit-notice (terminal-program))))
       (php/usleep menu-frame-us)
       (let [pressed (drain-keys)]
         (cond

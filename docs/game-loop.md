@@ -5,7 +5,7 @@ An IO shell around a pure per-frame transition, in `src/commands/play.phel`. The
 ## Lifecycle layers
 
 1. **`run-play`**: reads CLI options and settings, arms signal handlers, enters raw mode, runs the start menu and the run. Teardown runs in a `finally` (see [input.md](input.md#teardown-and-signals)). Settings and scores write failures are reported after teardown, on the cooked terminal.
-2. **`show-start-menu!`**: polls until the player starts (`Enter` / `Space`), opens settings (`s`) or quits (`q`, Ctrl-C). Redraws every frame, so a resize repaints cleanly. `--demo` replay skips it.
+2. **`show-start-menu!`**: polls until the player starts (`Enter` / `Space`), opens settings (`s`) or quits (`q`, Ctrl-C). Draws on entry and on resize. `--demo` replay skips it.
 3. **`run-levels`**: the level chain. Carries lives, kills, time, run stats, backpack, owned weapons, the active weapon with per-weapon ammo, the minimap and sound toggles, and live settings. Stamina does not carry: each level starts with a full pool.
 4. **`game-loop`**: one level. Returns a result kind (below).
 
@@ -13,7 +13,7 @@ An IO shell around a pure per-frame transition, in `src/commands/play.phel`. The
 
 1. **Size.** Ask `resized?` (SIGWINCH), then fork `stty size` only when `sample-size?` says so. `cap-dims` applies `--max-cols` / `--max-rows`. `redraw-if-resized` clears the screen on a size change.
 2. **Re-arm mouse** on a resize or every 120th frame, when the Mouse setting is on ([input.md](input.md#re-arming-mouse-reporting-issue-288)).
-3. **Render.** `draw-frame` calls `render!` with `frame-stats`, the render DTO. `adaptive-sleep!` fills the rest of the frame budget. `next-cal` feeds the measured render time to auto calibration.
+3. **Render.** `draw-frame` calls `render!` with `frame-stats`, the render DTO. An unchanged paused frame stays on screen, unless the debug overlay is active. A changed world, viewport or pixel scale redraws it; gameplay always redraws. `adaptive-sleep!` fills the rest of the frame budget. `next-cal` feeds actual render times to auto calibration.
 4. **Input.** `drain-keys`, then `dt` from `ms-since` clamped by `clamp-frame-ms`. Under `--demo` / `--record`, `demo/resolve-frame!` swaps in or taps the recorded keys and ms (#64).
 5. **Edges.** `key-states` and `rising-edges`. `mouse-aim` and `wheel-weapon-step` read the same string; a left click ORs into `:fire` / `:fire-held`, the wheel into `:next-weapon` / `:prev-weapon`.
 6. **Quit check.** A replay out of frames, a confirmed `q` (`quit-confirmed?`) or `interrupted?` returns `:quit`. `interrupted?` is also where pending signals dispatch. Quitting from the pause page saves settings.
@@ -68,7 +68,7 @@ Physics details (collision in `physics/try-move`, the `:bob-phase` walk cycle) a
 - **Clamped `dt`.** `clamp-frame-ms` caps a frame at `max-frame-ms` (100 ms, a ~10 fps floor) before it becomes `dt` (#278). One stall cannot tunnel the player through a 1-thick wall in the unswept physics step or drain every timer at once. Real frames sit well under the cap.
 - **`ms-since`** tags its arguments `^float` so Phel does not infer `int` from `* 1000` and truncate microtime values.
 - **One `dt` per frame** for physics, AI and decay, so a frame's simulation stays consistent.
-- **Menu loops** (start, settings, intermission, end screens) sleep a flat `menu-frame-us` (16 ms, ~60 fps).
+- **Menu loops** (start, settings, intermission, end screens) sleep a flat `menu-frame-us` (16 ms, ~60 fps). They redraw on entry or resize; settings also redraw when the selected row or a value changes. Unchanged menus stay on screen without a background repaint.
 
 ### Render size and auto pixel scale
 

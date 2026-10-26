@@ -8,11 +8,31 @@
                                              apply-mouse-look clamp-frame-ms adopt-loaded-world
                                              poll-size? resize-poll-frames restart-show-map?
                                              rearm-mouse? rearm-mouse-frames retry-loadout
-                                             quit-confirmed? arm-quit-menu sample-size?])
+                                             quit-confirmed? arm-quit-menu sample-size? menu-redraw? game-frame-redraw?])
   (:require phel-doom.core.settings :refer [pause-menu-action pause-menu-index-of]))
 
 (defn- restart-cursor [] (pause-menu-index-of :restart))
 (defn- quit-cursor [] (pause-menu-index-of :quit))
+
+(deftest test-menu-redraw-on-entry-resize-or-content-change
+  (is (menu-redraw? 0 [24 80] [24 80] nil nil) "entry and return from settings")
+  (is (menu-redraw? 1 [24 80] [30 80] nil nil) "resize")
+  (is (menu-redraw? 1 [24 80] [24 80] [{:sound true} 0] [{:sound true} 1]) "cursor change")
+  (is (menu-redraw? 1 [24 80] [24 80] [{:sound true} 0] [{:sound false} 0]) "setting change")
+  (is (not (menu-redraw? 1 [24 80] [24 80] [{:sound true} 0] [{:sound true} 0])) "unchanged menu"))
+
+(deftest test-paused-game-frame-redraws-only-when-needed
+  (let [paused {:paused true :debug? false :pause-cursor 0}
+        drawn  [paused 24 80 false]]
+    (is (game-frame-redraw? paused 24 80 false nil) "first pause frame")
+    (is (not (game-frame-redraw? paused 24 80 false drawn)) "unchanged pause")
+    (is (game-frame-redraw? (assoc paused :pause-cursor 1) 24 80 false drawn) "menu change")
+    (is (game-frame-redraw? paused 30 80 false drawn) "resize")
+    (is (game-frame-redraw? paused 24 80 true drawn) "pixel scale change")
+    (let [debug (assoc paused :debug? true)]
+      (is (game-frame-redraw? debug 24 80 false [debug 24 80 false]) "debug updates"))
+    (let [resumed (assoc paused :paused false)]
+      (is (game-frame-redraw? resumed 24 80 false [resumed 24 80 false]) "resume"))))
 
 (def open-grid
   (apply vector

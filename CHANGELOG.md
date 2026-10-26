@@ -12,8 +12,7 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 ### Changed
 
 - Lowered enemy pain cries when they are shot.
-- Runs on Phel 0.54. No source or game change.
-- Runs on Phel 0.53, the stable release of the `dev-main` build 0.20.0 shipped with. No game change. The per-frame tickers and the enemy and combat writes use one plain `assoc` where they used to guard or chain writes by hand to dodge costs 0.53 removed; same speed, less code.
+- Runs on Phel 0.54. Phel 0.53 replaced the `dev-main` build shipped with 0.20.0 and simplified per-frame, enemy and combat writes to plain `assoc`, with no game or speed change.
 
 ### Fixed
 

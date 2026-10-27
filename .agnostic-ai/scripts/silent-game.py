@@ -75,29 +75,39 @@ def unsafe(command, silent):
             words = without_options(words[1:], ("-d", "-c", "-z"))
             if not words:
                 continue
-            executable = os.path.basename(words[0])
-        if executable == "phel" and re.search(r"(?:^|/)vendor/bin/phel$", words[0]):
-            if len(words) > 1 and words[1] in ("run", "test"):
+            if re.search(r"(?:^|/)out/main\.php$", words[0]):
                 return True
+            executable = os.path.basename(words[0])
+        if executable == "phel" and len(words) > 1 and words[1] in ("run", "test"):
+            return True
         if executable == "composer":
             value_options = ("-d", "--working-dir", "--format", "--timeout")
             args = without_options(words[1:], value_options)
             if args and args[0] in ("run", "run-script"):
                 args = without_options(args[1:], value_options)
-            if args and args[0] in ("play", "dev", "test"):
+            if args and args[0] in ("play", "dev"):
                 return True
     return False
+
+
+def risky(command, silent):
+    try:
+        return unsafe(command, silent)
+    except ValueError:
+        return not silent and re.search(r"\b(phel|composer|out/main\.php)\b", command) is not None and "PHEL_DOOM_SILENT=1" not in command
 
 
 def main():
     try:
         payload = json.load(sys.stdin)
         command = (payload.get("tool_input") or {}).get("command") or payload.get("command") or ""
-        if unsafe(command, os.environ.get("PHEL_DOOM_SILENT") == "1"):
-            print("Run this command with PHEL_DOOM_SILENT=1 to silence the game.", file=sys.stderr)
-            return 2
-    except (ValueError, TypeError, AttributeError):
+    except (ValueError, AttributeError):
+        command = None
+    if not isinstance(command, str):
         print("Could not inspect the command for silent mode.", file=sys.stderr)
+        return 2
+    if risky(command, os.environ.get("PHEL_DOOM_SILENT") == "1"):
+        print("Run this command with PHEL_DOOM_SILENT=1 to silence the game.", file=sys.stderr)
         return 2
     return 0
 

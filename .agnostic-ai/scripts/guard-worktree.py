@@ -59,29 +59,52 @@ def dangerous(command):
         if not args:
             continue
         action, options = args[0], args[1:]
-        if action in ("stash", "restore", "clean"):
+        if action == "stash" and not (options and options[0] in ("list", "show")):
+            return True
+        if action == "clean" and not {"-n", "--dry-run"} & set(options):
+            return True
+        if action == "restore":
             return True
         if action == "reset" and "--hard" in options:
             return True
-        if action == "checkout" and "--" in options and options.index("--") < len(options) - 1:
+        if action == "switch" and {"-f", "--force", "--discard-changes"} & set(options):
+            return True
+        if action == "checkout" and discards_checkout(options):
             return True
     return False
+
+
+def discards_checkout(options):
+    if {"-f", "--force"} & set(options):
+        return True
+    if "--" in options:
+        return options.index("--") < len(options) - 1
+    return any(option == "." or (not option.startswith("-") and os.path.exists(option)) for option in options)
+
+
+def risky(command):
+    try:
+        return dangerous(command)
+    except ValueError:
+        return re.search(r"\bgit\b.*\b(stash|restore|clean|reset|checkout|switch)\b", command, re.S) is not None
 
 
 def main():
     try:
         payload = json.load(sys.stdin)
         command = (payload.get("tool_input") or {}).get("command") or payload.get("command") or ""
-        if dangerous(command):
-            if os.environ.get("AGNOSTIC_AI_TARGET") == "claude":
-                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": "This command can discard working changes and needs approval."}}))
-                return 0
-            print("Ask the user for approval before running this command, which can discard working changes.", file=sys.stderr)
-            return 2
-    except (ValueError, TypeError, AttributeError):
+    except (ValueError, AttributeError):
+        command = None
+    if not isinstance(command, str):
         print("Could not inspect the command for working tree changes.", file=sys.stderr)
         return 2
-    return 0
+    if not risky(command):
+        return 0
+    if os.environ.get("AGNOSTIC_AI_TARGET") == "claude":
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": "This command can discard working changes and needs approval."}}))
+        return 0
+    print("Ask the user for approval before running this command, which can discard working changes.", file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":

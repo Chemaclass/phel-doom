@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Focused behavior checks for the project agent hooks."""
-
 import json
 import os
 from pathlib import Path
@@ -14,6 +12,10 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / ".agnostic-ai" / "scripts"
 
+# A Git hook exports GIT_INDEX_FILE and friends; the temp repositories below must not inherit them.
+for name in [name for name in os.environ if name.startswith("GIT_")]:
+    del os.environ[name]
+
 
 def run_hook(name, command="", path=None, cwd=ROOT, target=None):
     payload = {"tool_input": {"command": command}}
@@ -21,6 +23,7 @@ def run_hook(name, command="", path=None, cwd=ROOT, target=None):
         payload["tool_input"]["file_path"] = str(path)
     runner = [sys.executable] if name.endswith(".py") else ["bash"]
     environment = os.environ.copy()
+    environment.pop("PHEL_DOOM_SILENT", None)
     if target:
         environment["AGNOSTIC_AI_TARGET"] = target
     else:
@@ -30,7 +33,7 @@ def run_hook(name, command="", path=None, cwd=ROOT, target=None):
 
 class SilentGameTest(unittest.TestCase):
     def test_blocks_game_commands_without_silent_mode(self):
-        for command in ("vendor/bin/phel run", "vendor/bin/phel test", "composer play", "composer dev", "composer test"):
+        for command in ("vendor/bin/phel run", "vendor/bin/phel test", "phel run", "php out/main.php play", "composer play", "composer dev"):
             with self.subTest(command=command):
                 result = run_hook("silent-game.py", command)
                 self.assertEqual(2, result.returncode)
@@ -41,7 +44,7 @@ class SilentGameTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
 
     def test_allows_unrelated_commands(self):
-        for command in ("composer ci", "composer --no-interaction ci", "env -u FOO PHEL_DOOM_SILENT=1 composer test"):
+        for command in ("composer ci", "composer test", "composer --no-interaction ci", "env -u FOO PHEL_DOOM_SILENT=1 composer test", "printf $'it\\'s'"):
             with self.subTest(command=command):
                 result = run_hook("silent-game.py", command)
                 self.assertEqual(0, result.returncode, result.stderr)
@@ -55,14 +58,14 @@ class SilentGameTest(unittest.TestCase):
 
 class GuardWorktreeTest(unittest.TestCase):
     def test_blocks_commands_that_discard_work(self):
-        for command in ("git stash", "git checkout -- src/core/engine.phel", "git restore src/core/engine.phel", "git reset --hard", "git clean -fd"):
+        for command in ("git stash", "git checkout -- src/core/engine.phel", "git checkout src/core/engine.phel", "git checkout .", "git checkout -f main", "git switch --discard-changes main", "git restore src/core/engine.phel", "git reset --hard", "git clean -fd", "git stash $'it\\'s'"):
             with self.subTest(command=command):
                 result = run_hook("guard-worktree.py", command)
                 self.assertEqual(2, result.returncode)
                 self.assertIn("approval", result.stderr.lower())
 
     def test_allows_non_destructive_git_command(self):
-        for command in ("git status --short", "command -- git status", "env -u FOO git status"):
+        for command in ("git status --short", "command -- git status", "env -u FOO git status", "git stash list", "git clean -n", "git checkout main", "printf $'it\\'s'"):
             with self.subTest(command=command):
                 result = run_hook("guard-worktree.py", command)
                 self.assertEqual(0, result.returncode, result.stderr)
@@ -92,6 +95,7 @@ class GuardWorktreeTest(unittest.TestCase):
                 self.assertEqual("", result.stdout)
 
 
+@unittest.skipUnless(shutil.which("agnostic-ai"), "agnostic-ai is not installed")
 class CheckLayersTest(unittest.TestCase):
     def run_edit_hook(self, path):
         return subprocess.run(
@@ -125,7 +129,7 @@ class CheckLayersTest(unittest.TestCase):
             environment = os.environ.copy()
             environment["CLAUDE_PROJECT_DIR"] = str(project)
             result = subprocess.run(["bash", str(SCRIPTS / "check-layers.sh")], cwd=project, input=json.dumps(payload), text=True, capture_output=True, env=environment, check=False)
-            self.assertEqual(1, result.returncode)
+            self.assertEqual(2, result.returncode)
             self.assertIn("LAYERING VIOLATION", result.stderr)
 
 

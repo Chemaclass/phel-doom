@@ -1,7 +1,7 @@
 ---
 description: Evaluate a Phel expression to verify behavior without writing a test
 disable-model-invocation: true
-allowed-tools: "Bash(vendor/bin/phel *), Bash(echo *), Bash(timeout *), Read, Write"
+allowed-tools: "Bash(PHEL_DOOM_SILENT=1 vendor/bin/phel *), Bash(PHEL_DOOM_SILENT=1 timeout *), Bash(echo *), Read, Write"
 x-claude:
   argument-hint: "<phel expression>"
 ---
@@ -20,7 +20,7 @@ Evaluate ad-hoc Phel expressions. Use to confirm syntax, fn shape, or quick math
    (ns phel-doom-repl)
    (println <expr>)
    EOF
-   timeout 10 vendor/bin/phel run /tmp/phel-doom-repl.phel
+   PHEL_DOOM_SILENT=1 timeout 10 vendor/bin/phel run /tmp/phel-doom-repl.phel
    ```
 
 3. If the expression needs project namespaces:
@@ -30,7 +30,7 @@ Evaluate ad-hoc Phel expressions. Use to confirm syntax, fn shape, or quick math
      (:require phel-doom.core.engine :as engine))
    (println (engine/cast-ray ...))
    EOF
-   timeout 10 vendor/bin/phel run /tmp/phel-doom-repl.phel
+   PHEL_DOOM_SILENT=1 timeout 10 vendor/bin/phel run /tmp/phel-doom-repl.phel
    ```
 
 4. Report result. If error, explain layer (lexer / analyzer / runtime).

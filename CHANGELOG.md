@@ -9,10 +9,6 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
-### Changed
-
-- Added agent checks for silent game commands, worktree safety, layer boundaries and worktree dependencies.
-
 ## [0.21.0] - 2026-10-26
 
 ### Changed

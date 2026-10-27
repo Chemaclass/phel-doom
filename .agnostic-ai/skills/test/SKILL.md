@@ -1,7 +1,7 @@
 ---
 description: Run phel-doom tests with smart scope filtering
 disable-model-invocation: true
-allowed-tools: "Bash(composer *), Bash(vendor/bin/phel *)"
+allowed-tools: "Bash(composer *), Bash(vendor/bin/phel *), Bash(PHEL_DOOM_SILENT=1 vendor/bin/phel *)"
 x-claude:
   argument-hint: "[scope-or-file]"
 ---
@@ -15,8 +15,8 @@ Run the **minimum** scope for the changed files.
 | Changed | Command |
 |---------|---------|
 | `src/core/**` or `src/glue/**` | `composer test` |
-| `src/io/**` (no test) | `composer play` for manual smoke (use `/play`) |
-| One file, one module | `vendor/bin/phel test tests/<layer>/<name>-test.phel` |
+| `src/io/**` (no test) | `PHEL_DOOM_SILENT=1 composer play` for manual smoke (use `/play`) |
+| One file, one module | `PHEL_DOOM_SILENT=1 vendor/bin/phel test tests/<layer>/<name>-test.phel` |
 | Format/lint only | `composer format-check && composer lint` |
 | Everything (pre-commit) | `composer ci` |
 
@@ -29,7 +29,7 @@ composer format-check  # dry-run format check
 composer lint          # static analysis on src tests
 composer ci            # format-check + lint + test + build
 composer build         # build out/main.php
-composer play          # launch game (interactive)
+PHEL_DOOM_SILENT=1 composer play  # launch game (interactive)
 composer repl          # phel repl
 composer doctor        # env check
 ```
@@ -50,14 +50,14 @@ composer doctor        # env check
 
 3. Looks like file path:
    ```bash
-   vendor/bin/phel test <file>
+   PHEL_DOOM_SILENT=1 vendor/bin/phel test <file>
    ```
 
 4. Looks like module name (e.g. `engine`):
    ```bash
-   vendor/bin/phel test tests/core/<module>-test.phel 2>/dev/null \
-   || vendor/bin/phel test tests/glue/<module>-test.phel 2>/dev/null \
-   || vendor/bin/phel test tests/commands/<module>-test.phel
+   PHEL_DOOM_SILENT=1 vendor/bin/phel test tests/core/<module>-test.phel 2>/dev/null \
+   || PHEL_DOOM_SILENT=1 vendor/bin/phel test tests/glue/<module>-test.phel 2>/dev/null \
+   || PHEL_DOOM_SILENT=1 vendor/bin/phel test tests/commands/<module>-test.phel
    ```
 
 5. Report pass/fail count clearly.

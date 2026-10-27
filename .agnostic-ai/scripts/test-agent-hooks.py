@@ -44,13 +44,13 @@ class SilentGameTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
 
     def test_allows_unrelated_commands(self):
-        for command in ("composer ci", "composer test", "composer --no-interaction ci", "env -u FOO PHEL_DOOM_SILENT=1 composer test", "printf $'it\\'s'"):
+        for command in ("composer ci", "composer test", "composer --no-interaction ci", "env -u FOO PHEL_DOOM_SILENT=1 composer test", "printf $'it\\'s'", "make test", "make play PHEL_DOOM_SILENT=1", "PHEL_DOOM_SILENT=1 make play", "export PHEL_DOOM_SILENT=1; composer play", "PHEL_DOOM_SILENT=1 timeout 10 vendor/bin/phel run x", "timeout 10 env PHEL_DOOM_SILENT=1 vendor/bin/phel run x"):
             with self.subTest(command=command):
                 result = run_hook("silent-game.py", command)
                 self.assertEqual(0, result.returncode, result.stderr)
 
     def test_blocks_commands_with_wrappers_and_options(self):
-        for command in ("composer --no-interaction play", "composer run play", "composer run --no-interaction play", "composer run-script --timeout=0 play", "php vendor/bin/phel run", "php -d memory_limit=-1 vendor/bin/phel run", "env -u PHEL_DOOM_SILENT vendor/bin/phel run"):
+        for command in ("composer --no-interaction play", "composer run play", "composer run --no-interaction play", "composer run-script --timeout=0 play", "php vendor/bin/phel run", "php -d memory_limit=-1 vendor/bin/phel run", "env -u PHEL_DOOM_SILENT vendor/bin/phel run", "vendor/bin/phel --quiet run x", "vendor/bin/phel bench", "make play", "make p", "make -C . dev ARGS=play", "timeout 10 vendor/bin/phel run x", "time composer play", "nohup composer play", "nice -n 5 composer play", "sudo vendor/bin/phel run", "xargs vendor/bin/phel run", "env -S 'vendor/bin/phel run'", "env -i PHEL_DOOM_SILENT=0 composer play"):
             with self.subTest(command=command):
                 result = run_hook("silent-game.py", command)
                 self.assertEqual(2, result.returncode)
@@ -65,13 +65,13 @@ class GuardWorktreeTest(unittest.TestCase):
                 self.assertIn("approval", result.stderr.lower())
 
     def test_allows_non_destructive_git_command(self):
-        for command in ("git status --short", "command -- git status", "env -u FOO git status", "git stash list", "git clean -n", "git checkout main", "printf $'it\\'s'"):
+        for command in ("git status --short", "command -- git status", "env -u FOO git status", "git stash list", "git clean -n", "git checkout main", "printf $'it\\'s'", "git restore --staged src/core/engine.phel", "git rm --cached src/core/engine.phel", "git checkout -b feature main", "timeout 5 git status"):
             with self.subTest(command=command):
                 result = run_hook("guard-worktree.py", command)
                 self.assertEqual(0, result.returncode, result.stderr)
 
     def test_blocks_wrapped_commands_that_discard_work(self):
-        for command in ("command -- git clean", "env -u FOO git restore src/core/engine.phel"):
+        for command in ("command -- git clean", "env -u FOO git restore src/core/engine.phel", "time git stash", "nohup git clean -fd", "sudo git reset --hard", "xargs git stash", "env -C /tmp git stash", "timeout 5 git stash", "cd src && git checkout core/engine.phel", "git -C src checkout core/engine.phel", "git checkout main src/core/engine.phel", "git rm -f src/core/engine.phel", "git rm -rf src", "git restore --staged --worktree src/core/engine.phel"):
             with self.subTest(command=command):
                 result = run_hook("guard-worktree.py", command)
                 self.assertEqual(2, result.returncode)

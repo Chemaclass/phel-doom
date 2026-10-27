@@ -83,7 +83,7 @@ truncated at the signature (and a float literal is a compile error):
 ```
 
 Compare against float literals (and tag the parameter) whenever a fractional
-value can reach it. `PHEL_WARN_DEPRECATIONS=1 vendor/bin/phel test` surfaces the
+value can reach it. `PHEL_WARN_DEPRECATIONS=1 PHEL_DOOM_SILENT=1 vendor/bin/phel test` surfaces the
 truncation as a PHP "Implicit conversion from float ... loses precision" notice.
 
 ## Per-frame maps (world, enemy, moves)

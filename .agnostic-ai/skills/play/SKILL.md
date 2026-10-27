@@ -1,7 +1,7 @@
 ---
 description: Launch the game to manually verify a change. Required smoke test for io/ work.
 disable-model-invocation: false
-allowed-tools: "Bash(composer play:*), Bash(make play:*)"
+allowed-tools: "Bash(PHEL_DOOM_SILENT=1 composer play:*), Bash(PHEL_DOOM_SILENT=1 make play:*)"
 x-claude:
   argument-hint: "[check-list]"
 ---
@@ -22,8 +22,9 @@ Launch phel-doom to verify a change end-to-end.
 
 1. Launch:
    ```bash
-   composer play
+   PHEL_DOOM_SILENT=1 composer play
    ```
+   Sound stays off. For an audio change, ask the user to check the sound by ear.
 
 2. Check the **golden path** from the argument (or default smoke: load → move → shoot → take damage → die → restart).
 

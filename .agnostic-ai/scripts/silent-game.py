@@ -2,75 +2,40 @@
 import json
 import os
 import re
-import shlex
 import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / ".agnostic-ai" / "scripts"))
+from shell_words import segments, shell_scripts, unwrap, without_options  # noqa: E402
 
 
-def segments(command):
-    lexer = shlex.shlex(command.replace("\n", ";"), posix=True, punctuation_chars=";&|()")
-    lexer.whitespace_split = True
-    lexer.commenters = ""
-    segment = []
-    for word in lexer:
-        if all(char in ";&|()" for char in word):
-            if segment:
-                yield segment
-                segment = []
-        else:
-            segment.append(word)
-    if segment:
-        yield segment
+MAKE_VALUE_OPTIONS = ("-C", "--directory", "-f", "--file", "--makefile", "-I", "--include-dir", "-o", "-W")
 
 
-def without_options(args, value_options):
-    while args and args[0].startswith("-"):
-        option = args.pop(0)
-        if option == "--":
-            break
-        if option in value_options and args:
-            args.pop(0)
-    return args
+def silenced(silent, changes):
+    for change in changes:
+        if change[0] == "clear":
+            silent = False
+        elif change[1] == "PHEL_DOOM_SILENT":
+            silent = change[0] == "set" and change[2] == "1"
+    return silent
 
 
 def unsafe(command, silent):
     for words in segments(command):
-        current = silent
-        while words:
-            word = words[0]
-            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", word):
-                name, value = word.split("=", 1)
-                if name == "PHEL_DOOM_SILENT":
-                    current = value == "1"
-                words = words[1:]
-            elif word == "env":
-                words = words[1:]
-                while words and words[0].startswith("-"):
-                    option = words.pop(0)
-                    if option == "--":
-                        break
-                    if option in ("-i", "--ignore-environment"):
-                        current = False
-                    elif option in ("-u", "--unset") and words:
-                        name = words.pop(0)
-                        if name == "PHEL_DOOM_SILENT":
-                            current = False
-                    elif option == "--unset=PHEL_DOOM_SILENT":
-                        current = False
-            elif word in ("command", "exec"):
-                words = words[1:]
-                if words and words[0] == "--":
-                    words = words[1:]
-            else:
-                break
+        if words[0] == "export":
+            silent = silenced(silent, [("set", *word.split("=", 1)) for word in words[1:] if "=" in word])
+            continue
+        words, changes = unwrap(words)
+        current = silenced(silent, changes)
         if not words:
             continue
-        executable = os.path.basename(words[0])
-        if executable in ("sh", "bash", "zsh", "dash"):
-            for index, word in enumerate(words[1:-1], 1):
-                if re.fullmatch(r"-[a-zA-Z]*c[a-zA-Z]*", word) and unsafe(words[index + 1], current):
-                    return True
+        if any(unsafe(script, current) for script in shell_scripts(words)):
+            return True
         if current:
             continue
+        executable = os.path.basename(words[0])
         if executable == "php" and len(words) > 1:
             words = without_options(words[1:], ("-d", "-c", "-z"))
             if not words:
@@ -78,14 +43,29 @@ def unsafe(command, silent):
             if re.search(r"(?:^|/)out/main\.php$", words[0]):
                 return True
             executable = os.path.basename(words[0])
-        if executable == "phel" and len(words) > 1 and words[1] in ("run", "test"):
-            return True
+        if executable == "phel":
+            args = without_options(words[1:])
+            if args and args[0] in ("run", "test", "bench"):
+                return True
         if executable == "composer":
             value_options = ("-d", "--working-dir", "--format", "--timeout")
             args = without_options(words[1:], value_options)
             if args and args[0] in ("run", "run-script"):
                 args = without_options(args[1:], value_options)
             if args and args[0] in ("play", "dev"):
+                return True
+        if executable == "make":
+            args = words[1:]
+            if "PHEL_DOOM_SILENT=1" in args:
+                continue
+            targets = []
+            while args:
+                arg = args.pop(0)
+                if arg in MAKE_VALUE_OPTIONS and args:
+                    args.pop(0)
+                elif not arg.startswith("-") and "=" not in arg:
+                    targets.append(arg)
+            if {"play", "p", "dev", "d"} & set(targets):
                 return True
     return False
 
@@ -94,7 +74,7 @@ def risky(command, silent):
     try:
         return unsafe(command, silent)
     except ValueError:
-        return not silent and re.search(r"\b(phel|composer|out/main\.php)\b", command) is not None and "PHEL_DOOM_SILENT=1" not in command
+        return not silent and re.search(r"\b(phel|composer|make|out/main\.php)\b", command) is not None and "PHEL_DOOM_SILENT=1" not in command
 
 
 def main():

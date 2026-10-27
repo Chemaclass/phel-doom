@@ -15,12 +15,17 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / ".agnostic-ai" / "scripts"
 
 
-def run_hook(name, command="", path=None, cwd=ROOT):
+def run_hook(name, command="", path=None, cwd=ROOT, target=None):
     payload = {"tool_input": {"command": command}}
     if path is not None:
         payload["tool_input"]["file_path"] = str(path)
     runner = [sys.executable] if name.endswith(".py") else ["bash"]
-    return subprocess.run(runner + [str(SCRIPTS / name)], cwd=cwd, input=json.dumps(payload), text=True, capture_output=True, check=False)
+    environment = os.environ.copy()
+    if target:
+        environment["AGNOSTIC_AI_TARGET"] = target
+    else:
+        environment.pop("AGNOSTIC_AI_TARGET", None)
+    return subprocess.run(runner + [str(SCRIPTS / name)], cwd=cwd, input=json.dumps(payload), text=True, capture_output=True, env=environment, check=False)
 
 
 class SilentGameTest(unittest.TestCase):
@@ -67,6 +72,24 @@ class GuardWorktreeTest(unittest.TestCase):
             with self.subTest(command=command):
                 result = run_hook("guard-worktree.py", command)
                 self.assertEqual(2, result.returncode)
+
+    def test_claude_asks_for_approval_of_dangerous_commands(self):
+        for command in ("git stash", "git checkout -- src/core/engine.phel", "git restore src/core/engine.phel", "git reset --hard", "git clean -fd"):
+            with self.subTest(command=command):
+                result = run_hook("guard-worktree.py", command, target="claude")
+                self.assertEqual(0, result.returncode, result.stderr)
+                reply = json.loads(result.stdout)
+                output = reply["hookSpecificOutput"]
+                self.assertEqual("PreToolUse", output["hookEventName"])
+                self.assertEqual("ask", output["permissionDecision"])
+                self.assertIn("discard", output["permissionDecisionReason"].lower())
+
+    def test_claude_allows_safe_commands_without_an_approval_response(self):
+        for command in ("git status --short", "git diff --check", "git log -1 --oneline"):
+            with self.subTest(command=command):
+                result = run_hook("guard-worktree.py", command, target="claude")
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual("", result.stdout)
 
 
 class CheckLayersTest(unittest.TestCase):

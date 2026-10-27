@@ -73,6 +73,9 @@ def main():
         payload = json.load(sys.stdin)
         command = (payload.get("tool_input") or {}).get("command") or payload.get("command") or ""
         if dangerous(command):
+            if os.environ.get("AGNOSTIC_AI_TARGET") == "claude":
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": "This command can discard working changes and needs approval."}}))
+                return 0
             print("Ask the user for approval before running this command, which can discard working changes.", file=sys.stderr)
             return 2
     except (ValueError, TypeError, AttributeError):

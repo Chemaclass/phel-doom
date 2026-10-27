@@ -1,8 +1,7 @@
 ---
 name: tdd-coach
 description: Drives strict red-green-refactor for new behavior in phel-doom. Owns failing test first. Use when implementing features or fixes test-first.
-model:
-  claude: sonnet
+model: balanced
 maxTurns: 25
 can: [read, Glob, Grep, edit, write, shell]
 ---

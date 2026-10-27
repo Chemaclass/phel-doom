@@ -1,8 +1,7 @@
 ---
 name: clean-code-reviewer
 description: Reviews diff for Phel smells, game conventions, IO-boundary violations. Use after implementation, before commit/PR.
-model:
-  claude: sonnet
+model: balanced
 memory: project
 can: [read, Glob, Grep, shell]
 ---

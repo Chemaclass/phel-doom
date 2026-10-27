@@ -1,8 +1,7 @@
 ---
 name: raycaster-expert
 description: Specialist for ray-marching, DDA, hit-side detection, fisheye correction, sprite/wall occlusion. Use when modifying engine.phel or any ray math.
-model:
-  claude: sonnet
+model: balanced
 maxTurns: 20
 can: [read, Glob, Grep, edit, shell]
 ---

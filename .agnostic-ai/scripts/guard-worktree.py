@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / ".agnostic-ai" / "s
 from shell_words import segments, shell_scripts, unwrap  # noqa: E402
 
 GIT_VALUE_OPTIONS = ("-c", "--git-dir", "--work-tree", "--namespace")
-CHECKOUT_VALUE_OPTIONS = ("-b", "-B", "--orphan", "--conflict", "--pathspec-from-file")
+CHECKOUT_VALUE_OPTIONS = ("-b", "-B", "--orphan", "--conflict")
 
 
 def has_flag(options, short, *long):
@@ -60,7 +60,7 @@ def discards(action, options, directory):
 
 
 def discards_checkout(options, directory):
-    if has_flag(options, "f", "--force"):
+    if has_flag(options, "f", "--force") or any(option.split("=", 1)[0] == "--pathspec-from-file" for option in options):
         return True
     if "--" in options:
         return options.index("--") < len(options) - 1

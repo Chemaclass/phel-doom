@@ -27,6 +27,9 @@ def unsafe(command, silent):
         if words[0] == "export":
             silent = silenced(silent, [("set", *word.split("=", 1)) for word in words[1:] if "=" in word])
             continue
+        if words[0] == "unset":
+            silent = silenced(silent, [("unset", name) for name in words[1:]])
+            continue
         words, changes = unwrap(words)
         current = silenced(silent, changes)
         if not words:

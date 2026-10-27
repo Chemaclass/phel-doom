@@ -3,6 +3,7 @@ import shlex
 
 ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
 SHELLS = ("sh", "bash", "zsh", "dash")
+KEYWORDS = ("if", "then", "else", "elif", "fi", "while", "until", "do", "done", "!", "{", "}")
 VALUE_OPTIONS = {
     "env": ("-u", "--unset", "-C", "--chdir", "-S", "--split-string"),
     "nice": ("-n", "--adjustment"),
@@ -43,6 +44,9 @@ def unwrap(words):
     changes = []
     while words:
         word = words[0]
+        if word in KEYWORDS:
+            words.pop(0)
+            continue
         if ASSIGNMENT.fullmatch(word):
             name, value = word.split("=", 1)
             changes.append(("set", name, value))

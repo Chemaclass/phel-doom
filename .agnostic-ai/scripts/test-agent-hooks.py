@@ -50,7 +50,7 @@ class SilentGameTest(unittest.TestCase):
                 self.assertEqual(0, result.returncode, result.stderr)
 
     def test_blocks_commands_with_wrappers_and_options(self):
-        for command in ("composer --no-interaction play", "composer run play", "composer run --no-interaction play", "composer run-script --timeout=0 play", "php vendor/bin/phel run", "php -d memory_limit=-1 vendor/bin/phel run", "env -u PHEL_DOOM_SILENT vendor/bin/phel run", "vendor/bin/phel --quiet run x", "vendor/bin/phel bench", "make play", "make p", "make -C . dev ARGS=play", "timeout 10 vendor/bin/phel run x", "time composer play", "nohup composer play", "nice -n 5 composer play", "sudo vendor/bin/phel run", "xargs vendor/bin/phel run", "env -S 'vendor/bin/phel run'", "env -i PHEL_DOOM_SILENT=0 composer play"):
+        for command in ("composer --no-interaction play", "composer run play", "composer run --no-interaction play", "composer run-script --timeout=0 play", "php vendor/bin/phel run", "php -d memory_limit=-1 vendor/bin/phel run", "env -u PHEL_DOOM_SILENT vendor/bin/phel run", "vendor/bin/phel --quiet run x", "vendor/bin/phel bench", "make play", "make p", "make -C . dev ARGS=play", "timeout 10 vendor/bin/phel run x", "time composer play", "nohup composer play", "nice -n 5 composer play", "sudo vendor/bin/phel run", "xargs vendor/bin/phel run", "env -S 'vendor/bin/phel run'", "env -i PHEL_DOOM_SILENT=0 composer play", "if true; then composer play; fi", "export PHEL_DOOM_SILENT=1; unset PHEL_DOOM_SILENT; composer play"):
             with self.subTest(command=command):
                 result = run_hook("silent-game.py", command)
                 self.assertEqual(2, result.returncode)
@@ -71,7 +71,7 @@ class GuardWorktreeTest(unittest.TestCase):
                 self.assertEqual(0, result.returncode, result.stderr)
 
     def test_blocks_wrapped_commands_that_discard_work(self):
-        for command in ("command -- git clean", "env -u FOO git restore src/core/engine.phel", "time git stash", "nohup git clean -fd", "sudo git reset --hard", "xargs git stash", "env -C /tmp git stash", "timeout 5 git stash", "cd src && git checkout core/engine.phel", "git -C src checkout core/engine.phel", "git checkout main src/core/engine.phel", "git rm -f src/core/engine.phel", "git rm -rf src", "git restore --staged --worktree src/core/engine.phel"):
+        for command in ("command -- git clean", "env -u FOO git restore src/core/engine.phel", "time git stash", "nohup git clean -fd", "sudo git reset --hard", "xargs git stash", "env -C /tmp git stash", "timeout 5 git stash", "cd src && git checkout core/engine.phel", "git -C src checkout core/engine.phel", "git checkout main src/core/engine.phel", "git rm -f src/core/engine.phel", "git rm -rf src", "git restore --staged --worktree src/core/engine.phel", "if true; then git reset --hard; fi", "while true; do git stash; done", "! git clean -fd", "{ git stash; }", "git checkout --pathspec-from-file=paths.txt", "git checkout --pathspec-from-file paths.txt"):
             with self.subTest(command=command):
                 result = run_hook("guard-worktree.py", command)
                 self.assertEqual(2, result.returncode)
@@ -145,30 +145,43 @@ class WorktreeSetupTest(unittest.TestCase):
         self.git(self.main, "config", "user.name", "Test")
         (self.main / ".githooks").mkdir()
         shutil.copy(ROOT / ".githooks/post-checkout", self.main / ".githooks/post-checkout")
-        (self.main / "composer.lock").write_text("{}\n")
-        (self.main / "tracked").write_text("tracked\n")
+        (self.main / "composer.json").write_text("{}\n")
         self.git(self.main, "add", ".")
         self.git(self.main, "commit", "-qm", "initial")
+        (self.main / "composer.lock").write_text("{\"packages\": []}\n")
         (self.main / "vendor").mkdir()
         (self.main / ".phel").mkdir()
         self.git(self.main, "worktree", "add", "-qb", "feature", str(self.worktree))
-        (self.worktree / "composer.lock").unlink()
 
     def git(self, cwd, *args):
         subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
 
-    def test_links_dependencies_in_a_linked_worktree(self):
-        result = subprocess.run(["bash", str(SCRIPTS / "worktree-setup.sh")], cwd=self.worktree, text=True, capture_output=True, check=False)
+    def run_setup(self, cwd):
+        return subprocess.run(["bash", str(SCRIPTS / "worktree-setup.sh")], cwd=cwd, text=True, capture_output=True, check=False)
+
+    def test_links_vendor_and_copies_the_lock_file_in_a_linked_worktree(self):
+        result = self.run_setup(self.worktree)
         self.assertEqual(0, result.returncode, result.stderr)
-        for name in ("vendor", "composer.lock", ".phel"):
-            path = self.worktree / name
-            self.assertTrue(path.is_symlink(), name)
-            self.assertEqual((self.main / name).resolve(), path.resolve())
+        vendor = self.worktree / "vendor"
+        self.assertTrue(vendor.is_symlink())
+        self.assertEqual((self.main / "vendor").resolve(), vendor.resolve())
+        lock = self.worktree / "composer.lock"
+        self.assertFalse(lock.is_symlink())
+        self.assertEqual((self.main / "composer.lock").read_text(), lock.read_text())
+        self.assertFalse((self.worktree / ".phel").exists())
+
+    def test_skips_a_worktree_with_different_requirements(self):
+        (self.worktree / "composer.json").write_text("{\"require\": {\"x/y\": \"*\"}}\n")
+        result = self.run_setup(self.worktree)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("composer install", result.stderr)
+        self.assertFalse((self.worktree / "vendor").exists())
+        self.assertFalse((self.worktree / "composer.lock").exists())
 
     def test_does_nothing_in_the_main_checkout(self):
         vendor = self.main / "vendor"
         self.assertFalse(vendor.is_symlink())
-        result = subprocess.run(["bash", str(SCRIPTS / "worktree-setup.sh")], cwd=self.main, text=True, capture_output=True, check=False)
+        result = self.run_setup(self.main)
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertFalse(vendor.is_symlink())
 

@@ -1,7 +1,7 @@
 ---
 name: render-expert
 description: Specialist for ANSI rendering, RLE emit, color, HUD, frame-stats, terminal cursor model. Use when modifying src/io/render/ or any visual output.
-model: balanced
+model: strong
 maxTurns: 20
 can: [read, Glob, Grep, edit, shell]
 ---

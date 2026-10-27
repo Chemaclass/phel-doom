@@ -22,6 +22,8 @@ Read `docs/architecture.md`, `docs/state.md`, `docs/performance.md` before touch
 
 Project skills (`test`, `commit`, `pr`, `fix`, `changelog`, `release`, `phel-repl`, `perf-bench`, `play`) are authoritative for their topic: load one before guessing. Hand engine math, render, perf, debugging and docs drift to the matching project agent. For codebase search use a read-only explorer.
 
+Run `composer install` in the main checkout to install the Git hooks. New linked worktrees without `vendor/` sync the agent configuration on checkout when `agnostic-ai` is on PATH. A new worktree links `vendor/` from the main checkout when `composer.json` matches; before changing dependencies there, remove the link and run `composer install`. In Codex, use `/hooks` to review and trust the project hooks before they run. Codex 0.155 and later inherit the parent session sandbox, so `readonly: true` does not enforce a read-only reviewer; use a read-only parent session when that guarantee is required.
+
 ## Project conventions (not in global)
 
 - Branch prefixes match commit type: `feat/` `fix/` `ref/` `docs/` `perf/`.

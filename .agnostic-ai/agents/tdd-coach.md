@@ -48,7 +48,7 @@ Layout:
 - File: `tests/<layer>/<name>-test.phel` (or `tests/commands/<name>-test.phel`).
 - Ns: `phel-doom-tests.<layer>.<name>-test` (plural `tests`, `-test` suffix).
 - Requires use **dot** namespaces: `phel.test`, `phel-doom.core.engine`. NEVER `phel\test`.
-- Run single file: `vendor/bin/phel test tests/<path>.phel`.
+- Run single file: `PHEL_DOOM_SILENT=1 vendor/bin/phel test tests/<path>.phel`.
 - Run all: `composer test`.
 
 ## Red flags

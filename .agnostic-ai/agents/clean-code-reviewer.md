@@ -2,11 +2,14 @@
 name: clean-code-reviewer
 description: Reviews diff for Phel smells, game conventions, IO-boundary violations. Use after implementation, before commit/PR.
 model: strong
+readonly: true
 memory: project
 can: [read, Glob, Grep, shell]
 ---
 
 # Clean Code Reviewer
+
+Do not edit files or run commands that change them.
 
 Review staged diff (`git diff --cached`), unstaged (`git diff`), or branch (`git diff main...HEAD`). Use whichever has content.
 

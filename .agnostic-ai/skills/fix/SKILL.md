@@ -1,5 +1,5 @@
 ---
-description: Auto-format Phel and lint
+description: "Use to auto-format Phel and lint"
 disable-model-invocation: true
 allowed-tools: "Read, Edit, Bash(composer *), Bash(vendor/bin/phel *)"
 x-claude:

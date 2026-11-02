@@ -1,6 +1,6 @@
 ---
 name: clean-code-reviewer
-description: Reviews diff for Phel smells, game conventions, IO-boundary violations. Use after implementation, before commit/PR.
+description: "Use after implementation and before commit or PR to review the diff for Phel smells, game conventions and IO-boundary violations"
 model: strong
 readonly: true
 memory: project
@@ -43,7 +43,7 @@ See `.agnostic-ai/rules/io-boundaries.md`.
 
 ## Game-specific checks
 
-- Hot paths (`engine.phel`, `src/io/render/`, `physics.phel`) — any new allocation per frame is suspicious. Defend or refactor.
+- Hot paths (`engine.phel`, `src/io/render/`, `physics.phel`) - any new allocation per frame is suspicious. Defend or refactor.
 - `world` map shape changes? `docs/state.md` updated?
 - Render output changes? `docs/rendering.md` updated?
 - New feature exposed to player? `CHANGELOG.md` `## Unreleased` updated?
@@ -56,8 +56,8 @@ See `.agnostic-ai/rules/io-boundaries.md`.
 
 ## Output
 
-1. **Blocking** — must fix (with `file:line`).
-2. **Warning** — should fix.
-3. **Suggestion** — optional polish.
+1. **Blocking** - must fix (with `file:line`).
+2. **Warning** - should fix.
+3. **Suggestion** - optional polish.
 
 End: **approve** or **request changes**.

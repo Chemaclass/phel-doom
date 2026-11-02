@@ -1,41 +1,22 @@
 ---
-description: Macro-hygiene pitfalls for quasiquote, gensym, and expand-time evaluation
+description: "Macro hygiene for quasiquote, gensym and expand-time evaluation; use when editing defmacro"
 globs: src/**,tests/**,tools/**
 ---
 
-# Macro Hygiene
+# Macro hygiene
 
-Phel macros non-hygienic. `let`/`binding` names in macro body silently shadow homonymous globals when unquoted in `` ` ``. No error → wrong expansion.
+Phel macros are non-hygienic: a `let` or `binding` name in a macro body silently shadows a homonymous global when unquoted in `` ` ``. No error, wrong expansion.
 
-## 1. Local names must not collide with referenced globals
-
-```phel
-;; bad — local `frame-stats` shadows global
-(let [frame-stats (php/aget ctx :frame-stats)]
-  `(update-stats ~frame-stats))
-
-;; good — role suffix
-(let [frame-stats-arg (php/aget ctx :frame-stats)]
-  `(update-stats ~frame-stats-arg))
-```
-
-Convention: suffix macro-local bindings with role (`-arg`, `-flag`, `-val`, `-sym`, `-form`).
-
-## 2. New symbols introduced into expansion need auto-gensym
+1. Macro-local names must not collide with referenced globals. Suffix them by role (`-arg`, `-flag`, `-val`, `-sym`, `-form`):
 
 ```phel
-`(let [acc 0] ~@body)    ; bad — captures user's `acc`
-`(let [acc# 0] ~@body)   ; good
+;; bad: local shadows the global frame-stats
+(let [frame-stats (php/aget ctx :frame-stats)] `(update-stats ~frame-stats))
+;; good
+(let [frame-stats-arg (php/aget ctx :frame-stats)] `(update-stats ~frame-stats-arg))
 ```
 
-## 3. Expand-time vs runtime
+2. Symbols the expansion introduces need auto-gensym: `` `(let [acc# 0] ~@body) ``, not `acc`, which captures the caller's `acc`.
+3. The macro body runs at expand time; only forms inside `` ` `` reach runtime. Splice computed values with `~`; identifiers must still resolve in the caller's namespace.
 
-Macro body runs expand-time. Only forms inside `` ` `` reach runtime. Splice computed values via `~`; identifiers must still resolve in caller ns.
-
-## Checklist
-
-- List every `let`-binding name in body
-- Grep each against in-scope globals (own ns + required modules)
-- Collision → suffix or `name#`
-- New scope-introduced symbol → `name#`
-- Add a test exercising recursion / self-reference (where shadow diverges from global)
+Checklist: list every `let` name in the body; grep each against in-scope globals (own ns and required modules); on collision suffix it or use `name#`; add a test with recursion or self-reference, where the shadow diverges from the global.

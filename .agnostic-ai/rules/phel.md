@@ -1,33 +1,26 @@
 ---
-description: Phel language conventions for source and test files
+description: "Phel language conventions for source and test files; use when writing or reviewing .phel"
 globs: src/**,tests/**,tools/**
 ---
 
-# Phel Conventions
+# Phel conventions
 
 ## Naming
 
-- kebab-case for functions and variables: `cast-ray`, `frame-stats`, `enemy-aggro?`
-- `defn-` for private (not exported)
-- `?` suffix for predicates: `alive?`, `door?`
-- `!` suffix for side-effecting: `render!`, `play-sound!`
-- Namespaces match path with **dot** separator: `phel-doom.core.engine`, `phel-doom.io.render`, `phel.test`. NEVER backslash (`phel\test` is deprecated).
-- Test ns: `phel-doom-tests.<layer>.<name>-test` (plural `tests`, `-test` suffix on file + ns).
+- kebab-case for functions and variables: `cast-ray`, `enemy-aggro?`.
+- `defn-` for private; `?` suffix for predicates (`alive?`); `!` suffix for side effects (`render!`).
+- Namespaces match the path with dots: `phel-doom.core.engine`, `phel.test`. Never a backslash (`phel\test` is deprecated).
+- Test namespace: `phel-doom-tests.<layer>.<name>-test`.
 
 ## Docstrings
 
-Every public `defn` MUST be documented. Two equivalent forms, pick by need:
+Every public `defn` is documented, in one of two forms.
 
-1. **String docstring** (default) — a plain string after the fn name. This is
-   the house style for the vast majority of public fns. Phel stores it as the
-   fn's `:doc` meta, so it is REPL/`phel doc` queryable just like the map form.
+1. String docstring (default; stored as `:doc` meta, queryable via the REPL and `phel doc`):
    ```phel
    (defn gain-life "Bump :lives by one, capped at the soulsphere cap." [world] ...)
    ```
-2. **Metadata map** — `{:doc "..." :see-also [...] :example "..."}` after the fn
-   name. Use this when a fn is a subsystem entry point and benefits from
-   cross-links (`:see-also`) or a worked usage (`:example`). `format.phel` and
-   the central APIs (e.g. `build-world`, `cast-frame`, `tick-shooting`) use it.
+2. Metadata map, for subsystem entry points that gain from `:see-also` or `:example` (`format.phel`, `build-world`, `cast-frame`, `tick-shooting`):
    ```phel
    (defn format-duration
      {:doc "Format a second count as a clock string..."
@@ -36,69 +29,44 @@ Every public `defn` MUST be documented. Two equivalent forms, pick by need:
      [secs] ...)
    ```
 
-Rules: `:doc` text must match current behaviour; `:see-also` only names fns that
-exist and genuinely relate; `:example` must be correct (omit it rather than
-guess). Do NOT churn a clear string docstring into the map form just for
-uniformity - only upgrade when you are actually adding `:see-also`/`:example`.
-
-Skip docstrings on private `defn-` unless behaviour is subtle (a short `;;`
-comment is fine there).
+`:doc` must match current behaviour, `:see-also` names only real related fns, `:example` must be correct (omit rather than guess). Upgrade a string docstring to the map form only when adding `:see-also` or `:example`. Private `defn-` needs none unless behaviour is subtle.
 
 ## Comments
 
-- `;` line comments (not `#`)
-- `;;` standalone, `;` trailing after code
-- `#_` to comment out a form (`#| |#` block comments were removed in phel 0.50)
-- Default: NO comments. Add only when *why* is non-obvious (perf trick, hidden invariant, work around a Phel/PHP edge).
+- `;` line comments, `;;` standalone, `;` trailing. `#_` comments out a form (`#| |#` was removed in phel 0.50).
+- Default to none. Comment only a non-obvious why: perf trick, hidden invariant, Phel or PHP edge.
 
 ## Semantics
 
-- `conj` over `put` for collections
-- `defstruct` for data types, not PHP classes
-- Threading: `->` first, `->>` last
-- `for` builds sequences, `doseq` does side effects
-- CLI args: `*argv*`, not `php/$argv`
-- `*build-mode*` guard for top-level side effects (breaks `composer build`)
+- `conj` over `put`; `defstruct` over PHP classes; `->` threads first, `->>` last.
+- `for` builds sequences, `doseq` runs side effects.
+- CLI args: `*argv*`, not `php/$argv`.
+- Guard top-level side effects with `*build-mode*`, or `composer build` breaks.
 
 ## PHP interop (phel 0.50)
 
-- Construct with `(new \Foo arg)`, not `php/new`. `php/->` and `php/::` are
-  rejected as source (compile error); the Clojure-style shorthands are the
-  spelling to write. `php/aget`, `php/aset`, `php/apush`, `php/oset`, `php/ref` stay.
-- `(php/. a b c)` is native PHP concatenation and is the hot-path spelling when
-  every fragment is already a string or an int. `str` stays a runtime call
-  (plus one `val-to-str` per argument) unless every non-literal argument is
-  statically known to be a `string`. Do NOT swap `str` for `php/.` over a
-  float, bool or nil - PHP and Phel render those differently.
+- Construct with `(new \Foo arg)`, not `php/new`. `php/->` and `php/::` are compile errors; use the Clojure-style shorthands. `php/aget`, `php/aset`, `php/apush`, `php/oset`, `php/ref` remain.
+- `(php/. a b c)` is native concatenation, the hot-path spelling when every fragment is a string or int. `str` costs a runtime call plus one `val-to-str` per argument unless every non-literal argument is statically a `string`. Never swap `str` for `php/.` over a float, bool or nil: PHP and Phel render them differently.
 
-## Type inference traps
+## Type inference trap
 
-The compiler infers parameter types from the body. Comparing a parameter to an
-INT literal declares that parameter `int`, so a float caller is silently
-truncated at the signature (and a float literal is a compile error):
+The compiler infers parameter types from the body. Comparing a parameter to an int literal declares it `int`, so a float caller is silently truncated (a float literal is a compile error):
 
 ```phel
 (defn- sign [n] (cond (php/> n 0) 1.0 ...))     ; => int $n; (sign 0.5) is 0.0
 (defn- sign [^float n] (cond (php/> n 0.0) ...)) ; => float $n
 ```
 
-Compare against float literals (and tag the parameter) whenever a fractional
-value can reach it. `PHEL_WARN_DEPRECATIONS=1 PHEL_DOOM_SILENT=1 vendor/bin/phel test` surfaces the
-truncation as a PHP "Implicit conversion from float ... loses precision" notice.
+When a fractional value can reach the parameter, compare against float literals and tag it. `PHEL_WARN_DEPRECATIONS=1 PHEL_DOOM_SILENT=1 vendor/bin/phel test` surfaces truncation as a PHP "Implicit conversion from float ... loses precision" notice.
 
 ## Per-frame maps (world, enemy, moves)
 
-- Skip work, not writes: `combat/decay-key` leaves an idle timer alone. On Phel 0.53 an `assoc` of the value already there returns the map itself, so a compare guard around one write costs more than it saves (0.68 vs 0.56 us). Write the plain `assoc`.
-- Variadic `(assoc m :a 1 :b 2 ...)` and chained single-key `assoc`s cost the same on 0.53; write whichever reads better. Transients stay slower on the world map (docs/performance.md, "What a write costs on Phel 0.51").
-- Tag map params on dispatched per-frame fns as `^map world` so `(:k world)` lowers to `->find`. Do NOT tag one-expression `^:pure` helpers that still inline: a tagged param stops the -O2 inliner. Check with `grep -c '->find(' out/phel_doom/<module>.php` after `composer build`.
-- Probe before you rebuild: an indexed `loop` that exits on the first hit beats a `filterv` whose only purpose is to learn nothing was there.
+- Skip work, not writes. On Phel 0.53 an `assoc` of the value already there returns the map itself, so a compare guard costs more than it saves (0.68 vs 0.56 us). Write the plain `assoc`; `combat/decay-key` leaves an idle timer alone.
+- Variadic `(assoc m :a 1 :b 2)` and chained `assoc`s cost the same on 0.53; pick the clearer. Transients stay slower on the world map (`docs/performance.md`, "What a write costs on Phel 0.51").
+- Tag map params of dispatched per-frame fns `^map world` so `(:k world)` lowers to `->find`. Do not tag one-expression `^:pure` helpers that still inline: a tag stops the -O2 inliner. Check with `grep -c '->find(' out/phel_doom/<module>.php` after `composer build`.
+- Probe before rebuilding: an indexed `loop` that exits on the first hit beats a `filterv` used only to learn nothing was there.
 
-## Macros
+## Macros and formatting
 
-Editing `defmacro` body or quasiquote? Load [macro-hygiene.md](macro-hygiene.md) first.
-
-## Formatting
-
-`.phel` files auto-formatted by the `format-phel` after-edit hook (`.agnostic-ai/scripts/format-phel.sh`). Runs `vendor/bin/phel format <file>`. No manual run.
-
-Check without writing: `vendor/bin/phel format --dry-run <file>`. CI runs `composer format-check`.
+- Editing `defmacro` or a quasiquote: load [macro-hygiene.md](macro-hygiene.md) first.
+- The `format-phel` after-edit hook runs `vendor/bin/phel format <file>`; do not run it by hand. Check only: `vendor/bin/phel format --dry-run <file>`. CI runs `composer format-check`.

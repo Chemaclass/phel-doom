@@ -1,5 +1,5 @@
 ---
-description: Launch the game to manually verify a change. Required smoke test for io/ work.
+description: "Use to launch the game and smoke-test a change; required for io/ work"
 disable-model-invocation: false
 allowed-tools: "Bash(PHEL_DOOM_SILENT=1 composer play:*), Bash(PHEL_DOOM_SILENT=1 make play:*)"
 x-claude:
@@ -30,9 +30,9 @@ Launch phel-doom to verify a change end-to-end.
 
 3. Check **edge cases** for the feature you changed.
 
-4. Watch for **regressions in adjacent features** — pause, HUD, audio, render artifacts.
+4. Watch for **regressions in adjacent features** - pause, HUD, audio, render artifacts.
 
-5. Type-checking and tests verify code correctness, not feature correctness. If `/play` cannot be run in this environment, say so explicitly — do NOT claim success.
+5. Type-checking and tests verify code correctness, not feature correctness. If `/play` cannot be run in this environment, say so explicitly - do NOT claim success.
 
 ## Report
 

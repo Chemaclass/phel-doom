@@ -1,5 +1,5 @@
 ---
-description: Evaluate a Phel expression to verify behavior without writing a test
+description: "Use to evaluate a Phel expression and check behavior without writing a test"
 disable-model-invocation: true
 allowed-tools: "Bash(PHEL_DOOM_SILENT=1 vendor/bin/phel *), Bash(PHEL_DOOM_SILENT=1 timeout *), Bash(echo *), Read, Write"
 x-claude:

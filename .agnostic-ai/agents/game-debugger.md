@@ -1,6 +1,6 @@
 ---
 name: game-debugger
-description: Diagnoses runtime issues in phel-doom — crashes, wrong render, input desync, raycast math off, audio glitches. Use when game misbehaves and the cause is not obvious.
+description: "Use when the game crashes, renders wrong, desyncs input, gets raycast math wrong or glitches audio and the cause is not obvious"
 model: balanced
 maxTurns: 20
 can: [read, Glob, Grep, shell]
@@ -25,12 +25,12 @@ can: [read, Glob, Grep, shell]
 
 ## Diagnostic steps
 
-1. **Reproduce** — get the exact symptom and player input (level, position, action).
+1. **Reproduce** - get the exact symptom and player input (level, position, action).
 2. **Isolate the layer** using the table above.
-3. **Read the relevant `docs/<topic>.md`** before reading code — saves time.
-4. **Inspect frame-stats** if perf/visual — `src/commands/play.phel:frame-stats`.
-5. **Trace `world` map** at the suspect tick — what's in it, what's expected.
-6. **Check git log** on the suspect file — recent change?
+3. **Read the relevant `docs/<topic>.md`** before reading code - saves time.
+4. **Inspect frame-stats** if perf/visual - `src/commands/play.phel:frame-stats`.
+5. **Trace `world` map** at the suspect tick - what's in it, what's expected.
+6. **Check git log** on the suspect file - recent change?
 
 ## Common patterns
 

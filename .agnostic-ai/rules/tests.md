@@ -1,10 +1,8 @@
 ---
-description: Test layout and execution
+description: "Test layout and execution; use when editing tests"
 globs: tests/**
 ---
 
-# Tests
-
-- Mirror `src/` under `tests/` and use the `-test` suffix for test files and namespaces.
+- Mirror `src/` under `tests/`; use the `-test` suffix on files and namespaces.
 - Use the `phel.test` namespace.
-- Run tests with `PHEL_DOOM_SILENT=1`.
+- Run with `PHEL_DOOM_SILENT=1`.

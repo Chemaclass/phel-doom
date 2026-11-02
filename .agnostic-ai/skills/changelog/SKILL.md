@@ -1,5 +1,5 @@
 ---
-description: Update CHANGELOG.md `## Unreleased` from recent commits or a manual entry
+description: "Use to add to CHANGELOG.md Unreleased from recent commits or a manual entry"
 disable-model-invocation: true
 allowed-tools: "Read, Edit, Bash(git *)"
 x-claude:
@@ -24,11 +24,11 @@ Run first: `git log $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD~30
 2. If an entry was passed as the argument, add it under the right `## Unreleased` subsection.
 
 3. Otherwise analyze commits and draft entries:
-   - `### Added` — `feat:`
-   - `### Changed` — `ref:` (visible), `perf:` that changes behavior, behavior tweaks
-   - `### Fixed` — `fix:`
-   - `### Removed` — removals
-   - `### Performance` — `perf:` (pure speed/size)
+   - `### Added` - `feat:`
+   - `### Changed` - `ref:` (visible), `perf:` that changes behavior, behavior tweaks
+   - `### Fixed` - `fix:`
+   - `### Removed` - removals
+   - `### Performance` - `perf:` (pure speed/size)
 
 4. Entry format:
    - Imperative: "Add" not "Added".

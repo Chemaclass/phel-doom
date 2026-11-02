@@ -1,5 +1,5 @@
 ---
-description: Run phel-doom tests with smart scope filtering
+description: "Use to run tests with smart scope filtering"
 disable-model-invocation: true
 allowed-tools: "Bash(composer *), Bash(vendor/bin/phel *), Bash(PHEL_DOOM_SILENT=1 vendor/bin/phel *)"
 x-claude:

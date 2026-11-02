@@ -1,5 +1,5 @@
 ---
-description: Measure cast/render cost before/after a change with the tracked `phel bench` harness (tests/bench)
+description: "Use to measure cast/render cost before and after a hot-path change with the tests/bench harness"
 allowed-tools: "Read, Bash(vendor/bin/phel *), Bash(composer *), Bash(git *)"
 x-claude:
   argument-hint: "[baseline-ref] [candidate-ref]"
@@ -7,7 +7,7 @@ x-claude:
 
 # Perf Bench
 
-Validate or refute a performance hypothesis. Measurement-led — does NOT patch code.
+Validate or refute a performance hypothesis. Measurement-led - does NOT patch code.
 
 The harness is `tests/bench/frame-bench.phel`: `defbench` rows (phel 0.50
 `phel.bench`) over one fixed scene. `cast-120` / `cast-240` time `cast-frame`
@@ -69,7 +69,7 @@ and the local php CLI runs without JIT. Close what else is running.
    ```
 
 6. Cross-reference `docs/performance.md`. Flag any quoted number that should
-   update — do NOT edit the doc here.
+   update - do NOT edit the doc here.
 
 ## Output
 

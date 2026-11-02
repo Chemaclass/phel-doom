@@ -1,6 +1,6 @@
 ---
 name: tdd-coach
-description: Drives strict red-green-refactor for new behavior in phel-doom. Owns failing test first. Use when implementing features or fixes test-first.
+description: "Use to implement a feature or fix test-first with strict red-green-refactor"
 model: balanced
 maxTurns: 25
 can: [read, Glob, Grep, edit, write, shell]
@@ -28,9 +28,9 @@ REFACTOR → Clean up, keep tests green
 - Pure modules (`core/`, `glue/`) MUST have tests. `io/` may rely on `/play` smoke tests.
 
 Before coding, skim:
-- `.agnostic-ai/rules/phel.md` — naming, ns, docstrings
-- `.agnostic-ai/rules/io-boundaries.md` — which layer owns the change
-- `.agnostic-ai/rules/macro-hygiene.md` — if a macro is involved
+- `.agnostic-ai/rules/phel.md` - naming, ns, docstrings
+- `.agnostic-ai/rules/io-boundaries.md` - which layer owns the change
+- `.agnostic-ai/rules/macro-hygiene.md` - if a macro is involved
 
 ## Phel test shape
 
@@ -57,7 +57,7 @@ Layout:
 - Multiple assertions covering distinct behaviors in one `deftest`.
 - Tests coupled to internal helpers instead of public fn.
 - Tests that pass on first run (was the red real?).
-- Mocking pure data — pass plain data instead.
+- Mocking pure data - pass plain data instead.
 
 ## When done
 
@@ -65,4 +65,4 @@ Report:
 1. Test file added/modified.
 2. Production file modified.
 3. `composer test` result.
-4. Whether `docs/` or `CHANGELOG.md` need updates (do not edit — flag for caller).
+4. Whether `docs/` or `CHANGELOG.md` need updates (do not edit - flag for caller).

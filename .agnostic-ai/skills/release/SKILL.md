@@ -1,5 +1,5 @@
 ---
-description: Cut a phel-doom release via tools/release.sh, then verify the published phar + GitHub release
+description: "Use to cut a release via tools/release.sh and verify the published phar and GitHub release"
 disable-model-invocation: false
 allowed-tools: "Read, Bash(./tools/release.sh *), Bash(git *), Bash(gh *), Bash(composer *), Bash(shasum *)"
 x-claude:

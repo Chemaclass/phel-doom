@@ -1,5 +1,5 @@
 ---
-description: Push branch, open PR with concise body, assign Chemaclass, apply correct label
+description: "Use to push the branch and open a PR with a concise body, assignee and label"
 disable-model-invocation: false
 allowed-tools: "Read, Edit, Bash(git *), Bash(gh *)"
 x-claude:
@@ -21,7 +21,7 @@ Run first: `git branch --show-current`, `git log main..HEAD --oneline`, `git dif
 
 ## Instructions
 
-1. **CHANGELOG check** — if branch contains user-facing changes (`feat:`, `fix:`, `perf:`) and `CHANGELOG.md` is unchanged, update it first via `/changelog` and commit:
+1. **CHANGELOG check** - if branch contains user-facing changes (`feat:`, `fix:`, `perf:`) and `CHANGELOG.md` is unchanged, update it first via `/changelog` and commit:
    ```bash
    git add CHANGELOG.md && git commit -m "docs: update changelog"
    ```
@@ -31,13 +31,13 @@ Run first: `git branch --show-current`, `git log main..HEAD --oneline`, `git dif
    git push -u origin HEAD
    ```
 
-3. **PR title** — Conventional Commit style, under 70 chars. Derive type from branch prefix (`feat/` → `feat`, `fix/` → `fix`, `docs/` → `docs`, `perf/` → `perf`, `ref/` → `ref`).
+3. **PR title** - Conventional Commit style, under 70 chars. Derive type from branch prefix (`feat/` → `feat`, `fix/` → `fix`, `docs/` → `docs`, `perf/` → `perf`, `ref/` → `ref`).
    If the argument is an issue number, pull issue title for inspiration:
    ```bash
    gh issue view <number> --json title -q '.title'
    ```
 
-4. **PR body** — read `.github/PULL_REQUEST_TEMPLATE.md` for the exact headers (emoji included) and fill them in. Keep total body under 15 lines.
+4. **PR body** - read `.github/PULL_REQUEST_TEMPLATE.md` for the exact headers (emoji included) and fill them in. Keep total body under 15 lines.
 
 5. **Create PR**:
    ```bash
@@ -61,12 +61,12 @@ Run first: `git branch --show-current`, `git log main..HEAD --oneline`, `git dif
    ```
 
    **Label** (pick one):
-   - `bug` — branch `fix/`
-   - `enhancement` — branch `feat/`
-   - `documentation` — branch `docs/`
-   - `performance` — branch `perf/`
-   - `refactoring` — branch `ref/`
-   - `pure testing` — only test changes
+   - `bug` - branch `fix/`
+   - `enhancement` - branch `feat/`
+   - `documentation` - branch `docs/`
+   - `performance` - branch `perf/`
+   - `refactoring` - branch `ref/`
+   - `pure testing` - only test changes
 
    Drop `Closes #N` if not tied to an issue.
 

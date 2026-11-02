@@ -1,6 +1,6 @@
 ---
 name: perf-profiler
-description: Measures cast/render phase timing, bytes emitted, memory. Measurement-led — never optimizes without numbers. Use to validate perf hypotheses or check regressions.
+description: "Use to validate a perf hypothesis or check a regression by measuring cast/render timing, bytes emitted and memory; reports numbers, never patches"
 model: balanced
 maxTurns: 15
 can: [read, Glob, Grep, shell]
@@ -37,12 +37,12 @@ Drives the perf debug overlay (issue #9) and bench harness to validate optimizat
    - Improvement: > 5 % better.
    - Noise: ±5 %.
 
-4. **Cross-reference** `docs/performance.md` *Measured numbers* table. If improvement, propose doc update. Do NOT edit the doc — flag for caller.
+4. **Cross-reference** `docs/performance.md` *Measured numbers* table. If improvement, propose doc update. Do NOT edit the doc - flag for caller.
 
 ## Constraints
 
 - Bench variance is real. One >5 % data point is a signal, not proof. Re-run before declaring regression.
-- Empty-map scenes are not representative for sprite work — use sprite-heavy scenes for #4-style work.
+- Empty-map scenes are not representative for sprite work - use sprite-heavy scenes for #4-style work.
 - Static-scene benches for differential-render (#3); moving-scene for cast-phase (#2).
 
 ## Output

@@ -1,56 +1,25 @@
 ---
-description: What belongs in core/ vs glue/ vs io/
+description: "What belongs in core/, glue/ and io/; use when adding or moving code under src"
 globs: src/**
 ---
 
-# IO Boundaries
+# IO boundaries
 
-Three layers. Direction of dependency: `io/` → `glue/` → `core/`. Never the reverse.
+Dependencies run `io/` to `glue/` to `core/`, never the reverse. `tools/check-layers.sh` enforces the direction, not which module sits in which directory.
 
-## `src/core/`
+- **`core/`**: pure logic. Same input, same output. Plain data in and out. No printing, terminal reads, time, `rand`, atoms, `php/exit`, filesystem or sleep. Throwing on invalid input is fine. Unit-test 1:1 in `tests/core/`. Modules: `engine`, `combat`, `enemy`, `level`, `map`, `physics`, `state`.
+- **`glue/`**: pure wiring over `core/` output, deterministic, same purity rules. Modules: `controls` (key codes to intents), `demo/phases` (pure phase transforms).
+- **`io/`**: the only layer that touches the world: `render/` (ANSI, cursor, RLE), audio, file I/O, signal handlers. Functions end in `!`. Keep logic minimal; emit strings or buffers computed in `glue/`. `input`, `scores`, `sound`, `savegame` and `wad` live here, each with its pure kernel (`merge-run`, `encode`/`decode`, the WAD byte parser) colocated and unit-tested beside it.
 
-**Pure logic.** Same input → same output, no observable effect.
+## Output: `print` / `println`, never `php/fwrite`
 
-- Accepts and returns plain data (maps, vectors, structs).
-- May NOT: print, read terminal, query time, `rand`, mutate atoms, call `php/exit`, hit filesystem, sleep.
-- MAY: do math, return new maps, throw on invalid input.
-- Test target: 1:1 deterministic unit tests in `tests/core/`.
+`php/fwrite` can write fewer bytes than asked (full terminal buffer, or EINTR under `pcntl_async_signals`), and the render loop does not retry, so frames truncate silently. PHP `print` and `echo` loop internally. Flush with `php/flush`, not `php/fflush php/STDOUT`.
 
-Modules: `engine`, `combat`, `enemy`, `level`, `map`, `physics`, `state`.
+## Signals
 
-## `src/glue/`
+Never call `php/pcntl_async_signals true` in the play loop: every `write(2)`, `read(2)` and `exec(3)` can then return EINTR mid-call and break code that does not retry, including all of render. For SIGWINCH resize, call `pcntl_signal_dispatch` at safe checkpoints.
 
-**Pure wiring.** Composes core/ pieces. Stays deterministic.
+## Smells
 
-- Accepts core/ outputs, returns data to be consumed by `io/`.
-- Same purity rules as `core/`. The split is structural, not behavioral.
-- Example: `controls` translates raw key codes into intent commands.
-
-Modules: `controls`, plus `demo/phases` (pure phase transforms over `core/`, guarded by the same rule).
-
-`input`, `scores`, `sound`, `savegame` and `wad` live in `io/`, not here: each is a file/terminal/device module with its pure kernel (`merge-run`, `encode`/`decode`, the WAD byte parser) colocated and unit-tested next to it. `tools/check-layers.sh` enforces the dependency DIRECTION, which is the invariant that matters; it does not police which module sits in which directory.
-
-## `src/io/`
-
-**Side effects allowed.** Single layer that touches the world.
-
-- `render/` → terminal ANSI emit (`php/print`, escape codes, cursor, RLE).
-- audio backends, file I/O for save/scores, signal handlers.
-- Functions here SHOULD end in `!`.
-- Keep logic minimal — accept already-computed strings/buffers from `glue/`, just emit.
-
-## Output primitive: `print` / `println`, NEVER `php/fwrite`
-
-`php/fwrite($fh, $s)` returns the byte count written and can be `< strlen($s)` on partial writes (full kernel terminal buffer, or EINTR from a signal under `pcntl_async_signals`). The renderer is a tight loop that does not retry partial writes; result is silently truncated frames. PHP's `print` / `echo` loop internally via the output handler chain, so they are the safe primitive.
-
-Same applies to flush: use `php/flush`, not `php/fflush php/STDOUT` direct.
-
-## Signal handlers
-
-Do NOT call `php/pcntl_async_signals true` in the play loop. With async signals on, every `write(2)` / `read(2)` / `exec(3)` can return EINTR mid-call, breaking any code path that doesn't retry — including all of render. If a SIGWINCH-aware resize feature is ever needed, drive it via explicit `pcntl_signal_dispatch` at safe checkpoints, not via async dispatch.
-
-## Smell test
-
-If a function in `core/` calls `php/rand`, reads `php/microtime`, or prints anything → move the effect to `io/` and pass the value in instead.
-
-If `io/` does math that determines what to draw → extract the math into `core/` or `glue/` and unit-test it.
+- `core/` calls `php/rand` or `php/microtime`, or prints: move the effect to `io/` and pass the value in.
+- `io/` does math that decides what to draw: extract it to `core/` or `glue/` and unit-test it.

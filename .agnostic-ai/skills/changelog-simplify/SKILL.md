@@ -1,5 +1,5 @@
 ---
-description: Tighten and de-duplicate the CHANGELOG.md `## [Unreleased]` notes, then commit + push
+description: "Use to shorten and de-duplicate the CHANGELOG.md Unreleased notes, then commit and push"
 disable-model-invocation: false
 allowed-tools: "Read, Edit, Bash(git *)"
 ---

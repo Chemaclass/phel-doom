@@ -1,5 +1,5 @@
 ---
-description: Auto-fix, run ci gates, and commit with a conventional message
+description: "Use to auto-fix, run the CI gates and commit with a conventional message"
 disable-model-invocation: true
 allowed-tools: "Read, Edit, Bash(composer *), Bash(vendor/bin/phel *), Bash(git *)"
 x-claude:
@@ -55,7 +55,7 @@ If any step fails, fix it and re-run from that step. Do NOT commit with failures
 
 ### Phase 3: Commit
 
-6. **Stage files** — add specific files by name. NEVER `git add -A` (would pick up generated `out/main.php`, `.phel/cache/*`).
+6. **Stage files** - add specific files by name. NEVER `git add -A` (would pick up generated `out/main.php`, `.phel/cache/*`).
 
 7. **Draft commit message** in Conventional Commits format:
    - If a message was passed as the argument, use it.
@@ -72,6 +72,6 @@ If any step fails, fix it and re-run from that step. Do NOT commit with failures
    git commit -m "<message>"
    ```
 
-9. **CHANGELOG check** — if prefix is `feat:` / `fix:` / `perf:`, ensure `CHANGELOG.md` has been updated under `## Unreleased`. If not, warn user before pushing.
+9. **CHANGELOG check** - if prefix is `feat:` / `fix:` / `perf:`, ensure `CHANGELOG.md` has been updated under `## Unreleased`. If not, warn user before pushing.
 
 10. Report: commit hash, message, files included.

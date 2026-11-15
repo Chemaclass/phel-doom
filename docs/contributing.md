@@ -11,7 +11,7 @@ composer install   # deps + .githooks/pre-commit + .agents/
 composer play      # or: make play
 ```
 
-PHP 8.5 is the floor, locally and in CI. Phel 0.53 and later require it. `composer.lock` is gitignored, so `composer install` resolves the newest `^0.54`.
+PHP 8.5 is the floor, locally and in CI. Phel 0.53 and later require it. `composer.lock` is gitignored, so `composer install` resolves `^1.0.0-rc3` to validate the 1.0 release candidate.
 
 Work with `composer test`. Before a commit, the pre-commit hook runs `composer ci`, the same gate CI runs. Bypass with `git commit --no-verify` only in emergencies.
 

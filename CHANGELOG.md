@@ -9,6 +9,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 ## [Unreleased]
 
+### Changed
+
+- Runs on Phel 1.0.0-rc3, with a distinct alias for the core settings namespace.
+
 ## [0.21.0] - 2026-10-26
 
 ### Changed

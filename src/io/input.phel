@@ -39,16 +39,28 @@
    reporting focus changes to whatever runs next."
   "\e[?1004l")
 
+(def- screen-setup
+  ;; Alt screen + hide cursor + no autowrap + clear/home: the part of the
+  ;; terminal setup every terminal gets, the Linux console included (#545).
+  "\e[?1049h\e[?25l\e[?7l\e[2J\e[H")
+
 (defn init-escapes
   "Pure: the terminal-setup escape string init-input! emits. Alt screen
    (`\\e[?1049h`) + hide cursor (`\\e[?25l`) + no autowrap (`\\e[?7l`) +
    clear/home (`\\e[2J\\e[H`) + kitty keyboard opt-in (`\\e[>3u`), then
    the xterm mouse-reporting escapes (`mouse-enable`) appended ONLY when
    `mouse?` is true (#246). Split out from the side-effecting init-input!
-   so the mouse gating is unit-testable without touching the terminal."
-  [mouse?]
-  (str "\e[?1049h\e[?25l\e[?7l\e[2J\e[H\e[>3u" focus-enable
-       (if mouse? mouse-enable "")))
+   so the mouse gating is unit-testable without touching the terminal.
+
+   `console?` (the Linux virtual console, #545) keeps only the screen
+   setup: the console has no kitty keyboard, focus reporting, XTSMPOINTER
+   or any-motion mouse, and an older kernel can print the tail of an
+   escape it does not parse as literal text."
+  [mouse? & [console?]]
+  (if console?
+    screen-setup
+    (str screen-setup "\e[>3u" focus-enable
+         (if mouse? mouse-enable ""))))
 
 (def unhideable-pointer-terminals
   "TERM_PROGRAM values for terminals known NOT to hide the OS mouse pointer
@@ -99,6 +111,51 @@
   []
   (or (php/getenv "TERM_PROGRAM") ""))
 
+(defn linux-console?
+  "True when `term` (a $TERM value) is the Linux virtual console (#545):
+   Ctrl+Alt+F3 with no X11 / Wayland. Its palette has 16 colours, folded
+   differently for foreground and background, so the ▀ sub-pixel scene
+   shreds there; it has no xterm mouse reporting (gpm only drives the
+   console's own selection) and a font of a few hundred glyphs. Pure; pair
+   with `terminal-type`."
+  [term]
+  (= term "linux"))
+
+(defn terminal-type
+  "The terminal type from $TERM (\"\" when unset). Reads the environment,
+   so it is side-effecting (not pure)."
+  []
+  (or (php/getenv "TERM") ""))
+
+(defn on-linux-console?
+  "True when this session runs on the Linux virtual console (#545). Reads
+   $TERM, so it is side-effecting; the decision lives in `linux-console?`."
+  []
+  (linux-console? (terminal-type)))
+
+(defn mouse-usable?
+  "Pure: does mouselook run for this session? The Mouse setting
+   (`mouse?`) AND a terminal that can report pointer motion. The Linux
+   console (`term`, a $TERM value) cannot (#545), so there the game sends
+   no mouse escapes and ignores pointer input, while the saved setting
+   stays as the player left it for their graphical terminals."
+  [mouse? term]
+  (if (linux-console? term) false (boolean mouse?)))
+
+(def linux-console-notice
+  "Start-menu line for the Linux console (#545), in the slot
+   `pointer-limit-notice` uses. Fits the 48-column menu box."
+  "No mouse look on the Linux console; use keys.")
+
+(defn start-menu-notice
+  "Pure: the terminal caveat line for the start menu, or nil. The Linux
+   console (`term`, a $TERM value) has no mouselook at all, which trumps
+   the cosmetic-pointer caveat keyed on `term-program` ($TERM_PROGRAM)."
+  [term-program term]
+  (if (linux-console? term)
+    linux-console-notice
+    (pointer-limit-notice term-program)))
+
 (defn init-input!
   "Put the terminal in non-blocking raw mode so we can read single keys
    without waiting for Enter. Switch to the alternate screen buffer and
@@ -115,11 +172,12 @@
    `mouse?` (default true) gates the xterm mouse-reporting escapes
    (`mouse-enable`) for FPS-style mouselook (issue #246). When the Mouse
    setting is off the caller passes false and no mouse escapes are sent,
-   so the terminal never captures the pointer."
+   so the terminal never captures the pointer. On the Linux console
+   (#545) only the screen setup is sent, whatever `mouse?` says."
   [& [mouse?]]
   (php/exec "stty -icanon -echo min 0 time 0")
   (php/stream_set_blocking php/STDIN false)
-  (print (init-escapes (if (nil? mouse?) true mouse?))))
+  (print (init-escapes (if (nil? mouse?) true mouse?) (on-linux-console?))))
 
 (defn rearm-mouse!
   "Re-assert the xterm mouse-reporting escapes (`mouse-enable`) so pointer
@@ -156,6 +214,14 @@
    drain. mouse-disable is always sent (harmless if mouse was never
    enabled). Split out so the teardown contract is unit-testable."
   (str "\e[?2026l\e[<u" mouse-disable focus-disable))
+
+(defn restore-prelude-for
+  "Pure: the restore! prelude for this terminal. The Linux console (#545)
+   was never sent the kitty, mouse or focus escapes (see `init-escapes`),
+   so it only ends synchronized output; every other terminal gets
+   `restore-prelude` unchanged."
+  [console?]
+  (if console? "\e[?2026l" restore-prelude))
 
 (def- signals-armed
   ;; Whether install-signal-handlers! armed anything; interrupted? skips
@@ -291,7 +357,7 @@
   ;; stops emitting key / pointer reports, then swallow the trailing
   ;; release event for the quit key before cooked mode (echo on) would
   ;; print it to the shell.
-  (print restore-prelude)
+  (print (restore-prelude-for (on-linux-console?)))
   (php/flush)
   (drain-stdin! 120)
   (print "\e[?25h\e[?7h\e[?1049l")

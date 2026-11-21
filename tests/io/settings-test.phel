@@ -20,12 +20,44 @@
         (when (php/file_exists file) (php/unlink file))
         (php/rmdir tmp)))))
 
+(defn- with-term
+  "Run `f` with $TERM set to `term`, restoring the prior value after.
+   The Linux console check (#545) reads $TERM, so a test that does not pin
+   it would change outcome when the suite runs on a real VT."
+  [term f]
+  (let [prev (php/getenv "TERM")]
+    (try
+      (php/putenv (str "TERM=" term))
+      (f)
+      (finally
+        (if (php/=== false prev)
+          (php/putenv "TERM")
+          (php/putenv (str "TERM=" prev)))))))
+
 (deftest test-missing-file-returns-coerced-defaults
   (with-temp-home
    (fn []
       ;; No file written yet -> defaults.
-     (let [loaded (load-settings)]
+     (let [loaded (with-term "xterm-256color" load-settings)]
        (is (= (core/coerce-settings core/default-settings) loaded))))))
+
+(deftest test-linux-console-defaults-subpixel-off-and-ascii-glyphs
+  ;; #545: a fresh player on the VT gets one colour per scene cell and the
+  ;; ASCII HUD glyphs; the Mouse setting itself is left alone.
+  (with-temp-home
+   (fn []
+     (let [loaded (with-term "linux" load-settings)]
+       (is (= false (:subpixel loaded)) "sub-pixel off")
+       (is (= :ascii (:glyphs loaded)) "ascii glyphs")
+       (is (= true (:mouse loaded)) "persisted Mouse choice untouched")))))
+
+(deftest test-linux-console-honours-a-saved-subpixel-choice
+  (with-temp-home
+   (fn []
+     (save-settings! (assoc core/default-settings :subpixel true :glyphs :unicode))
+     (let [loaded (with-term "linux" load-settings)]
+       (is (= true (:subpixel loaded)) "saved on beats the console default")
+       (is (= :unicode (:glyphs loaded)) "saved glyphs beat the console default")))))
 
 (deftest test-round-trips-all-settings
   (with-temp-home

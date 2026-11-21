@@ -40,9 +40,11 @@ Doors need no key: walk into them. `TAB` is not bound.
 
 `init-input!` takes a `mouse?` flag (default true). `init-escapes` is pure, so the gating is unit-tested without a terminal.
 
+On the Linux console (`TERM=linux`, #545) `init-escapes` sends only the first four rows: the console has no kitty keyboard, focus reports, XTSMPOINTER or any-motion mouse, and an older kernel can print an escape it does not parse as text. Every other terminal gets the same bytes as before.
+
 `restore!` undoes it in three steps:
 
-1. `restore-prelude`: `\e[?2026l` (end synchronized output), `\e[<u` (pop kitty flags), `mouse-disable` (`\e[?1003l\e[?1006l\e[>1p`), `\e[?1004l`. The mouse disable always goes out; it is harmless when the mouse was never on.
+1. `restore-prelude`: `\e[?2026l` (end synchronized output), `\e[<u` (pop kitty flags), `mouse-disable` (`\e[?1003l\e[?1006l\e[>1p`), `\e[?1004l`. The mouse disable always goes out; it is harmless when the mouse was never on. On the Linux console `restore-prelude-for` sends only `\e[?2026l`.
 2. Flush, then `drain-stdin!` for 120 ms. This swallows the kitty release report of the quit key, which would otherwise echo onto the shell prompt.
 3. `\e[?25h\e[?7h\e[?1049l`, then `stty sane`.
 
@@ -151,6 +153,8 @@ Both reports are scrubbed before the byte walk. They embed an ESC byte, and a ba
 ## Mouse look (issue #246)
 
 FPS mouselook: the `+` crosshair stays at screen centre, the gun fires dead ahead, and mouse motion turns the camera and looks up/down. The mouse is an extra path, on by default. With the Mouse setting off, no mouse escape is sent and play is keyboard-only.
+
+The Linux console cannot do mouselook (#545). gpm drives the console's own copy/paste selection; the kernel sends no xterm motion reports. `mouse-usable?` is false there whatever the setting, so the play loop sends no mouse escapes, skips the rearm and the per-frame `\e[>3p`, and ignores pointer input. The start menu says to use the keyboard. The saved Mouse choice is left unchanged for graphical terminals.
 
 ### SGR report format
 

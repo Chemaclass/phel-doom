@@ -1,6 +1,6 @@
 (ns phel-doom.io.settings
   (:require phel-doom.core.settings :refer [coerce-settings default-settings page-fields resolve-glyphs resolve-subpixel])
-  (:require phel-doom.io.input :refer [terminal-program halfblock-seams?]))
+  (:require phel-doom.io.input :refer [terminal-program halfblock-seams? on-linux-console?]))
 
 ;; ---------------------------------------------------------------------
 ;; Settings persistence in $HOME/.phel-doom-settings.json.
@@ -64,15 +64,19 @@
   "Overlay terminal-derived startup defaults onto a coerced settings map.
    `saved?` says whether the on-disk file carried an explicit sub-pixel
    choice (honored over the terminal default). The #332 sub-pixel auto-off and the
-   #471 non-UTF-8 glyph fallback. Reads $TERM_PROGRAM + env, so it is side-effecting."
+   #471 non-UTF-8 glyph fallback. The Linux console (#545) gets both: its
+   16-colour palette folds the ▀ cell's fg and bg differently, and its font
+   lacks the HUD symbols. Reads $TERM_PROGRAM, $TERM + env, so it is
+   side-effecting."
   [settings saved?]
-  (-> settings
-      (assoc :subpixel
-             (resolve-subpixel (:subpixel settings) saved?
-                               (halfblock-seams? (terminal-program))
-                               (subpixel-force-on?)))
-      (assoc :glyphs
-             (resolve-glyphs (:glyphs settings) saved? (utf8-locale?)))))
+  (let [console? (on-linux-console?)]
+    (-> settings
+        (assoc :subpixel
+               (resolve-subpixel (:subpixel settings) saved?
+                                 (or (halfblock-seams? (terminal-program)) console?)
+                                 (subpixel-force-on?)))
+        (assoc :glyphs
+               (resolve-glyphs (:glyphs settings) saved? (utf8-locale?) console?)))))
 
 (defn load-settings
   "Read the persisted settings file, returning the coerced defaults

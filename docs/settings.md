@@ -16,6 +16,8 @@ The page groups fields under Audio, Video, Play, Controls and Access, and shows 
 
 Two fields use a terminal-derived default when the player has not saved a choice. A saved choice takes precedence.
 
+A terminal-derived default is not written to the file while the field still holds it, so closing the page on one terminal does not turn its fallback into a saved choice on another (#545). Changing the field makes it a saved choice.
+
 - **Sub-pixel** starts off on macOS Terminal.app (`$TERM_PROGRAM` = `Apple_Terminal`), which draws `▀` with row seams (#332), and on the Linux console (`$TERM` = `linux`), whose 16-colour palette folds `▀` foreground and background differently (#545). `PHEL_DOOM_SUBPIXEL=1` forces it on.
 - **HUD glyphs** starts as `ascii` when `LC_ALL` / `LC_CTYPE` / `LANG` is not UTF-8 (#471), or on the Linux console, whose font lacks the symbols (#545).
 

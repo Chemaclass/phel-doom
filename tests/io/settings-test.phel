@@ -59,6 +59,33 @@
        (is (= true (:subpixel loaded)) "saved on beats the console default")
        (is (= :unicode (:glyphs loaded)) "saved glyphs beat the console default")))))
 
+(deftest test-console-defaults-are-not-persisted-as-choices
+  ;; Closing Settings saves the whole effective map. The console fallbacks
+  ;; the player never touched must not come back as "saved" choices in a
+  ;; graphical terminal, while their other edits still persist.
+  (with-temp-home
+   (fn []
+     (let [on-console (with-term "linux" load-settings)]
+       (save-settings! (assoc on-console :minimap true))
+       (let [graphical (with-term "xterm-256color" load-settings)]
+         (is (= true (:subpixel graphical)) "sub-pixel stays automatic")
+         (is (= :unicode (:glyphs graphical)) "glyphs stay automatic")
+         (is (= true (:minimap graphical)) "the real edit persisted"))
+       (let [again (with-term "linux" load-settings)]
+         (is (= false (:subpixel again)) "console default still applies")
+         (is (= :ascii (:glyphs again))))))))
+
+(deftest test-console-explicit-edit-is-persisted
+  ;; Turning Sub-pixel back on at the console is a choice: it is written and
+  ;; wins on the next console launch. Glyphs, untouched, stay automatic.
+  (with-temp-home
+   (fn []
+     (let [on-console (with-term "linux" load-settings)]
+       (save-settings! (assoc on-console :subpixel true))
+       (let [again (with-term "linux" load-settings)]
+         (is (= true (:subpixel again)) "explicit on survives")
+         (is (= :ascii (:glyphs again)) "glyphs still automatic"))))))
+
 (deftest test-round-trips-all-settings
   (with-temp-home
    (fn []
@@ -69,8 +96,11 @@
      (let [custom (reduce (fn [s f] (core/adjust s (:key f) 1))
                           core/default-settings
                           core/page-fields)]
+       ;; The game always loads before it saves; the load also resets which
+       ;; fields hold a terminal-derived default (left out on save).
+       (with-term "xterm-256color" load-settings)
        (save-settings! custom)
-       (let [loaded (load-settings)]
+       (let [loaded (with-term "xterm-256color" load-settings)]
          (foreach [f core/page-fields]
            (let [k (:key f)]
              (is (not (= (get core/default-settings k) (get custom k)))

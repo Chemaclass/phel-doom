@@ -30,7 +30,7 @@
                                           render-start-menu render-settings!
                                           render-death-screen render-victory-screen
                                           render-intermission-screen])
-  (:require phel-doom.io.input    :refer [init-input! restore! drain-keys rearm-mouse! terminal-program pointer-limit-notice install-signal-handlers! install-resize-handler! resized? resize-armed? interrupted?]))
+  (:require phel-doom.io.input    :refer [init-input! restore! drain-keys rearm-mouse! terminal-program terminal-type start-menu-notice mouse-usable? install-signal-handlers! install-resize-handler! resized? resize-armed? interrupted?]))
 
 ;; ---------------------------------------------------------------------
 ;; The play subcommand wires together:
@@ -723,8 +723,9 @@
      ;; Mouselook on flag (#246): the crosshair IS the mouse aim point (no
      ;; visible OS pointer), so paint-crosshair forces a minimal centre dot
      ;; even when the player set Crosshair to :off, so mouse-aiming always has
-     ;; an aim indicator.
-     :mouse                (boolean (:mouse (:settings world)))
+     ;; an aim indicator. Off on the Linux console (#545), which has no
+     ;; mouselook, so render! also skips its per-frame `\e[>3p` there.
+     :mouse                (mouse-usable? (:mouse (:settings world)) (terminal-type))
      ;; Movable aim crosshair (#324): the reticle cell the gun aims at, so
      ;; render draws the `+` there. nil (mouse off / not placed) centres it.
      :aim-col              (:aim-col world)
@@ -1038,8 +1039,9 @@
         (redraw-if-resized dims rows cols)
         ;; Re-arm mouse reporting (#288) on a resize or on the periodic
         ;; cadence so pointer reports recover after a focus loss / regain.
-        ;; Gated on the Mouse setting so an opted-out player is untouched.
-        (when (and (:mouse (:settings world))
+        ;; Gated on the Mouse setting so an opted-out player is untouched,
+        ;; and never on the Linux console (#545).
+        (when (and (mouse-usable? (:mouse (:settings world)) (terminal-type))
                    (rearm-mouse? poll-frame (not= [rows cols] dims)))
           (rearm-mouse!))
         (let [draw?        (game-frame-redraw? world rows cols px2? drawn)
@@ -1081,7 +1083,7 @@
                 ;; edge band need; `(ms / 1000.0)` is this frame's dt in
                 ;; seconds, so the edge-pan rate (per-second) stays frame-
                 ;; rate independent at any cap.
-                mouse-on? (boolean (:mouse (:settings world)))
+                mouse-on? (mouse-usable? (:mouse (:settings world)) (terminal-type))
                 mpos      (if (not= [rows cols] dims) nil prev-mpos)
                 look      (mouse-aim pressed mpos
                                      (mouse-sensitivity (:settings world))
@@ -1582,7 +1584,7 @@
     (let [[rows cols] (if (poll-size? frame) (term-size) tdims-last)]
       (redraw-if-resized dims rows cols)
       (when (menu-redraw? frame dims [rows cols] nil nil)
-        (render-start-menu cols rows (pointer-limit-notice (terminal-program))))
+        (render-start-menu cols rows (start-menu-notice (terminal-program) (terminal-type))))
       (php/usleep menu-frame-us)
       (let [pressed (drain-keys)]
         (cond
@@ -1686,7 +1688,7 @@
         ;; already in raw mode and the alt screen up.
         (install-signal-handlers!)
         (install-resize-handler!)
-        (init-input! (:mouse settings0))
+        (init-input! (mouse-usable? (:mouse settings0) (terminal-type)))
         (apply-audio-settings! settings0)
         (cond
           replay  (demo/start-replay! (:seed replay) (:frames replay))

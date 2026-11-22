@@ -1,6 +1,6 @@
 (ns phel-doom.io.settings
   (:require phel-doom.core.settings :refer [coerce-settings default-settings page-fields resolve-glyphs resolve-subpixel])
-  (:require phel-doom.io.input :refer [terminal-program halfblock-seams?]))
+  (:require phel-doom.io.input :refer [terminal-program halfblock-seams? on-linux-console?]))
 
 ;; ---------------------------------------------------------------------
 ;; Settings persistence in $HOME/.phel-doom-settings.json.
@@ -60,19 +60,47 @@
   (let [v (str (php/getenv "LC_ALL") (php/getenv "LC_CTYPE") (php/getenv "LANG"))]
     (php/=== 1 (php/preg_match "/utf-?8/i" v))))
 
+(def- auto-fields
+  ;; Terminal-derived defaults the last `load-settings` applied over a field
+  ;; the file did not carry: {field-key effective-value}. `save-settings!`
+  ;; leaves such a field out while it still holds that value, so a fallback
+  ;; the player never chose (Linux console #545, Terminal.app #332, non-UTF-8
+  ;; #471) is not written to the shared file as if it were their preference.
+  (atom {}))
+
 (defn- apply-terminal-defaults
   "Overlay terminal-derived startup defaults onto a coerced settings map.
-   `saved?` says whether the on-disk file carried an explicit sub-pixel
-   choice (honored over the terminal default). The #332 sub-pixel auto-off and the
-   #471 non-UTF-8 glyph fallback. Reads $TERM_PROGRAM + env, so it is side-effecting."
-  [settings saved?]
-  (-> settings
-      (assoc :subpixel
-             (resolve-subpixel (:subpixel settings) saved?
-                               (halfblock-seams? (terminal-program))
-                               (subpixel-force-on?)))
-      (assoc :glyphs
-             (resolve-glyphs (:glyphs settings) saved? (utf8-locale?)))))
+   `saved` is the set of field keys the on-disk file carried; a saved
+   choice is honored over the terminal default, per field. The #332
+   sub-pixel auto-off and the #471 non-UTF-8 glyph fallback. The Linux
+   console (#545) gets both: its 16-colour palette folds the ▀ cell's fg
+   and bg differently, and its font lacks the HUD symbols. Records the
+   fields it changed in `auto-fields`. Reads $TERM_PROGRAM, $TERM + env,
+   so it is side-effecting."
+  [settings saved]
+  (let [console? (on-linux-console?)
+        subpixel (resolve-subpixel (:subpixel settings) (contains? saved :subpixel)
+                                   (or (halfblock-seams? (terminal-program)) console?)
+                                   (subpixel-force-on?))
+        glyphs   (resolve-glyphs (:glyphs settings) (contains? saved :glyphs)
+                                 (utf8-locale?) console?)
+        derived  {:subpixel subpixel :glyphs glyphs}]
+    (reset! auto-fields
+            (reduce (fn [acc k]
+                      (if (and (not (contains? saved k))
+                               (not= (get derived k) (get settings k)))
+                        (assoc acc k (get derived k))
+                        acc))
+                    {}
+                    [:subpixel :glyphs]))
+    (merge settings derived)))
+
+(defn- saved-keys
+  ;; The terminal-defaulted fields the decoded settings file carries.
+  [data]
+  (reduce (fn [acc k] (if (php/array_key_exists (name k) data) (conj acc k) acc))
+          #{}
+          [:subpixel :glyphs]))
 
 (defn load-settings
   "Read the persisted settings file, returning the coerced defaults
@@ -83,22 +111,22 @@
    half-block (macOS Terminal.app, #332) flips `:subpixel` off for a player
    who never saved a choice (see `apply-terminal-defaults`)."
   []
-  (let [path             (settings-path)
-        [coerced saved?]
+  (let [path            (settings-path)
+        [coerced saved]
         (if (php/file_exists path)
           (let [content (php/file_get_contents path)]
             (if (or (php/=== content false) (php/=== content ""))
-              [(coerce-settings default-settings) false]
+              [(coerce-settings default-settings) #{}]
               (let [data (php/json_decode content true)]
                 (if (php/is_array data)
                   [(coerce-settings
                     (reduce (fn [acc f] (assoc acc (:key f) (decode-field data f)))
                             {}
                             page-fields))
-                   (php/array_key_exists "subpixel" data)]
-                  [(coerce-settings default-settings) false]))))
-          [(coerce-settings default-settings) false])]
-    (apply-terminal-defaults coerced saved?)))
+                   (saved-keys data)]
+                  [(coerce-settings default-settings) #{}]))))
+          [(coerce-settings default-settings) #{}])]
+    (apply-terminal-defaults coerced saved)))
 
 (def- write-failed
   ;; Set by every save-settings! call. A read-only or full HOME makes each
@@ -116,16 +144,30 @@
    their bare keyword name (\"normal\", not \":normal\"). Returns the
    settings so callers can thread it. A failed write is recorded for
    `settings-write-failed?` rather than thrown: losing the file must not
-   interrupt play, but it must not pass unnoticed either."
+   interrupt play, but it must not pass unnoticed either.
+
+   A field still holding the terminal-derived default `load-settings`
+   applied is left out of the file (see `auto-fields`), so it stays
+   automatic on the next launch, in whatever terminal that is. Changing it
+   makes it an explicit choice and it is written from then on."
   [settings]
   ;; Re-coerce defensively: save-settings! is public, so a caller could
   ;; hand it a partial / out-of-range map. Clamping here keeps the file
   ;; on disk always valid, matching what load-settings will accept back.
-  (let [s   (coerce-settings settings)
-        arr (php/array)]
+  (let [s    (coerce-settings settings)
+        auto @auto-fields
+        arr  (php/array)]
     (foreach [f page-fields]
-      (let [v (get s (:key f))]
-        (php/aset arr (name (:key f)) (if (= :enum (:kind f)) (name v) v))))
+      (let [k (:key f)
+            v (get s k)]
+        (if (and (contains? auto k) (= v (get auto k)))
+          nil
+          (php/aset arr (name k) (if (= :enum (:kind f)) (name v) v)))))
+    ;; A field that was written is now the player's own choice.
+    (reset! auto-fields
+            (reduce (fn [acc k] (if (= (get s k) (get auto k)) (assoc acc k (get auto k)) acc))
+                    {}
+                    (keys auto)))
     (reset! write-failed
             (php/=== false (php/file_put_contents (settings-path) (php/json_encode arr))))
     s))

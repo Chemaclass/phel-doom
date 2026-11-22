@@ -46,6 +46,20 @@
    [:truecolor     :truecolor]
    [:quad          :quad]])
 
+(defn- with-term
+  "Run `f` with $TERM set to `term`, restoring the prior value after.
+   The Linux console check (#545) reads $TERM, so a test that does not pin
+   it would change outcome when the suite runs on a real VT."
+  [term f]
+  (let [prev (php/getenv "TERM")]
+    (try
+      (php/putenv (str "TERM=" term))
+      (f)
+      (finally
+        (if (php/=== false prev)
+          (php/putenv "TERM")
+          (php/putenv (str "TERM=" prev)))))))
+
 (deftest test-render-facing-settings-are-projected-when-on
   (let [on (reduce (fn [m [setting _]] (assoc m setting true)) {} render-facing)
         s  (stats-with on)]
@@ -73,14 +87,19 @@
   ;; DTO, so dropping or renaming one here would silently disable it -
   ;; the same shape as the :truecolor / :quad bug. tests/io/paint-test.phel
   ;; hand-builds a stats map with these keys injected, so it cannot catch it.
-  (let [on  (stats-with {:crosshair :dot :timer true :mouse true})
-        off (stats-with {:crosshair :off :timer false :mouse false})]
+  (let [on  (with-term "xterm-256color" (fn [] (stats-with {:crosshair :dot :timer true :mouse true})))
+        off (with-term "xterm-256color" (fn [] (stats-with {:crosshair :off :timer false :mouse false})))]
     (is (= :dot (:crosshair on)) "crosshair enum projected")
     (is (= :off (:crosshair off)) "crosshair :off projected, not defaulted away")
     (is (= true (:run-timer? on)) "timer on -> :run-timer? true")
     (is (= false (:run-timer? off)) "timer off -> :run-timer? false")
     (is (= true (:mouse on)) "mouse on")
     (is (= false (:mouse off)) "mouse off - the non-default case")))
+
+(deftest test-mouse-is-off-in-stats-on-the-linux-console
+  ;; #545: no mouselook on the VT, so render! must not force the aim dot or
+  ;; re-emit `\e[>3p` each frame, even with the saved setting on.
+  (is (= false (:mouse (with-term "linux" (fn [] (stats-with {:mouse true})))))))
 
 (deftest test-subpixel-defaults-on-and-only-explicit-false-disables
   (is (= true (:subpixel (stats-with {}))) "absent -> on")

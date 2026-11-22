@@ -64,6 +64,14 @@ On startup `load-settings` reads `$TERM_PROGRAM`. On `Apple_Terminal`, a player 
 
 For full fidelity there: set Preferences -> Profiles -> Text **line spacing to 1.0** with a tight monospace font (SF Mono, Menlo, Fira Code), then turn `Sub-pixel` back on (see [settings.md](settings.md)).
 
+### Linux console compatibility
+
+The Linux virtual console (`TERM=linux`, Ctrl+Alt+F3 with no X11 or Wayland) has **16 colours**. It accepts `38;5;n` and `48;5;n` but folds them to its palette, and folds foreground and background differently, so a `▀` cell shows one colour in its top half and an unrelated one in its bottom half. The sub-pixel scene breaks into mismatched bands (#545).
+
+`load-settings` reads `$TERM` too. On `linux`, a player with no saved choice gets `Sub-pixel` **off** (`io/input.linux-console?` feeds the same `seams?` argument of `resolve-subpixel`, same precedence as Terminal.app) and `HUD glyphs` **ascii**, since console fonts lack the keycard, half-heart and info symbols. Sky, floor and wall bodies then paint one background colour per cell. Wall top and bottom edge cells, enemy sprites and the weapon viewmodel still use `▀` / `▄` with two colours.
+
+The scene stays coarse there: 16 colours flatten the fog ramp and the textures. There is no dedicated 16-colour path. A graphical terminal gives the full picture.
+
 ## Per-column shade composition
 
 Walls shade once per column in `compute-wall-shades`:

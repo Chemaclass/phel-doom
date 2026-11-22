@@ -5,7 +5,9 @@
                                        init-escapes restore-prelude
                                        focus-enable focus-disable
                                        install-resize-handler! resized? resize-armed?
-                                       pointer-limit-notice halfblock-seams?]))
+                                       pointer-limit-notice halfblock-seams?
+                                       linux-console? mouse-usable? start-menu-notice
+                                       linux-console-notice restore-prelude-for]))
 
 ;; ---------------------------------------------------------------------
 ;; Mouse reporting escape contract (issue #246). The side-effecting
@@ -79,6 +81,51 @@
   (is (str/contains? restore-prelude "\e[<u") "kitty pop present")
   (is (str/contains? restore-prelude mouse-disable) "mouse disable present")
   (is (str/contains? restore-prelude focus-disable) "focus reporting off (#454)"))
+
+;; ---------------------------------------------------------------------
+;; Linux virtual console (#545): TERM=linux, 16 colours, no xterm mouse,
+;; no kitty keyboard / XTSMPOINTER / focus reporting.
+;; ---------------------------------------------------------------------
+
+(deftest test-linux-console-is-exactly-term-linux
+  (is (= true  (linux-console? "linux")) "kernel VT")
+  (is (= false (linux-console? "xterm-256color")) "graphical terminal")
+  (is (= false (linux-console? "linux-16color")) "only the exact value")
+  (is (= false (linux-console? "")) "unset TERM"))
+
+(deftest test-init-escapes-on-the-console-keep-only-the-screen-setup
+  (let [s (init-escapes true true)]
+    (is (= "\e[?1049h\e[?25l\e[?7l\e[2J\e[H" s) "alt screen, caret, autowrap, clear")
+    (is (not (str/contains? s "\e[>3u")) "no kitty keyboard push")
+    (is (not (str/contains? s focus-enable)) "no focus reporting")
+    (is (not (str/contains? s "\e[>3p")) "no XTSMPOINTER")
+    (is (not (str/contains? s "\e[?1003h")) "no any-motion mouse even with mouse? on")))
+
+(deftest test-init-escapes-off-the-console-are-unchanged
+  ;; Every other terminal keeps the exact bytes it always got.
+  (is (= (str "\e[?1049h\e[?25l\e[?7l\e[2J\e[H\e[>3u" focus-enable mouse-enable)
+         (init-escapes true false)))
+  (is (= (init-escapes true) (init-escapes true false)))
+  (is (= (init-escapes false) (init-escapes false false))))
+
+(deftest test-restore-prelude-on-the-console-only-ends-sync-output
+  (is (= "\e[?2026l" (restore-prelude-for true)) "nothing to pop or disable")
+  (is (= restore-prelude (restore-prelude-for false)) "other terminals unchanged"))
+
+(deftest test-mouse-is-unusable-on-the-console-whatever-the-setting
+  (is (= false (mouse-usable? true "linux")) "console: no mouselook")
+  (is (= false (mouse-usable? false "linux")))
+  (is (= true  (mouse-usable? true "xterm-256color")) "setting on elsewhere")
+  (is (= false (mouse-usable? false "xterm-256color")) "setting off elsewhere")
+  (is (= false (mouse-usable? nil "")) "missing setting reads as off"))
+
+(deftest test-start-menu-notice-on-the-console
+  (is (= linux-console-notice (start-menu-notice "" "linux")) "console notice")
+  (is (= linux-console-notice (start-menu-notice "iTerm.app" "linux")) "console trumps the pointer caveat")
+  (is (= (pointer-limit-notice "iTerm.app") (start-menu-notice "iTerm.app" "xterm-256color")))
+  (is (nil? (start-menu-notice "" "xterm-256color")) "capable terminal -> no notice")
+  ;; The menu row is 48 columns with a 2-space indent.
+  (is (<= (php/mb_strwidth linux-console-notice) 46) "fits the start-menu box"))
 
 ;; ---------------------------------------------------------------------
 ;; SIGWINCH (#459). The loops forked `stty size` every 12th frame - a

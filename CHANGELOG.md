@@ -13,6 +13,10 @@ User-facing changes (`feat:`, `fix:`, `perf:`) belong under `## [Unreleased]` un
 
 - Runs on Phel 1.0.0-rc3, with a distinct alias for the core settings namespace.
 
+### Fixed
+
+- Improved the Linux console (`TERM=linux`): sub-pixel off and ASCII HUD glyphs by default, no unsupported escapes, and a start-menu note that mouse look is unavailable. The console has 16 colours, so the scene is coarse there.
+
 ## [0.21.0] - 2026-10-26
 
 ### Changed

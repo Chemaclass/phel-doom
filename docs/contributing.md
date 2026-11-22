@@ -63,7 +63,7 @@ A dotted teal outline around the gun is the `:steel` floor theme showing through
 To get the Claude Code or Codex config locally:
 
 ```bash
-brew install Chemaclass/tap/agnostic-ai   # needs >= 0.30.0
+brew install Chemaclass/tap/agnostic-ai   # needs >= 0.96.0
 agnostic-ai sync                          # rebuild .claude/ + AGENTS.md
 ```
 

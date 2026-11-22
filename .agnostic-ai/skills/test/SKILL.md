@@ -27,7 +27,7 @@ composer test          # phel tests (PHEL_DOOM_SILENT=1 set)
 composer format        # auto-format
 composer format-check  # dry-run format check
 composer lint          # static analysis on src tests
-composer ci            # format-check + lint + test + build
+composer ci            # full gate: format, lint, checks, tests, build
 composer build         # build out/main.php
 PHEL_DOOM_SILENT=1 composer play  # launch game (interactive)
 composer repl          # phel repl

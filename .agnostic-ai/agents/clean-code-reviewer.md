@@ -46,7 +46,7 @@ See `.agnostic-ai/rules/io-boundaries.md`.
 - Hot paths (`engine.phel`, `src/io/render/`, `physics.phel`) - any new allocation per frame is suspicious. Defend or refactor.
 - `world` map shape changes? `docs/state.md` updated?
 - Render output changes? `docs/rendering.md` updated?
-- New feature exposed to player? `CHANGELOG.md` `## Unreleased` updated?
+- New feature exposed to player? `CHANGELOG.md` `## [Unreleased]` updated?
 
 ## General
 

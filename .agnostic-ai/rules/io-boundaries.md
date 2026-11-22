@@ -7,9 +7,9 @@ globs: src/**
 
 Dependencies run `io/` to `glue/` to `core/`, never the reverse. `tools/check-layers.sh` enforces the direction, not which module sits in which directory.
 
-- **`core/`**: pure logic. Same input, same output. Plain data in and out. No printing, terminal reads, time, `rand`, atoms, `php/exit`, filesystem or sleep. Throwing on invalid input is fine. Unit-test 1:1 in `tests/core/`. Modules: `engine`, `combat`, `enemy`, `level`, `map`, `physics`, `state`.
-- **`glue/`**: pure wiring over `core/` output, deterministic, same purity rules. Modules: `controls` (key codes to intents), `demo/phases` (pure phase transforms).
-- **`io/`**: the only layer that touches the world: `render/` (ANSI, cursor, RLE), audio, file I/O, signal handlers. Functions end in `!`. Keep logic minimal; emit strings or buffers computed in `glue/`. `input`, `scores`, `sound`, `savegame` and `wad` live here, each with its pure kernel (`merge-run`, `encode`/`decode`, the WAD byte parser) colocated and unit-tested beside it.
+- **`core/`**: pure logic. Same input, same output. Plain data in and out. No printing, terminal reads, time, `rand`, atoms, `php/exit`, filesystem or sleep. Throwing on invalid input is fine. Unit-test 1:1 in `tests/core/`.
+- **`glue/`** and **`demo/`**: pure wiring over `core/` output, deterministic, same purity rules: `glue/controls` (key codes to intents), `demo/phases` (phase transforms).
+- **`io/`**: the only layer that touches the world: `render/` (ANSI, cursor, RLE), audio, file I/O, signal handlers. Functions end in `!`. Keep logic minimal; emit strings or buffers computed in `glue/`. `input`, `scores`, `settings`, `sound`, `savegame` and `wad` live here, each with its pure kernel (`merge-run`, `encode`/`decode`, the WAD byte parser) colocated and unit-tested beside it.
 
 ## Output: `print` / `println`, never `php/fwrite`
 

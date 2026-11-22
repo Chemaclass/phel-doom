@@ -51,7 +51,7 @@ Stop and fix issues before continuing.
 
 If any step fails, fix it and re-run from that step. Do NOT commit with failures.
 
-> Equivalent one-shot: `composer ci`. Use it if you prefer one command.
+> One-shot alternative: `composer ci` (also runs the layer, cycle, unused, docs, deprecation and agent-hook checks).
 
 ### Phase 3: Commit
 
@@ -64,7 +64,7 @@ If any step fails, fix it and re-run from that step. Do NOT commit with failures
    - **Use `ref:` not `refactor:`**.
    - Add `(<scope>)` for single-module change. Scope ≈ filename root (`engine`, `render`, `controls`, …).
    - **NEVER mention AI tooling** in subject or body.
-   - **No Co-Authored-By trailer**.
+   - **No Co-Authored-By trailer** and no "Generated with" line.
    - No emoji.
 
 8. **Commit**:
@@ -72,6 +72,6 @@ If any step fails, fix it and re-run from that step. Do NOT commit with failures
    git commit -m "<message>"
    ```
 
-9. **CHANGELOG check** - if prefix is `feat:` / `fix:` / `perf:`, ensure `CHANGELOG.md` has been updated under `## Unreleased`. If not, warn user before pushing.
+9. **CHANGELOG check** - if prefix is `feat:` / `fix:` / `perf:`, ensure `CHANGELOG.md` has been updated under `## [Unreleased]`. If not, warn user before pushing.
 
 10. Report: commit hash, message, files included.

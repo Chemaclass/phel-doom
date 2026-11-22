@@ -1,6 +1,5 @@
 ---
 description: "Use to launch the game and smoke-test a change; required for io/ work"
-disable-model-invocation: false
 allowed-tools: "Bash(PHEL_DOOM_SILENT=1 composer play:*), Bash(PHEL_DOOM_SILENT=1 make play:*)"
 x-claude:
   argument-hint: "[check-list]"
@@ -12,9 +11,9 @@ Launch phel-doom to verify a change end-to-end.
 
 ## When to use
 
-- Any change in `src/io/render.phel` or `src/commands/play.phel`.
+- Any change in `src/io/render/` or `src/commands/play.phel`.
 - New key binding or input behavior (`controls.phel`, `input.phel`).
-- Audio change (`sound.phel`).
+- Audio change (`sound.phel`, `music.phel`).
 - HUD or pause overlay change.
 - Final check before opening PR for player-visible work.
 

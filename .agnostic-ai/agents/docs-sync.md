@@ -8,7 +8,7 @@ can: [read, Glob, Grep, edit]
 
 # Docs Sync
 
-Audit `docs/*.md` against the code that backs them. Fix drift.
+Audit `docs/*.md` against the code that backs them. Fix drift. `composer check-docs` already fails on dead links, missing paths and unknown composer scripts; your job is the prose.
 
 ## Mapping
 
@@ -21,12 +21,15 @@ Audit `docs/*.md` against the code that backs them. Fix drift.
 | `docs/performance.md` | `engine.phel` + `src/io/render/` + measured numbers |
 | `docs/state.md` | `src/core/state.phel` |
 | `docs/combat.md` | `src/core/combat.phel` |
-| `docs/monsters.md` | `src/core/enemy.phel` |
+| `docs/monsters.md` | `enemies.phel`, `enemy.phel`, `enemy_ai.phel`, `projectile.phel` |
 | `docs/map.md`, `docs/level-system.md` | `level.phel`, `map.phel` |
 | `docs/wad-parser.md` | `src/io/wad.phel` |
 | `docs/input.md` | `src/glue/controls.phel`, `src/io/input.phel` |
 | `docs/audio.md` | `src/io/sound.phel`, `src/io/music.phel` |
 | `docs/scores.md` | `src/io/scores.phel` |
+| `docs/savegame.md` | `src/io/savegame.phel` |
+| `docs/settings.md` | `src/core/settings.phel`, `src/io/settings.phel` |
+| `docs/demo.md`, `docs/demo-showcase.md` | `src/io/demo.phel`, `src/core/rng.phel`, `src/commands/demo.phel`, `src/demo/phases.phel` |
 | `docs/features.md` | spans the whole game |
 
 ## Per-doc checklist

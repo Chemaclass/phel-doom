@@ -40,8 +40,7 @@ Before coding, skim:
   (:require phel-doom.core.engine :refer [cast-ray]))
 
 (deftest cast-ray-hits-wall
-  (is (= [3.0 :wall :n-s]
-         (cast-ray test-grid 0.5 0.5 0.0))))
+  (is (= 3.0 (cast-ray test-grid 0.5 0.5 0.0))))
 ```
 
 Layout:

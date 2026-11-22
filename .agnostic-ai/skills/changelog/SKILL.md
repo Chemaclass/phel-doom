@@ -21,7 +21,7 @@ Run first: `git log $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD~30
 
 1. Read `CHANGELOG.md`.
 
-2. If an entry was passed as the argument, add it under the right `## Unreleased` subsection.
+2. If an entry was passed as the argument, add it under the right `## [Unreleased]` subsection.
 
 3. Otherwise analyze commits and draft entries:
    - `### Added` - `feat:`
@@ -42,13 +42,15 @@ Run first: `git log $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD~30
 ## Section template
 
 ```markdown
-## Unreleased
+## [Unreleased]
 
 ### Added
 
 ### Changed
 
 ### Fixed
+
+### Removed
 
 ### Performance
 ```

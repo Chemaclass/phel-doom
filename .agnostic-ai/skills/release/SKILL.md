@@ -1,6 +1,6 @@
 ---
 description: "Use to cut a release via tools/release.sh and verify the published phar and GitHub release"
-disable-model-invocation: false
+disable-model-invocation: true
 allowed-tools: "Read, Bash(./tools/release.sh *), Bash(git *), Bash(gh *), Bash(composer *), Bash(shasum *)"
 x-claude:
   argument-hint: "[version] [--dry-run]"
@@ -32,8 +32,8 @@ Run first: `git rev-parse --abbrev-ref HEAD`, `git status --porcelain`.
    - Target version is valid semver and the tag is free
      (`git tag | grep -x "vX.Y.Z"` returns nothing).
 
-2. If `## [Unreleased]` in `CHANGELOG.md` is messy, run `/changelog-simplify`
-   first so the release notes are clean. The script moves that block verbatim
+2. If `## [Unreleased]` in `CHANGELOG.md` is messy, stop and ask the user to
+   run `/changelog-simplify` first so the release notes are clean. The script moves that block verbatim
    into the dated section.
 
 3. Dry-run first when the version bump is non-obvious or the tree had recent

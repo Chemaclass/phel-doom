@@ -1,6 +1,6 @@
 ---
 description: "Use to shorten and de-duplicate the CHANGELOG.md Unreleased notes, then commit and push"
-disable-model-invocation: false
+disable-model-invocation: true
 allowed-tools: "Read, Edit, Bash(git *)"
 ---
 

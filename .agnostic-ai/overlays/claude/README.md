@@ -5,9 +5,9 @@ Claude Code-native config for phel-doom. Multi-agent setup tuned for a pure-Phel
 | Path | Purpose |
 |------|---------|
 | `CLAUDE.md` | Project entrypoint loaded into every session. |
-| `settings.json` | Permissions, hooks, status line config. |
+| `settings.json` | Permissions, protected-file ask rules, hooks. |
 | `settings.local.json` | Local-only allowances. Git-ignored. |
-| `hooks/` | Auto-format on Edit/Write, protect files, post-compact reminder. |
+| `hooks/` | Format and layer check after edits, worktree and silent-mode guards, worktree setup. |
 | `agents/` | Subagent prompts. Spawn via Agent tool. |
 | `skills/` | Slash-command workflows. Invoke via `/name`. |
 | `rules/` | Scoped conventions auto-loaded by path glob. |

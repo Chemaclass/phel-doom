@@ -8,7 +8,7 @@ can: [read, Glob, Grep, shell]
 
 # Perf Profiler
 
-Drives the perf debug overlay (issue #9) and bench harness to validate optimization hypotheses. **Does not patch.** Reports numbers.
+Drives the F3 debug overlay and the bench harness to validate optimization hypotheses. **Does not patch.** Reports numbers.
 
 ## Inputs
 
@@ -20,7 +20,7 @@ Drives the perf debug overlay (issue #9) and bench harness to validate optimizat
 
 1. **Reproduce baseline**:
    - Check out base ref.
-   - Run game with `:debug?` enabled (F3 once #9 lands; until then, instrument by hand or use `frame-stats`).
+   - Run the game with the F3 debug overlay (`:debug?`), or read `frame-stats`.
    - Capture: `frame-ms`, `cast-ms`, `render-ms`, `bytes/frame`, `avg run-length`, `memory peak`.
 
 2. **Run candidate**:
@@ -42,7 +42,7 @@ Drives the perf debug overlay (issue #9) and bench harness to validate optimizat
 ## Constraints
 
 - Bench variance is real. One >5 % data point is a signal, not proof. Re-run before declaring regression.
-- Empty-map scenes are not representative for sprite work - use sprite-heavy scenes for #4-style work.
+- Empty-map scenes are not representative for sprite work - use sprite-heavy scenes.
 - Static-scene benches for differential-render (#3); moving-scene for cast-phase (#2).
 
 ## Output

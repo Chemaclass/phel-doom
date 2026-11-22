@@ -6,7 +6,7 @@ paths=$(agnostic-ai hook paths --action)
 while IFS= read -r change; do
   path=${change#*	}
   case "$path" in
-    src/core/*|src/glue/*)
+    src/core/*|src/glue/*|src/demo/*)
       bash tools/check-layers.sh >&2 || exit 2
       exit 0
       ;;

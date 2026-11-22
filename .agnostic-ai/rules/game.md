@@ -11,7 +11,7 @@ Cast plus render under 5 ms per frame at 120x30; hard ceiling 16 ms. Do not regr
 
 - `src/core/engine.phel`: `cast-ray`, `cast-frame`
 - `src/io/render/`: `render!`, RLE emit, shade strings
-- `src/core/physics.phel`: `step-world`
+- `src/core/physics.phel`: `apply-physics`
 
 Read `docs/performance.md` before optimizing. Bench before claiming a win (`/perf-bench`).
 
@@ -19,7 +19,7 @@ Read `docs/performance.md` before optimizing. Bench before claiming a win (`/per
 
 - `world` is an immutable map threaded through the loop. Never mutate it.
 - `core/` and `glue/`: no `php/print`, no `php/echo`, no global atom mutation, no `php/rand` (thread the RNG seed through `world`). Effects go in `src/io/` ([io-boundaries.md](io-boundaries.md)).
-- Loop in `play.phel`: input, `step-world` (pure), `cast-frame` (pure), `render!` (io). Each frame makes a new `world`; keep no back-references.
+- Loop in `play.phel`: input, `tick-world` (pure), `cast-frame` (pure), `render!` (io). Each frame makes a new `world`; keep no back-references.
 
 ## Tests
 
@@ -33,10 +33,12 @@ Update the doc in the same commit; stale docs block merge.
 |------|-----|
 | `engine.phel` | `docs/raycaster.md` |
 | `src/io/render/` | `docs/rendering.md`, `docs/performance.md` |
-| `combat.phel`, `enemy.phel` | `docs/combat.md`, `docs/monsters.md` |
+| `combat.phel`, `enemies.phel`, `enemy.phel`, `enemy_ai.phel`, `projectile.phel` | `docs/combat.md`, `docs/monsters.md` |
 | `level.phel`, `map.phel`, `wad.phel` | `docs/level-system.md`, `docs/map.md`, `docs/wad-parser.md` |
 | `state.phel` | `docs/state.md` |
 | `controls.phel`, `input.phel` | `docs/input.md` |
 | `sound.phel`, `music.phel` | `docs/audio.md` |
 | `scores.phel` | `docs/scores.md` |
+| `savegame.phel` | `docs/savegame.md` |
+| `settings.phel` | `docs/settings.md` |
 | `play.phel` | `docs/game-loop.md` |

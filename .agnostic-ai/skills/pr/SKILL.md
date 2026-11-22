@@ -1,6 +1,5 @@
 ---
 description: "Use to push the branch and open a PR with a concise body, assignee and label"
-disable-model-invocation: false
 allowed-tools: "Read, Edit, Bash(git *), Bash(gh *)"
 x-claude:
   argument-hint: "[issue-number]"
@@ -37,7 +36,7 @@ Run first: `git branch --show-current`, `git log main..HEAD --oneline`, `git dif
    gh issue view <number> --json title -q '.title'
    ```
 
-4. **PR body** - read `.github/PULL_REQUEST_TEMPLATE.md` for the exact headers (emoji included) and fill them in. Keep total body under 15 lines.
+4. **PR body** - read `.github/PULL_REQUEST_TEMPLATE.md` for the exact headers (emoji included) and fill them in. Keep total body under 15 lines. No "Generated with" footer or other AI attribution.
 
 5. **Create PR**:
    ```bash
